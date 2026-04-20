@@ -1,6 +1,6 @@
 {
   "_source": "https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json",
-  "_refreshed": "2026-04-16",
+  "_refreshed": "2026-04-20",
   "models": {
     "chatgpt-4o-latest": {
       "input_cost_per_token": 5e-06,
@@ -129,6 +129,20 @@
       "litellm_provider": "anthropic"
     },
     "claude-opus-4-6-20260205": {
+      "input_cost_per_token": 5e-06,
+      "output_cost_per_token": 2.5e-05,
+      "cache_creation_input_token_cost": 6.25e-06,
+      "cache_read_input_token_cost": 5e-07,
+      "litellm_provider": "anthropic"
+    },
+    "claude-opus-4-7": {
+      "input_cost_per_token": 5e-06,
+      "output_cost_per_token": 2.5e-05,
+      "cache_creation_input_token_cost": 6.25e-06,
+      "cache_read_input_token_cost": 5e-07,
+      "litellm_provider": "anthropic"
+    },
+    "claude-opus-4-7-20260416": {
       "input_cost_per_token": 5e-06,
       "output_cost_per_token": 2.5e-05,
       "cache_creation_input_token_cost": 6.25e-06,
