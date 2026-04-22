@@ -574,6 +574,51 @@ else
   fail "1.1.6b: statusline crashed on garbage input -- fail-open broken"
 fi
 
+# Cross-platform parity: memory prelude surfaces update nudge when behind
+# (this is the path Codex/Gemini/Cursor/Windsurf/Copilot/Hermes/Wayland use)
+echo '{"schema_version":1,"installed_version":"1.1.5"}' > "$ST_HOME/state.json"
+echo '{"schema_version":1,"last_check":1,"last_latest_seen":"1.1.6","last_failure":null}' > "$ST_HOME/cache/update-check.json"
+PRELUDE_OUT=$(
+  (
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}'
+    sleep 0.2
+    printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    sleep 0.2
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ijfw_memory_prelude","arguments":{"detail_level":"summary"}}}'
+    sleep 0.4
+  ) | IJFW_HOME="$ST_HOME" node "$SERVER_JS" 2>/dev/null
+)
+if echo "$PRELUDE_OUT" | grep -q 'IJFW update available'; then
+  pass "1.1.6: prelude surfaces update nudge (Codex/Gemini/Cursor parity)"
+else
+  fail "1.1.6: prelude does NOT surface update nudge -- cross-platform parity broken"
+fi
+
+# Re-entrancy in prelude path: after sentinel set, prelude does NOT nudge
+echo '{"schema_version":1,"installed_version":"1.1.5","last_applied_version":"1.1.6"}' > "$ST_HOME/state.json"
+PRELUDE_OUT2=$(
+  (
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}'
+    sleep 0.2
+    printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    sleep 0.2
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ijfw_memory_prelude","arguments":{"detail_level":"summary"}}}'
+    sleep 0.4
+  ) | IJFW_HOME="$ST_HOME" node "$SERVER_JS" 2>/dev/null
+)
+if echo "$PRELUDE_OUT2" | grep -q 'IJFW update available'; then
+  fail "1.1.6: prelude re-entrancy guard NOT working (still nudges after apply)"
+else
+  pass "1.1.6: prelude re-entrancy sentinel suppresses nudge"
+fi
+
+# Codex session-start fires bg update check (cross-platform parity)
+if grep -q "ijfw-check-update.sh" "$ISO_HOME/.codex/hooks/session-start.sh" 2>/dev/null; then
+  pass "1.1.6: Codex session-start.sh wires bg update-check"
+else
+  fail "1.1.6: Codex session-start.sh does NOT fire bg update-check"
+fi
+
 # ============================================================
 # SUMMARY
 # ============================================================

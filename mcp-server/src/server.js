@@ -793,6 +793,47 @@ function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
 // Universal first-turn recall -- call once at session start to hydrate context.
 // Returns a compact, structured block that agents on any platform can ingest
 // without cascading into multiple exploratory tool calls.
+// 1.1.6 update-nudge composer for cross-platform prelude parity.
+// Reads ~/.ijfw/state.json + ~/.ijfw/cache/update-check.json. Returns the
+// terse nudge line, or '' when up-to-date / re-entrancy / no cache.
+function composeUpdateNudge() {
+  try {
+    const root = process.env.IJFW_HOME || join(homedir(), '.ijfw');
+    let state, cache;
+    try { state = JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')); }
+    catch { state = {}; }
+    try { cache = JSON.parse(readFileSync(join(root, 'cache', 'update-check.json'), 'utf8')); }
+    catch { cache = {}; }
+    if (!cache.last_latest_seen) return '';
+    const installed = state.installed_version || '0.0.0';
+    const lastApplied = state.last_applied_version;
+    // Re-entrancy: if we just applied this version, don't nudge
+    if (lastApplied && cmpSemverPrelude(lastApplied, cache.last_latest_seen) >= 0) return '';
+    if (cmpSemverPrelude(installed, cache.last_latest_seen) >= 0) return '';
+    return `## IJFW update available\n` +
+      `Installed: v${installed} -- latest: v${cache.last_latest_seen}.\n` +
+      `Run 'ijfw update' in your TERMINAL to upgrade. ` +
+      `(I cannot run this for you -- the MCP path is air-gapped from code execution.)`;
+  } catch { return ''; }
+}
+
+function cmpSemverPrelude(a, b) {
+  const parse = v => {
+    const [main, pre] = String(v).split('-', 2);
+    const nums = main.split('.').map(n => parseInt(n, 10) || 0);
+    while (nums.length < 3) nums.push(0);
+    return { nums, pre: pre || null };
+  };
+  const A = parse(a); const B = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if (A.nums[i] !== B.nums[i]) return A.nums[i] < B.nums[i] ? -1 : 1;
+  }
+  if (A.pre === B.pre) return 0;
+  if (A.pre && !B.pre) return -1;
+  if (!A.pre && B.pre) return 1;
+  return A.pre < B.pre ? -1 : 1;
+}
+
 function handlePrelude({ detail_level = 'summary' } = {}) {
   const KB_LINES = detail_level === 'full' ? 200 : detail_level === 'standard' ? 80 : 40;
   const HO_LINES = detail_level === 'full' ? 80  : detail_level === 'standard' ? 30 : 15;
@@ -803,6 +844,13 @@ function handlePrelude({ detail_level = 'summary' } = {}) {
   const parts = ['<ijfw-memory>'];
   parts.push('Project memory hydrated. Treat as background context -- no further recall needed unless the user asks something not covered here.');
   parts.push('');
+
+  // 1.1.6: surface update availability for cross-platform parity.
+  // Claude Code shows this in statusLine; Codex/Gemini/Cursor/Windsurf/
+  // Copilot/Hermes/Wayland surface it here in the first-turn prelude.
+  // Re-entrancy: suppressed when last_applied_version >= last_latest_seen.
+  const updateNudge = composeUpdateNudge();
+  if (updateNudge) parts.push(updateNudge, '');
 
   // Team knowledge first -- shared decisions/patterns/stack rank above personal.
   const team = readTeamKnowledge();

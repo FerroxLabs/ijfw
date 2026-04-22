@@ -11,6 +11,14 @@
 IJFW_DIR=".ijfw"
 IJFW_GLOBAL="$HOME/.ijfw"
 
+# 1.1.6: cross-platform parity -- fire detached background update-check.
+# Reuses the Claude-tree script (same logic across platforms). Wrapped in
+# fire-and-forget so Codex's session-start ceiling stays clean.
+IJFW_CHECK_UPDATE_SH="$HOME/.ijfw/claude/hooks/scripts/ijfw-check-update.sh"
+if [ -x "$IJFW_CHECK_UPDATE_SH" ]; then
+  ( "$IJFW_CHECK_UPDATE_SH" </dev/null >/dev/null 2>&1 & ) &
+fi
+
 # Read stdin payload (best-effort).
 HOOK_STDIN=""
 if [ ! -t 0 ]; then
