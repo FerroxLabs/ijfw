@@ -1522,12 +1522,24 @@ else
 
   CLI_LINKED=0
   CLI_FAILED=0
+  CLI_COPIED=0
   for bin in $CLI_BINS; do
     src="$CLI_SRC_DIR/$bin"
     dst="$CLI_LINK_DIR/$bin"
     if [ -f "$src" ]; then
       if ln -sfn "$src" "$dst" 2>/dev/null; then
-        CLI_LINKED=$((CLI_LINKED + 1))
+        # Git Bash / MINGW64 silently falls back to a file copy when the user
+        # lacks Windows symlink privileges (no admin, no Developer Mode, no
+        # MSYS=winsymlinks:nativestrict). The copy sits in ~/.local/bin with no
+        # way to resolve back to the install tree, so the launcher's readlink
+        # walk fails and `ijfw` errors out. Verify with -L and treat a copy as
+        # a failure so the user gets a real fix hint instead of silent breakage.
+        if [ -L "$dst" ]; then
+          CLI_LINKED=$((CLI_LINKED + 1))
+        else
+          CLI_COPIED=$((CLI_COPIED + 1))
+          rm -f "$dst"
+        fi
       else
         CLI_FAILED=$((CLI_FAILED + 1))
       fi
@@ -1548,6 +1560,16 @@ else
   fi
   if [ "$CLI_FAILED" -gt 0 ]; then
     printf '  %s[!]%s %d commands could not be linked (check permissions on %s)\n' "$C_YELLOW" "$C_RESET" "$CLI_FAILED" "$CLI_LINK_DIR"
+  fi
+  if [ "$CLI_COPIED" -gt 0 ]; then
+    printf '  %s[!]%s %d commands could not be symlinked on this Windows shell.\n' "$C_YELLOW" "$C_RESET" "$CLI_COPIED"
+    printf '      Git Bash falls back to copies without symlink privileges, which breaks the launcher.\n'
+    printf '      Fix one of:\n'
+    printf '        %s1.%s Enable Developer Mode (Settings > Privacy & security > For developers), then rerun.\n' "$C_BOLD" "$C_RESET"
+    printf '        %s2.%s Rerun this installer from Git Bash launched as Administrator.\n' "$C_BOLD" "$C_RESET"
+    printf '        %s3.%s In Git Bash: %sexport MSYS=winsymlinks:nativestrict%s, then rerun.\n' "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '      Or skip ~/.local/bin wiring and add %s%s%s to PATH directly.\n' "$C_BOLD" "$CLI_SRC_DIR" "$C_RESET"
+    CLI_NEEDS_SYMLINK_FIX=1
   fi
 fi
 
@@ -1685,7 +1707,9 @@ if [ "$MCP_OK" -eq 1 ]; then
 else
   printf '  %s║   MCP server: could not verify (check node installation)     ║%s\n' "$C_YELLOW" "$C_RESET"
 fi
-if [ "${CLI_NEEDS_PATH:-0}" -eq 1 ]; then
+if [ "${CLI_NEEDS_SYMLINK_FIX:-0}" -eq 1 ] && [ "${CLI_LINKED:-0}" -eq 0 ]; then
+  printf '  %s║   CLI: symlinks blocked on Windows (see fix above)           ║%s\n' "$C_YELLOW" "$C_RESET"
+elif [ "${CLI_NEEDS_PATH:-0}" -eq 1 ]; then
   printf '  %s║   CLI: add ~/.local/bin to PATH (see above) for `ijfw` cmd   ║%s\n' "$C_YELLOW" "$C_RESET"
 elif [ "${CLI_LINKED:-0}" -gt 0 ]; then
   printf '  %s║   CLI: ijfw command ready (try: ijfw doctor)                 ║%s\n' "$C_GREEN" "$C_RESET"
