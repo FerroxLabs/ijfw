@@ -1190,6 +1190,17 @@ if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
   printf "      Run binaries directly from %s/mcp-server/bin/ or add that dir to PATH.\n" "$REPO_ROOT"
   CLI_LINKED=0
   CLI_FAILED=0
+elif [ "$IS_WINDOWS" -eq 1 ]; then
+  # On Windows, mcp-server/bin/* are unix bash scripts (#!/usr/bin/env bash).
+  # Linking them into ~/.local/bin would put them ahead of npm's ijfw.cmd shim
+  # on PATH -- PowerShell can't execute the bash file and Windows opens it in
+  # Notepad (the "Windows can't execute the bash file -> default file handler"
+  # bug we hit on 1.1.6 RDP installs). The npm shim from `npm install -g
+  # @ijfw/install` is the correct PATH entry on Windows.
+  printf '  [+] Windows detected -- skipping ~/.local/bin wiring (npm shims own PATH on Windows).\n'
+  printf '      If `ijfw` is not on PATH, run: npm install -g @ijfw/install\n'
+  CLI_LINKED=0
+  CLI_FAILED=0
 else
   CLI_BINS="ijfw ijfw-memory ijfw-dispatch-plan ijfw-dashboard ijfw-memorize"
   CLI_SRC_DIR="$REPO_ROOT/mcp-server/bin"
