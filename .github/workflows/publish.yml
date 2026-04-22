@@ -81,10 +81,12 @@ jobs:
           echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
           echo "Publishing dist-tag: $DIST_TAG"
 
+      # No NODE_AUTH_TOKEN env -- Trusted Publishing exchanges the GitHub
+      # OIDC token (granted by `permissions: id-token: write` above) for a
+      # short-lived npm token automatically. NPM_TOKEN secret not required.
       - name: Publish with provenance (Trusted Publishing / OIDC)
         working-directory: installer
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
         run: npm publish --provenance --access public --tag "$DIST_TAG"
 
