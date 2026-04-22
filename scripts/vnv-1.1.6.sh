@@ -90,7 +90,7 @@ rsync -aq --exclude='.git' --exclude='node_modules' --exclude='.ijfw' \
   export HOME="$VNV_HOME"
   export IJFW_HOME="$VNV_HOME/.ijfw"
   export IJFW_CUSTOM_DIR="0"
-  cd "$VNV_HOME/.ijfw"
+  cd "$VNV_HOME/.ijfw" || exit 1
   bash scripts/install.sh > "$VNV_HOME/install.out" 2> "$VNV_HOME/install.err"
 )
 INSTALL_RC=$?
