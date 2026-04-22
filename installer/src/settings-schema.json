@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "IJFW Settings",
+  "description": "User preferences only. Decisions as enum strings; all runtime-state lives in state.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "auto_update", "statusline", "update_check", "context_bar"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "auto_update": {
+      "type": "string",
+      "enum": ["ask", "on", "off"],
+      "description": "Action policy for ijfw update. 'ask' prompts; 'on' allows auto (1.1.7+); 'off' suppresses."
+    },
+    "auto_update_consent_version": {
+      "type": ["string", "null"],
+      "description": "Semver of last consent prompt. Null means never asked. Re-prompt when scheme changes."
+    },
+    "statusline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "mode", "style"],
+      "properties": {
+        "enabled": { "type": "string", "enum": ["auto", "on", "off"] },
+        "mode": { "type": "string", "enum": ["compose", "own"] },
+        "style": { "type": "string", "enum": ["left", "right"] },
+        "compose_path_hash": { "type": ["string", "null"] },
+        "composed_command": { "type": ["string", "null"] }
+      }
+    },
+    "update_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interval_hours", "failure_backoff_hours"],
+      "properties": {
+        "interval_hours": { "type": "number", "minimum": 1, "maximum": 168 },
+        "failure_backoff_hours": { "type": "number", "minimum": 0.1, "maximum": 24 }
+      }
+    },
+    "context_bar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "used_warn", "used_critical"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "used_warn": { "type": "number", "minimum": 0, "maximum": 1 },
+        "used_critical": { "type": "number", "minimum": 0, "maximum": 1 },
+        "style": { "type": "string", "enum": ["left", "runway", "classic"] }
+      }
+    }
+  }
+}

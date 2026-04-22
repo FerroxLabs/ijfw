@@ -34,6 +34,15 @@ fi
 mkdir -p "$IJFW_DIR/memory" "$IJFW_DIR/sessions" "$IJFW_DIR/index" 2>/dev/null
 mkdir -p "$IJFW_GLOBAL/memory" 2>/dev/null
 
+# 1.1.6: detached background update-check + stale run-dir cleanup.
+# All logic (dedupe, interval, env-disable, re-entrancy) lives in the .js
+# worker -- this fire-and-forget spawn keeps the SessionStart hot-path clean.
+# Wrapped in a 2s ceiling per v3 Âsection 3.
+IJFW_HOOK_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -x "$IJFW_HOOK_DIR/ijfw-check-update.sh" ]; then
+  ( "$IJFW_HOOK_DIR/ijfw-check-update.sh" </dev/null >/dev/null 2>&1 & ) &
+fi
+
 # --- Project registry (Phase 3: enables cross-project memory search) ---
 # Append <absolute-path> | <sha256-12> | <first-seen-iso> on first sight only.
 # Registry lives in ~/.ijfw/ (gitignored); per-project memory remains in repo.

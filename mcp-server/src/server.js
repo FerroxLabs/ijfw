@@ -36,6 +36,10 @@ import { searchCorpus } from './search-bm25.js';
 import { crossProjectSearch } from './cross-project-search.js';
 // R2-E -- single source of truth for markdown/HTML/control-char defanger.
 import { sanitizeContent } from './sanitizer.js';
+// 1.1.6: update tools (cap 8 -> 10) -- token-issuance + OOB terminal confirm.
+// Per CLAUDE.md policy: future growth triggers retirement review, not raise.
+import { ijfwUpdateCheck, TOOL_DEF as UPDATE_CHECK_TOOL } from './update-check.js';
+import { ijfwUpdateApply, TOOL_DEF as UPDATE_APPLY_TOOL } from './update-apply.js';
 
 // --- Constants ---
 const SCHEMA_VERSION = 1;
@@ -640,7 +644,9 @@ const TOOLS = [
       },
       required: ['pattern']
     }
-  }
+  },
+  UPDATE_CHECK_TOOL,
+  UPDATE_APPLY_TOOL
 ];
 
 // --- Tool Handlers ---
@@ -1035,6 +1041,16 @@ function handleMessage(msg) {
       let result;
       try {
         switch (name) {
+          case 'ijfw_update_check': {
+            const r = ijfwUpdateCheck(args || {});
+            result = { text: JSON.stringify(r, null, 2), isError: !!(r && r.error) };
+            break;
+          }
+          case 'ijfw_update_apply': {
+            const r = ijfwUpdateApply(args || {});
+            result = { text: JSON.stringify(r, null, 2), isError: r && r.status === 'error' };
+            break;
+          }
           case 'ijfw_memory_recall':
             result = handleRecall(args || {});
             emitRecallObservation(args || {});

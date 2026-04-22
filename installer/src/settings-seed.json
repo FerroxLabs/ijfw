@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "auto_update": "ask",
+  "auto_update_consent_version": null,
+  "statusline": {
+    "enabled": "auto",
+    "mode": "compose",
+    "style": "left",
+    "compose_path_hash": null,
+    "composed_command": null
+  },
+  "update_check": {
+    "interval_hours": 24,
+    "failure_backoff_hours": 1
+  },
+  "context_bar": {
+    "enabled": true,
+    "used_warn": 0.50,
+    "used_critical": 0.80,
+    "style": "left"
+  }
+}

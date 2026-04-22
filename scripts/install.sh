@@ -188,6 +188,121 @@ if [ ! -f "$PLUGIN_DST/.claude-plugin/plugin.json" ]; then
   printf "  [!] Plugin at %s is missing .claude-plugin/plugin.json -- install may be incomplete.\n" "$PLUGIN_DST"
 fi
 
+# ============================================================
+# 1.1.6: STATE + SETTINGS SEED -- durable facts + user preferences
+# ============================================================
+# State ownership model (v3 �section 1):
+#   ~/.ijfw/state.json    durable facts written by installer + update flow
+#   ~/.ijfw/settings.json user preferences (created once, never overwritten)
+#   ~/.ijfw/cache/        disposable network results
+#   ~/.ijfw/run/<sid>/    ephemeral per-session
+#   ~/.ijfw/logs/         observability, rotated at 1MB
+# Permissions: dir 0700, files 0600 -- only mutated in cold paths (here).
+if [ "$IJFW_CUSTOM_DIR" != "1" ]; then
+  IJFW_STATE_DIR="$HOME_REAL/.ijfw"
+  mkdir -p "$IJFW_STATE_DIR/cache" "$IJFW_STATE_DIR/run" "$IJFW_STATE_DIR/logs"
+  chmod 700 "$IJFW_STATE_DIR" 2>/dev/null || true
+
+  # Detect install_method
+  INSTALL_METHOD="manual"
+  if [ -d "$REPO_ROOT/.git" ]; then
+    INSTALL_METHOD="git-clone"
+  fi
+  NPM_GROOT="$(command -v npm >/dev/null 2>&1 && npm root -g 2>/dev/null || true)"
+  if [ -n "$NPM_GROOT" ] && [ "${REPO_ROOT#"$NPM_GROOT"}" != "$REPO_ROOT" ]; then
+    INSTALL_METHOD="npm-global"
+  fi
+
+  # Read installed version from installer/package.json
+  INSTALLED_VER="$( [ -n "${NODE_BIN:-}" ] && "$NODE_BIN" -e '
+    try { console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version || "0.0.0"); }
+    catch { console.log("0.0.0"); }
+  ' "$REPO_ROOT/installer/package.json" 2>/dev/null || echo "0.0.0" )"
+
+  NOW_TS="$(date +%s)"
+
+  # state.json -- always rewritten (durable facts, installer-owned)
+  STATE_TMP="$IJFW_STATE_DIR/state.json.tmp.$$"
+  cat > "$STATE_TMP" <<JSON
+{
+  "schema_version": 1,
+  "install_method": "$INSTALL_METHOD",
+  "installed_version": "$INSTALLED_VER",
+  "last_applied_version": "$INSTALLED_VER",
+  "last_good_shasum": null,
+  "settings_reseeded_at": null,
+  "installed_at": $NOW_TS
+}
+JSON
+  mv -f "$STATE_TMP" "$IJFW_STATE_DIR/state.json"
+  chmod 600 "$IJFW_STATE_DIR/state.json" 2>/dev/null || true
+
+  # settings.json -- seed only if absent (preserve user prefs across upgrades)
+  if [ ! -f "$IJFW_STATE_DIR/settings.json" ]; then
+    if [ -f "$REPO_ROOT/installer/src/settings-seed.json" ]; then
+      cp "$REPO_ROOT/installer/src/settings-seed.json" "$IJFW_STATE_DIR/settings.json.tmp.$$"
+      mv -f "$IJFW_STATE_DIR/settings.json.tmp.$$" "$IJFW_STATE_DIR/settings.json"
+      chmod 600 "$IJFW_STATE_DIR/settings.json" 2>/dev/null || true
+    fi
+  fi
+
+  # install-method legacy file (back-compat for older callers)
+  printf '%s\n' "$INSTALL_METHOD" > "$IJFW_STATE_DIR/install-method"
+  chmod 600 "$IJFW_STATE_DIR/install-method" 2>/dev/null || true
+
+  printf "  [+] State seeded (%s, v%s)\n" "$INSTALL_METHOD" "$INSTALLED_VER"
+
+  # ============================================================
+  # 1.1.6b: statusline GSD detection + safe compose default.
+  #
+  # Decision matrix (v3 sec 8 + statusline behavior):
+  #   - existing statusLine in claude settings, allowlisted path -> silent compose
+  #   - existing statusLine, non-allowlist path                  -> skip + note
+  #   - no existing statusLine                                   -> off (fresh install)
+  # User can always run: ijfw statusline --install|--compose|--disable
+  # ============================================================
+  CLAUDE_SETTINGS="$HOME_REAL/.claude/settings.json"
+  if [ -f "$CLAUDE_SETTINGS" ] && [ -n "${NODE_BIN:-}" ]; then
+    EXISTING_STATUSLINE_CMD="$("$NODE_BIN" -e '
+      try {
+        const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(d.statusLine && d.statusLine.command ? d.statusLine.command : "");
+      } catch { process.stdout.write(""); }
+    ' "$CLAUDE_SETTINGS" 2>/dev/null || printf '')"
+    if [ -n "$EXISTING_STATUSLINE_CMD" ]; then
+      ALLOWLISTED=0
+      case "$EXISTING_STATUSLINE_CMD" in
+        *"/.claude/"*|*"/.gsd/"*|*"/.ijfw/claude/"*|*"/.cursor/"*) ALLOWLISTED=1 ;;
+      esac
+      if [ "$ALLOWLISTED" = "1" ]; then
+        # Silent compose: persist the existing command in IJFW settings; the
+        # statusline script renders alongside it. We do NOT mutate Claude's
+        # settings.json -- the existing tool stays in charge until the user
+        # explicitly runs `ijfw statusline --compose` to wrap.
+        "$NODE_BIN" -e '
+          const fs = require("fs"), p = process.argv[1], cmd = process.argv[2];
+          let s = {}; try { s = JSON.parse(fs.readFileSync(p, "utf8")); } catch { s = {}; }
+          if (!s.schema_version) s.schema_version = 1;
+          if (!s.statusline) s.statusline = {};
+          s.statusline.composed_command = cmd;
+          s.statusline.mode = "compose";
+          s.statusline.enabled = "auto";
+          const tmp = p + ".tmp." + process.pid;
+          fs.writeFileSync(tmp, JSON.stringify(s, null, 2) + "\n", { mode: 0o600 });
+          fs.renameSync(tmp, p);
+        ' "$IJFW_STATE_DIR/settings.json" "$EXISTING_STATUSLINE_CMD" 2>/dev/null || true
+        printf "  [+] Composed alongside existing statusLine. Run 'ijfw statusline --disable' to opt out.\n"
+      else
+        printf "  [!] Existing statusLine at %s -- not composing for security.\n" "$EXISTING_STATUSLINE_CMD"
+        printf "      Run 'ijfw statusline --install' to replace, or '--compose' if trusted.\n"
+      fi
+    else
+      # No existing statusLine -- respect minimalists (v3 default change)
+      printf "  [+] statusLine off by default. Run 'ijfw statusline --install' to enable.\n"
+    fi
+  fi
+fi
+
 # Patch the plugin's .mcp.json with an ABSOLUTE node path detected by
 # pre-flight. Claude Code spawns MCP servers with an empty env by default,
 # meaning "command": "node" fails because the subprocess has no PATH and

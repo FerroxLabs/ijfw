@@ -44,6 +44,28 @@ function doctorCheck(cmd, args) {
   return r.status === 0 ? r.stdout.split('\n')[0].trim() : 'not found';
 }
 
+// Locate cross-orchestrator-cli.js from one of:
+//   1. repoRoot() (running from a clone)
+//   2. ~/.ijfw/mcp-server/src/ (post-install)
+// Returns the absolute path if found, else null.
+function findCli() {
+  const candidates = [
+    join(repoRoot(), 'mcp-server', 'src', 'cross-orchestrator-cli.js'),
+    join(homedir(), '.ijfw', 'mcp-server', 'src', 'cross-orchestrator-cli.js'),
+  ];
+  return candidates.find(p => existsSync(p)) || null;
+}
+
+// Delegate the full argv tail to cross-orchestrator-cli.js.
+// Returns true when delegation happened (so caller skips fallback).
+// Exits with the delegated process's status on success.
+function delegateToCli(argTail) {
+  const cli = findCli();
+  if (!cli) return false;
+  const r = spawnSync('node', [cli, ...argTail], { stdio: 'inherit' });
+  process.exit(r.status ?? 1);
+}
+
 async function main() {
   const argv = process.argv;
   const sub = argv[2];
@@ -53,16 +75,31 @@ async function main() {
     process.exit(0);
   }
 
-  if (sub === '--version' || sub === '-v') {
+  if (sub === '--version' || sub === '-v' || sub === 'version') {
+    // 1.1.6: full version surface lives in cross-orchestrator-cli.js (terminal CLI).
+    // Delegate when the repo + cli are reachable; fall back to bare version on naked npx.
+    const verbose = argv.slice(3).includes('--verbose');
+    if (delegateToCli(argv.slice(2))) return;
     try {
-      const { readFileSync } = await import('node:fs');
       const pkgPath = join(__dirname, '..', 'package.json');
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-      console.log(pkg.version || 'unknown');
+      console.log(`@ijfw/install@${pkg.version || 'unknown'}`);
+      if (verbose) {
+        console.log('  (full --verbose details require a completed install: run ijfw install)');
+      }
     } catch {
       console.log('unknown');
     }
     process.exit(0);
+  }
+
+  // 1.1.6: terminal-side commands -- delegate to cross-orchestrator-cli.js
+  // when the repo is present (post-install). For naked npx invocations
+  // (no repo), print a helpful pointer instead of exploding.
+  if (sub === 'update' || sub === 'statusline' || sub === 'config' || sub === 'insight') {
+    if (delegateToCli(argv.slice(2))) return;
+    console.error(`'ijfw ${sub}' requires a completed IJFW install. Run: ijfw install`);
+    process.exit(1);
   }
 
   switch (sub) {

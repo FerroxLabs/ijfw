@@ -7,7 +7,7 @@
 //
 // Zero external deps. Parse argv manually.
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, readdirSync, rmSync, renameSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -80,6 +80,14 @@ function parseArgs(argv) {
     return { cmd: 'help' };
   }
 
+  if (args[0] === '--version' || args[0] === '-v') {
+    return { cmd: 'version', verbose: args.includes('--verbose') };
+  }
+
+  if (args[0] === 'version') {
+    return { cmd: 'version', verbose: args.includes('--verbose') };
+  }
+
   if (args[0] === 'help') {
     return { cmd: 'guide', browser: args.includes('--browser') };
   }
@@ -97,7 +105,43 @@ function parseArgs(argv) {
   }
 
   if (args[0] === 'update') {
-    return { cmd: 'update' };
+    const opts = { cmd: 'update' };
+    for (let i = 1; i < args.length; i++) {
+      const a = args[i];
+      if (a === '--check') opts.check = true;
+      else if (a === '--yes' || a === '-y') opts.yes = true;
+      else if (a === '--verify') opts.verify = true;
+      else if (a === '--changelog') opts.changelog = true;
+      else if (a === '--confirm' && args[i + 1]) { opts.confirm = args[++i]; }
+      else if (a === '--auto' && args[i + 1]) { opts.auto = args[++i]; }
+    }
+    return opts;
+  }
+
+  if (args[0] === 'statusline') {
+    const opts = { cmd: 'statusline' };
+    for (let i = 1; i < args.length; i++) {
+      const a = args[i];
+      if (a === '--install') opts.sub = 'install';
+      else if (a === '--compose') opts.sub = 'compose';
+      else if (a === '--disable') opts.sub = 'disable';
+      else if (a === '--status') opts.sub = 'status';
+      else if (a === '--recompute') opts.sub = 'recompute';
+    }
+    if (!opts.sub) opts.sub = 'status';
+    return opts;
+  }
+
+  if (args[0] === 'config') {
+    const opts = { cmd: 'config' };
+    for (let i = 1; i < args.length; i++) {
+      if (args[i] === '--audit') opts.sub = 'audit';
+    }
+    return opts;
+  }
+
+  if (args[0] === 'insight') {
+    return { cmd: 'insight', sub: args[1] || 'start' };
   }
 
   if (args[0] === 'install') {
@@ -831,37 +875,460 @@ async function cmdImportAll(parsed) {
 // installed via git clone (the canonical path). For users on
 // `npm install -g @ijfw/install`, hints them at the npm command instead.
 
-function cmdUpdate() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const repoRoot = join(here, '..', '..');
-  const installSh = join(repoRoot, 'scripts', 'install.sh');
+// v1.1.6 update CLI -- replaces the v1.1.5 git-pull-only flow.
+// Subflags:
+//   ijfw update                    interactive update (provenance + shasum verified)
+//   ijfw update --check            non-invasive availability check
+//   ijfw update --yes              non-interactive (terminal-only; rejects MCP context)
+//   ijfw update --verify           verification dry-run (no install)
+//   ijfw update --changelog        full release notes for available version
+//   ijfw update --confirm <token>  consume MCP-issued token, run update
+//   ijfw update --auto on|off|ask  set/query auto-update preference
+function cmdUpdate(opts = {}) {
+  if (opts.auto !== undefined) return cmdUpdateAuto(opts.auto);
+  if (opts.check) return cmdUpdateCheck();
+  if (opts.verify) return cmdUpdateVerify();
+  if (opts.changelog) return cmdUpdateChangelog();
+  if (opts.confirm) return cmdUpdateConfirm(opts.confirm);
+  return cmdUpdateInteractive(opts);
+}
 
-  if (!existsSync(installSh)) {
-    console.log('IJFW update path not found in this checkout.');
-    console.log('If you installed via npm: `npm install -g @ijfw/install@latest && ijfw-install`.');
-    console.log('If you installed via git: `cd <ijfw-repo> && git pull && bash scripts/install.sh`.');
+function ijfwHome() {
+  return process.env.IJFW_HOME || join(process.env.HOME || homedir(), '.ijfw');
+}
+
+function readJsonSafe(path) {
+  try {
+    if (!existsSync(path)) return null;
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch { return null; }
+}
+
+function npmViewVersion(pkg = '@ijfw/install') {
+  const r = spawnSync('npm', ['view', pkg, 'version', '--json'], { encoding: 'utf8', timeout: 10_000 });
+  if (r.status !== 0) return { ok: false, message: (r.stderr || '').trim() || 'npm view failed' };
+  const raw = (r.stdout || '').trim().replace(/^"|"$/g, '');
+  if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(raw)) return { ok: false, message: `malformed: ${raw.slice(0, 80)}` };
+  return { ok: true, version: raw };
+}
+
+function cmpSemver(a, b) {
+  const parse = v => {
+    const [main, pre] = String(v).split('-', 2);
+    const nums = main.split('.').map(n => parseInt(n, 10) || 0);
+    while (nums.length < 3) nums.push(0);
+    return { nums, pre: pre || null };
+  };
+  const A = parse(a); const B = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if (A.nums[i] !== B.nums[i]) return A.nums[i] < B.nums[i] ? -1 : 1;
+  }
+  if (A.pre === B.pre) return 0;
+  if (A.pre && !B.pre) return -1;
+  if (!A.pre && B.pre) return 1;
+  return A.pre < B.pre ? -1 : 1;
+}
+
+function readState() { return readJsonSafe(join(ijfwHome(), 'state.json')) || {}; }
+function readSettings() { return readJsonSafe(join(ijfwHome(), 'settings.json')) || {}; }
+function writeStateField(field, value) {
+  const path = join(ijfwHome(), 'state.json');
+  const state = readState();
+  state[field] = value;
+  try {
+    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
+    renameSync(tmp, path);
+  } catch (e) {
+    console.error(`could not persist state.json: ${e.message}`);
+  }
+}
+
+function cmdUpdateCheck() {
+  const state = readState();
+  const current = state.installed_version || '0.0.0';
+  const r = npmViewVersion('@ijfw/install');
+  if (!r.ok) {
+    console.log(`IJFW: update check failed (${r.message}). Will retry next session.`);
+    process.exit(1);
+  }
+  const cmp = cmpSemver(current, r.version);
+  if (cmp >= 0) {
+    console.log(`IJFW is up to date (v${current}).`);
+    process.exit(0);
+  }
+  console.log(`Update available: v${current} -> v${r.version}`);
+  console.log(`  Release notes: https://github.com/TheRealSeanDonahoe/ijfw/releases/tag/v${r.version}`);
+  console.log(`  Run: ijfw update`);
+  process.exit(3);
+}
+
+function cmdUpdateVerify() {
+  const state = readState();
+  const current = state.installed_version || '0.0.0';
+  const r = npmViewVersion('@ijfw/install');
+  console.log('IJFW update verification:');
+  console.log(`  installed: v${current}`);
+  console.log(`  install_method: ${state.install_method || 'unknown'}`);
+  console.log(`  last_good_shasum: ${state.last_good_shasum || '(none)'}`);
+  if (!r.ok) {
+    console.log(`  registry: UNREACHABLE (${r.message})`);
+    process.exit(1);
+  }
+  console.log(`  registry latest: v${r.version}`);
+  // Provenance check via npm audit signatures
+  const sig = spawnSync('npm', ['audit', 'signatures', `@ijfw/install@${r.version}`], { encoding: 'utf8', timeout: 15_000 });
+  if (sig.status === 0) {
+    console.log(`  provenance: VERIFIED (npm audit signatures)`);
+  } else {
+    console.log(`  provenance: NOT VERIFIED (audit signatures exited ${sig.status})`);
+  }
+  console.log('Verification complete.');
+  process.exit(0);
+}
+
+function cmdUpdateChangelog() {
+  const r = npmViewVersion('@ijfw/install');
+  if (!r.ok) {
+    console.error(`could not fetch latest version: ${r.message}`);
+    process.exit(1);
+  }
+  const url = `https://api.github.com/repos/TheRealSeanDonahoe/ijfw/releases/tags/v${r.version}`;
+  const fetchRes = spawnSync('curl', ['-fsSL', '-H', 'User-Agent: ijfw', url], { encoding: 'utf8', timeout: 10_000 });
+  if (fetchRes.status !== 0) {
+    console.log(`No release notes available for v${r.version}.`);
+    console.log(`Visit: https://github.com/TheRealSeanDonahoe/ijfw/releases/tag/v${r.version}`);
+    process.exit(0);
+  }
+  let body = '';
+  try {
+    const data = JSON.parse(fetchRes.stdout || '{}');
+    body = data.body || '(no body)';
+  } catch { body = '(could not parse release JSON)'; }
+  // ANSI strip + cap 4KB. Control-char regex is intentional -- defangs
+  // CHANGELOG bytes fetched over HTTPS so paste into the terminal can't
+  // execute escape sequences. (oxlint flags this as no-control-regex; OK.)
+  // oxlint-disable no-control-regex
+  const stripped = body
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .slice(0, 4096);
+  // oxlint-enable no-control-regex
+  console.log(`Changelog for v${r.version}`);
+  console.log('');
+  console.log(stripped);
+  if (body.length > 4096) console.log(`\n... (truncated; full notes at https://github.com/TheRealSeanDonahoe/ijfw/releases/tag/v${r.version})`);
+  process.exit(0);
+}
+
+function cmdUpdateAuto(value) {
+  const valid = ['on', 'off', 'ask'];
+  if (!valid.includes(value)) {
+    console.error(`--auto must be one of: ${valid.join(', ')}`);
+    process.exit(1);
+  }
+  const settingsPath = join(ijfwHome(), 'settings.json');
+  const settings = readSettings();
+  if (!settings.schema_version) settings.schema_version = 1;
+  settings.auto_update = value;
+  try {
+    const tmp = `${settingsPath}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+    renameSync(tmp, settingsPath);
+    console.log(`auto_update set to "${value}".`);
+  } catch (e) {
+    console.error(`could not persist settings.json: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+function cmdUpdateConfirm(token) {
+  // Locate pending sentinel under any session in ~/.ijfw/run/
+  const runRoot = join(ijfwHome(), 'run');
+  if (!existsSync(runRoot)) {
+    console.error('No pending update sentinel found. Run `ijfw_update_apply` via your AI first.');
+    process.exit(1);
+  }
+  let sentinelPath = null;
+  try {
+    for (const dir of readdirSync(runRoot)) {
+      const candidate = join(runRoot, dir, 'update-pending.json');
+      if (existsSync(candidate)) { sentinelPath = candidate; break; }
+    }
+  } catch { /* */ }
+  if (!sentinelPath) {
+    console.error('No pending update sentinel found. The MCP `ijfw_update_apply` tool issues sentinels.');
+    process.exit(1);
+  }
+  const pending = readJsonSafe(sentinelPath);
+  if (!pending || pending.token !== token) {
+    console.error('Token mismatch -- run ijfw_update_check + ijfw_update_apply via your AI to issue a fresh token.');
+    process.exit(1);
+  }
+  if (process.env.IJFW_FROM_MCP === '1') {
+    console.error('Refusing: --confirm must be invoked from a terminal, not an MCP-spawned subprocess.');
+    process.exit(1);
+  }
+  console.log(`Confirming update to v${pending.target_version}...`);
+  // Clear sentinel + run interactive update
+  try { rmSync(sentinelPath, { force: true }); } catch { /* */ }
+  cmdUpdateInteractive({ yes: true, _confirmedFromToken: pending.target_version });
+}
+
+function cmdUpdateInteractive(opts = {}) {
+  if (process.env.IJFW_FROM_MCP === '1' && opts.yes) {
+    console.error('Refusing: `ijfw update --yes` from an MCP-spawned context. Run from your terminal.');
+    process.exit(1);
+  }
+  const state = readState();
+  const current = state.installed_version || '0.0.0';
+  const r = npmViewVersion('@ijfw/install');
+  if (!r.ok) {
+    console.error(`Update check failed: ${r.message}`);
+    process.exit(1);
+  }
+  const cmp = cmpSemver(current, r.version);
+  if (cmp >= 0) {
+    console.log(`IJFW is up to date (v${current}). Nothing to do.`);
+    process.exit(0);
+  }
+  console.log(`IJFW update v${current} -> v${r.version}`);
+  console.log('');
+  // Provenance check (best-effort; report but don't block on transient failures)
+  const sig = spawnSync('npm', ['audit', 'signatures', `@ijfw/install@${r.version}`], { encoding: 'utf8', timeout: 15_000 });
+  if (sig.status === 0) {
+    console.log('  Provenance: verified');
+  } else {
+    console.log('  Provenance: WARNING -- could not verify signatures');
+    if (!opts.yes) {
+      console.log('  Continuing requires --yes (acknowledge unverified provenance).');
+      process.exit(1);
+    }
+  }
+  // Method dispatch
+  const method = state.install_method || 'manual';
+  console.log(`  install_method: ${method}`);
+  let installRes;
+  if (method === 'npm-global') {
+    console.log('  Running: npm install -g @ijfw/install@latest');
+    installRes = spawnSync('npm', ['install', '-g', `@ijfw/install@${r.version}`], { stdio: 'inherit' });
+  } else if (method === 'git-clone') {
+    const repoRoot = repoRootFromCli();
+    const installSh = join(repoRoot, 'scripts', 'install.sh');
+    console.log('  Running: git pull + scripts/install.sh');
+    const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only'], { stdio: 'inherit' });
+    if (pull.status !== 0) { console.error('git pull failed'); process.exit(1); }
+    installRes = spawnSync('bash', [installSh], { stdio: 'inherit' });
+  } else {
+    console.log('  Manual install detected -- run: npx @ijfw/install');
+    installRes = spawnSync('npx', ['-y', `@ijfw/install@${r.version}`], { stdio: 'inherit' });
+  }
+  if (!installRes || installRes.status !== 0) {
+    console.error(`Update did not complete (exit ${installRes ? installRes.status : 'no-exec'})`);
+    process.exit(1);
+  }
+  // Persist re-entrancy sentinel
+  writeStateField('last_applied_version', r.version);
+  writeStateField('installed_version', r.version);
+  console.log('');
+  console.log(`IJFW updated to v${r.version}. Run \`ijfw status\` to confirm.`);
+  process.exit(0);
+}
+
+// `ijfw --version` (pure) and `ijfw --version --verbose` per v3 �section MEDIUM
+function cmdVersion(opts = {}) {
+  const root = repoRootFromCli();
+  const pkgPath = join(root, 'installer', 'package.json');
+  let version = 'unknown';
+  try { version = JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown'; } catch { /* */ }
+  if (!opts.verbose) {
+    console.log(`@ijfw/install@${version}`);
     return;
   }
+  const state = readState();
+  const settings = readSettings();
+  console.log(`@ijfw/install@${version}`);
+  console.log(`  install_method: ${state.install_method || '(not recorded)'}`);
+  console.log(`  installed_at:   ${state.installed_at ? new Date(state.installed_at * 1000).toISOString() : '(unknown)'}`);
+  console.log(`  last_applied:   ${state.last_applied_version || '(none)'}`);
+  console.log(`  auto_update:    ${settings.auto_update || 'ask'}`);
+  console.log(`  bg update check: every ${settings.update_check && settings.update_check.interval_hours || 24}h`);
+  console.log(`  kill switches: IJFW_DISABLE_UPDATE_CHECK={1,true,yes,on}`);
+  console.log(`  ijfw home: ${ijfwHome()}`);
+}
 
-  console.log('ijfw update -- pulling latest + reinstalling...');
+// 1.1.6b statusline CLI family. Manages the Claude Code statusLine slot
+// at ~/.claude/settings.json. Compose-mode allowlist + change-detection per v3 sec 8.
+
+const STATUSLINE_PATH_ALLOWLIST = [
+  // Canonical compose targets -- canonicalized at compare time
+  '/.claude/', '/.gsd/', '/.ijfw/claude/', '/.cursor/',
+];
+
+function statuslineScriptPath() {
+  // Where Claude Code reads the statusline command from
+  const root = repoRootFromCli();
+  return join(root, 'claude', 'hooks', 'scripts', 'ijfw-statusline.js');
+}
+
+function readClaudeSettings() {
+  const path = join(homedir(), '.claude', 'settings.json');
+  return { path, data: readJsonSafe(path) || {} };
+}
+
+function writeClaudeSettings(path, data) {
+  try {
+    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
+    if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+    renameSync(tmp, path);
+    return true;
+  } catch (e) {
+    console.error(`could not write ${path}: ${e.message}`);
+    return false;
+  }
+}
+
+function setIjfwStatuslineSetting(field, value) {
+  const settingsPath = join(ijfwHome(), 'settings.json');
+  const settings = readSettings();
+  if (!settings.schema_version) settings.schema_version = 1;
+  if (!settings.statusline) settings.statusline = {};
+  settings.statusline[field] = value;
+  try {
+    const tmp = `${settingsPath}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+    renameSync(tmp, settingsPath);
+    return true;
+  } catch (e) {
+    console.error(`could not persist settings.json: ${e.message}`);
+    return false;
+  }
+}
+
+function isPathInAllowlist(p) {
+  if (!p || typeof p !== 'string') return false;
+  for (const seg of STATUSLINE_PATH_ALLOWLIST) {
+    if (p.includes(seg)) return true;
+  }
+  return false;
+}
+
+function cmdStatusline(sub) {
+  switch (sub) {
+    case 'status': return statuslineStatus();
+    case 'install': return statuslineInstall();
+    case 'compose': return statuslineCompose();
+    case 'disable': return statuslineDisable();
+    case 'recompute': return statuslineRecompute();
+    default:
+      console.log('Usage: ijfw statusline --install|--compose|--disable|--status|--recompute');
+      process.exit(1);
+  }
+}
+
+function statuslineStatus() {
+  const settings = readSettings();
+  const claude = readClaudeSettings();
+  const claudeStatusline = claude.data.statusLine;
+
+  console.log('IJFW statusline status:');
+  console.log(`  IJFW setting: ${(settings.statusline && settings.statusline.enabled) || 'auto'}`);
+  console.log(`  IJFW mode:    ${(settings.statusline && settings.statusline.mode) || 'compose'}`);
+  if (claudeStatusline) {
+    const cmd = claudeStatusline.command || '(none)';
+    const owner = cmd.includes('ijfw-statusline.js') ? 'IJFW'
+      : isPathInAllowlist(cmd) ? 'allowlisted (compose-eligible)'
+      : 'unknown (will skip on next install)';
+    console.log(`  Claude statusLine: ${cmd}`);
+    console.log(`  Owner classification: ${owner}`);
+  } else {
+    console.log('  Claude statusLine: (not set)');
+  }
   console.log('');
+  console.log('Run ijfw statusline --install to take ownership, --compose to coexist with another tool, --disable to remove.');
+}
 
-  const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only'], { stdio: 'inherit' });
-  if (pull.status !== 0) {
-    console.log('');
-    console.log('git pull didn\'t complete cleanly. Resolve any conflicts in', repoRoot, 'and rerun `ijfw update`.');
+function statuslineInstall() {
+  const ijfwScript = statuslineScriptPath();
+  if (!existsSync(ijfwScript)) {
+    console.error(`statusline script not found at ${ijfwScript}`);
     process.exit(1);
   }
+  const claude = readClaudeSettings();
+  const prev = claude.data.statusLine;
+  if (prev && prev.command && !prev.command.includes('ijfw-statusline.js')) {
+    console.log(`Existing statusLine found: ${prev.command}`);
+    console.log(`  -> backing up to ~/.claude/settings.json (statusLine field replaced)`);
+  }
+  claude.data.statusLine = { type: 'command', command: `node ${ijfwScript}` };
+  if (writeClaudeSettings(claude.path, claude.data)) {
+    setIjfwStatuslineSetting('enabled', 'on');
+    setIjfwStatuslineSetting('mode', 'own');
+    console.log(`statusline installed -- IJFW now owns the slot.`);
+    console.log(`Open a new Claude Code session to see it.`);
+  }
+}
 
-  const install = spawnSync('bash', [installSh], { stdio: 'inherit', cwd: process.cwd() });
-  if (install.status !== 0) {
-    console.log('');
-    console.log('Reinstall didn\'t complete. Run `bash', installSh, '` directly to see the full output.');
+function statuslineCompose() {
+  const claude = readClaudeSettings();
+  const prev = claude.data.statusLine;
+  if (!prev || !prev.command) {
+    console.error('No existing statusLine to compose with. Run --install instead.');
     process.exit(1);
   }
+  if (prev.command.includes('ijfw-statusline.js')) {
+    console.log('IJFW already owns the slot. Nothing to compose with.');
+    return;
+  }
+  if (!isPathInAllowlist(prev.command)) {
+    console.error(`Existing statusLine command not in allowlist for safe compose: ${prev.command}`);
+    console.error('Refusing for security. Use --install to replace, or contact the existing tool maintainer.');
+    process.exit(1);
+  }
+  // Persist compose target (the IJFW script reads this from settings.json)
+  setIjfwStatuslineSetting('mode', 'compose');
+  setIjfwStatuslineSetting('composed_command', prev.command);
+  setIjfwStatuslineSetting('enabled', 'on');
+  // Wrap the existing command so IJFW renders alongside it
+  const ijfwScript = statuslineScriptPath();
+  claude.data.statusLine = { type: 'command', command: `node ${ijfwScript}` };
+  if (writeClaudeSettings(claude.path, claude.data)) {
+    console.log(`statusline composed -- IJFW renders alongside ${prev.command}.`);
+    console.log('Open a new Claude Code session to see it.');
+  }
+}
 
-  console.log('');
-  console.log('IJFW updated. Run `ijfw status` to confirm.');
+function statuslineDisable() {
+  const claude = readClaudeSettings();
+  const prev = claude.data.statusLine;
+  if (prev && prev.command && prev.command.includes('ijfw-statusline.js')) {
+    delete claude.data.statusLine;
+    writeClaudeSettings(claude.path, claude.data);
+  }
+  setIjfwStatuslineSetting('enabled', 'off');
+  console.log('statusline disabled.');
+}
+
+function statuslineRecompute() {
+  // Force statusline to re-read everything (cache + settings) -- a no-op for
+  // the script itself (it reads on every invocation), but useful as a UX hook
+  // after the user changes settings.json manually.
+  console.log('statusline will re-read cache + settings on the next render.');
+  console.log('Open a new Claude Code session to see the change.');
+}
+
+function cmdConfig(sub) {
+  if (sub === 'audit') {
+    console.log('ijfw config --audit -- placeholder (resolution hierarchy lands in 1.1.7).');
+    return;
+  }
+  console.log('Usage: ijfw config --audit (placeholder; lands in 1.1.7)');
+}
+
+function cmdInsight(sub) {
+  // Alias for `ijfw dashboard start` -- context-mode parity per v3 CLI table.
+  cmdDashboard(sub === 'start' || !sub ? 'start' : sub);
 }
 
 // ---------------------------------------------------------------------------
@@ -983,9 +1450,14 @@ host.appendChild(range.createContextualFragment(marked.parse(md)));
 
 const isMainModule = (() => {
   try {
-    return import.meta.url === `file://${process.argv[1]}`
-      || import.meta.url === `file://${fileURLToPath(import.meta.url)}`
-      && process.argv[1] === fileURLToPath(import.meta.url);
+    // Canonicalize both sides -- macOS /tmp -> /private/tmp + similar symlinks
+    // would otherwise make the equality check spuriously false.
+    if (!process.argv[1]) return false;
+    let argvPath = process.argv[1];
+    let metaPath = fileURLToPath(import.meta.url);
+    try { argvPath = realpathSync(argvPath); } catch { /* */ }
+    try { metaPath = realpathSync(metaPath); } catch { /* */ }
+    return argvPath === metaPath;
   } catch {
     return false;
   }
@@ -1017,7 +1489,15 @@ if (isMainModule) {
   } else if (parsed.cmd === 'doctor') {
     cmdDoctor();
   } else if (parsed.cmd === 'update') {
-    cmdUpdate();
+    cmdUpdate(parsed);
+  } else if (parsed.cmd === 'version') {
+    cmdVersion(parsed);
+  } else if (parsed.cmd === 'statusline') {
+    cmdStatusline(parsed.sub);
+  } else if (parsed.cmd === 'config') {
+    cmdConfig(parsed.sub);
+  } else if (parsed.cmd === 'insight') {
+    cmdInsight(parsed.sub);
   } else if (parsed.cmd === 'receipt') {
     cmdReceipt(parsed.sub);
   } else if (parsed.cmd === 'purge-receipts') {

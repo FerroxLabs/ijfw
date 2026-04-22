@@ -23,7 +23,7 @@ Author: Sean Donahoe
 - Core skill (ijfw-core/SKILL.md) hard cap: **55 lines**. Single source of truth -- supersedes any older 40/51 references in handoff/instructions docs. Currently 53 lines.
 - On-demand skills: hot-load only when triggered, unload when done.
 - Hooks: shell scripts only, deterministic, no LLM calls.
-- MCP server: ≤8 tools (recall, store, search, status, prelude; Phase 3 adds metrics + prompt_check). Phase 1's cap of 4 outgrown by Phase 2/3 needs; ≤8 keeps the surface scannable while leaving room for Phase 4.
+- MCP server: ≤10 tools (1.1.6 raises from 8 to 10 to land `ijfw_update_check` + `ijfw_update_apply` admin tools). Future growth triggers retirement review of existing tools, not another cap raise.
 - Startup report: positive framing ONLY. No negatives, no "not found", no diagnostics.
 - Platform rules files: identical core rules, adapted for platform format.
 - All memory storage: plain markdown (hot), SQLite FTS5 (warm), optional vectors (cold).
@@ -38,7 +38,7 @@ Author: Sean Donahoe
 <ijfw-memory>
 Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context.
 
-Last handoff: # Handoff: 2026-04-21 -- IJFW 1.1.4 SHIPPED + next-session roadmap
+Last handoff: # Handoff: 2026-04-22 -- IJFW 1.1.5 SHIPPED + 1.1.6 ready to build (v3, double-audited)
 ## TLDR (30 seconds)
 </ijfw-memory>
 

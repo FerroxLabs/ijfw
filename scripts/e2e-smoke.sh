@@ -379,6 +379,202 @@ else
 fi
 
 # ============================================================
+# 1.1.6 GATES: state file, settings file, atomic-write, MCP update tools,
+# re-entrancy, provenance workflow file presence, log rotation.
+# ============================================================
+hdr "1.1.6 -- state + update backend gates"
+
+# 1) state.json + settings.json present after install (canonical install)
+STATE_JSON="$ISO_HOME/.ijfw/state.json"
+SETTINGS_JSON="$ISO_HOME/.ijfw/settings.json"
+if [ -f "$STATE_JSON" ] && node -e "
+  const d=JSON.parse(require('fs').readFileSync('$STATE_JSON','utf8'));
+  process.exit(d && d.schema_version===1 && typeof d.installed_version==='string' && /^(npm-global|npm-local|git-clone|tarball|manual)$/.test(d.install_method) ? 0 : 1)
+"; then
+  pass "1.1.6: ~/.ijfw/state.json present + valid"
+else
+  fail "1.1.6: ~/.ijfw/state.json missing or malformed"
+fi
+
+if [ -f "$SETTINGS_JSON" ] && node -e "
+  const d=JSON.parse(require('fs').readFileSync('$SETTINGS_JSON','utf8'));
+  process.exit(d && d.schema_version===1 && d.statusline && d.update_check ? 0 : 1)
+"; then
+  pass "1.1.6: ~/.ijfw/settings.json seeded + valid"
+else
+  fail "1.1.6: ~/.ijfw/settings.json missing or malformed"
+fi
+
+# 2) install-method file (back-compat)
+if [ -f "$ISO_HOME/.ijfw/install-method" ]; then
+  pass "1.1.6: ~/.ijfw/install-method written"
+else
+  fail "1.1.6: ~/.ijfw/install-method missing"
+fi
+
+# 3) atomic-write self-test
+if node -e "
+  import('$ISO_HOME/.ijfw/mcp-server/src/lib/atomic-io.js').then(m => {
+    const fs=require('fs'), p='$ISO_HOME/.ijfw/cache/atomic-test.json';
+    m.writeAtomic(p, {ok:true, t:Date.now()});
+    const r=m.readSafe(p);
+    if (!r.ok || r.data.ok!==true) process.exit(1);
+    fs.unlinkSync(p);
+    process.exit(0);
+  }).catch(e => { console.error(e.message); process.exit(2); });
+" 2>/dev/null; then
+  pass "1.1.6: writeAtomic + readSafe roundtrip works"
+else
+  fail "1.1.6: atomic-io roundtrip failed"
+fi
+
+# 4) MCP update tools registered (cap 8 -> 10)
+TOOLS_JSON=$(
+  (
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}'
+    sleep 0.2
+    printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    sleep 0.2
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+    sleep 0.4
+  ) | node "$SERVER_JS" 2>/dev/null
+)
+if echo "$TOOLS_JSON" | grep -q 'ijfw_update_check' && echo "$TOOLS_JSON" | grep -q 'ijfw_update_apply'; then
+  pass "1.1.6: ijfw_update_check + ijfw_update_apply registered"
+else
+  fail "1.1.6: update tools missing from tools/list"
+fi
+
+# 5) ijfw --version shows the expected pkg @ version
+VER_OUT=$(node "$ISO_HOME/.ijfw/mcp-server/src/cross-orchestrator-cli.js" --version 2>&1 | head -1)
+if echo "$VER_OUT" | grep -q '@ijfw/install@1\.1\.6'; then
+  pass "1.1.6: ijfw --version reports 1.1.6"
+else
+  fail "1.1.6: ijfw --version unexpected output: $VER_OUT"
+fi
+
+# 6) re-entrancy guard: when state.last_applied_version >= cache.last_latest_seen, available=false
+node -e "
+  process.env.IJFW_HOME='$ISO_HOME/.ijfw';
+  Promise.resolve().then(async () => {
+    const { writeAtomic } = await import('$ISO_HOME/.ijfw/mcp-server/src/lib/atomic-io.js');
+    const { ijfwUpdateCheck, writeCachedCheck } = await import('$ISO_HOME/.ijfw/mcp-server/src/update-check.js');
+    writeAtomic('$ISO_HOME/.ijfw/state.json', { schema_version: 1, install_method: 'manual', installed_version: '99.99.99', last_applied_version: '99.99.99' });
+    writeCachedCheck({ last_latest_seen: '99.99.99', last_failure: null });
+    const r = ijfwUpdateCheck();
+    if (r.available !== false) { console.error('expected available:false, got', JSON.stringify(r)); process.exit(1); }
+    process.exit(0);
+  }).catch(e => { console.error(e.message); process.exit(2); });
+" 2>/dev/null
+if [ "$?" -eq 0 ]; then
+  pass "1.1.6: re-entrancy sentinel suppresses re-nudge"
+else
+  fail "1.1.6: re-entrancy sentinel did NOT suppress nudge"
+fi
+
+# 7) provenance workflow file present (publish.yml on v* tag)
+PUBLISH_YML="$REPO_ROOT/.github/workflows/publish.yml"
+if [ -f "$PUBLISH_YML" ] \
+   && grep -q "tags:" "$PUBLISH_YML" \
+   && grep -q "'v\*'" "$PUBLISH_YML" \
+   && grep -q "id-token: write" "$PUBLISH_YML" \
+   && grep -q -- "--provenance" "$PUBLISH_YML"; then
+  pass "1.1.6: publish.yml triggers on v*, has OIDC + --provenance"
+else
+  fail "1.1.6: publish.yml missing required publish-with-provenance contract"
+fi
+
+# 8) installer/package.json has publishConfig.provenance:true
+if node -e "
+  const d=JSON.parse(require('fs').readFileSync('$REPO_ROOT/installer/package.json','utf8'));
+  process.exit(d && d.publishConfig && d.publishConfig.provenance===true ? 0 : 1)
+"; then
+  pass "1.1.6: installer/package.json publishConfig.provenance:true"
+else
+  fail "1.1.6: installer/package.json missing publishConfig.provenance"
+fi
+
+# 9) ijfw-update skill mirrored across 4 trees with identical content
+SHARED_SKILL="$REPO_ROOT/shared/skills/ijfw-update/SKILL.md"
+EXPECTED_HASH=$(hash_file "$SHARED_SKILL")
+ALL_MATCH=1
+for tree in \
+    "$REPO_ROOT/claude/skills/ijfw-update/SKILL.md" \
+    "$REPO_ROOT/codex/skills/ijfw-update/SKILL.md" \
+    "$REPO_ROOT/gemini/extensions/ijfw/skills/ijfw-update/SKILL.md"; do
+  if [ "$(hash_file "$tree")" != "$EXPECTED_HASH" ]; then
+    ALL_MATCH=0
+  fi
+done
+if [ "$ALL_MATCH" = "1" ]; then
+  pass "1.1.6: ijfw-update skill identical across 4 trees"
+else
+  fail "1.1.6: ijfw-update skill drift across trees"
+fi
+
+# 10) Wave-1 unit tests pass (in-process)
+if (cd "$REPO_ROOT/mcp-server" && node --test test-1.1.6.js >/dev/null 2>&1); then
+  pass "1.1.6: Wave-1 unit tests (test-1.1.6.js) all green"
+else
+  fail "1.1.6: Wave-1 unit tests failed"
+fi
+
+# 1.1.6b -- statusline + context bar gates
+hdr "1.1.6b -- statusline + context bar gates"
+
+# Wave-2 unit tests (statusline behavior + hot-path budget)
+if (cd "$REPO_ROOT/mcp-server" && node --test test-1.1.6b.js >/dev/null 2>&1); then
+  pass "1.1.6b: Wave-2 unit tests (test-1.1.6b.js) all green"
+else
+  fail "1.1.6b: Wave-2 unit tests failed"
+fi
+
+# statusline script exists + executable + hot-path renders under 500ms (CI ceiling)
+STATUSLINE_JS="$ISO_HOME/.ijfw/claude/hooks/scripts/ijfw-statusline.js"
+if [ -f "$STATUSLINE_JS" ]; then
+  pass "1.1.6b: ijfw-statusline.js shipped"
+else
+  fail "1.1.6b: ijfw-statusline.js missing from install"
+fi
+
+CTX_MONITOR_JS="$ISO_HOME/.ijfw/claude/hooks/scripts/ijfw-context-monitor.js"
+if [ -f "$CTX_MONITOR_JS" ]; then
+  pass "1.1.6b: ijfw-context-monitor.js shipped"
+else
+  fail "1.1.6b: ijfw-context-monitor.js missing from install"
+fi
+
+# Statusline renders update nudge + context bar in cache-hit path
+ST_HOME="$ISO_HOME/.ijfw"
+mkdir -p "$ST_HOME/cache"
+echo '{"schema_version":1,"installed_version":"1.1.5"}' > "$ST_HOME/state.json"
+echo '{"schema_version":1,"last_check":1,"last_latest_seen":"1.1.6","last_failure":null}' > "$ST_HOME/cache/update-check.json"
+ST_OUT=$(echo '{"context_window":{"remaining_percentage":50}}' | IJFW_HOME="$ST_HOME" node "$STATUSLINE_JS" 2>&1)
+if echo "$ST_OUT" | grep -q '1.1.6 available' && echo "$ST_OUT" | grep -qE 'left|runway|used'; then
+  pass "1.1.6b: statusline renders update nudge + context bar"
+else
+  fail "1.1.6b: statusline output unexpected: $ST_OUT"
+fi
+
+# Statusline suppresses nudge after re-entrancy sentinel
+echo '{"schema_version":1,"installed_version":"1.1.5","last_applied_version":"1.1.6"}' > "$ST_HOME/state.json"
+ST_OUT=$(echo '{"context_window":{"remaining_percentage":50}}' | IJFW_HOME="$ST_HOME" node "$STATUSLINE_JS" 2>&1)
+if echo "$ST_OUT" | grep -q '1.1.6 available'; then
+  fail "1.1.6b: re-entrancy sentinel did NOT suppress statusline nudge"
+else
+  pass "1.1.6b: re-entrancy sentinel suppresses statusline nudge"
+fi
+
+# Statusline fail-open: malformed cache + state -> exit 0
+echo 'not json{' > "$ST_HOME/state.json"
+echo 'also bad{' > "$ST_HOME/cache/update-check.json"
+if echo 'garbage' | IJFW_HOME="$ST_HOME" node "$STATUSLINE_JS" >/dev/null 2>&1; then
+  pass "1.1.6b: statusline fail-open invariant (exit 0 on garbage input)"
+else
+  fail "1.1.6b: statusline crashed on garbage input -- fail-open broken"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 hdr "Summary"

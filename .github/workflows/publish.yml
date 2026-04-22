@@ -1,63 +1,105 @@
-name: Publish installer
+name: Release
 
 on:
   push:
     tags:
-      - 'installer-v*'
-  workflow_dispatch:
-    inputs:
-      dist_tag:
-        description: 'npm dist-tag (latest | next)'
-        required: false
-        default: 'next'
-        type: choice
-        options:
-          - latest
-          - next
+      - 'v*'
+
+permissions:
+  contents: read
 
 jobs:
+  preflight:
+    name: Preflight gate (belt-and-braces)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: installer/package-lock.json
+
+      - name: Install dependencies
+        working-directory: installer
+        run: npm ci
+
+      - name: Build installer
+        working-directory: installer
+        run: npm run build
+
+      - name: Run preflight (must be green to proceed)
+        working-directory: installer
+        run: node dist/ijfw.js preflight --json > preflight-report.json
+
+      - name: Upload preflight report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preflight-report-release
+          path: installer/preflight-report.json
+          retention-days: 30
+
   publish:
+    name: Publish to npm
+    needs: preflight
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.x'
           registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: installer/package-lock.json
+
+      - name: Install dependencies
+        working-directory: installer
+        run: npm ci
+
+      - name: Build installer
+        working-directory: installer
+        run: npm run build
 
       - name: Derive dist-tag from tag name
         id: tag
         env:
           TAG_REF: ${{ github.ref_name }}
-          INPUT_TAG: ${{ github.event.inputs.dist_tag }}
         run: |
-          if [ -n "$INPUT_TAG" ]; then
-            DIST_TAG="$INPUT_TAG"
-          elif echo "$TAG_REF" | grep -q -- '-rc\.'; then
+          if echo "$TAG_REF" | grep -q -- '-rc\.'; then
             DIST_TAG="next"
           else
             DIST_TAG="latest"
           fi
           echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
-          echo "Publishing with dist-tag: $DIST_TAG"
+          echo "Publishing dist-tag: $DIST_TAG"
 
-      - name: Install + build
-        working-directory: installer
-        run: |
-          npm ci
-          npm run build
-          npm pack --dry-run
-
-      - name: Run tests
-        working-directory: installer
-        run: node --test test.js test-resilient-parse.js test-tagged-release.js
-
-      - name: Publish to npm with provenance
+      - name: Publish with provenance (Trusted Publishing / OIDC)
         working-directory: installer
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
-        run: npm publish --access public --tag "$DIST_TAG" --provenance
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
+
+      - name: Create GitHub Release with CHANGELOG notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_REF: ${{ github.ref_name }}
+        run: |
+          # Extract section matching the tag from CHANGELOG.md
+          VERSION="${TAG_REF#v}"
+          notes=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          if [ -z "$notes" ]; then
+            notes="See CHANGELOG.md for details."
+          fi
+          gh release create "$TAG_REF" \
+            --title "$TAG_REF" \
+            --notes "$notes" \
+            --verify-tag

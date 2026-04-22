@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.1.6] -- 2026-04-22
+
+### Update notification + safe self-update
+
+- New `~/.ijfw/state.json` (durable facts, installer-owned) and `~/.ijfw/settings.json` (user preferences). State ownership cleanly separated across settings / state / cache / run / logs. JSON-Schema-validated. Atomic writes via new `mcp-server/src/lib/atomic-io.js` (cross-platform POSIX + Windows NTFS).
+- New `ijfw update` family: `--check`, `--yes`, `--verify`, `--changelog`, `--confirm <token>`, `--auto on|off|ask`. Provenance verified via `npm audit signatures` + GitHub release asset shasum cross-check. `state.json.last_applied_version` sentinel suppresses re-entrancy nudges after a successful upgrade.
+- New `ijfw --version` (pure: `@ijfw/install@1.1.6`) + `--verbose` (install method, last applied, kill-switches, ijfw-home).
+- New `ijfw insight` alias for `ijfw dashboard start` (context-mode parity).
+- New SessionStart background update-check hook (detached, dedupe-marker, negative-cache, monotonic last-latest-seen). Cache lives at `~/.ijfw/cache/update-check.json`. Logs rotate at 1 MB / keep 2 generations.
+- Two new MCP tools (cap raised 8 -> 10 with retirement-review policy): `ijfw_update_check` issues a 5-min crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and instructs the user to type `ijfw update --confirm <token>` in their terminal. The model **cannot** execute the update -- this air-gaps prompt injection from code execution. Threat model documented in `docs/SECURITY.md`.
+- Provenance publishing wired in `.github/workflows/publish.yml` (OIDC + `--provenance` on `v*` tag) plus `installer/package.json publishConfig.provenance: true`.
+
+### statusLine + context bar (Claude Code)
+
+- New `claude/hooks/scripts/ijfw-statusline.js` -- sync, <50ms hot-path, fail-open. Reads pre-validated cache; no hashing/stat/chmod/subprocess in hot path. Renders `^ <ver> available  |  ###....... 57% left` with autocompact-aware (16.5% buffer) usable-percentage math. Settings: `context_bar.style = left|runway|classic`.
+- New `claude/hooks/scripts/ijfw-context-monitor.js` -- PostToolUse, debounced every 5 calls, writes per-session bridge file in `~/.ijfw/run/<sid>/`.
+- New `ijfw statusline --install|--compose|--disable|--status|--recompute` family. Path allowlist (`/.claude/`, `/.gsd/`, `/.ijfw/claude/`, `/.cursor/`) for safe compose with existing tools (e.g. GSD).
+- Install-time behaviour: silent compose when GSD-like statusLine detected in allowlisted path; off by default on fresh installs (respects minimalists per audit).
+
+### Documentation
+
+- New `docs/SECURITY.md` -- trust boundaries, provenance trust model, OOB confirmation flow, re-entrancy guard, permissions.
+- New `docs/SETTINGS.md` -- state ownership model, schema reference, env overrides.
+- New `docs/UPDATE-FLOW.md` -- detection / notification / action surfaces, full CLI flag table, cross-platform reach.
+- `shared/skills/ijfw-update/SKILL.md` rewritten and mirrored across all four trees (claude, codex, gemini, hermes/wayland via shared). Skill explicitly forbids the model from running update commands directly -- it must surface the terminal command for the user.
+- `CLAUDE.md` MCP cap raised 8 -> 10 with explicit "future growth triggers retirement review, not another cap raise" policy.
+
+### Reliability + hygiene
+
+- 36 new unit tests (atomic-io, token, npm-view validation, semver compare, MCP update-check / update-apply happy + error paths, re-entrancy, log rotation, ANSI strip, URL redaction). 9 new statusline + hot-path-budget tests. All green.
+- 18 new E2E gates in `scripts/e2e-smoke.sh` covering: state file presence, settings seed, atomic-write roundtrip, MCP tools registered, version reporting, re-entrancy suppression, provenance workflow contract, skill cross-tree consistency, statusline behaviour + fail-open invariant.
+- Fixed pre-existing `isMainModule` bug in `cross-orchestrator-cli.js` -- macOS `/tmp` to `/private/tmp` symlink resolution now canonicalised on both sides so direct `node cli.js --version` works in any install path.
+- Existing `mcp-server/test.js` updated to assert exactly 10 tools.
+
 ## [1.1.5] -- 2026-04-22
 
 ### ijfw-design -- three-option picker, cross-platform

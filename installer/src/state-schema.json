@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "IJFW Durable State",
+  "description": "Durable runtime facts written by installer + update flow. Not user-editable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "install_method", "installed_version"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "install_method": {
+      "type": "string",
+      "enum": ["npm-global", "npm-local", "git-clone", "tarball", "manual"]
+    },
+    "installed_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w.]+)?$"
+    },
+    "last_applied_version": {
+      "type": ["string", "null"],
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w.]+)?$"
+    },
+    "last_good_shasum": { "type": ["string", "null"] },
+    "settings_reseeded_at": { "type": ["integer", "null"] },
+    "installed_at": { "type": ["integer", "null"] }
+  }
+}
