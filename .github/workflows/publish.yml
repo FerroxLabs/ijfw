@@ -53,17 +53,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24.x ships npm 11.x natively, which is the version that supports
+      # Trusted Publishing OIDC token exchange. Avoids the known in-place
+      # `npm install -g npm@latest` self-upgrade corruption (promise-retry
+      # missing mid-swap, see github.com/npm/cli/issues for the lineage).
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '24.x'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
           cache-dependency-path: installer/package-lock.json
-
-      # npm Trusted Publishing (OIDC -> short-lived token) requires npm 11.5.1+.
-      # Node 22.x ships npm 10.x; explicit upgrade is mandatory for the swap.
-      - name: Upgrade npm to a Trusted-Publishing-capable version
-        run: npm install -g npm@latest
 
       - name: Install dependencies
         working-directory: installer
