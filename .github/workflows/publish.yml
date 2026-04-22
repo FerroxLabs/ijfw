@@ -60,6 +60,11 @@ jobs:
           cache: npm
           cache-dependency-path: installer/package-lock.json
 
+      # npm Trusted Publishing (OIDC -> short-lived token) requires npm 11.5.1+.
+      # Node 22.x ships npm 10.x; explicit upgrade is mandatory for the swap.
+      - name: Upgrade npm to a Trusted-Publishing-capable version
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         working-directory: installer
         run: npm ci
