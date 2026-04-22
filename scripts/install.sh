@@ -37,6 +37,28 @@ fi
 # sets IJFW_CUSTOM_DIR=1 when the user passes --dir to a non-canonical path.
 IJFW_CUSTOM_DIR="${IJFW_CUSTOM_DIR:-0}"
 
+# 1.1.6: source-tree auto-detect. When the installer runs with PWD inside
+# the IJFW source repo, project-scoped writes (Cursor .cursor/, Copilot
+# .github/copilot-instructions.md + .vscode/mcp.json, Codex .codex/, etc.)
+# would litter the source tree. Detect via the installer's package.json
+# "@ijfw/install" identifier + PWD-equals-repo-root check, and refuse
+# project-scoped writes when matched. The legacy .ijfw-source marker +
+# IJFW_PROTECT_DEV_TREE env still work as overrides.
+IS_IJFW_SOURCE=0
+PWD_REAL="$(cd -P "$PWD" 2>/dev/null && pwd || printf '%s' "$PWD")"
+# Triple condition keeps the auto-detect tight enough that e2e/VNV isolated
+# installs (which rsync the source without .git) still proceed normally:
+#   1. PWD equals REPO_ROOT (running install.sh from the source root)
+#   2. installer/package.json identifies as @ijfw/install
+#   3. .git/ exists (a real git checkout, not an rsync copy)
+if [ "$PWD_REAL" = "$REPO_ROOT" ] \
+   && [ -f "$REPO_ROOT/installer/package.json" ] \
+   && [ -d "$REPO_ROOT/.git" ]; then
+  if grep -q '"name": *"@ijfw/install"' "$REPO_ROOT/installer/package.json" 2>/dev/null; then
+    IS_IJFW_SOURCE=1
+  fi
+fi
+
 LAUNCHER="$REPO_ROOT/mcp-server/bin/ijfw-memory"
 
 # ============================================================
@@ -310,7 +332,20 @@ fi
 # entirely -- works on macOS, Linux, and Windows (where NODE_BIN is
 # C:\...\node.exe).
 # Skip for custom-dir installs so we don't mutate the user's real plugin .mcp.json.
-if [ "$IJFW_CUSTOM_DIR" != "1" ] && [ -n "${NODE_BIN:-}" ] && [ -f "$PLUGIN_DST/.mcp.json" ]; then
+# Also skip when PLUGIN_DST resolves into the IJFW source repo (dev installs
+# where ~/.ijfw/claude is a symlink back to a clone) -- patching there would
+# rewrite the source template with developer-machine-specific absolute paths.
+PLUGIN_DST_REAL=""
+if [ -e "$PLUGIN_DST" ]; then
+  PLUGIN_DST_REAL="$(cd -P "$PLUGIN_DST" 2>/dev/null && pwd || printf '%s' "$PLUGIN_DST")"
+fi
+PLUGIN_TARGETS_SOURCE=0
+if [ -n "$PLUGIN_DST_REAL" ] && [ -d "$REPO_ROOT/.git" ] \
+   && [ "${PLUGIN_DST_REAL#"$REPO_ROOT"}" != "$PLUGIN_DST_REAL" ]; then
+  PLUGIN_TARGETS_SOURCE=1
+fi
+if [ "$IJFW_CUSTOM_DIR" != "1" ] && [ "$PLUGIN_TARGETS_SOURCE" != "1" ] \
+   && [ -n "${NODE_BIN:-}" ] && [ -f "$PLUGIN_DST/.mcp.json" ]; then
   ABS_SERVER_JS="$REPO_ROOT/mcp-server/src/server.js"
   "$NODE_BIN" -e '
     const fs = require("fs");
@@ -926,6 +961,13 @@ for target in "${TARGETS[@]}"; do
       ;;
     cursor)
       log "[Cursor]"
+      if [ "$IS_IJFW_SOURCE" = "1" ]; then
+        info "IJFW source tree detected -- skipping Cursor project writes (would litter source)."
+        ok "Cursor: source tree left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
       dst=".cursor/mcp.json"
       merge_json "$dst" "$LAUNCHER"
       mkdir -p .cursor/rules
@@ -934,8 +976,8 @@ for target in "${TARGETS[@]}"; do
       ;;
     windsurf)
       log "[Windsurf]"
-      if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
-        info "Custom-dir install -- skipping ~/.codeium/windsurf/ merge."
+      if [ "$IJFW_CUSTOM_DIR" = "1" ] || [ "$IS_IJFW_SOURCE" = "1" ]; then
+        info "Skipping Windsurf platform writes (custom-dir or IJFW source tree)."
         ok "Windsurf: real platform config left untouched."
         log ""
         if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
@@ -954,6 +996,13 @@ for target in "${TARGETS[@]}"; do
       ;;
     copilot)
       log "[Copilot (VS Code)]"
+      if [ "$IS_IJFW_SOURCE" = "1" ]; then
+        info "IJFW source tree detected -- skipping Copilot project writes (would litter source)."
+        ok "Copilot: source tree left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
       dst=".vscode/mcp.json"
       merge_json "$dst" "$LAUNCHER"
       # W4.1 / E2 -- copy the copilot-instructions.md to .github/ (Copilot's

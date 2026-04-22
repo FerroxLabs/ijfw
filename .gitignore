@@ -22,9 +22,16 @@ dist/
 *.swp
 
 # install.sh leaks when run on IJFW's own repo (dogfood)
+# install.sh now auto-refuses project-scoped writes when it detects the
+# IJFW source tree (PWD matches REPO_ROOT). These gitignore entries are
+# belt-and-braces in case anyone runs install.sh with the auto-detect
+# disabled or from a sub-directory.
 .cursor/
+.codex/
+.claude/
 .windsurfrules
 .github/copilot-instructions.md
+mcp-server/.github/
 
 # Local dev-tree guard (Sean only) -- prevents install.sh from targeting the
 # IJFW source checkout itself. Must NOT be tracked or user clones will refuse
