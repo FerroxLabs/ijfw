@@ -24,8 +24,15 @@ IJFW configures every agent on your machine. The options below let you customize
 ### Uninstall
 
 ```bash
-npx @ijfw/install uninstall        # preserves ~/.ijfw/memory/
-npx @ijfw/install uninstall --purge # removes memory too
+ijfw uninstall          # preserves ~/.ijfw/memory/
+ijfw uninstall --purge  # removes memory too
+```
+
+If `ijfw` isn't on your PATH (e.g. you uninstalled the global `@ijfw/install`
+package already), invoke the bin directly:
+
+```bash
+npx -p @ijfw/install ijfw-uninstall
 ```
 
 Memory is preserved across re-runs by default.
