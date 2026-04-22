@@ -216,9 +216,9 @@ Three invariants run through every surface.
 
 * * *
 
-## The six engines
+## The seven engines
 
-IJFW is not one thing. It is six connected engines under one install.
+IJFW is not one thing. It is seven connected engines under one install.
 
 ### 1\. Token economy
 
@@ -319,6 +319,27 @@ On confirmation, the picker writes `DESIGN.md` to your project root so future se
 
 Warm editorial palette, confident display type, real content density, trust signals in the right places. The design contract drove every decision: the gold accent, the type scale, the card rhythm, the booking-widget hierarchy. Every screen that gets added to this project inherits the same rules automatically because every AI on the stack reads from the same `DESIGN.md`.
 
+### 7\. Always-on update + cross-platform status card
+
+**Stop running stale.** Every AI on your stack knows when there's a new IJFW, and the model can never run the update behind your back. The same one-line context+update card surfaces on Claude Code, Codex, and Gemini -- one composer, three native surfaces.
+
+A detached background check fires on every session start (Claude + Codex), polls npm with a 30-second dedupe + 24-hour interval, and writes the result to `~/.ijfw/cache/update-check.json` atomically. From there, the same composer feeds three surfaces:
+
+| Where | When | What you see |
+|---|---|---|
+| Claude Code statusLine | Always visible | `^ 1.1.6 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.1.6 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.1.6 available` injected via `additionalContext` |
+| Memory prelude | First turn, all 8 platforms | `IJFW update available v1.1.5 -> v1.1.6 -- run 'ijfw update' in your TERMINAL` |
+
+When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
+
+```bash
+ijfw update --confirm <token>
+```
+
+This air-gaps prompt injection from code execution. Even if a hostile prompt convinces the model to call `ijfw_update_apply`, no code runs until a human types the token in the terminal. Provenance verified via `npm audit signatures` + GitHub release shasum cross-check. A `last_applied_version` sentinel prevents the detect→update→detect→update loop. Full threat model in [`docs/SECURITY.md`](docs/SECURITY.md).
+
 * * *
 
 ## The 30-second test drive
@@ -396,7 +417,19 @@ ijfw cross research "<topic>"      Multi-source research.
 ijfw cross critique <range>        Structured counter-argument generation.
 ijfw cross project-audit <rule>    Same audit across every registered IJFW project.
 ijfw import claude-mem             Absorb claude-mem SQLite memory into local markdown.
-ijfw update                        Pull latest + reinstall merge-safely.
+ijfw update                        Interactive update with provenance + shasum verified.
+ijfw update --check                Non-invasive availability check (exit 3 if available).
+ijfw update --verify               Verification dry-run: signatures + registry + shasum.
+ijfw update --changelog            Full release notes for the latest version.
+ijfw update --confirm <token>      Consume MCP-issued token, run update.
+ijfw update --auto on|off|ask      Set/query auto-update preference.
+ijfw --version                     Pure: @ijfw/install@<ver>.
+ijfw --version --verbose           Install method, last-applied, kill-switches.
+ijfw statusline --status           Show statusLine ownership + IJFW state.
+ijfw statusline --install          IJFW takes the Claude Code statusLine slot.
+ijfw statusline --compose          IJFW renders alongside an allowlisted existing tool.
+ijfw statusline --disable          Remove IJFW from the statusLine slot.
+ijfw insight                       Alias for ijfw dashboard start.
 ijfw receipt last                  Redacted, shareable block from the last Trident run.
 ```
 
