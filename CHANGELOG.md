@@ -27,10 +27,18 @@
 - `shared/skills/ijfw-update/SKILL.md` rewritten and mirrored across all four trees (claude, codex, gemini, hermes/wayland via shared). Skill explicitly forbids the model from running update commands directly -- it must surface the terminal command for the user.
 - `CLAUDE.md` MCP cap raised 8 -> 10 with explicit "future growth triggers retirement review, not another cap raise" policy.
 
+### Cross-platform parity (Codex + Gemini status card)
+
+- New `mcp-server/src/lib/status-card.js` -- one composer for the per-turn `[ijfw] context: 47% left | update: 1.1.6 available` line. Same re-entrancy guard everywhere.
+- Codex `Stop` hook (`codex/.codex/hooks/session-end.sh`) now appends the status card to its receipt `systemMessage` -- context % derived from the existing input/output token totals + 200K context window estimate.
+- Gemini `AfterAgent` hook (`gemini/extensions/ijfw/hooks/after-agent.sh`) now emits the status card via `additionalContext` (update-only; payload doesn't expose context %).
+- Codex `SessionStart` hook also fires the same detached background update-check as Claude's session-start, so Codex users get fresh nudges without manual polling.
+- Memory prelude (`ijfw_memory_prelude` MCP tool) surfaces the update nudge -- so Codex / Gemini / Cursor / Windsurf / Copilot / Hermes / Wayland all get update notification on first turn via the same MCP path. Re-entrancy guarded.
+
 ### Reliability + hygiene
 
-- 36 new unit tests (atomic-io, token, npm-view validation, semver compare, MCP update-check / update-apply happy + error paths, re-entrancy, log rotation, ANSI strip, URL redaction). 9 new statusline + hot-path-budget tests. All green.
-- 18 new E2E gates in `scripts/e2e-smoke.sh` covering: state file presence, settings seed, atomic-write roundtrip, MCP tools registered, version reporting, re-entrancy suppression, provenance workflow contract, skill cross-tree consistency, statusline behaviour + fail-open invariant.
+- 36 new Wave-1 unit tests + 15 new Wave-2 unit tests (status-card composer + statusline + hot-path budget + compose-safety). All green.
+- 23 new E2E gates in `scripts/e2e-smoke.sh` covering: state file presence, settings seed, atomic-write roundtrip, MCP tools registered, version reporting, re-entrancy suppression (statusline + prelude + status card), provenance workflow contract, skill cross-tree consistency, statusline behaviour + fail-open invariant, prelude update-nudge surfacing, Codex bg update-check wiring, Codex `Stop` + Gemini `AfterAgent` status-card emission.
 - Fixed pre-existing `isMainModule` bug in `cross-orchestrator-cli.js` -- macOS `/tmp` to `/private/tmp` symlink resolution now canonicalised on both sides so direct `node cli.js --version` works in any install path.
 - Existing `mcp-server/test.js` updated to assert exactly 10 tools.
 

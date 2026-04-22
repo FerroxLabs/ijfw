@@ -46,13 +46,17 @@ Always exits 0. Never blocks Claude Code. Errors land in `~/.ijfw/logs/update-ch
 
 ## Cross-platform reach
 
-| Platform | Update notification | Update action |
-|---|---|---|
-| Claude Code | statusLine (Wave 2) + memory prelude + chat | CLI + chat -> MCP -> terminal confirm |
-| Codex / Gemini / Cursor / Windsurf / Copilot | Memory prelude + chat | CLI + chat -> MCP -> terminal confirm |
-| Hermes / Wayland | Receipt + memory prelude + chat | CLI + chat -> MCP -> terminal confirm |
+| Platform | Always-visible bar | Per-turn nudge | First-turn nudge | Update action |
+|---|---|---|---|---|
+| Claude Code | statusLine (context % + update) | -- | memory prelude | CLI + chat -> MCP -> terminal confirm |
+| Codex | -- (no native API) | Stop hook `systemMessage` (context % from token estimate + update) | memory prelude | CLI + chat -> MCP -> terminal confirm |
+| Gemini | -- (no native API) | AfterAgent `additionalContext` (update only; payload has no context %) | memory prelude | CLI + chat -> MCP -> terminal confirm |
+| Cursor / Windsurf / Copilot | -- | -- (no per-turn hook) | memory prelude | CLI + chat -> MCP -> terminal confirm |
+| Hermes / Wayland | -- | -- | memory prelude + receipt | CLI + chat -> MCP -> terminal confirm |
 
-Full parity across all 8 platforms via the chat -> MCP -> terminal confirm path. No rules-file rewrites in 1.1.6.
+Cross-platform status card -- one composer (`mcp-server/src/lib/status-card.js`), three surfaces. Same re-entrancy guard everywhere: when `state.json.last_applied_version >= cache.last_latest_seen`, the update segment is suppressed.
+
+No rules-file rewrites in 1.1.6.
 
 ## All `ijfw update` flags
 

@@ -17,5 +17,26 @@ IJFW_DIR=".ijfw"
 # Nothing to actively flush -- files are append-only; just ensure dirs exist.
 mkdir -p "$IJFW_DIR/sessions" "$IJFW_DIR/memory" 2>/dev/null
 
-printf '{"decision":"allow"}\n'
+# 1.1.6 cross-platform status card -- one-line update nudge after each agent
+# turn. Best-effort: silent on any failure; never breaks the response.
+# (Context % omitted on Gemini -- the AfterAgent payload doesn't expose it.)
+STATUS_CARD=""
+if command -v node >/dev/null 2>&1; then
+  STATUS_CARD_JS="$HOME/.ijfw/mcp-server/src/lib/status-card.js"
+  if [ -f "$STATUS_CARD_JS" ]; then
+    STATUS_CARD=$(node -e '
+      try {
+        const { composeStatusCard } = await import(process.argv[1]);
+        const card = composeStatusCard();
+        if (card) process.stdout.write(card);
+      } catch {}
+    ' "$STATUS_CARD_JS" 2>/dev/null)
+  fi
+fi
+
+if [ -n "$STATUS_CARD" ]; then
+  printf '{"decision":"allow","additionalContext":"%s"}\n' "$STATUS_CARD"
+else
+  printf '{"decision":"allow"}\n'
+fi
 exit 0

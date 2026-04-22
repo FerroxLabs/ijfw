@@ -184,6 +184,30 @@ fi
 
 RECEIPT="[ijfw] Session #$SESSION_NUM saved$COMPRESS_HINT"
 
+# 1.1.6 cross-platform status card -- one-line context+update nudge.
+# Pulls from the same composer Claude's statusLine + Gemini AfterAgent use.
+# Best-effort: silent on any failure; never breaks the response.
+STATUS_CARD=""
+if command -v node >/dev/null 2>&1; then
+  STATUS_CARD_JS="$HOME/.ijfw/mcp-server/src/lib/status-card.js"
+  if [ -f "$STATUS_CARD_JS" ] && [ -n "${METRICS:-}" ]; then
+    STATUS_CARD=$(node -e '
+      try {
+        const { composeStatusCard } = await import(process.argv[1]);
+        const m = JSON.parse(process.argv[2] || "{}");
+        const inT = m.input_tokens || 0, outT = m.output_tokens || 0;
+        const win = Number(process.env.IJFW_CTX_WINDOW_TOKENS || 200000);
+        const pct = win > 0 ? ((inT + outT) / win) * 100 : null;
+        const card = composeStatusCard({ contextPct: pct });
+        if (card) process.stdout.write(card);
+      } catch {}
+    ' "$STATUS_CARD_JS" "$METRICS" 2>/dev/null)
+  fi
+fi
+if [ -n "$STATUS_CARD" ]; then
+  RECEIPT="$RECEIPT"$'\n'"$STATUS_CARD"
+fi
+
 # Emit Codex-format JSON response.
 if command -v node >/dev/null 2>&1; then
   node -e '

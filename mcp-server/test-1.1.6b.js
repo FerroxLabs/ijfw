@@ -143,6 +143,81 @@ test('statusline never throws -- fail-open invariant', () => {
 // compose-safety -- path allowlist check (CLI side)
 // ============================================================
 
+// ============================================================
+// status-card composer (cross-platform per-turn nudge)
+// ============================================================
+
+import { composeStatusCard } from './src/lib/status-card.js';
+
+test('status-card: empty when no cache + no state + no context', () => {
+  const d = isolated();
+  assert.equal(composeStatusCard({ ijfwHome: d }), '');
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('status-card: update-only when behind + no context', () => {
+  const d = isolated();
+  writeJson(join(d, 'state.json'), { schema_version: 1, installed_version: '1.1.5' });
+  writeJson(join(d, 'cache', 'update-check.json'), {
+    schema_version: 1, last_check: 1, last_latest_seen: '1.1.6', last_failure: null,
+  });
+  const card = composeStatusCard({ ijfwHome: d });
+  assert.equal(card, '[ijfw] update: 1.1.6 available');
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('status-card: context+update when both available', () => {
+  const d = isolated();
+  writeJson(join(d, 'state.json'), { schema_version: 1, installed_version: '1.1.5' });
+  writeJson(join(d, 'cache', 'update-check.json'), {
+    schema_version: 1, last_check: 1, last_latest_seen: '1.1.6', last_failure: null,
+  });
+  const card = composeStatusCard({ ijfwHome: d, contextPct: 47 });
+  assert.match(card, /context: 53% left/);
+  assert.match(card, /update: 1\.1\.6 available/);
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('status-card: re-entrancy guard suppresses update segment', () => {
+  const d = isolated();
+  writeJson(join(d, 'state.json'), {
+    schema_version: 1, installed_version: '1.1.5', last_applied_version: '1.1.6',
+  });
+  writeJson(join(d, 'cache', 'update-check.json'), {
+    schema_version: 1, last_check: 1, last_latest_seen: '1.1.6', last_failure: null,
+  });
+  const card = composeStatusCard({ ijfwHome: d, contextPct: 30 });
+  assert.match(card, /context: 70% left/);
+  assert.ok(!card.includes('update:'), 'update should be suppressed');
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('status-card: ignores out-of-range context %', () => {
+  const d = isolated();
+  writeJson(join(d, 'cache', 'update-check.json'), {
+    schema_version: 1, last_check: 1, last_latest_seen: '99.99.99', last_failure: null,
+  });
+  // Negative + over-100 + NaN -> no context segment, update only
+  for (const bad of [-5, 105, NaN, 'oops', null, undefined]) {
+    const card = composeStatusCard({ ijfwHome: d, contextPct: bad });
+    assert.ok(!card.includes('context:'), `should ignore ${bad}: ${card}`);
+  }
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('status-card: context_bar.style runway/classic respected', () => {
+  const d = isolated();
+  writeJson(join(d, 'settings.json'), {
+    schema_version: 1, auto_update: 'ask',
+    statusline: { enabled: 'auto', mode: 'compose', style: 'left' },
+    update_check: { interval_hours: 24, failure_backoff_hours: 1 },
+    context_bar: { enabled: true, used_warn: 0.5, used_critical: 0.8, style: 'runway' },
+  });
+  const card = composeStatusCard({ ijfwHome: d, contextPct: 30 });
+  assert.match(card, /70% runway/);
+  rmSync(d, { recursive: true, force: true });
+});
+
 test('compose-safety: allowlist accepts ~/.claude/* paths', () => {
   // The helper STATUSLINE_PATH_ALLOWLIST is internal to the CLI module;
   // this test documents the contract by mirroring the allowlist logic.

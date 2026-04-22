@@ -619,6 +619,42 @@ else
   fail "1.1.6: Codex session-start.sh does NOT fire bg update-check"
 fi
 
+# Cross-platform per-turn status card (Codex + Gemini)
+# Set up an isolated state so the composer surfaces a real nudge
+SC_HOME="$(mktemp -d -t ijfw-sc-XXXXXX)"
+mkdir -p "$SC_HOME/.ijfw/cache"
+echo '{"schema_version":1,"installed_version":"1.1.5"}' > "$SC_HOME/.ijfw/state.json"
+echo '{"schema_version":1,"last_check":1,"last_latest_seen":"1.1.6","last_failure":null}' > "$SC_HOME/.ijfw/cache/update-check.json"
+ln -s "$REPO_ROOT/mcp-server" "$SC_HOME/.ijfw/mcp-server"
+
+# Gemini AfterAgent hook should emit the status card via additionalContext
+GEMINI_HOOK="$REPO_ROOT/gemini/extensions/ijfw/hooks/after-agent.sh"
+if [ -f "$GEMINI_HOOK" ]; then
+  GEM_OUT=$(echo '{"event":"AfterAgent","session_id":"test-12345678"}' | HOME="$SC_HOME" IJFW_HOME="$SC_HOME/.ijfw" bash "$GEMINI_HOOK" 2>/dev/null)
+  if echo "$GEM_OUT" | grep -q '1.1.6 available' && echo "$GEM_OUT" | grep -q 'additionalContext'; then
+    pass "1.1.6: Gemini AfterAgent emits status card with update nudge"
+  else
+    fail "1.1.6: Gemini AfterAgent did NOT emit status card: $GEM_OUT"
+  fi
+else
+  fail "1.1.6: Gemini after-agent.sh missing"
+fi
+
+# Codex Stop hook should emit the status card via systemMessage (in receipt line)
+CODEX_HOOK="$REPO_ROOT/codex/.codex/hooks/session-end.sh"
+if [ -f "$CODEX_HOOK" ]; then
+  COD_OUT=$(echo '{"event":"Stop","session_id":"test-12345678"}' | HOME="$SC_HOME" IJFW_HOME="$SC_HOME/.ijfw" bash "$CODEX_HOOK" 2>/dev/null | head -1)
+  if echo "$COD_OUT" | grep -q '1.1.6 available' && echo "$COD_OUT" | grep -q 'systemMessage'; then
+    pass "1.1.6: Codex Stop emits status card with update nudge"
+  else
+    fail "1.1.6: Codex Stop did NOT emit status card: $COD_OUT"
+  fi
+else
+  fail "1.1.6: Codex session-end.sh missing"
+fi
+
+rm -rf "$SC_HOME"
+
 # ============================================================
 # SUMMARY
 # ============================================================
