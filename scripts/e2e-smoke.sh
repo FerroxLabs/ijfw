@@ -445,12 +445,68 @@ else
   fail "1.1.6: update tools missing from tools/list"
 fi
 
-# 5) ijfw --version shows the expected pkg @ version
+# 5) ijfw --version reports the version from installer/package.json (auto-detect)
+EXPECTED_VER=$(node -p "require('$REPO_ROOT/installer/package.json').version" 2>/dev/null)
 VER_OUT=$(node "$ISO_HOME/.ijfw/mcp-server/src/cross-orchestrator-cli.js" --version 2>&1 | head -1)
-if echo "$VER_OUT" | grep -q '@ijfw/install@1\.1\.6'; then
-  pass "1.1.6: ijfw --version reports 1.1.6"
+if echo "$VER_OUT" | grep -q "@ijfw/install@${EXPECTED_VER}"; then
+  pass "ijfw --version reports ${EXPECTED_VER} (matches installer/package.json)"
 else
-  fail "1.1.6: ijfw --version unexpected output: $VER_OUT"
+  fail "ijfw --version mismatch: expected ${EXPECTED_VER}, got: $VER_OUT"
+fi
+
+# 1.1.7: 5 new MCP platforms + Aider rules-only
+hdr "1.1.7 -- new platform install assertions"
+
+# OpenCode -- ~/.config/opencode/opencode.json with mcpServers.ijfw-memory
+OC="$ISO_HOME/.config/opencode/opencode.json"
+if [ -f "$OC" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$OC','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
+  pass "1.1.7: OpenCode opencode.json registers ijfw-memory"
+else
+  fail "1.1.7: OpenCode opencode.json missing or lacks ijfw-memory"
+fi
+
+# QwenCode -- ~/.qwen/settings.json
+QW="$ISO_HOME/.qwen/settings.json"
+if [ -f "$QW" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$QW','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
+  pass "1.1.7: Qwen Code settings.json registers ijfw-memory"
+else
+  fail "1.1.7: Qwen Code settings.json missing or lacks ijfw-memory"
+fi
+
+# Cline -- ~/.cline/data/settings/cline_mcp_settings.json
+CL="$ISO_HOME/.cline/data/settings/cline_mcp_settings.json"
+if [ -f "$CL" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$CL','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
+  pass "1.1.7: Cline cline_mcp_settings.json registers ijfw-memory"
+else
+  fail "1.1.7: Cline cline_mcp_settings.json missing or lacks ijfw-memory"
+fi
+
+# KimiCode -- ~/.kimi/mcp.json
+KM="$ISO_HOME/.kimi/mcp.json"
+if [ -f "$KM" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$KM','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
+  pass "1.1.7: Kimi Code mcp.json registers ijfw-memory"
+else
+  fail "1.1.7: Kimi Code mcp.json missing or lacks ijfw-memory"
+fi
+
+# OpenClaw -- ~/.openclaw/config.json (CLI-set ALSO when openclaw on PATH)
+OW="$ISO_HOME/.openclaw/config.json"
+if [ -f "$OW" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$OW','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
+  pass "1.1.7: OpenClaw config.json registers ijfw-memory"
+else
+  fail "1.1.7: OpenClaw config.json missing or lacks ijfw-memory"
+fi
+
+# Aider -- rules-only (no MCP). ~/.aider.conf.yml + ~/CONVENTIONS.md present
+if [ -f "$ISO_HOME/.aider.conf.yml" ] && grep -q 'CONVENTIONS.md' "$ISO_HOME/.aider.conf.yml"; then
+  pass "1.1.7: Aider rules: ~/.aider.conf.yml present and references CONVENTIONS.md"
+else
+  fail "1.1.7: Aider .aider.conf.yml missing or malformed"
+fi
+if [ -f "$ISO_HOME/CONVENTIONS.md" ]; then
+  pass "1.1.7: Aider rules: ~/CONVENTIONS.md present"
+else
+  fail "1.1.7: Aider CONVENTIONS.md missing"
 fi
 
 # 6) re-entrancy guard: when state.last_applied_version >= cache.last_latest_seen, available=false

@@ -141,7 +141,7 @@ for arg in "$@"; do
     *) TARGETS+=("$arg") ;;
   esac
 done
-[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(claude codex gemini cursor windsurf copilot hermes wayland)
+[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(claude codex gemini cursor windsurf copilot hermes wayland opencode qwen cline kimi openclaw aider)
 
 if [ ! -x "$LAUNCHER" ]; then
   chmod +x "$LAUNCHER" 2>/dev/null
@@ -465,6 +465,12 @@ is_live() {
     copilot)  command -v code    >/dev/null 2>&1 || [ -d "$HOME/.vscode" ] || [ -d "$HOME/.config/Code" ] || [ -d "$HOME/Library/Application Support/Code" ] || [ -d "${APPDATA:-}/Code" ] ;;
     hermes)   command -v hermes  >/dev/null 2>&1 || [ -d "$HOME/.hermes" ] ;;
     wayland)  command -v wayland >/dev/null 2>&1 || [ -d "$HOME/.wayland" ] ;;
+    opencode) command -v opencode >/dev/null 2>&1 || [ -d "$HOME/.config/opencode" ] ;;
+    qwen)     command -v qwen >/dev/null 2>&1 || [ -d "$HOME/.qwen" ] ;;
+    cline)    [ -d "$HOME/.cline" ] || [ -d "$HOME/.vscode/extensions" ] || [ -d "$HOME/Library/Application Support/Code/User/globalStorage" ] ;;
+    kimi)     command -v kimi >/dev/null 2>&1 || [ -d "$HOME/.kimi" ] ;;
+    openclaw) command -v openclaw >/dev/null 2>&1 || [ -d "$HOME/.openclaw" ] ;;
+    aider)    command -v aider >/dev/null 2>&1 || [ -f "$HOME/.aider.conf.yml" ] ;;
     *) return 1 ;;
   esac
 }
@@ -479,6 +485,12 @@ pretty_name() {
     copilot)  printf 'Copilot' ;;
     hermes)   printf 'Hermes' ;;
     wayland)  printf 'Wayland' ;;
+    opencode) printf 'OpenCode' ;;
+    qwen)     printf 'Qwen Code' ;;
+    cline)    printf 'Cline' ;;
+    kimi)     printf 'Kimi Code' ;;
+    openclaw) printf 'OpenClaw' ;;
+    aider)    printf 'Aider' ;;
     *)        printf '%s' "$1" ;;
   esac
 }
@@ -1068,6 +1080,98 @@ for target in "${TARGETS[@]}"; do
         fi
       done
       ok "Installed Wayland bundle: MCP + WAYLAND.md + skills"
+      ;;
+    opencode)
+      log "[OpenCode]"
+      if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
+        info "Custom-dir install -- skipping ~/.config/opencode/ merge."
+        ok "OpenCode: real platform config left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
+      dst="$HOME/.config/opencode/opencode.json"
+      merge_json "$dst" "$LAUNCHER"
+      ok "Merged MCP into $dst"
+      ;;
+    qwen)
+      log "[Qwen Code]"
+      if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
+        info "Custom-dir install -- skipping ~/.qwen/ merge."
+        ok "Qwen Code: real platform config left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
+      dst="$HOME/.qwen/settings.json"
+      merge_json "$dst" "$LAUNCHER"
+      ok "Merged MCP into $dst"
+      ;;
+    cline)
+      log "[Cline]"
+      if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
+        info "Custom-dir install -- skipping Cline merges."
+        ok "Cline: real platform config left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
+      dst="$HOME/.cline/data/settings/cline_mcp_settings.json"
+      merge_json "$dst" "$LAUNCHER"
+      ok "Merged MCP into $dst"
+      ;;
+    kimi)
+      log "[Kimi Code]"
+      if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
+        info "Custom-dir install -- skipping ~/.kimi/ merge."
+        ok "Kimi Code: real platform config left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
+      dst="$HOME/.kimi/mcp.json"
+      merge_json "$dst" "$LAUNCHER"
+      ok "Merged MCP into $dst"
+      ;;
+    openclaw)
+      log "[OpenClaw]"
+      if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
+        info "Custom-dir install -- skipping OpenClaw merges."
+        ok "OpenClaw: real platform config left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
+      # OpenClaw stores MCP config in its own JSON file under ~/.openclaw/.
+      # Path is undocumented in OpenClaw v0.x; we write the standard mcp.servers
+      # block to ~/.openclaw/config.json and ALSO try `openclaw mcp set ijfw-memory`
+      # so whichever convention OpenClaw v1 settles on, we hit it.
+      dst="$HOME/.openclaw/config.json"
+      merge_json "$dst" "$LAUNCHER"
+      if command -v openclaw >/dev/null 2>&1; then
+        openclaw mcp set ijfw-memory "{\"command\":\"$LAUNCHER\",\"args\":[]}" 2>/dev/null || true
+      fi
+      ok "Merged MCP into $dst (and openclaw mcp set when CLI present)"
+      ;;
+    aider)
+      log "[Aider]"
+      if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
+        info "Custom-dir install -- skipping Aider merges."
+        ok "Aider: real platform config left untouched."
+        log ""
+        if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
+        continue
+      fi
+      # Aider has no native MCP client. Tier 3: ship rules-only via
+      # ~/.aider.conf.yml + ~/CONVENTIONS.md (Aider's documented convention
+      # files for project-wide style + system prompt).
+      if [ ! -f "$HOME/.aider.conf.yml" ] && [ -f "$REPO_ROOT/aider/aider.conf.yml" ]; then
+        cp "$REPO_ROOT/aider/aider.conf.yml" "$HOME/.aider.conf.yml" 2>/dev/null
+      fi
+      if [ ! -f "$HOME/CONVENTIONS.md" ] && [ -f "$REPO_ROOT/aider/CONVENTIONS.md" ]; then
+        cp "$REPO_ROOT/aider/CONVENTIONS.md" "$HOME/CONVENTIONS.md" 2>/dev/null
+      fi
+      ok "Aider: rules-only install (~/.aider.conf.yml + ~/CONVENTIONS.md). No MCP -- Aider lacks a native MCP client."
       ;;
     *)
       info "skipping unknown target: $target"

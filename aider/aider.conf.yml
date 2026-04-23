@@ -1,0 +1,23 @@
+# IJFW-shipped Aider config. Aider has no native MCP client (1.1.7 status);
+# this file scaffolds project conventions + auto-loads CONVENTIONS.md so
+# IJFW principles travel into Aider sessions.
+#
+# Edit freely -- IJFW only writes this file if absent.
+
+# Auto-load IJFW conventions on every Aider session.
+read:
+  - ~/CONVENTIONS.md
+
+# Default model -- override per-session with --model or per-project.
+# model: gpt-4o
+# weak-model: gpt-4o-mini
+
+# Auto-commits OFF by default. Aider's auto-commit can produce noisy
+# history; IJFW workflow prefers atomic commits at gate boundaries.
+auto-commits: false
+
+# Show diffs in the chat for transparency.
+show-diffs: true
+
+# Subtree-only -- don't grep the entire monorepo every turn.
+subtree-only: true

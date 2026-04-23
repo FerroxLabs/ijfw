@@ -433,7 +433,7 @@ ijfw insight                       Alias for ijfw dashboard start.
 ijfw receipt last                  Redacted, shareable block from the last Trident run.
 ```
 
-### Eight platforms, one install, one workflow
+### Thirteen platforms, one install, one workflow
 
 | Platform | What ships |
 |----------|------------|
@@ -443,6 +443,14 @@ ijfw receipt last                  Redacted, shareable block from the last Tride
 | Cursor | `.cursor/mcp.json` + `.cursor/rules/ijfw.mdc`; dashboard view-only (no hook lifecycle) |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` + `.windsurfrules`; dashboard view-only |
 | Copilot (VS Code) | `.vscode/mcp.json` + `.github/copilot-instructions.md`; dashboard view-only |
+| Hermes | `~/.hermes/config.yaml` + `HERMES.md` + skills directory |
+| Wayland | `~/.wayland/config.yaml` + `WAYLAND.md` + skills directory |
+| **OpenCode** (1.1.7) | `~/.config/opencode/opencode.json` mcpServers block |
+| **Qwen Code** (1.1.7) | `~/.qwen/settings.json` mcpServers block |
+| **Cline** (1.1.7) | `~/.cline/data/settings/cline_mcp_settings.json` |
+| **Kimi Code** (1.1.7) | `~/.kimi/mcp.json` (matches `kimi mcp add` format) |
+| **OpenClaw** (1.1.7) | `~/.openclaw/config.json` + `openclaw mcp set` when CLI on PATH |
+| Aider (1.1.7, rules-only) | `~/.aider.conf.yml` + `~/CONVENTIONS.md` -- no native MCP, IJFW conventions injected via Aider's read: convention |
 | Universal | `universal/ijfw-rules.md`, paste into anything else |
 
 ### Observation + dashboard parity

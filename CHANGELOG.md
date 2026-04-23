@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.7] -- 2026-04-23
+
+### Five new platform install targets + Aider rules-only
+
+- **OpenCode** (opencode.ai by SST): MCP registered in `~/.config/opencode/opencode.json` `mcpServers` block.
+- **Qwen Code** (Alibaba): MCP registered in `~/.qwen/settings.json` `mcpServers` block (Gemini-CLI fork shape).
+- **Cline** (VS Code extension, fka Claude Dev): MCP registered in `~/.cline/data/settings/cline_mcp_settings.json`.
+- **Kimi Code** (Moonshot AI): MCP registered in `~/.kimi/mcp.json` (matches the format `kimi mcp add` writes).
+- **OpenClaw** (Steinberger): MCP written to `~/.openclaw/config.json`; also `openclaw mcp set ijfw-memory '...'` invoked when the CLI is on PATH.
+- **Aider** (rules-only, Tier 3): Aider has no native MCP client. Ships `~/.aider.conf.yml` (auto-loads CONVENTIONS.md, sane defaults) + `~/CONVENTIONS.md` (terse IJFW workflow rules adapted for Aider's chat-only architecture). Memory + cross-audit not available inside Aider sessions.
+
+Platform count: **8 install targets -> 13 MCP-integrated + 1 rules-only**. Same `merge_json` primitive as Cursor/Copilot/Windsurf -- same atomic-backup-then-write semantics; existing user MCP servers preserved.
+
+### Reliability + hygiene
+
+- Hardcoded "1.1.6" version assertion in `scripts/e2e-smoke.sh` replaced with auto-detect from `installer/package.json`. Future bumps don't require sed.
+- 7 new e2e gates (one per new platform + 2 for Aider rules) -- all green in isolated-HOME mode.
+- Each new platform install block honors the same `IJFW_CUSTOM_DIR=1` and `IS_IJFW_SOURCE=1` guards as Cursor/Copilot, so e2e + dogfood runs don't pollute real user configs.
+
 ## [1.1.6] -- 2026-04-22
 
 ### Update notification + safe self-update
