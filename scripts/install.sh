@@ -141,7 +141,12 @@ for arg in "$@"; do
     *) TARGETS+=("$arg") ;;
   esac
 done
-[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(claude codex gemini cursor windsurf copilot hermes wayland opencode qwen cline kimi openclaw aider)
+# 1.1.8: cline deferred to 1.1.9 -- helper code + path verified against Cline
+# source (src/services/mcp/schemas.ts, src/core/storage/disk.ts) but not live
+# verified in VS Code runtime this release. Opt in explicitly via:
+#   bash scripts/install.sh cline
+# The cline) case block and cline_merge helper remain wired for that path.
+[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(claude codex gemini cursor windsurf copilot hermes wayland opencode qwen kimi openclaw aider)
 
 if [ ! -x "$LAUNCHER" ]; then
   chmod +x "$LAUNCHER" 2>/dev/null
@@ -467,7 +472,10 @@ is_live() {
     wayland)  command -v wayland >/dev/null 2>&1 || [ -d "$HOME/.wayland" ] ;;
     opencode) command -v opencode >/dev/null 2>&1 || [ -d "$HOME/.config/opencode" ] ;;
     qwen)     command -v qwen >/dev/null 2>&1 || [ -d "$HOME/.qwen" ] ;;
-    cline)    [ -d "$HOME/.cline" ] || [ -d "$HOME/.vscode/extensions" ] || [ -d "$HOME/Library/Application Support/Code/User/globalStorage" ] ;;
+    cline)    [ -d "$HOME/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "${APPDATA:-}/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "$HOME/.vscode/extensions" ] ;;
     kimi)     command -v kimi >/dev/null 2>&1 || [ -d "$HOME/.kimi" ] ;;
     openclaw) command -v openclaw >/dev/null 2>&1 || [ -d "$HOME/.openclaw" ] ;;
     aider)    command -v aider >/dev/null 2>&1 || [ -f "$HOME/.aider.conf.yml" ] ;;
@@ -521,6 +529,95 @@ install_hook() {
   fi
   cp "$src" "$dst"
   chmod +x "$dst" 2>/dev/null
+}
+
+# --- OpenCode-shaped merge: top-level "mcp" with type:"local" + command:[arr] ---
+# Verified against opencode-ai 1.14.20: rejects mcpServers with
+# "Configuration is invalid ... Unrecognized key: mcpServers".
+opencode_merge() {
+  local dst="$1" launcher="$2"
+  mkdir -p "$(dirname "$dst")"
+  backup "$dst"
+  node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    const launcher = process.argv[2];
+    let doc = {};
+    if (fs.existsSync(path)) {
+      try { doc = JSON.parse(fs.readFileSync(path, "utf8") || "{}"); } catch { doc = {}; }
+    }
+    if (!doc || typeof doc !== "object") doc = {};
+    doc.mcp = doc.mcp || {};
+    doc.mcp["ijfw-memory"] = { type: "local", command: [launcher] };
+    fs.writeFileSync(path + ".tmp", JSON.stringify(doc, null, 2));
+    fs.renameSync(path + ".tmp", path);
+  ' "$dst" "$launcher"
+}
+
+# --- OpenClaw-shaped merge: ~/.openclaw/openclaw.json, mcp.servers.<name> nested ---
+# Verified against openclaw 2026.4.21: src/cli/mcp-cli.ts + src/config/mcp-config.ts
+# + src/config/paths.ts. Config file is "openclaw.json" (NOT "config.json").
+# Used as fallback when `openclaw mcp set` CLI isn't on PATH.
+openclaw_merge() {
+  local dst="$1" launcher="$2"
+  mkdir -p "$(dirname "$dst")"
+  backup "$dst"
+  node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    const launcher = process.argv[2];
+    let doc = {};
+    if (fs.existsSync(path)) {
+      try { doc = JSON.parse(fs.readFileSync(path, "utf8") || "{}"); } catch { doc = {}; }
+    }
+    if (!doc || typeof doc !== "object") doc = {};
+    if (!doc.mcp || typeof doc.mcp !== "object") doc.mcp = {};
+    if (!doc.mcp.servers || typeof doc.mcp.servers !== "object") doc.mcp.servers = {};
+    doc.mcp.servers["ijfw-memory"] = { command: launcher, args: [] };
+    fs.writeFileSync(path + ".tmp", JSON.stringify(doc, null, 2));
+    fs.renameSync(path + ".tmp", path);
+  ' "$dst" "$launcher"
+}
+
+# --- Cline-shaped merge: VS Code globalStorage per-extension path ---
+# Extension publisher id: saoudrizwan.claude-dev. Schema requires type:"stdio".
+# Verified against Cline src/core/storage/disk.ts:227 + src/extension.ts:586
+# + src/services/mcp/schemas.ts. ~/.cline/ is not read by any current Cline
+# code path; VS Code globalStorage is the only live location.
+# Writes stdout: the destination path (so callers can log it).
+cline_merge() {
+  local launcher="$1"
+  local user_dir=""
+  case "$(uname -s 2>/dev/null)" in
+    Darwin)                     user_dir="$HOME/Library/Application Support/Code/User" ;;
+    CYGWIN*|MINGW*|MSYS_NT*)    user_dir="${APPDATA:-$HOME/AppData/Roaming}/Code/User" ;;
+    *)                          user_dir="$HOME/.config/Code/User" ;;
+  esac
+  local dst="$user_dir/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+  mkdir -p "$(dirname "$dst")"
+  backup "$dst"
+  node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    const launcher = process.argv[2];
+    let doc = {};
+    if (fs.existsSync(path)) {
+      try { doc = JSON.parse(fs.readFileSync(path, "utf8") || "{}"); } catch { doc = {}; }
+    }
+    if (!doc || typeof doc !== "object") doc = {};
+    doc.mcpServers = doc.mcpServers || {};
+    doc.mcpServers["ijfw-memory"] = {
+      type: "stdio",
+      command: launcher,
+      args: [],
+      disabled: false,
+      autoApprove: [],
+      timeout: 60
+    };
+    fs.writeFileSync(path + ".tmp", JSON.stringify(doc, null, 2));
+    fs.renameSync(path + ".tmp", path);
+  ' "$dst" "$launcher"
+  printf '%s' "$dst"
 }
 
 # --- JSON merge helper (Gemini / Cursor / Windsurf / Copilot) ---
@@ -1091,8 +1188,8 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst="$HOME/.config/opencode/opencode.json"
-      merge_json "$dst" "$LAUNCHER"
-      ok "Merged MCP into $dst"
+      opencode_merge "$dst" "$LAUNCHER"
+      ok "Merged MCP into $dst (opencode mcp.local schema)"
       ;;
     qwen)
       log "[Qwen Code]"
@@ -1116,9 +1213,10 @@ for target in "${TARGETS[@]}"; do
         if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
         continue
       fi
-      dst="$HOME/.cline/data/settings/cline_mcp_settings.json"
-      merge_json "$dst" "$LAUNCHER"
-      ok "Merged MCP into $dst"
+      # Cline MCP config lives under VS Code's globalStorage for extension
+      # saoudrizwan.claude-dev -- platform-specific path resolved inside cline_merge.
+      dst=$(cline_merge "$LAUNCHER")
+      ok "Merged MCP into $dst (cline globalStorage schema)"
       ;;
     kimi)
       log "[Kimi Code]"
@@ -1142,16 +1240,20 @@ for target in "${TARGETS[@]}"; do
         if is_live "$target"; then LIVE+=("$(pretty_name "$target")"); else STANDBY+=("$(pretty_name "$target")"); fi
         continue
       fi
-      # OpenClaw stores MCP config in its own JSON file under ~/.openclaw/.
-      # Path is undocumented in OpenClaw v0.x; we write the standard mcp.servers
-      # block to ~/.openclaw/config.json and ALSO try `openclaw mcp set ijfw-memory`
-      # so whichever convention OpenClaw v1 settles on, we hit it.
-      dst="$HOME/.openclaw/config.json"
-      merge_json "$dst" "$LAUNCHER"
-      if command -v openclaw >/dev/null 2>&1; then
-        openclaw mcp set ijfw-memory "{\"command\":\"$LAUNCHER\",\"args\":[]}" 2>/dev/null || true
+      # OpenClaw MCP config: ~/.openclaw/openclaw.json, mcp.servers.<name> nested.
+      # Verified against openclaw 2026.4.21 (src/cli/mcp-cli.ts, src/config/mcp-config.ts,
+      # src/config/paths.ts). The `openclaw mcp set` shell subcommand is the official
+      # path and runs the daemon validator, so we prefer it when the CLI is on PATH.
+      # Direct file-write fallback handles the "standing by" case where OpenClaw
+      # isn't installed yet; it will be picked up the moment the user installs it.
+      dst="$HOME/.openclaw/openclaw.json"
+      if command -v openclaw >/dev/null 2>&1 \
+         && openclaw mcp set ijfw-memory "{\"command\":\"$LAUNCHER\",\"args\":[]}" >/dev/null 2>&1; then
+        ok "Registered ijfw-memory via 'openclaw mcp set' ($dst)"
+      else
+        openclaw_merge "$dst" "$LAUNCHER"
+        ok "Merged MCP into $dst (openclaw mcp.servers schema)"
       fi
-      ok "Merged MCP into $dst (and openclaw mcp set when CLI present)"
       ;;
     aider)
       log "[Aider]"

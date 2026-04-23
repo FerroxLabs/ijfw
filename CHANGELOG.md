@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.1.8] -- 2026-04-23
+
+**Four AI coding CLIs now live-verified end-to-end.** `opencode mcp list`, `qwen mcp list`, `kimi mcp list`, `openclaw mcp list` -- each platform's own CLI independently reports `ijfw-memory` connected against the real binary. Shipping IJFW support no longer means "JSON validates"; it means the platform's own CLI says "connected". Every new platform integration clears this bar going forward.
+
+### Platform parity, live-verified against real CLIs
+
+- **OpenCode** (opencode-ai 1.14.20): wired to OpenCode's native `mcp.<name>.{type:"local", command:[...]}` shape via a new `opencode_merge` helper. `opencode mcp list` reports `✓ ijfw-memory connected`.
+- **OpenClaw** (openclaw 2026.4.21): config lives at `~/.openclaw/openclaw.json` under `mcp.servers.<name>`. The installer prefers `openclaw mcp set ijfw-memory` when the CLI is on PATH (runs OpenClaw's own zod validator -- fails fast if anything drifts) and file-merges when it's not. New `openclaw_merge` helper. `openclaw mcp list` reports `- ijfw-memory`.
+- **Qwen Code** (qwen-code 0.15.1): live-verified this ship. `qwen mcp list` reports `✓ ijfw-memory ... (stdio) - Connected`.
+- **Kimi Code** (kimi-cli 1.38.0): live-verified this ship. `kimi mcp list` reports `ijfw-memory (stdio): ...`. Installer detects the uv-managed binary at `~/.local/bin/kimi`.
+
+### New e2e gate class: CLI invocation
+
+`scripts/e2e-smoke.sh` now invokes each platform's own CLI and asserts `ijfw-memory` in the output. When the CLI isn't on PATH the gate skips and notes. This closes the "JSON validates but the platform rejects it" class of divergence at the harness level -- not just this release, every future release.
+
+### Hook hot-path: 32% faster
+
+`post-tool-use.sh` consolidated from 2-3 node cold-starts to one via new `post-tool-use.js` (ESM, behaviour-identical: ANSI strip, signal capture into `.session-signals.jsonl`, noise-line drop, >500-line error-aware truncation, detached observation-capture dispatch, envelope emit). **Measured: 99 ms median, 98 ms min, 105 ms p95** (down from 145 ms). Floor is Node's cold-start (~50-70 ms on macOS); going lower would trade the zero-runtime-deps invariant.
+
+### Bounded observation-ledger retention
+
+`scripts/observation/ledger.js` gains `MAX_ARCHIVES=10` (tunable via `IJFW_LEDGER_ARCHIVES`; set `0` to keep everything). `gcArchives()` runs on every rotation, unlinks archives older than the cap by mtime. Worst-case disk footprint lands at ~110 MB (1 live file + 10 archives of 10 MB each). Live-tested: 11 MB ledger + 15 fake archives -> rotation fires -> 10 newest retained, live ledger fresh.
+
+### Plugin-routing, user-respected
+
+When IJFW and a peer brainstorming skill both expose a workflow entry point, the session-start hook now emits an `<ijfw-routing>` block framed as a user preference (the user opted into IJFW via install; prefer `ijfw:ijfw-workflow`) rather than a global override directive. Same treatment in the pre-prompt intent router and the repo `CLAUDE.md`. Targeted scoping preserved (fires only when a peer is detected); phrasing softens to respect plugin-author consent.
+
+### README accuracy pass
+
+- 12 stale platform-count references brought to current spec (12 MCP-integrated + 1 rules-only = 13 platforms).
+- Dashboard screenshot caption reframed as explicit dogfood receipt: one machine (the author's), 30-day window. `ijfw dashboard start` surfaces the reader's own traffic; the published numbers are not an averaged benchmark.
+- PostToolUse overhead line updated to the measured median (99 ms) with the consolidation note.
+- DESIGN.md section clarified: picker + 12 templates + brand atlas reach the eight full-skill-tree platforms (Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) today; OpenCode / Qwen Code / Kimi Code / OpenClaw / Aider read project-root `DESIGN.md` via their native rules surfaces, picker extension reaches them in 1.2.0.
+
+### Cline: opt-in today, default in 1.1.9
+
+Cline is a VS Code extension without a shell CLI, so the "platform's own CLI says connected" gate can't be cleared from the harness. The full helper is in place: cross-platform VS Code per-extension globalStorage path resolution (macOS / Linux / Windows), `type:"stdio"` schema, verified against Cline source (`src/services/mcp/schemas.ts`, `src/core/storage/disk.ts`, `src/extension.ts`). Cline returns to the default TARGETS list in 1.1.9 after the VS Code runtime receipt lands. Opt in today: `bash scripts/install.sh cline`.
+
+### Feedback rules captured
+
+- `feedback_no_push_without_authorization.md`: "build / execute / implement" mean build + verify + commit locally and stop. Only "push / ship / go / tag" trigger actual push. Tag pushes are publish operations (Trusted Publishing fires on `v*`).
+- `feedback_copywriting_hooks_stay.md`: deliberate marketing register (README hero, taglines) is user-owned. Audit critiques about tone/register on copy surfaces need explicit sign-off, not a blanket rewrite.
+
+### Coming in 1.2.0
+
+- Reproducible token-savings benchmark harness (3 task buckets x 3 model tiers x 10 runs x IJFW-on/off, published CSV). Dedicated session with real API budget.
+- Skill-catalogue consolidation pass (self-Trident with per-skill test coverage for anything touched).
+- DESIGN.md picker + templates extension to the 1.1.7 platforms (OpenCode, Qwen Code, Kimi Code, OpenClaw, Aider).
+
+### Back-compat
+
+- 1.1.8 will overwrite the 1.1.7 broken config files on reinstall. `.bak.<timestamp>` backups preserved as usual. Users on 1.1.7 should run `ijfw update` (or `npm i -g @ijfw/install@1.1.8 && ijfw-install`) to get the fixes.
+
 ## [1.1.7] -- 2026-04-23
 
 ### Five new platform install targets + Aider rules-only

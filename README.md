@@ -8,9 +8,9 @@
 
 # IJFW (It Just F*cking Works!)
 
-**Your AI is brilliant. It's also forgetful, undisciplined, alone, and quietly burning tokens you never needed to spend.** One install fixes all four. Richest on Claude Code, connected through Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, and Wayland.  
+**Your AI is brilliant. It's also forgetful, undisciplined, alone, and quietly burning tokens you never needed to spend.** One install fixes all four. Richest on Claude Code, connected through Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider.  
   
-Eight AI coding agents sharing one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.  
+Thirteen AI coding agents sharing one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.  
   
 An on-demand three-AI critique puts a second lineage in the room so one model's blind spot never reaches production. Tasks dispatched to the right model for the job, output rules that strip the padding, prompt-cache discipline that compounds every session. Your bill goes down while your quality goes up.  
   
@@ -28,7 +28,7 @@ A portable design contract keeps every AI on-brand: drop a `DESIGN.md` in your p
 npm install -g @ijfw/install && ijfw-install
 ```
 
-One command. Eight AI coding agents configured. Nothing to log into.
+One command. Thirteen AI coding agents configured. Nothing to log into.
 
 **Windows** (PowerShell 5.1 or 7+):
 
@@ -177,7 +177,7 @@ All blocking gates passed.
   <img src="docs/guide/assets/dashboard.png" alt="IJFW observability dashboard: today's cost, active session, cache efficiency, 30-day totals" width="100%"/>
 </p>
 
-Real numbers from one machine's 30-day window: $5.1k today across 5 active sessions, 97% cache efficiency, 2.71B tokens served from cache, $9.4k actual 30-day burn. Measured, not marketing.
+Dogfood receipt -- one machine (the author's), 30-day window: $5.1k today across 5 active sessions, 97% cache efficiency, 2.71B tokens served from cache, $9.4k actual 30-day burn. These are one user's real numbers, not an averaged benchmark. Your own mileage materialises the moment you run `ijfw dashboard start` against your own traffic.
 
 **Dollar-saved ledger.** The dashboard's headline tile shows actual spend, estimated spend without IJFW, and savings amount + percentage computed from three levers applied to your real session data: cache hit rate vs a 25% baseline (Anthropic cache reads at ~10% of input pricing), model routing (Haiku fraction vs all-Sonnet baseline), and output discipline (30% measured midpoint of the 20-40% range). Composite capped at 5x for defensibility. Methodology toggle inline -- every number traced to its source. Your numbers, defensible math, zero marketing.
 
@@ -199,6 +199,8 @@ The web dashboard at `http://localhost:37891` is a single-file zero-dependency H
 - Zero runtime dependencies. `npm ls --production`: 0 entries.
 
 The observation ledger feeds into a session summary written at SessionEnd: files read, files edited, what was learned, what ships next.
+
+**Retention math.** The ledger lives at `~/.ijfw/observations.jsonl` and rotates when it hits 10 MB (`observations.jsonl.<timestamp>` archives). Each line is capped at 8 KB. 1.1.8 adds bounded retention: the 10 most-recent archives are kept, older archives are GC'd on the next rotation. Worst-case disk footprint is therefore ~110 MB (one live file + ten 10 MB archives). Override via `IJFW_LEDGER_ARCHIVES=<N>` (0 disables GC for unbounded archiving).
 
 * * *
 
@@ -275,7 +277,7 @@ Decisions, patterns, handoffs, and journal entries persist as plain markdown in 
 | Warm | BM25 ranked retrieval | Always on. Scales to around 10,000 entries. |
 | Cold | Optional semantic vectors via `@xenova/transformers` | Only if installed. Off by default. |
 
-Eight MCP tools talk to that memory from every supported AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
+Ten MCP tools (cap raised 8 -> 10 in 1.1.6 to land the update-check + update-apply admin tools) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
 
 **Dream reconciliation.** On demand (`/consolidate` or "run a dream cycle"), IJFW sweeps your memory: it promotes observed patterns into the knowledge base, prunes stale entries, reconciles contradictions, and optionally lifts winners into your global memory so every future project benefits. You end up with a memory that grows sharper over time instead of heavier.
 
@@ -301,7 +303,7 @@ Three parallel audits, findings reconciled into a consolidated table with a cons
 
 ### 6\. Design contract
 
-**One `DESIGN.md`, every AI builds on-brand.** Design is now a first-class surface across all eight platforms: Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, and Wayland. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
+**One `DESIGN.md`, every AI builds on-brand.** Design is a first-class surface across the eight full-skill-tree platforms (Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) -- picker + 12 templates + brand atlas ship to all eight. The 1.1.7 additions (OpenCode, Qwen Code, Kimi Code, OpenClaw, Aider) read project-root `DESIGN.md` via their native rules/config surfaces today; the picker + templates extension reaches them in 1.2.0. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
 
 No `DESIGN.md` yet? Run a design task and `ijfw-design` fires a three-option picker:
 
@@ -309,7 +311,7 @@ No `DESIGN.md` yet? Run a design task and `ijfw-design` fires a three-option pic
 2. **Pick a style.** 12 opinionated DESIGN.md templates: swiss-minimal, editorial-warm, terminal-native, cinematic-dark, glassmorphic, brutalist-luxe, maximalist-vibrant, neo-swiss-tech, data-dense-dashboard, warm-organic, bento-grid, magazine-editorial. Each follows the canonical 9-section spec (Visual Theme, Colors, Typography, Components, Layout, Depth, Do's, Responsive, Agent Prompt Guide). **Compatible with Claude Design (claude.ai/design)** out of the box -- drop the file into a new design system there and it scaffolds a full UI kit in one shot.
 3. **Blank slate.** Progressive one-question-at-a-time brainstorm if you want to design from first principles.
 
-On confirmation, the picker writes `DESIGN.md` to your project root so future sessions skip the picker and go straight to contract-driven builds. Downstream handoff is automatic: if you have `ui-ux-pro-max`, `frontend-design`, or Superpowers installed, `ijfw-design` dispatches to them with the contract already loaded. One design, eight agents, zero drift.
+On confirmation, the picker writes `DESIGN.md` to your project root so future sessions skip the picker and go straight to contract-driven builds. Downstream handoff is automatic: if you have `ui-ux-pro-max`, `frontend-design`, or Superpowers installed, `ijfw-design` dispatches to them with the contract already loaded. One design, every agent on your stack, zero drift.
 
 **What this looks like in practice.** A real landing page built from a DESIGN.md contract on a shipping project (Bangkok Big Bike V1):
 
@@ -330,7 +332,7 @@ A detached background check fires on every session start (Claude + Codex), polls
 | Claude Code statusLine | Always visible | `^ 1.1.6 available  \|  #####..... 49% left` (autocompact-aware bar) |
 | Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.1.6 available` (tokens via existing PreCompact estimate) |
 | Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.1.6 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 8 platforms | `IJFW update available v1.1.5 -> v1.1.6 -- run 'ijfw update' in your TERMINAL` |
+| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.1.5 -> v1.1.6 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
@@ -387,7 +389,7 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 ### The MCP memory server
 
-Node.js. 40 KB. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Eight tools at the CLAUDE.md cap of 8.
+Node.js. 40 KB. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Ten tools at the CLAUDE.md cap of 10.
 
 | Tool | Purpose |
 |------|---------|
@@ -400,7 +402,7 @@ Node.js. 40 KB. Zero runtime dependencies. Stdio transport. No sockets, no daemo
 | `ijfw_metrics` | Tokens, cost, routing mix, session totals. |
 | `ijfw_cross_project_search` | BM25 across every registered IJFW project on the machine. |
 
-Hard cap at 8. Every tool earns its slot or it gets cut.
+Hard cap at 10 (raised from 8 in 1.1.6 to land the update-check + update-apply admin tools). Every tool earns its slot or it gets cut; future growth triggers a retirement review, not another cap raise.
 
 ### The `ijfw` CLI
 
@@ -445,11 +447,11 @@ ijfw receipt last                  Redacted, shareable block from the last Tride
 | Copilot (VS Code) | `.vscode/mcp.json` + `.github/copilot-instructions.md`; dashboard view-only |
 | Hermes | `~/.hermes/config.yaml` + `HERMES.md` + skills directory |
 | Wayland | `~/.wayland/config.yaml` + `WAYLAND.md` + skills directory |
-| **OpenCode** (1.1.7) | `~/.config/opencode/opencode.json` mcpServers block |
-| **Qwen Code** (1.1.7) | `~/.qwen/settings.json` mcpServers block |
-| **Cline** (1.1.7) | `~/.cline/data/settings/cline_mcp_settings.json` |
-| **Kimi Code** (1.1.7) | `~/.kimi/mcp.json` (matches `kimi mcp add` format) |
-| **OpenClaw** (1.1.7) | `~/.openclaw/config.json` + `openclaw mcp set` when CLI on PATH |
+| **OpenCode** (1.1.8, live-verified) | `~/.config/opencode/opencode.json` `mcp.<name>.{type:"local",command:[...]}` -- `opencode mcp list` reports connected |
+| **Qwen Code** (1.1.7, live-verified in 1.1.8) | `~/.qwen/settings.json` mcpServers block -- `qwen mcp list` reports connected |
+| **Kimi Code** (1.1.7, live-verified in 1.1.8) | `~/.kimi/mcp.json` (matches `kimi mcp add` format) -- `kimi mcp list` reports connected |
+| **OpenClaw** (1.1.8, live-verified) | `~/.openclaw/openclaw.json` `mcp.servers.<name>` + `openclaw mcp set` when CLI on PATH -- `openclaw mcp list` reports connected |
+| Cline (1.1.9, opt-in today) | VS Code per-extension globalStorage (`saoudrizwan.claude-dev`); helper + path wired, VS Code runtime verification pending. Install today with `bash scripts/install.sh cline` |
 | Aider (1.1.7, rules-only) | `~/.aider.conf.yml` + `~/CONVENTIONS.md` -- no native MCP, IJFW conventions injected via Aider's read: convention |
 | Universal | `universal/ijfw-rules.md`, paste into anything else |
 
@@ -481,7 +483,7 @@ Same engine behind all of them. Native affordances on each.
        |              |            |            |
        v              v            v            v
    Token economy   Workflow     Teams        Memory
-   (right model,   (Quick and   (per-project  (8 MCP tools,
+   (right model,   (Quick and   (per-project  (10 MCP tools,
     output rules,   Deep modes,  agents +      hot, warm,
     cache)          audit gates) swarm)        cold)
        |              |            |            |
@@ -558,7 +560,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of eight platforms. The plugin is richest there because Claude Code exposes the most integration points. Every capability is available on the other seven (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) through their native MCP and rules-file integrations.
+No. Claude Code is one of thirteen platforms shipping in 1.1.8. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is deferred to 1.1.9 (awaiting live VS Code runtime verification).
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.
@@ -576,7 +578,7 @@ Yes. `ijfw off` disables the core skill. Each command is isolated. The MCP serve
 `ijfw import claude-mem` round-trips the SQLite store into IJFW markdown. Idempotent. Safe to rerun. `--dry-run` shows what would happen first.
 
 **Will it slow my sessions down?**  
-MCP handshake is about 50 ms. Hooks are under 30 ms. Memory recall across thousands of entries is under 10 ms. No perceptible overhead.
+MCP handshake is about 50 ms. Memory recall across thousands of entries is under 10 ms. The PostToolUse hook (fires per tool call) measures ~100 ms median on M1 Pro -- 1.1.8 consolidated it from ~145 ms by collapsing multiple node spawns into one; further reduction is bounded below by node's cold-start floor and we won't trade zero-runtime-deps to go lower. Observation capture dispatches to a detached child so it never blocks the hot path. Numbers are from the `scripts/observation/` ledger and `post-tool-use.js`; reproducible with `time` on your own machine.
 
 **How do I update?**  
 `ijfw update` pulls latest and reinstalls merge-safely. Your memory is preserved.
@@ -614,6 +616,6 @@ If you ship code with AI, you need this. If you write with AI, run a business wi
 
 * * *
 
-[github.com/TheRealSeanDonahoe/ijfw](https://github.com/TheRealSeanDonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, eight platforms, six engines, three AI families, zero apologies.
+[github.com/TheRealSeanDonahoe/ijfw](https://github.com/TheRealSeanDonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, thirteen platforms, six engines, three AI families, zero apologies.
 
 **Install it. Inspect it. Fork it. Ship it. It just fucking works.**

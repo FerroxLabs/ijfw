@@ -6,15 +6,23 @@
  * Zero deps. All Node built-ins.
  */
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync, renameSync, statSync, rmdirSync } from 'fs';
+import { appendFileSync, readFileSync, existsSync, mkdirSync, renameSync, statSync, rmdirSync, readdirSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, basename } from 'path';
 
 const IJFW_GLOBAL = join(homedir(), '.ijfw');
 const JSONL_PATH  = join(IJFW_GLOBAL, 'observations.jsonl');
 const LOCK_DIR    = join(IJFW_GLOBAL, '.obs-lock');
 const MAX_JSONL   = 10 * 1024 * 1024; // 10MB rotation threshold
 const MAX_LINE    = 8 * 1024;         // 8KB line cap
+
+// Archive retention: keep the N most-recent observations.jsonl.<ts> files after
+// rotation. Default 10 (~100MB worst-case historical ledger). Set 0 to disable
+// (unbounded archives). Override via IJFW_LEDGER_ARCHIVES=<N> in the environment.
+const MAX_ARCHIVES = (() => {
+  const raw = parseInt(process.env.IJFW_LEDGER_ARCHIVES || '', 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 10;
+})();
 
 // ---------- mkdir-lock (mirrors session-end.sh pattern) ----------
 function acquireLock(retries = 10) {
@@ -35,13 +43,33 @@ function releaseLock() {
   try { rmdirSync(LOCK_DIR); } catch {}
 }
 
-// ---------- JSONL rotation ----------
+// ---------- JSONL rotation + archive GC ----------
+function gcArchives() {
+  // MAX_ARCHIVES=0 disables GC (user opt-in to unbounded).
+  if (MAX_ARCHIVES === 0) return;
+  try {
+    const prefix = basename(JSONL_PATH) + '.';
+    const entries = readdirSync(IJFW_GLOBAL)
+      .filter(n => n.startsWith(prefix) && n !== basename(JSONL_PATH))
+      .map(n => {
+        try { return { name: n, mtimeMs: statSync(join(IJFW_GLOBAL, n)).mtimeMs }; }
+        catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs); // newest first
+    for (let i = MAX_ARCHIVES; i < entries.length; i++) {
+      try { unlinkSync(join(IJFW_GLOBAL, entries[i].name)); } catch {}
+    }
+  } catch {}
+}
+
 function rotateIfNeeded() {
   try {
     if (!existsSync(JSONL_PATH)) return;
     const { size } = statSync(JSONL_PATH);
     if (size < MAX_JSONL) return;
     renameSync(JSONL_PATH, `${JSONL_PATH}.${Date.now()}`);
+    gcArchives();
   } catch {}
 }
 

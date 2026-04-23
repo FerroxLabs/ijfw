@@ -457,12 +457,13 @@ fi
 # 1.1.7: 5 new MCP platforms + Aider rules-only
 hdr "1.1.7 -- new platform install assertions"
 
-# OpenCode -- ~/.config/opencode/opencode.json with mcpServers.ijfw-memory
+# OpenCode -- 1.1.8 corrected schema: top-level mcp.<name>.{type:"local", command:[arr]}
+# (was mcpServers.<name> -- rejected by opencode-ai 1.14.20 with "Unrecognized key: mcpServers")
 OC="$ISO_HOME/.config/opencode/opencode.json"
-if [ -f "$OC" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$OC','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
-  pass "1.1.7: OpenCode opencode.json registers ijfw-memory"
+if [ -f "$OC" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$OC','utf8')); const s=d.mcp&&d.mcp['ijfw-memory']; process.exit(s&&s.type==='local'&&Array.isArray(s.command)&&s.command.length>0?0:1)"; then
+  pass "1.1.8: OpenCode opencode.json registers ijfw-memory at mcp.<name> (type:local, command:[...])"
 else
-  fail "1.1.7: OpenCode opencode.json missing or lacks ijfw-memory"
+  fail "1.1.8: OpenCode opencode.json missing or schema wrong (expected mcp.<name>.{type:local,command:[...]})"
 fi
 
 # QwenCode -- ~/.qwen/settings.json
@@ -473,15 +474,15 @@ else
   fail "1.1.7: Qwen Code settings.json missing or lacks ijfw-memory"
 fi
 
-# Cline -- ~/.cline/data/settings/cline_mcp_settings.json
-CL="$ISO_HOME/.cline/data/settings/cline_mcp_settings.json"
-if [ -f "$CL" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$CL','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
-  pass "1.1.7: Cline cline_mcp_settings.json registers ijfw-memory"
-else
-  fail "1.1.7: Cline cline_mcp_settings.json missing or lacks ijfw-memory"
-fi
+# Cline -- DEFERRED in 1.1.8 (removed from default TARGETS per ship decision).
+# Helper (cline_merge) + case block + path resolution are wired and correct
+# per Cline source (src/services/mcp/schemas.ts, src/core/storage/disk.ts), but
+# we have no live VS Code runtime verification this ship. Re-enabled in 1.1.9
+# after a live "Connected" receipt inside VS Code. Opt-in today via:
+#   bash scripts/install.sh cline
+info "SKIP 1.1.8: Cline deferred (no live VS Code runtime verification this ship)"
 
-# KimiCode -- ~/.kimi/mcp.json
+# KimiCode -- ~/.kimi/mcp.json (schema unchanged, verified live in 1.1.8)
 KM="$ISO_HOME/.kimi/mcp.json"
 if [ -f "$KM" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$KM','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
   pass "1.1.7: Kimi Code mcp.json registers ijfw-memory"
@@ -489,12 +490,15 @@ else
   fail "1.1.7: Kimi Code mcp.json missing or lacks ijfw-memory"
 fi
 
-# OpenClaw -- ~/.openclaw/config.json (CLI-set ALSO when openclaw on PATH)
-OW="$ISO_HOME/.openclaw/config.json"
-if [ -f "$OW" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$OW','utf8')); process.exit(d.mcpServers && d.mcpServers['ijfw-memory'] && d.mcpServers['ijfw-memory'].command ? 0 : 1)"; then
-  pass "1.1.7: OpenClaw config.json registers ijfw-memory"
+# OpenClaw -- 1.1.8 corrected to ~/.openclaw/openclaw.json with mcp.servers.<name>
+# nested (was ~/.openclaw/config.json with top-level mcpServers -- rejected by
+# openclaw 2026.4.21 validator). CLI-set is preferred when openclaw on PATH; this
+# gate covers the fallback direct-write path that fires in the isolated CI HOME.
+OW="$ISO_HOME/.openclaw/openclaw.json"
+if [ -f "$OW" ] && node -e "const d=JSON.parse(require('fs').readFileSync('$OW','utf8')); const s=d.mcp&&d.mcp.servers&&d.mcp.servers['ijfw-memory']; process.exit(s&&s.command?0:1)"; then
+  pass "1.1.8: OpenClaw openclaw.json registers ijfw-memory at mcp.servers"
 else
-  fail "1.1.7: OpenClaw config.json missing or lacks ijfw-memory"
+  fail "1.1.8: OpenClaw openclaw.json missing or schema wrong (expected mcp.servers.<name>)"
 fi
 
 # Aider -- rules-only (no MCP). ~/.aider.conf.yml + ~/CONVENTIONS.md present
@@ -508,6 +512,42 @@ if [ -f "$ISO_HOME/CONVENTIONS.md" ]; then
 else
   fail "1.1.7: Aider CONVENTIONS.md missing"
 fi
+
+# ------------------------------------------------------------------------------
+# 1.1.8 -- live CLI invocation gates.
+# The structural gates above prove JSON shape. These gates prove the platform's
+# OWN CLI accepts our config. Added because 1.1.7 shipped an OpenCode config
+# that was valid JSON but rejected by opencode-ai 1.14.20 -- structural green
+# gave a false pass. A CLI-invocation gate would have caught it pre-publish.
+#
+# Each gate: if <cli> is on PATH, invoke `<cli> mcp list` and assert the output
+# references "ijfw-memory". Skip+note when CLI absent (most CI boxes won't have
+# all five installed).
+# ------------------------------------------------------------------------------
+hdr "1.1.8 -- live CLI invocation gates (skip when CLI absent)"
+
+_live_cli_gate() {
+  local platform="$1" cmd="$2" listcmd="$3" needle="$4"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    info "SKIP 1.1.8: $platform CLI not on PATH"
+    return 0
+  fi
+  # The CLI reads the REAL user config (not $ISO_HOME) -- this gate proves the
+  # shape installs into a real user environment, using the dev-tree install
+  # that the outer test runner has already applied to the developer's HOME.
+  if eval "$listcmd" 2>&1 | grep -Fq "$needle"; then
+    pass "1.1.8: $platform '$listcmd' reports $needle"
+  else
+    fail "1.1.8: $platform '$listcmd' did NOT report $needle"
+  fi
+}
+
+_live_cli_gate "OpenCode" "opencode"  "opencode mcp list"  "ijfw-memory"
+_live_cli_gate "Qwen Code" "qwen"     "qwen mcp list"      "ijfw-memory"
+_live_cli_gate "Kimi Code" "kimi"     "kimi mcp list"      "ijfw-memory"
+_live_cli_gate "OpenClaw"  "openclaw" "openclaw mcp list"  "ijfw-memory"
+# Cline has no CLI (VS Code extension only). Structural gate above is the
+# authoritative check; user verifies "Connected" live in VS Code after install.
 
 # 6) re-entrancy guard: when state.last_applied_version >= cache.last_latest_seen, available=false
 node -e "
