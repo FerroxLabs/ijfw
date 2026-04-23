@@ -474,13 +474,24 @@ else
   fail "1.1.7: Qwen Code settings.json missing or lacks ijfw-memory"
 fi
 
-# Cline -- DEFERRED in 1.1.8 (removed from default TARGETS per ship decision).
-# Helper (cline_merge) + case block + path resolution are wired and correct
-# per Cline source (src/services/mcp/schemas.ts, src/core/storage/disk.ts), but
-# we have no live VS Code runtime verification this ship. Re-enabled in 1.1.9
-# after a live "Connected" receipt inside VS Code. Opt-in today via:
-#   bash scripts/install.sh cline
-info "SKIP 1.1.8: Cline deferred (no live VS Code runtime verification this ship)"
+# Cline -- 1.1.9 RE-ENABLED. Live-verified in VS Code 1.117 + Cline 3.80.0 via
+# round-tripped `ijfw_memory_prelude` native tool call (log evidence:
+# `DEBUG [ToolCallProcessor] Native Tool Called: c04RcW0mcp0ijfw_memory_prelude`).
+# Config lives at VS Code per-extension globalStorage; platform-specific user dir
+# resolved below; Darwin is the CI default. Schema: mcpServers.<name>.{type:"stdio",
+# command, args, disabled, autoApprove, timeout}. Cline has no shell CLI, so this
+# structural gate is the authoritative check; live verification happens in VS Code.
+case "$(uname -s 2>/dev/null)" in
+  Darwin)                     CLINE_USER_DIR="$ISO_HOME/Library/Application Support/Code/User" ;;
+  CYGWIN*|MINGW*|MSYS_NT*)    CLINE_USER_DIR="${APPDATA:-$ISO_HOME/AppData/Roaming}/Code/User" ;;
+  *)                          CLINE_USER_DIR="$ISO_HOME/.config/Code/User" ;;
+esac
+CL="$CLINE_USER_DIR/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+if [ -f "$CL" ] && node -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); const s=d.mcpServers&&d.mcpServers['ijfw-memory']; process.exit(s&&s.command&&s.type==='stdio'?0:1)" "$CL"; then
+  pass "1.1.9: Cline globalStorage registers ijfw-memory with type:stdio"
+else
+  fail "1.1.9: Cline globalStorage path missing or schema wrong"
+fi
 
 # KimiCode -- ~/.kimi/mcp.json (schema unchanged, verified live in 1.1.8)
 KM="$ISO_HOME/.kimi/mcp.json"

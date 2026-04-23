@@ -1,5 +1,77 @@
 # Changelog
 
+## [1.1.9] -- 2026-04-24
+
+**Cline back in default TARGETS -- now 13 live platforms with no deferrals.** Discipline adoption pass from Damir Zorcic absorbed into the framework. One marketing receipt ("craft mode by design") added to the README.
+
+### Cline re-enabled
+
+Cline returns to the default install list after live-verified round-trip through its MCP hub inside VS Code 1.117 + Cline 3.80.0. Evidence: our test session saw Cline's ToolCallProcessor fire the `ijfw_memory_prelude` native tool call against the `ijfw-memory` MCP server -- not just "listed," actual round-tripped data (log marker: `DEBUG [ToolCallProcessor] Native Tool Called: c04RcW0mcp0ijfw_memory_prelude`). Schema confirmed stable: `mcpServers.<name>.{type:"stdio", command, args, disabled, autoApprove, timeout}` at VS Code globalStorage (platform-branched macOS / Linux / Windows). Opt-in via explicit `bash scripts/install.sh cline` flag removed; Cline is default again, matching the other twelve live-verified platforms.
+
+Re-instated the 1.1.9 structural e2e gate covering globalStorage path + type:"stdio" schema. Sits alongside the four live CLI-invocation gates introduced in 1.1.8 (OpenCode, Qwen, Kimi, OpenClaw) -- five platforms now have an automated "platform accepts our config" check, two have no CLI to invoke and rely on structural gates plus user runtime verification (Cline + Aider rules-only).
+
+### Discipline adoption pass
+
+Four rules from **Damir Zorcic's "Five Laws"** suggestion absorbed into the IJFW framework at the scopes where they earn their weight. Not a schema or platform change; tightens the behaviour IJFW ships on every surface.
+
+**Credit:** Damir Zorcic for the Five Laws suggestion. Three of the five rules adopted verbatim into universal rules; one adopted scoped to verify/ship/audit workflow gates; the remaining two were either already shipping at the right scope or explicitly rejected as anti-patterns (a mandatory 5-section output format would break IJFW's output-discipline engine).
+
+### Universal rules (`universal/ijfw-rules.md`)
+
+Three new lines, each paste-anywhere across any AI agent's system prompt:
+
+- **Antisycophancy** (Damir's Law 6, promoted): "Match the user's accuracy, never their energy. Don't mirror enthusiasm to fake agreement or mirror frustration to fake empathy. Sycophancy is a failure mode, not a feature." Tightest one-line antidote to default LLM flattery.
+- **Unknown is valid** (Damir's Law 1): "'I don't know' is a valid answer. Uncertainty is data. Never confabulate facts, paths, commits, or sources to fill silence. If ambiguous, ask -- don't guess." Legitimizes epistemic honesty as a first-class primitive.
+- **Push back on irreversible actions** (Damir's Law 3, umbrella-ified): "Push back on irreversible actions (push, publish, deploy, tag, rm -rf, git reset --hard, drop table, ship design -> code, rewrite user copy). State the conflict, stop, and wait for an explicit go ('push it' / 'ship it' / 'yes, delete') before proceeding. 'Plan and execute' is NOT authorization to publish." Consolidates several domain-specific feedback memories under one rule.
+
+### Confidence declaration scoped to verify/ship/audit (Damir's Law 4)
+
+New required gate behaviour inside `claude/commands/ijfw-verify.md`, `ijfw-ship.md`, and `ijfw-audit.md`. Every finding is tagged with one of **VERIFIED** (command run, raw output available), **LIKELY** (reasoning given, not externally verified), **GUESSING** (insufficient info), or **ISSUE** (blocker; halt). Ship-gate does not auto-advance with any GUESSING or ISSUE finding. Scoped deliberately -- this rigor earns its weight at the ship boundary, not on every conversational turn (where it would break the output-discipline engine).
+
+### Feedback memories added
+
+- `feedback_antisycophancy.md` -- match accuracy never energy.
+- `feedback_unknown_is_valid.md` -- "I don't know" as first-class answer.
+- `feedback_push_back_on_irreversible.md` -- umbrella for stop-and-wait protocol before irreversible actions.
+
+### Rejected wholesale
+
+- **Mandatory 5-section output format** (What I Did / Proof / What I Could NOT Verify / Potential Problems / Confidence). Adopting this as a universal response template would structurally break IJFW engine #1's output-discipline rule (lead with answer, no monologues, strip 20-40% padding). Kept as an optional template pattern inside specific audit/ship workflows where the accountability weight earns the verbosity; never applied to conversational or design surfaces.
+- **Universal verify-and-prove** (raw terminal output on every response). Already shipping at the correct scope (ships, audits, e2e-smoke); universalizing it = bloat for zero marginal value outside ship contexts.
+
+### Sean Donahoe notes
+
+Damir's framework is "defensive SRE" -- the posture you want when you've been burned by hallucinating LLMs in production. IJFW's posture is "calm confidence with receipts" -- discipline that doesn't *look* disciplined. Stealing the sharpest rules without the mandatory output template preserves IJFW's lean register while closing the epistemic-honesty gap the framework surfaced.
+
+### Stale count in `universal/ijfw-rules.md`
+
+While in the file: the "IJFW currently targets 8 platforms" line was stale (1.1.7 added five, Cline deferred in 1.1.8). Updated to "13 platforms" with the full list, matching the README parity matrix.
+
+### README: "craft mode by design" positioning line
+
+One marketing line added to the README "What this isn't" section, reframing IJFW's architectural discipline against the factory-mode-vs-craft-mode distinction that's surfaced in the wider 2026 Claude Code discourse (see claudecodecamp.com's "Boiling the Ocean" piece). IJFW is already craft mode by design -- single memory core, audit gates, receipts, $2 Trident budget cap, 99 ms hook floor. The line makes that implicit positioning explicit for the senior-engineer audience who parse the distinction.
+
+### Coming in 1.2.0 (workflow intelligence)
+
+Spec work from gstack + Ralph Loop research absorbed. All confirmed as genuine improvements, all scheduled for the next dedicated session:
+
+- **Ralph-style completion loop** in `/ijfw-execute` with `max-iterations=3` default + explicit completion contract per task + halt-as-ISSUE confidence tag on unmet criteria. Closes the "Claude stops mid-task at 60%" failure mode.
+- **Completeness score** on coverage-varying `AskUserQuestion` surfaces, with gstack's "options differ in kind, no score" discipline.
+- **Four-mode plan review** (SCOPE EXPANSION / SELECTIVE / HOLD / REDUCTION) in `/ijfw-plan` Deep mode with context-aware defaults.
+- **Temporal Interrogation** (HOUR 1 / 2-3 / 4-5 / 6+ pre-flight questions) in `/ijfw-plan` Deep mode.
+
+### Coming in 1.3.0 (evidence + reach)
+
+- Reproducible token-savings benchmark harness (3 task buckets × 3 model tiers × 10 runs × IJFW-on/off + public CSV).
+- Skill-catalogue consolidation pass (self-Trident + per-skill test coverage).
+- DESIGN.md picker + templates extension to OpenCode / Qwen Code / Kimi Code / OpenClaw / Aider.
+
+### Credits
+
+- **Damir Zorcic** -- Five Laws suggestion (discipline adoption).
+- **David Steel** -- correction-propagation durability question that refined IJFW's pattern/decision/preference/observation taxonomy thinking (agents-md#1).
+- **Garry Tan** -- gstack (`garrytan/gstack`) for the Completeness score pattern + four-mode plan review pattern feeding 1.2.0.
+
 ## [1.1.8] -- 2026-04-23
 
 **Four AI coding CLIs now live-verified end-to-end.** `opencode mcp list`, `qwen mcp list`, `kimi mcp list`, `openclaw mcp list` -- each platform's own CLI independently reports `ijfw-memory` connected against the real binary. Shipping IJFW support no longer means "JSON validates"; it means the platform's own CLI says "connected". Every new platform integration clears this bar going forward.

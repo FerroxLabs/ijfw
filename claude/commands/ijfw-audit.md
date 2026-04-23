@@ -27,3 +27,13 @@ of the current workflow position. Omit the argument and the current phase gate r
 
 **GATE:** Each audit gate is a hard stop -- fix failures before the next phase
 begins. Gate outcomes are recorded in `audit-log.md` for the active project.
+
+**Confidence declaration (required per finding):** Every audit finding is tagged
+VERIFIED / LIKELY / GUESSING / ISSUE:
+- **VERIFIED** -- command run, raw output shown, reproducible.
+- **LIKELY** -- code read, docs consulted, reasoning given, not externally verified.
+- **GUESSING** -- insufficient information, best guess only.
+- **ISSUE** -- blocker or bug; document and halt.
+
+Gate outcomes with any GUESSING or ISSUE finding do not auto-advance. This is the
+scoped adoption of Damir Zorcic's "Declare Confidence" law at audit boundaries.

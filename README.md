@@ -536,6 +536,8 @@ Five engines. One workflow. One memory. One Trident. One install.
 
 **Not magic.** It is deterministic bash, Node, plain markdown, and opinionated rules. Inspect every byte. Fork it. Diff next month's release.
 
+**Not factory mode.** IJFW is craft mode by design -- one shared memory core, audit gates at every phase, receipts per session, a $2 Trident budget cap, a ~99 ms hot-path hook floor. Running more sessions doesn't make you smarter; running disciplined sessions does. IJFW's entire architecture rewards the second.
+
 * * *
 
 ## Privacy

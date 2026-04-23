@@ -30,3 +30,16 @@ auto-advance to Ship on a partial pass.
 
 **GATE:** Verify phase ends at the SHIP GATE -- original brief re-read, what was
 built matches what was asked. All items pass before advancing to Ship.
+
+**Confidence declaration (required at end of Verify):** Every Verify finding is
+tagged with one of:
+- **VERIFIED** -- command was run, raw output is available, anyone can reproduce it.
+- **LIKELY** -- reasoning provided (code read, docs consulted), not externally
+  verified this session.
+- **GUESSING** -- insufficient information, best guess only.
+- **ISSUE** -- blocker or bug surfaced; stop and document rather than advance.
+
+Verify does not auto-advance to Ship with any finding tagged GUESSING or ISSUE.
+VERIFIED findings clear the gate; LIKELY findings require user acknowledgement.
+This is the scoped adoption of Damir Zorcic's "Declare Confidence" law, applied
+at ship-gate boundaries where the rigor earns its weight.

@@ -29,5 +29,13 @@ This command invokes `ijfw-workflow` at the D6 Ship phase directly.
 **GATE:** The SHIP GATE must pass before deployment proceeds -- original brief
 re-read, changelog updated, monitoring confirmed, rollback plan documented.
 
+**Confidence declaration (required before push/publish):** Every ship-readiness
+claim is tagged VERIFIED / LIKELY / GUESSING / ISSUE. Ship proceeds only when
+every blocking claim is VERIFIED (live-run command with raw output) or LIKELY
+with explicit user acknowledgement. GUESSING or ISSUE halts the ship. Publish
+operations (`git push`, `git tag v*`, `npm publish`) require the user's
+explicit push-word ("push it" / "ship it" / "tag and push") -- no substitute
+authorization accepted. See `feedback_push_back_on_irreversible.md`.
+
 **Natural triggers:** "ship it", "deploy", "let's ship", "go live", "time to ship",
 "wrap this up."

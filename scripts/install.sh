@@ -141,12 +141,10 @@ for arg in "$@"; do
     *) TARGETS+=("$arg") ;;
   esac
 done
-# 1.1.8: cline deferred to 1.1.9 -- helper code + path verified against Cline
-# source (src/services/mcp/schemas.ts, src/core/storage/disk.ts) but not live
-# verified in VS Code runtime this release. Opt in explicitly via:
-#   bash scripts/install.sh cline
-# The cline) case block and cline_merge helper remain wired for that path.
-[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(claude codex gemini cursor windsurf copilot hermes wayland opencode qwen kimi openclaw aider)
+# 1.1.9: cline re-enabled in default TARGETS. Live-verified in VS Code 1.117 +
+# Cline 3.80.0 via round-tripped `ijfw_memory_prelude` native tool call (log
+# marker: `DEBUG [ToolCallProcessor] Native Tool Called: c04RcW0mcp0ijfw_memory_prelude`).
+[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(claude codex gemini cursor windsurf copilot hermes wayland opencode qwen cline kimi openclaw aider)
 
 if [ ! -x "$LAUNCHER" ]; then
   chmod +x "$LAUNCHER" 2>/dev/null
