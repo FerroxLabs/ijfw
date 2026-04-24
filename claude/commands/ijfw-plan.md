@@ -28,4 +28,12 @@ If not, it asks one clarifying question to establish scope before drafting.
 **GATE:** Plan phase ends at the PLAN AUDIT gate -- every requirement has a task,
 no scope drops, dependencies ordered. Gate must pass before execution begins.
 
-Deep mode asks a time-budget question before drafting.
+Deep mode asks a time-budget question before drafting. Deep mode offers a four-mode review after plan-check.
+
+**Resume intent pattern:** If user says `resume`, `resume plan`, `/ijfw-plan resume`, or `continue plan`:
+1. Load `.ijfw/state/plan-hold.md`. If missing: reply "No plan on hold. Start a fresh plan with `/ijfw-plan`." and stop.
+2. Echo the recorded reason + unresolved gaps to the user so they know what was blocking.
+3. Ask AskUserQuestion: "Has this changed? Unblock and continue, or keep on hold?"
+   - Option A: "Unblock + continue" -> re-run plan-check, re-offer four-mode review (Step 7).
+   - Option B: "Keep on hold" -> no-op, close.
+4. On unblock: annotate `.ijfw/state/plan-hold.md` with `resolved_at: <now>` (or delete), re-run plan-check Step 7.

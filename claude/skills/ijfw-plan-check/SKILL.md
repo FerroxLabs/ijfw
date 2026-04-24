@@ -78,4 +78,86 @@ Populate each field from the counts gathered in Steps 2-6. `budget_overrun` is
 in `.ijfw/memory/plan.md` frontmatter (HOUR_1=3, HOUR_2_3=7, HOUR_4_5=12,
 HOUR_6_PLUS=unlimited); `false` if no budget was set or ceiling not exceeded.
 
+## Step 7 -- Plan review modes (Deep only)
+
+Fires ONLY for verdict `FLAG` or `PASS`. If verdict is `BLOCK`, skip Step 7 -- rework is needed, not a review mode.
+
+### Default mode selection (reads Step 6.5 metrics block deterministically)
+
+```
+if metrics.budget_overrun == true:
+  default = REDUCTION
+elif metrics.dep_inversions > 0 or metrics.under_specified_pct > 30:
+  default = HOLD
+elif metrics.goal_alignment_fail > 0 and metrics.scope_leaks == 0:
+  default = SCOPE_EXPANSION
+else:
+  default = SELECTIVE
+```
+
+Tag the default with `(Recommended)` and a one-line basis citing the triggering metric:
+- `(Recommended) -- budget overrun: <N> tasks vs <BUCKET> ceiling <M>`
+- `(Recommended) -- dep inversions: <N>; under-specified <P>%`
+- `(Recommended) -- <N> goal-alignment gaps, no scope leaks`
+- `(Recommended) -- plan passes audit; pick highest-value subset`
+
+### Mode definitions (kind, not degree -- NO scores per gstack rule)
+
+| Mode | When it fits | Action |
+|---|---|---|
+| SCOPE EXPANSION | Brief has acceptance criteria with no matching tasks (>20%) | Surface gaps; user adds to brief; re-plan |
+| SELECTIVE | Plan is right but too big for session | Pick top N tasks; rest go to backlog |
+| HOLD | Plan has too many unknowns (under_specified_pct > 30, or dep_inversions > 0) | Return to Discovery/Research; re-surface later |
+| REDUCTION | budget_overrun: true | Cut to smallest viable slice; defer rest |
+
+### AskUserQuestion shape
+
+```json
+{
+  "question": "Plan is ready. How do you want to move forward?",
+  "header": "Plan review",
+  "options": [
+    { "label": "Selective -- execute top N tasks", "description": "Pick highest-value items; rest go to backlog" },
+    { "label": "Reduction -- cut to smallest viable slice", "description": "Trim to what fits the time budget" },
+    { "label": "Scope expansion -- surface missing pieces", "description": "Add tasks for uncovered acceptance criteria" },
+    { "label": "Hold -- return to discovery", "description": "Too many unknowns; research more before execute" }
+  ]
+}
+```
+
+### Routing (each mode terminates with a specific next step)
+
+- **SELECTIVE:** Follow-up AskUserQuestion (multiSelect) to pick which tasks; plan.md marks non-selected as `backlog: true`; execute runs only the selected subset.
+- **REDUCTION:** Re-invoke planner with "cut to top <ceiling> tasks preserving highest-value deliverable"; re-audit; re-review.
+- **SCOPE_EXPANSION:** Surface missing criteria in chat; ask user which to add; re-plan; re-audit. If user cannot answer a criterion, emit a plan-review ISSUE (see ISSUE vocabulary below).
+- **HOLD:** Write `.ijfw/state/plan-hold.md` with timestamp, reason (which metrics trigger HOLD), and list of unresolved gaps. Tell user: "Plan on hold. Resume with `/ijfw-plan resume` when ready."
+
+### ISSUE vocabulary (unified ledger)
+
+If any routing action produces a new unresolved gap, emit a structured ISSUE with `kind: plan-review` and persist to `.ijfw/state/execute-issues.json` (unified ledger shared with Phase 4; discriminated by `kind` field).
+
+Example entry:
+
+```json
+{
+  "id": "iss_<N>",
+  "kind": "plan-review",
+  "mode": "SCOPE_EXPANSION",
+  "gap": "User cannot specify success criterion for task 'X'",
+  "status": "unresolved",
+  "resolution": null,
+  "created_at": "<ISO-8601>",
+  "resolved_at": null
+}
+```
+
+**Day-1 protection:** Every consumer treats a missing `.ijfw/state/execute-issues.json` as `{ "issues": [] }`. Canonical JS read stub:
+
+```js
+const path = ".ijfw/state/execute-issues.json";
+const ledger = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, 'utf8')) : { issues: [] };
+```
+
+Do NOT reference `plan-issues.json` -- the unified ledger path is always `execute-issues.json`.
+
 Closer: `You have a <PASS|FLAG|BLOCK> -- <next action>.`
