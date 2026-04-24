@@ -12,8 +12,8 @@ deliverable and success criteria. Present it for approval, then execute.
 
 **Deep mode (D3):** Break the work into phases → milestones → tasks. Each task
 gets a deliverable, success criteria, file list, dependencies, and blast radius.
-Output lands in `.ijfw/projects/<name>/plan.md`. The full PLAN AUDIT gate runs
-before execution begins.
+Output lands in `.ijfw/memory/plan.md` (fallback: `.planning/**/PLAN.md`). The
+full PLAN AUDIT gate runs before execution begins.
 
 This command invokes `ijfw-workflow` at the Plan phase directly. IJFW owns the
 full loop from here: plan → audit → execute → verify → ship. No external plugin

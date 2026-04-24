@@ -51,4 +51,31 @@ Rework needed (BLOCK):
 - **FLAG**: fix numbered items, then proceed.
 - **BLOCK**: rework required. Do not execute until re-audited.
 
+## Step 6.5 -- Metrics block (machine-readable)
+
+After the verdict text, emit this HTML comment block exactly:
+
+```
+<!-- plan-check-metrics
+tasks_total: <int>
+goal_alignment_pass: <int>
+goal_alignment_fail: <int>
+scope_leaks: <int>
+budget_overrun: <bool>
+dep_inversions: <int>
+under_specified_pct: <int>
+verdict: <PASS|FLAG|BLOCK>
+-->
+```
+
+**under_specified_pct:** percentage of tasks that are missing ANY of:
+- Verb-noun description (e.g., "Write failing test for X", not "fix stuff")
+- Target file path(s)
+- Verifiable success criterion
+
+Populate each field from the counts gathered in Steps 2-6. `budget_overrun` is
+`true` if the plan exceeds the task ceiling for the `time_budget` bucket recorded
+in `.ijfw/memory/plan.md` frontmatter (HOUR_1=3, HOUR_2_3=7, HOUR_4_5=12,
+HOUR_6_PLUS=unlimited); `false` if no budget was set or ceiling not exceeded.
+
 Closer: `You have a <PASS|FLAG|BLOCK> -- <next action>.`

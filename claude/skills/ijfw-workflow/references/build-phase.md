@@ -66,6 +66,13 @@ Break each plan task into bite-sized steps (2-5 min each):
 User approves with `approve` / `trim` / `expand`.
 Write `.ijfw/memory/plan.md` on approval. Render as HTML and open in browser.
 
+**Downstream consumers -- parse plan-check metrics block:**
+```bash
+sed -n '/<!-- plan-check-metrics/,/-->/p' .ijfw/memory/plan.md
+```
+Use this snippet to extract machine-readable counters (tasks_total, budget_overrun,
+verdict, etc.) emitted by `ijfw-plan-check` Step 6.5 after the verdict text.
+
 **Second Opinion on plan (auto-fire if enabled):**
 Check CLI availability (`command -v codex gemini`). Fire only those that exist.
 When clean: `Second Opinion reviewed your plan -- all clear.`

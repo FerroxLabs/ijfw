@@ -265,6 +265,7 @@ These files enable resume after /clear or context compaction.
 
 ## INVARIANTS
 
+- **Canonical plan path is `.ijfw/memory/plan.md`; never write plan data elsewhere.**
 - **Interaction style respected.** Guided = AskUserQuestion. Conversation = open dialogue with periodic capture + checkpoints.
 - **Adaptive switching is natural.** No announcements. Read notes.md to avoid re-asking covered topics.
 - **TaskCreate for every workflow step** (or text checklist if unavailable).
