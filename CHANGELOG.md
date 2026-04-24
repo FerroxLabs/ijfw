@@ -1,5 +1,128 @@
 # Changelog
 
+## [1.2.0] -- 2026-04-24
+
+**Workflow intelligence release.** Four improvements to how IJFW plans and executes work, plus the platform-count cleanup closing a three-release drift. Every change landed under Donahoe Loop discipline -- three rounds of codex + gemini cross-audit closed 33 findings (6 BLOCK, 16 FLAG, 6 NOTE, 6 execution warnings) before any code was written.
+
+### Wave 0 -- foundation primitives
+
+Three load-bearing primitives landed first, so feature phases could assume they exist.
+
+- **Canonical plan artifact path: `.ijfw/memory/plan.md`.** Three surfaces had disagreed; now unified. `claude/commands/ijfw-plan.md` corrected, workflow `SKILL.md` carries the invariant.
+- **Structured metrics block in `ijfw-plan-check` output.** Downstream consumers now read machine-readable counters (`tasks_total`, `budget_overrun`, `dep_inversions`, `under_specified_pct`, `goal_alignment_fail`, `scope_leaks`, `verdict`) instead of parsing prose. Emitted as an HTML-comment block after the verdict text.
+- **Verify-command allowlist primitive.** `mcp-server/src/ralph-allowlist.js` exports `ALLOWLIST`, `FORBID_LIST`, and `isSafeVerifyCommand(cmd)`. Zero deps, ESM, matches mcp-server's flat-test convention at `mcp-server/test-ralph-allowlist.js`. Used by Phase 4's Ralph loop to gate verify commands before execution. 27/27 tests green.
+
+### Phase 0 -- stale "8 platforms" hunt + regression gate
+
+Five shippable surfaces (installer banner + uninstall comment + UPDATE-FLOW docs + `/ijfw` command description) corrected from `8 platforms` to `13 platforms`. Historical files (CHANGELOGs, archived `.planning/` docs) left frozen. The `installer/dist/install.js` bundle regenerates via `prepublishOnly` from `installer/src/install.js`.
+
+**The real fix is the gate, not the strings.** `scripts/preflight-stale-count.sh` scans shippable surfaces for bare `8 platforms` strings, excludes CHANGELOGs + `.planning/` + the gate's own self-references, and exits 1 on any hit. Wired into `scripts/e2e-smoke.sh` canonical-install mode; documented in `claude/skills/ijfw-preflight/SKILL.md` as the 12th gate. No more three-release drift.
+
+### Phase 1 -- Temporal Interrogation (Deep-mode plan pre-flight)
+
+**Closes "Claude plans for the ambitious case regardless of time budget."** Before drafting the plan body, Deep-mode `/ijfw-plan` asks a time-budget question:
+
+```
+How much time can you give this?
+- HOUR 1       -- Smallest shippable slice: one commit, one verify
+- HOUR 2-3     -- One coherent feature: small task set, no migration
+- HOUR 4-5     -- Multi-task: dependency ordering matters, real risk surface
+- HOUR 6+      -- Phased: rollback plan, incremental ship path
+```
+
+No `(Recommended)` tag. Time budget is the user's fact, not a judgment call with basis. Selection persists to `.ijfw/memory/plan.md` frontmatter as `time_budget: <bucket>` before the plan body drafts, so Phase 2's four-mode review can read it deterministically.
+
+Ceilings (advisory to the planner, enforced by plan-check via the `budget_overrun` metric):
+
+| Bucket | Max tasks | Max waves | Risk depth | Rollback |
+|---|---|---|---|---|
+| HOUR_1 | 3 | 1 | none | no |
+| HOUR_2_3 | 7 | 2 | surface | no |
+| HOUR_4_5 | 12 | 3 | deep | recommended |
+| HOUR_6_PLUS | unlimited | unlimited | deep | yes |
+
+Quick and Express tiers unaffected.
+
+### Phase 3 -- Completeness score on `AskUserQuestion` (gstack rule)
+
+**Credit: Garry Tan's gstack (`garrytan/gstack`) for the pattern.**
+
+When `AskUserQuestion` options vary by DEGREE (measurable dimension -- coverage %, risk level, time-to-ship, scope breadth), each option's description now prefixes a score: `"[Coverage: 80%] ..."`, `"[Severity: HIGH] ..."`. When options vary by KIND (categorical -- framework A vs B, style X vs Y), no score. A score on a categorical choice is false precision.
+
+Rule landed in `claude/skills/ijfw-core/SKILL.md` (under the 55-line hard cap at 54 lines via Verbosity-section compaction; all four original rules preserved in denser form). Workflow `SKILL.md` INVARIANTS carries the reminder. `references/think-phase.md` ships worked examples for SHAPE (CSS framework unscored + coverage strategy scored) and STRESS (risk severity scored). New `references/score-examples.md` canonicalizes 3 scored + 3 unscored + 1 "Deceptive degree" counter-example (options that LOOK scored but lack a measurable dimension).
+
+### Phase 2 -- Four-mode plan review (Deep-mode `/ijfw-plan`)
+
+**Credit: Garry Tan's gstack for the four-mode pattern.**
+
+After `ijfw-plan-check` emits verdict, Deep mode now offers four ways forward instead of binary proceed/don't. Fires only for FLAG or PASS verdicts (BLOCK skips -- rework needed, not a review mode).
+
+- **SCOPE EXPANSION** -- brief has acceptance criteria with no matching tasks (>20%). Surface gaps; user adds to brief; re-plan.
+- **SELECTIVE** -- plan is right but too big for session. Pick top N tasks; rest go to backlog.
+- **HOLD** -- too many unknowns (`under_specified_pct > 30` or `dep_inversions > 0`). Return to Discovery/Research. Writes `.ijfw/state/plan-hold.md` with timestamp + reason + unresolved gaps. New `/ijfw-plan resume` sub-command (4-step algorithm in `claude/commands/ijfw-plan.md`) so HOLD doesn't dead-end.
+- **REDUCTION** -- `budget_overrun: true`. Cut to smallest viable slice; defer rest.
+
+Default selection reads Wave 0's metrics block deterministically. `(Recommended)` tag cites its basis ("budget overrun: 14 tasks vs HOUR_2_3 ceiling 7").
+
+The four modes are KIND-varying (no score per Phase 3 rule).
+
+### Phase 4 -- Ralph-style completion loop in `/ijfw-execute`
+
+**Closes "Claude stops mid-task at 60%."** Deep-mode `/ijfw-execute` now runs tasks under completion contracts with `max_iterations=3` and halt-as-ISSUE discipline. Credit: Ralph Loop research for the completion-contract pattern.
+
+Each task ships with a YAML contract inline in `.ijfw/memory/plan.md`:
+
+```yaml
+task_id: t1
+contract:
+  completion_criteria:
+    - id: c1
+      type: shell           # shell | model-verify | manual
+      description: "..."
+      verify: "<command>"   # type:shell passes through Wave 0's isSafeVerifyCommand
+  max_iterations: 3
+  halt_rule: "Emit ISSUE with failed criterion ids after iter 3"
+```
+
+**Three criterion types** cover real verify needs:
+- `shell` -- allowlisted command (8 primitives, 19 explicit forbid items from Wave 0 F.3).
+- `model-verify` -- semantic check by model. Bounded; used sparingly.
+- `manual` -- user confirms pass/fail. Task pauses.
+
+**Loop protocol** with stagnation halt (cost saver): if iter N results are byte-identical to iter N-1, halt early with `ISSUE(task-stagnated)` instead of burning tokens on iters 2-3.
+
+**Unified ISSUE ledger** at `.ijfw/state/execute-issues.json` discriminated by `kind` field:
+- `task-incomplete` -- failed after `max_iterations`
+- `task-stagnated` -- identical iter outputs (early halt)
+- `unsafe-verify` -- command rejected by allowlist before run
+- `plan-review` -- Phase 2 routing gap
+
+**Gate consumers** (real repo surfaces, path-verified): `claude/commands/ijfw-verify.md`, `claude/commands/ijfw-audit.md`, `claude/skills/ijfw-preflight/SKILL.md`, `claude/commands/ijfw-ship.md` -- each reads the ledger at start and refuses to advance with any `status: unresolved` entry. Day-1 fresh-install protection: missing file treated as zero issues, not a crash.
+
+**Resolution** via new `/ijfw-execute resolve <iss_id> <note>` sub-command (4-step algorithm), or automatically when the same `task_id` next executes successfully.
+
+Four dry-run scripts ship as ship-blockers: happy-path (3 criteria pass iter 1), fail-path (stagnation halt fires), unsafe-verify (task halts BEFORE rm -rf runs), multi-file refactor (iter 1 mis-edit caught + iter 2 verifies). All four + preflight-stale-count + three earlier phase dry-runs aggregate in `scripts/1.2.0-verify-all.sh`, which also flushes `rehearsal: true` ledger entries after the run (cleanup discipline).
+
+### Donahoe Loop audit trail
+
+Three rounds of codex + gemini cross-audit, all findings closed in the plan before execution. Round 1: codex BLOCK + gemini FLAG + self FLAG across 17 findings. Round 2: codex FLAG (3 new) + gemini PASS + gemini NOTE. Round 3: codex PATCH (4 FLAGs) + 4 codex execution warnings + gemini READY/GO (2 NOTEs + 2 warnings). Plan artifact at `.planning/1.2.0/PLAN.md` (801 lines) + full reconciliation at `.planning/1.2.0/AUDIT.md`.
+
+### Sean Donahoe notes
+
+Each phase shipped via isolated-context subagent (context discipline: the main planning conversation never saw the implementation bytes). Every commit atomic and gated by per-phase structural dry-runs plus the aggregate `scripts/1.2.0-verify-all.sh` harness. No push until explicit authorization per `feedback_no_push_without_authorization.md` -- the commits are local; v1.2.0 tag does not exist yet.
+
+### Coming in 1.3.0 (evidence + reach)
+
+- Reproducible token-savings benchmark harness (3 task buckets x 3 model tiers x 10 runs x IJFW-on/off + public CSV).
+- Skill-catalogue consolidation pass (self-Trident + per-skill test coverage).
+- DESIGN.md picker + templates extension to OpenCode / Qwen Code / Kimi Code / OpenClaw / Aider.
+- Team tier memory (cross-user shared memory).
+
+### Credits
+
+- **Garry Tan** -- gstack (`garrytan/gstack`) for the Completeness score pattern + four-mode plan review pattern.
+- **Ralph Loop research** -- completion-contract pattern with max-iter + halt-as-ISSUE discipline.
+
 ## [1.1.9] -- 2026-04-24
 
 **Cline back in default TARGETS -- now 13 live platforms with no deferrals.** Discipline adoption pass from Damir Zorcic absorbed into the framework. One marketing receipt ("craft mode by design") added to the README.
@@ -62,7 +185,7 @@ Spec work from gstack + Ralph Loop research absorbed. All confirmed as genuine i
 
 ### Coming in 1.3.0 (evidence + reach)
 
-- Reproducible token-savings benchmark harness (3 task buckets × 3 model tiers × 10 runs × IJFW-on/off + public CSV).
+- Reproducible token-savings benchmark harness (3 task buckets x 3 model tiers x 10 runs x IJFW-on/off + public CSV).
 - Skill-catalogue consolidation pass (self-Trident + per-skill test coverage).
 - DESIGN.md picker + templates extension to OpenCode / Qwen Code / Kimi Code / OpenClaw / Aider.
 
@@ -78,9 +201,9 @@ Spec work from gstack + Ralph Loop research absorbed. All confirmed as genuine i
 
 ### Platform parity, live-verified against real CLIs
 
-- **OpenCode** (opencode-ai 1.14.20): wired to OpenCode's native `mcp.<name>.{type:"local", command:[...]}` shape via a new `opencode_merge` helper. `opencode mcp list` reports `✓ ijfw-memory connected`.
+- **OpenCode** (opencode-ai 1.14.20): wired to OpenCode's native `mcp.<name>.{type:"local", command:[...]}` shape via a new `opencode_merge` helper. `opencode mcp list` reports `[OK] ijfw-memory connected`.
 - **OpenClaw** (openclaw 2026.4.21): config lives at `~/.openclaw/openclaw.json` under `mcp.servers.<name>`. The installer prefers `openclaw mcp set ijfw-memory` when the CLI is on PATH (runs OpenClaw's own zod validator -- fails fast if anything drifts) and file-merges when it's not. New `openclaw_merge` helper. `openclaw mcp list` reports `- ijfw-memory`.
-- **Qwen Code** (qwen-code 0.15.1): live-verified this ship. `qwen mcp list` reports `✓ ijfw-memory ... (stdio) - Connected`.
+- **Qwen Code** (qwen-code 0.15.1): live-verified this ship. `qwen mcp list` reports `[OK] ijfw-memory ... (stdio) - Connected`.
 - **Kimi Code** (kimi-cli 1.38.0): live-verified this ship. `kimi mcp list` reports `ijfw-memory (stdio): ...`. Installer detects the uv-managed binary at `~/.local/bin/kimi`.
 
 ### New e2e gate class: CLI invocation
