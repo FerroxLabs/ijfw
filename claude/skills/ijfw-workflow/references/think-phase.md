@@ -77,6 +77,59 @@ AskUserQuestion({
 })
 ```
 
+### Score rule: degree vs kind
+
+**Kind choices (categorical -- NO score):** Options differ in type, not on a measurable scale. Adding a score would be false precision (gstack rule).
+
+```json
+AskUserQuestion({
+  "questions": [{
+    "question": "Which CSS framework?",
+    "header": "Framework",
+    "multiSelect": false,
+    "options": [
+      { "label": "Tailwind", "description": "Utility-first, minimal CSS bundle, fast iteration" },
+      { "label": "Bootstrap", "description": "Component library, familiar grid system, broad browser support" },
+      { "label": "Vanilla CSS", "description": "Zero deps, full control, higher maintenance cost" }
+    ]
+  }]
+})
+```
+
+**Degree choices (measurable -- SCORE each option):** Options sit on a measurable scale. Prefix the description with the score.
+
+```json
+AskUserQuestion({
+  "questions": [{
+    "question": "How thorough should test coverage be?",
+    "header": "Coverage strategy",
+    "multiSelect": false,
+    "options": [
+      { "label": "Minimal", "description": "[Coverage: 40%] Happy-path only -- fast to write, misses edge cases" },
+      { "label": "Focused", "description": "[Coverage: 70%] Core paths + known edge cases -- good balance" },
+      { "label": "Thorough", "description": "[Coverage: 95%] Full branch coverage -- slow to write, catches regressions" }
+    ]
+  }]
+})
+```
+
+### STRESS module -- risk-severity options (scored by severity tier)
+
+```json
+AskUserQuestion({
+  "questions": [{
+    "question": "Which risks need mitigation before we ship?",
+    "header": "Risk triage",
+    "multiSelect": true,
+    "options": [
+      { "label": "Unsigned migration", "description": "[Severity: HIGH] Blast radius unbounded -- data loss possible with no rollback" },
+      { "label": "Token expiry collision", "description": "[Severity: MEDIUM] Auth failure recoverable in <1hr -- degraded UX only" },
+      { "label": "Stale cache on restart", "description": "[Severity: LOW] Self-heals on next deploy -- no data risk" }
+    ]
+  }]
+})
+```
+
 ### Socratic arc (guided mode question order)
 
 1. Product type (what does it do?)

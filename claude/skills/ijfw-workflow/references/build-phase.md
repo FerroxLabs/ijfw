@@ -73,6 +73,8 @@ sed -n '/<!-- plan-check-metrics/,/-->/p' .ijfw/memory/plan.md
 Use this snippet to extract machine-readable counters (tasks_total, budget_overrun,
 verdict, etc.) emitted by `ijfw-plan-check` Step 6.5 after the verdict text.
 
+**Score rule for plan-review questions:** Plan-review modes (Phase 2) differ by KIND -- never score them (Selective / Reduction / Scope Expansion / Hold are categorical, not points on a scale). Task orderings by blast radius differ by DEGREE -- score by severity (e.g., "[Severity: HIGH] touches auth schema", "[Severity: LOW] style-only change").
+
 **Second Opinion on plan (auto-fire if enabled):**
 Check CLI availability (`command -v codex gemini`). Fire only those that exist.
 When clean: `Second Opinion reviewed your plan -- all clear.`

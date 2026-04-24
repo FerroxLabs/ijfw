@@ -22,10 +22,7 @@ If `IJFW_TERSE_ONLY` or mode=brutal: code-only + 1-sentence answers; no explanat
 9. JSON tool payloads: minified, 1-line, no optional nulls.
 
 ## Verbosity (auto in smart mode)
-- simple fact/fix → 1-3 lines
-- code request → code block + max 1 line context
-- comparison → max 5 bullets
-- explain/teach → only when user says "why" or "explain"
+- fact/fix → 1-3 lines. code → block + 1 line. comparison → max 5 bullets. explain/teach → only when user says "why" or "explain".
 
 ## Context Discipline
 - Read specific line ranges, not whole files.
@@ -48,6 +45,8 @@ If `IJFW_TERSE_ONLY` or mode=brutal: code-only + 1-sentence answers; no explanat
 - Transform tasks into verifiable goals; prefer test-first. After edits: run tests.
 - After 2 failed corrections on the same issue: stop. Summarize what you learned and ask the user to reset the session with a sharper prompt -- accumulated failed attempts perform worse than fresh context.
 
+## AskUserQuestion Score Rule
+Degree options (coverage %, risk level, time-to-ship) -> score prefix: "[Coverage: 80%]". Kind options (framework A vs B, style X vs Y) -> no score (false precision). Full rule in workflow skill.
 ## Workflow Routing (MANDATORY when IJFW is installed)
 Project-level tasks (build, create, design, plan, brainstorm, new project, launch) → invoke `ijfw:ijfw-workflow` via Skill tool. Do NOT use superpowers:brainstorming or gsd:discuss-phase for these. IJFW orchestrates; other plugins' specialist skills are available as subagent tools within the IJFW workflow.
 
