@@ -291,7 +291,7 @@ async function main() {
     }
   }
 
-  // Clean up platform configs across all 8 platforms -- canonical only.
+  // Clean up platform configs across all 13 platforms -- canonical only.
   if (isCanonical) {
     const cleaned = cleanPlatforms();
     if (cleaned.length > 0) {

@@ -1,6 +1,6 @@
 ---
 name: ijfw-preflight
-description: "Run the IJFW preflight pipeline (11 gates, fail-fast). Trigger: 'ijfw preflight', 'run preflight', 'check before ship', 'preflight gates', 'validate before release'."
+description: "Run the IJFW preflight pipeline (12 gates, fail-fast). Trigger: 'ijfw preflight', 'run preflight', 'check before ship', 'preflight gates', 'validate before release'."
 ---
 
 # IJFW Preflight
@@ -26,6 +26,7 @@ ijfw preflight
 9. license-check -- dependency license compatibility
 10. pack-smoke -- `npm pack` roundtrip + `ijfw --help` assert
 11. upgrade-smoke -- upgrade from floor version, assert settings key survives
+12. stale platform count -- runs `scripts/preflight-stale-count.sh`; fails if any shippable surface still contains the old "8 platforms" string
 
 ## Behavior
 

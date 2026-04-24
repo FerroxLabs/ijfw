@@ -20,8 +20,8 @@ Always exits 0. Never blocks Claude Code. Errors land in `~/.ijfw/logs/update-ch
 ## Notification (4 surfaces)
 
 1. **statusline** (Claude Code, Wave 2) -- `↑ 1.1.6 available` segment
-2. **Memory prelude** (all 8 platforms) -- first-turn one-liner when behind AND `last_applied_version < last_latest_seen`
-3. **Chat command** (all 8 platforms via MCP) -- user types "ijfw update check" -> model invokes `ijfw_update_check` -> renders structured result + terminal confirmation instruction
+2. **Memory prelude** (all 13 platforms) -- first-turn one-liner when behind AND `last_applied_version < last_latest_seen`
+3. **Chat command** (all 13 platforms via MCP) -- user types "ijfw update check" -> model invokes `ijfw_update_check` -> renders structured result + terminal confirmation instruction
 4. **Explicit CLI** -- `ijfw update --check` (exit 0 up-to-date, 3 if available, 1 on error)
 
 ## Action (out-of-band confirmation)

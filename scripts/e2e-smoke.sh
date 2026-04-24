@@ -145,6 +145,16 @@ if [ "$LEAK" = "0" ]; then
 fi
 
 # ============================================================
+# Stale platform-count regression gate (runs before canonical install)
+# ============================================================
+hdr "Stale platform-count gate"
+if (cd "$REPO_ROOT" && bash scripts/preflight-stale-count.sh); then
+  pass "preflight-stale-count: no stale strings"
+else
+  fail "preflight-stale-count: stale '8 platforms' strings found -- fix before ship"
+fi
+
+# ============================================================
 # MODE 2: CANONICAL install in isolated HOME
 # ============================================================
 hdr "Mode 2 of 2 -- canonical install in isolated HOME"

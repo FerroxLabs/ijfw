@@ -5,7 +5,7 @@ description: "IJFW command index. Groups commands by intent: Build / Remember / 
 Single landing surface for IJFW commands, grouped by what the user is trying to do. Print when invoked without arguments.
 
 ```
-IJFW -- one interface, 8 platforms, persistent memory across all of them.
+IJFW -- one interface, 13 platforms, persistent memory across all of them.
 
 Build -- plan -- explore
   /workflow             -- quick or deep project workflow (brainstorm -> plan -> build)
