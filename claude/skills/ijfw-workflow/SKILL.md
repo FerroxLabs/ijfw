@@ -190,7 +190,50 @@ Mark completed after approval.
 
 **Check:** `.ijfw/memory/brief.md` must exist. If not, go back to Step 3.
 
-Two sub-steps:
+### S5.0 Temporal Interrogation (Deep mode only)
+
+Gate: fires only when tier === "deep". Skip for Quick and Express tiers.
+
+Before drafting the plan body, ask:
+
+```json
+{
+  "questions": [{
+    "question": "How much time can you give this?",
+    "header": "Time budget",
+    "multiSelect": false,
+    "options": [
+      { "label": "HOUR 1", "description": "Smallest shippable slice -- one commit, one verify" },
+      { "label": "HOUR 2-3", "description": "One coherent feature -- small task set, no migration" },
+      { "label": "HOUR 4-5", "description": "Multi-task -- dependency ordering matters, real risk surface" },
+      { "label": "HOUR 6+", "description": "Phased -- rollback plan, incremental ship path" }
+    ]
+  }]
+}
+```
+
+No "(Recommended)" tag. Time budget is the user's fact, not a judgment call.
+
+Immediately after the user answers, write the choice to `.ijfw/memory/plan.md` frontmatter BEFORE the plan body is drafted:
+
+```yaml
+---
+time_budget: HOUR_2_3
+---
+```
+
+Values: `HOUR_1` / `HOUR_2_3` / `HOUR_4_5` / `HOUR_6_PLUS`.
+
+**Budget ceilings (advisory to planner; plan-check enforces via `budget_overrun` metric):**
+
+| Bucket | Max tasks | Max waves | Risk depth | Rollback required |
+|---|---|---|---|---|
+| HOUR_1 | 3 | 1 | none | no |
+| HOUR_2_3 | 7 | 2 | surface | no |
+| HOUR_4_5 | 12 | 3 | deep | recommended |
+| HOUR_6_PLUS | unlimited | unlimited | deep | yes |
+
+Three sub-steps:
 1. **High-level plan with dependency analysis:** Execution strategy with tasks assigned to team. For each task, check: does it read/write files another task touches? Does it depend on another task's output? Organize into waves -- parallel (independent files/modules) or sequential (dependencies). Show the user WHY each wave is parallel or sequential. See `references/build-phase.md` for the dependency checklist.
 2. **Implementation breakdown:** Each task broken into bite-sized steps (2-5 min each) with TDD where applicable and verifiable success criteria.
 

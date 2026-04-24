@@ -27,3 +27,5 @@ If not, it asks one clarifying question to establish scope before drafting.
 
 **GATE:** Plan phase ends at the PLAN AUDIT gate -- every requirement has a task,
 no scope drops, dependencies ordered. Gate must pass before execution begins.
+
+Deep mode asks a time-budget question before drafting.
