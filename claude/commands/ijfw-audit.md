@@ -7,6 +7,27 @@ Run the audit gate for the current (or named) phase of the active IJFW workflow.
 Every IJFW workflow phase has a built-in audit checklist -- this command fires it
 explicitly without advancing to the next phase.
 
+**Ledger gate (Damir Law 4 scope -- run before any gate):** Read `.ijfw/state/execute-issues.json` at the start of every audit run:
+
+```bash
+read_issues() {
+  local f=".ijfw/state/execute-issues.json"
+  [ -f "$f" ] || { printf '{"issues":[]}'; return; }
+  cat "$f"
+}
+```
+
+If any entry has `status: unresolved`, halt with the list before running any phase gate:
+
+```
+ISSUE: unresolved-execute-issues
+  count: <N>
+  ids: [iss_001]
+  action: resolve with /ijfw-execute resolve <id> <note> first
+```
+
+Missing file = zero issues (day-1 fresh-install protection). Do not crash.
+
 **Phase audit gates available:**
 
 - **DISCOVER AUDIT** -- scope boundaries, success criteria, no hidden assumptions

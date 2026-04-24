@@ -27,6 +27,7 @@ ijfw preflight
 10. pack-smoke -- `npm pack` roundtrip + `ijfw --help` assert
 11. upgrade-smoke -- upgrade from floor version, assert settings key survives
 12. stale platform count -- runs `scripts/preflight-stale-count.sh`; fails if any shippable surface still contains the old "8 platforms" string
+13. unresolved execute-issues -- reads `.ijfw/state/execute-issues.json`; refuses preflight if any entry has `status: unresolved`. Missing file treated as zero issues (day-1 fresh-install protection). Canonical read stub: `[ -f ".ijfw/state/execute-issues.json" ] || printf '{"issues":[]}'`
 
 ## Behavior
 

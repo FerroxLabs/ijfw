@@ -3,6 +3,27 @@ name: ijfw-verify
 description: "Run the IJFW workflow Verify phase (Deep D5). Full audit against the original brief. Usage: /ijfw-verify"
 ---
 
+**Ledger gate (run first):** Before emitting any VERIFY PASS, read the execute-issues ledger:
+
+```bash
+read_issues() {
+  local f=".ijfw/state/execute-issues.json"
+  [ -f "$f" ] || { printf '{"issues":[]}'; return; }
+  cat "$f"
+}
+```
+
+If any entry has `status: unresolved` (any `kind`: `task-incomplete`, `task-stagnated`, `unsafe-verify`, `plan-review`), emit ISSUE and halt:
+
+```
+ISSUE: unresolved-execute-issues
+  count: <N>
+  ids: [iss_001, iss_003]
+  action: resolve with /ijfw-execute resolve <id> <note> before verifying
+```
+
+Missing file = zero issues (day-1 fresh-install protection). Do not crash.
+
 **Plausibility is not correctness.** Run the full Verify phase of the IJFW workflow. This is the quality gate before shipping -- a structured audit of everything built against the original brief. Every claim must trace to a command output, a test pass, or a manual verification you actually performed; never report "done" based on a plausible-looking diff alone.
 
 **What runs:**

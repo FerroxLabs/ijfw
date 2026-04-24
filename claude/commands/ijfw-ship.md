@@ -21,6 +21,27 @@ checks, deployment, monitoring, rollback plan, documentation, and memory update.
 - P20: Works on all target platforms
 - P21: Pricing respects the user (no surprise costs introduced)
 
+**Ledger gate (blocks ship):** Before the SHIP GATE runs, read `.ijfw/state/execute-issues.json`:
+
+```bash
+read_issues() {
+  local f=".ijfw/state/execute-issues.json"
+  [ -f "$f" ] || { printf '{"issues":[]}'; return; }
+  cat "$f"
+}
+```
+
+If any entry has `status: unresolved` (any `kind`), ship is refused:
+
+```
+ISSUE: ship-blocked-by-unresolved-issues
+  count: <N>
+  ids: [iss_001, iss_002]
+  action: resolve all issues before shipping
+```
+
+Missing file = zero issues (day-1 fresh-install protection). Resolved and absent entries do not block ship.
+
 Before running, the SHIP GATE re-reads the original brief and confirms what was
 built matches what was asked. If gaps remain, ship is held until they close.
 

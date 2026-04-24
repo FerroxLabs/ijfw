@@ -190,6 +190,30 @@ Mark completed after approval.
 
 **Check:** `.ijfw/memory/brief.md` must exist. If not, go back to Step 3.
 
+### S5 Contract generation (Deep mode only)
+
+In Deep mode, every task written into `.ijfw/memory/plan.md` must include a completion contract block. Write the contract inline with the task entry, immediately after the task's implementation steps:
+
+```yaml
+task_id: t1
+title: "<human-readable>"
+contract:
+  completion_criteria:
+    - id: c1
+      type: shell             # shell | model-verify | manual
+      description: "<what this proves>"
+      verify: "<command>"     # required for type:shell; passes through isSafeVerifyCommand
+  max_iterations: 3
+  halt_rule: "Emit ISSUE with failed criterion ids if any remain red after iter 3"
+```
+
+**Criterion types:**
+- `type: shell` -- allowlisted shell verify (default). Command passes through `isSafeVerifyCommand()` from `mcp-server/src/ralph-allowlist.js` before execution.
+- `type: model-verify` -- semantic check by model ("agent confirms brief alignment"). Bounded scope; use sparingly.
+- `type: manual` -- user confirms. Task pauses at verify step; user responds "pass" or "fail <reason>".
+
+Contracts are generated during this step, before execute begins. Every Deep-mode task gets one.
+
 ### S5.0 Temporal Interrogation (Deep mode only)
 
 Gate: fires only when tier === "deep". Skip for Quick and Express tiers.
@@ -253,6 +277,91 @@ Offer execution mode: Sequential (< 5 tasks) or Subagent swarm (5+ tasks).
 
 Both modes: `TaskCreate` per build task before dispatching. Two-stage review per task (spec + quality). Mark completed when all done.
 
+### S6 Ralph completion loop (Deep mode only)
+
+In Deep mode, every task runs under its completion contract (written in S5). Loop protocol:
+
+```
+previous_results = null
+
+for iter in 1..contract.max_iterations:
+  if iter == 1:
+    dispatch task to agent (or execute inline)
+  else:
+    re-dispatch with feedback: "Iter {iter}: criterion_{x} failed. Output: {last_20_lines}"
+
+  results = []
+  for criterion in contract.completion_criteria:
+    if criterion.type == "shell":
+      safety = isSafeVerifyCommand(criterion.verify)
+      if not safety.safe:
+        emit ISSUE: unsafe-verify
+          task_id: <id>
+          criterion_id: <id>
+          command: "<original>"
+          reason: "<from checker>"
+          halt: true
+        persist to .ijfw/state/execute-issues.json (kind: unsafe-verify)
+        halt task; break outer
+      outcome = run(criterion.verify, timeout=60s, capture_output=true)
+      results.append({ id: criterion.id, pass: outcome.exit == 0, output: outcome.tail(20) })
+    elif criterion.type == "model-verify":
+      outcome = model_check(criterion.description, context=brief + task_body)
+      results.append({ id: criterion.id, pass: outcome.pass, reason: outcome.reason })
+    elif criterion.type == "manual":
+      ask user "Did criterion {id} pass? (yes/no <reason>)"
+      results.append({ id: criterion.id, pass: user.answered == "yes", reason: user.reason })
+
+  if all(r.pass for r in results):
+    emit VERIFIED tag
+    auto-resolve any ledger entries for this task_id
+    break
+
+  # Stagnation halt: if iter N results are byte-identical to iter N-1,
+  # no progress is being made -- halt early rather than burn tokens.
+  if previous_results is not null and results == previous_results:
+    emit ISSUE(task-stagnated) with last outputs + "iter {iter} identical to iter {iter-1}"
+    persist to .ijfw/state/execute-issues.json (kind: task-stagnated, status: unresolved)
+    halt task; break
+
+  previous_results = results
+
+  if iter < contract.max_iterations:
+    continue  # next iter with feedback
+  else:
+    emit ISSUE(task-incomplete) with failed criterion ids + last outputs
+    persist to .ijfw/state/execute-issues.json (kind: task-incomplete, status: unresolved)
+    halt task (do not advance to next task)
+```
+
+**Ledger schema** (`.ijfw/state/execute-issues.json`):
+```json
+{
+  "schema_version": 1,
+  "issues": [
+    {
+      "id": "iss_001",
+      "task_id": "t3",
+      "criterion_id": "c2",
+      "kind": "task-incomplete",
+      "message": "tsc --noEmit failed after 3 iterations",
+      "last_output": "...",
+      "iter_count": 3,
+      "status": "unresolved",
+      "rehearsal": false,
+      "created_at": "<ISO-8601>",
+      "resolved_at": null
+    }
+  ]
+}
+```
+
+Kinds: `task-incomplete`, `task-stagnated`, `unsafe-verify`, `plan-review` (Phase 2). All share this file.
+
+**Day-1 protection:** Every ledger consumer treats a missing file as zero issues. Never crash on missing ledger.
+
+**resolve sub-command:** When user says `/ijfw-execute resolve <iss_id> <note>` -- load ledger, find entry by id, set `status: resolved`, `resolution: accepted|deferred|reworked` per note, `resolved_at: <now>`, write back atomically, emit one-line receipt.
+
 ## STEP 7: VERIFY (see `references/ship-phase.md`)
 
 Run tests/lint/build -- evidence before claims. Verify against the **brief**, not just the plan.
@@ -310,6 +419,7 @@ These files enable resume after /clear or context compaction.
 
 - **AskUserQuestion scoring:** Options differ by degree (coverage %, risk level, time-to-ship, scope breadth) -> score prefix each description: "[Coverage: 80%]", "[Risk: LOW]". Options differ by kind (framework A vs B, style X vs Y) -> no score (gstack rule; see core SKILL.md for details).
 - **Canonical plan path is `.ijfw/memory/plan.md`; never write plan data elsewhere.**
+- **Every Deep-mode task has a completion contract. No contract = refuse to execute.**
 - **Interaction style respected.** Guided = AskUserQuestion. Conversation = open dialogue with periodic capture + checkpoints.
 - **Adaptive switching is natural.** No announcements. Read notes.md to avoid re-asking covered topics.
 - **TaskCreate for every workflow step** (or text checklist if unavailable).
