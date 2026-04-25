@@ -17,7 +17,7 @@ Rules:
 - Consider: what breaks if this is wrong? What's the blast radius?
 - Present tradeoffs explicitly. Push back if a simpler approach exists.
 - Store key architectural decisions in memory with rationale.
-- "Make no mistakes" — verify your own output before presenting.
+- "Make no mistakes" - verify your own output before presenting.
 
 Security (check every time):
 - Assume hostile input on every boundary. Validate server-side, never trust client.
@@ -31,7 +31,7 @@ Architecture:
 - Consider scale, maintainability, team familiarity.
 - Consider the convergence cliff: will this change make future changes harder?
 - Prefer reversible decisions. Flag irreversible ones explicitly.
-- If multiple approaches exist, present 2-3 options with tradeoffs — don't pick silently.
+- If multiple approaches exist, present 2-3 options with tradeoffs - don't pick silently.
 
 ## Architecture Discipline
 

@@ -1,4 +1,4 @@
-// test-cross-orchestrator.js — Unit tests for cross-orchestrator internals.
+// test-cross-orchestrator.js - Unit tests for cross-orchestrator internals.
 //
 // Strategy: we can't import private functions, so we test via runCrossOp
 // with a stubbed environment. The _installedCache from audit-roster lets us
@@ -35,14 +35,14 @@ const { runCrossOp } = await import('./src/cross-orchestrator.js');
 // ---------------------------------------------------------------------------
 
 test('fireExternal timeout returns auditor status:timeout', async () => {
-  // Use a pick pointing to `sleep` — will be killed by the short timeout.
+  // Use a pick pointing to `sleep` - will be killed by the short timeout.
   // We can't override picks from runCrossOp directly, so we use a fake
   // "installed" CLI that just hangs: `sleep 999`
   // We patch _installedCache to claim `codex` is installed, but override
-  // the invoke by monkey-patching (we can't — it's a const ROSTER entry).
+  // the invoke by monkey-patching (we can't - it's a const ROSTER entry).
   // Instead, we exercise the internal spawnCli indirectly by running
   // runCrossOp with IJFW_AUDIT_TIMEOUT_SEC=1 against a pick whose binary
-  // doesn't exist — that gives us 'failed' (ENOENT), not 'timeout'.
+  // doesn't exist - that gives us 'failed' (ENOENT), not 'timeout'.
   //
   // To test timeout directly without a hanging process, we use the
   // concurrency test approach: verify the allTimedOut guard triggers.
@@ -80,7 +80,7 @@ test('fireExternal timeout returns auditor status:timeout', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test: single-settlement guard — error + close both emit, no double-resolve
+// Test: single-settlement guard - error + close both emit, no double-resolve
 // ---------------------------------------------------------------------------
 
 test('spawnCli settle guard: no double-resolve when error+close both fire', async () => {
@@ -99,7 +99,7 @@ test('spawnCli settle guard: no double-resolve when error+close both fire', asyn
 
 // ---------------------------------------------------------------------------
 // Test: minResponses short-circuit with 3 picks, only 2 resolve quickly
-// (all three will fail fast since they're not installed — still demonstrates
+// (all three will fail fast since they're not installed - still demonstrates
 // that we return before all 3 if 2 have already settled)
 // ---------------------------------------------------------------------------
 
@@ -218,11 +218,11 @@ test('receipt.auditors includes source and elapsedMs', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 2: minResponses:2 — 3rd pick gets status:'aborted'
+// Fix 2: minResponses:2 - 3rd pick gets status:'aborted'
 // ---------------------------------------------------------------------------
 
-test('minResponses:2 — 3rd pick gets status:aborted when first 2 settle', async () => {
-  // Prime 3 non-self "installed" auditors (all will fail fast via ENOENT —
+test('minResponses:2 - 3rd pick gets status:aborted when first 2 settle', async () => {
+  // Prime 3 non-self "installed" auditors (all will fail fast via ENOENT -
   // fast enough that 2 settle before the 3rd is launched or mid-flight).
   primeCache(['codex', 'gemini', 'opencode']);
   const env = {
@@ -247,7 +247,7 @@ test('minResponses:2 — 3rd pick gets status:aborted when first 2 settle', asyn
       if (s !== null) assert.ok(validStatuses.includes(s), `unexpected status: ${s}`);
     }
     // At least one aborted or all settled is both acceptable (ENOENT is so fast
-    // all 3 may settle before threshold — that's a valid pass too).
+    // all 3 may settle before threshold - that's a valid pass too).
     const abortedCount = result.auditorResults.filter(r => r?.status === 'aborted').length;
     const settledCount = result.auditorResults.filter(r => r !== null && r?.status !== 'aborted').length;
     assert.ok(settledCount >= 2 || abortedCount > 0, 'at least 2 settled or some aborted');
@@ -255,7 +255,7 @@ test('minResponses:2 — 3rd pick gets status:aborted when first 2 settle', asyn
 });
 
 // ---------------------------------------------------------------------------
-// Fix 3: parsePosInt / env var validation — invalid IJFW_AUDIT_CONCURRENCY
+// Fix 3: parsePosInt / env var validation - invalid IJFW_AUDIT_CONCURRENCY
 // ---------------------------------------------------------------------------
 
 test('invalid IJFW_AUDIT_CONCURRENCY falls back to 3 and emits no crash', async () => {

@@ -94,7 +94,7 @@ test('assignRoles critique assigns all three angles', () => {
 });
 
 test('assignRoles missing when auditor not in roster', () => {
-  // Remove gemini — citations angle preferred by gemini should go to missing or fallback.
+  // Remove gemini - citations angle preferred by gemini should go to missing or fallback.
   const roster = ['codex', 'claude', 'opencode', 'aider', 'copilot']; // no gemini
   const { roles } = assignRoles('research', roster, 'codex');
   // citations preferred list is ['gemini', 'claude', 'copilot']; claude is installed so it takes it
@@ -106,7 +106,7 @@ test('assignRoles missing when auditor not in roster', () => {
   // use a stripped roster with none of the citation preferred installed.
   const sparseRoster = ['codex']; // no gemini, claude, copilot
   const { missing: m2 } = assignRoles('research', sparseRoster, 'something');
-  // citations preferred: gemini, claude, copilot — none in sparse roster → missing
+  // citations preferred: gemini, claude, copilot - none in sparse roster → missing
   assert.ok(m2.some(m => m.angle === 'citations'), 'citations should be in missing');
 });
 
@@ -311,7 +311,7 @@ test('mergeResponses audit handles empty responses', () => {
   assert.deepEqual(merged, []);
 });
 
-test('mergeResponses research consensus — same normalised claim from ≥2 auditors', () => {
+test('mergeResponses research consensus - same normalised claim from ≥2 auditors', () => {
   const r1 = { items: [{ claim: 'Node is fast', evidence: 'bench A', source: 'x', confidence: 'high' }] };
   const r2 = { items: [{ claim: 'node is fast', evidence: 'bench A', source: 'y', confidence: 'high' }] }; // same after normalise
   const { consensus, unique } = mergeResponses('research', [r1, r2]);
@@ -319,7 +319,7 @@ test('mergeResponses research consensus — same normalised claim from ≥2 audi
   assert.equal(Object.keys(unique).length, 0, 'no unique items when consensus detected');
 });
 
-test('mergeResponses research contested — same claim with differing confidence', () => {
+test('mergeResponses research contested - same claim with differing confidence', () => {
   const r1 = { items: [{ claim: 'async adds overhead', evidence: 'traces', source: 'a', confidence: 'high' }] };
   const r2 = { items: [{ claim: 'Async adds overhead', evidence: 'traces', source: 'b', confidence: 'low' }] };
   const { contested, consensus } = mergeResponses('research', [r1, r2]);
@@ -327,7 +327,7 @@ test('mergeResponses research contested — same claim with differing confidence
   assert.equal(consensus.length, 0);
 });
 
-test('mergeResponses research unique — claims only from one auditor', () => {
+test('mergeResponses research unique - claims only from one auditor', () => {
   const r1 = { items: [{ claim: 'claim A', evidence: 'e', source: 's', confidence: 'high' }] };
   const r2 = { items: [{ claim: 'claim B', evidence: 'e', source: 's', confidence: 'high' }] };
   const { unique, consensus } = mergeResponses('research', [r1, r2]);
@@ -435,7 +435,7 @@ test('checkBudget message matches exact format spec', () => {
 });
 
 test('checkBudget ignores receipts older than session start', () => {
-  // Receipt is 1 hour before session start — should not count toward accumulated.
+  // Receipt is 1 hour before session start - should not count toward accumulated.
   const sessionStart = new Date(Date.now() - 1_000);
   const oldReceipt = { timestamp: new Date(Date.now() - 7_200_000).toISOString(), cost_usd: 100.0 };
   const result = checkBudget({

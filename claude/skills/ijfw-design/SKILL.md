@@ -25,6 +25,8 @@ Check project root for `DESIGN.md`. If it exists:
 
 ## Step 2 - No DESIGN.md: Three-Option Picker
 
+MCP-only platforms (OpenCode, Qwen Code, Kimi Code, OpenClaw) access the same picker via `ijfw_memory_recall({context_hint: 'design_template[:<name>]'})`. Aider reads `DESIGN.md` once written.
+
 Present exactly three options. Wait for user selection before proceeding. If the user's input doesn't match a valid template name or brand, re-prompt with the numbered list.
 
 ### Option 1: Reference a brand ("like Vercel", "like Apple", "like Stripe")

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * IJFW Memory Server — Smoke Test
+ * IJFW Memory Server - Smoke Test
  * Tests all 4 tools and MCP protocol compliance.
  * Run: node mcp-server/test.js
  */
@@ -9,11 +9,12 @@
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { rmSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { rmSync, existsSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(__dirname, 'src', 'server.js');
+const TEMPLATES_DIR_LIVE = join(__dirname, 'templates', 'design');
 
 // Clean test state
 const TEST_DIR = join(__dirname, '.test-ijfw');
@@ -27,7 +28,7 @@ function assert(condition, message) {
   total++;
   if (condition) {
     passed++;
-    console.log(`  ✓ ${message}`);
+    console.log(`  [ok] ${message}`);
   } else {
     failed++;
     console.log(`  ✗ FAIL: ${message}`);
@@ -35,7 +36,7 @@ function assert(condition, message) {
 }
 
 async function runTest() {
-  console.log('IJFW Memory Server — Smoke Test\n');
+  console.log('IJFW Memory Server - Smoke Test\n');
 
   const server = spawn('node', [SERVER_PATH], {
     env: { ...process.env, IJFW_PROJECT_DIR: TEST_DIR },
@@ -91,7 +92,7 @@ async function runTest() {
 
     // --- Test 2: Notifications (no response expected) ---
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    // No response expected — just verify no crash
+    // No response expected - just verify no crash
 
     // --- Test 3: Tools list ---
     console.log('\nTools:');
@@ -125,14 +126,14 @@ async function runTest() {
     assert(resp.result !== undefined, 'Ping responds');
 
     // --- Test 7: Status (empty memory) ---
-    console.log('\nTools — status:');
+    console.log('\nTools - status:');
     send({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'ijfw_memory_status', arguments: {} } });
     resp = await waitForResponse(10);
     const statusText = resp.result?.content?.[0]?.text || '';
     assert(statusText.includes('Fresh project'), 'Status shows fresh project for empty memory');
 
     // --- Test 8: Store a decision ---
-    console.log('\nTools — store:');
+    console.log('\nTools - store:');
     send({ jsonrpc: '2.0', id: 11, method: 'tools/call', params: {
       name: 'ijfw_memory_store',
       arguments: { content: 'Use PostgreSQL for the database because of relational integrity needs.', type: 'decision', tags: ['database', 'architecture'] }
@@ -142,8 +143,8 @@ async function runTest() {
     assert(storeText.includes('Stored decision'), 'Store returns confirmation');
     assert(storeText.includes('database, architecture'), 'Store includes tags');
 
-    // --- Test 9: Store validation — too long ---
-    console.log('\nTools — validation:');
+    // --- Test 9: Store validation - too long ---
+    console.log('\nTools - validation:');
     send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: {
       name: 'ijfw_memory_store',
       arguments: { content: 'x'.repeat(6000), type: 'decision' }
@@ -152,7 +153,7 @@ async function runTest() {
     const validText = resp.result?.content?.[0]?.text || '';
     assert(validText.includes('exceeds'), 'Rejects content exceeding 5000 chars');
 
-    // --- Test 10: Store validation — invalid type ---
+    // --- Test 10: Store validation - invalid type ---
     send({ jsonrpc: '2.0', id: 13, method: 'tools/call', params: {
       name: 'ijfw_memory_store',
       arguments: { content: 'test', type: 'invalid_type' }
@@ -162,7 +163,7 @@ async function runTest() {
     assert(typeText.includes('must be one of'), 'Rejects invalid memory type');
 
     // --- Test 11: Search ---
-    console.log('\nTools — search:');
+    console.log('\nTools - search:');
     send({ jsonrpc: '2.0', id: 14, method: 'tools/call', params: {
       name: 'ijfw_memory_search',
       arguments: { query: 'PostgreSQL database' }
@@ -172,7 +173,7 @@ async function runTest() {
     assert(searchText.includes('PostgreSQL'), 'Search finds stored decision');
 
     // --- Test 12: Recall ---
-    console.log('\nTools — recall:');
+    console.log('\nTools - recall:');
     send({ jsonrpc: '2.0', id: 15, method: 'tools/call', params: {
       name: 'ijfw_memory_recall',
       arguments: { context_hint: 'decisions' }
@@ -451,9 +452,9 @@ async function runTest() {
   mkdirSync(join(TEAM_PROJ, '.ijfw', 'team'), { recursive: true });
   mkdirSync(join(TEAM_PROJ, '.ijfw', 'memory'), { recursive: true });
   // Personal knowledge mentions "PostgreSQL". Team decisions mention "PostgreSQL"
-  // too — both should appear, team ranked first.
+  // too - both should appear, team ranked first.
   writeFileSync(join(TEAM_PROJ, '.ijfw', 'memory', 'knowledge.md'),
-    '# Knowledge\n**decision**: Personal note — PostgreSQL local for dev\n');
+    '# Knowledge\n**decision**: Personal note - PostgreSQL local for dev\n');
   writeFileSync(join(TEAM_PROJ, '.ijfw', 'team', 'decisions.md'),
     '# Team Decisions\n**decision**: Team-wide PostgreSQL 16 in production, no MySQL\n');
   writeFileSync(join(TEAM_PROJ, '.ijfw', 'team', 'patterns.md'),
@@ -529,9 +530,9 @@ async function runTest() {
   // Use a recent date so the default 7d window catches it.
   const today = new Date().toISOString().slice(0, 10);
   const lines = [
-    // v1 line — no token fields, must default to 0
+    // v1 line - no token fields, must default to 0
     JSON.stringify({ v: 1, timestamp: `${today}T01:00:00Z`, session: 1, mode: 'smart', effort: 'high', routing: 'native', memory_stores: 3, handoff: false }),
-    // v2 line — full token + cost
+    // v2 line - full token + cost
     JSON.stringify({ v: 2, timestamp: `${today}T02:00:00Z`, session: 2, mode: 'smart', effort: 'high', routing: 'OpenRouter', memory_stores: 5, handoff: true, input_tokens: 10000, output_tokens: 2000, cache_read_tokens: 5000, cache_creation_tokens: 0, cost_usd: 0.3, model: 'claude-opus-4-6', prompt_check_fired: false, prompt_check_signals: [] }),
     'malformed line that should be skipped',
     JSON.stringify({ v: 2, timestamp: `${today}T03:00:00Z`, session: 3, mode: 'smart', effort: 'high', routing: 'native', memory_stores: 1, handoff: true, input_tokens: 5000, output_tokens: 1000, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0.12, model: 'claude-sonnet-4-6' })
@@ -546,7 +547,7 @@ async function runTest() {
   }
 
   try {
-    // tokens (default) — sums input/output across mixed v1/v2; malformed line skipped.
+    // tokens (default) - sums input/output across mixed v1/v2; malformed line skipped.
     let srv = spawnMetrics(M_PROJ);
     let resp = await callTool(srv, 300, 'ijfw_metrics', { period: '7d', metric: 'tokens' });
     let txt = resp.result?.content?.[0]?.text || '';
@@ -555,14 +556,14 @@ async function runTest() {
     assert(!resp.result?.isError, 'Tokens metric does not error on mixed schema');
     srv.kill();
 
-    // cost — total $0.42 (0.30 + 0.12); v1 line contributes 0.
+    // cost - total $0.42 (0.30 + 0.12); v1 line contributes 0.
     srv = spawnMetrics(M_PROJ);
     resp = await callTool(srv, 301, 'ijfw_metrics', { period: '7d', metric: 'cost' });
     txt = resp.result?.content?.[0]?.text || '';
     assert(txt.includes('$0.4200') || txt.includes('$0.42'), 'Cost metric totals correctly across mixed schema');
     srv.kill();
 
-    // sessions — count + handoff rate (2 of 3 = 66%).
+    // sessions - count + handoff rate (2 of 3 = 66%).
     srv = spawnMetrics(M_PROJ);
     resp = await callTool(srv, 302, 'ijfw_metrics', { period: '7d', metric: 'sessions' });
     txt = resp.result?.content?.[0]?.text || '';
@@ -570,14 +571,14 @@ async function runTest() {
     assert(txt.includes('Handoffs preserved: 2'), 'Sessions metric counts handoffs');
     srv.kill();
 
-    // routing — mixed native + OpenRouter.
+    // routing - mixed native + OpenRouter.
     srv = spawnMetrics(M_PROJ);
     resp = await callTool(srv, 303, 'ijfw_metrics', { period: '7d', metric: 'routing' });
     txt = resp.result?.content?.[0]?.text || '';
     assert(txt.includes('native') && txt.includes('OpenRouter'), 'Routing metric shows mixed routing breakdown');
     srv.kill();
 
-    // Zero state — fresh project, no metrics file.
+    // Zero state - fresh project, no metrics file.
     const freshProj = join(M_HARNESS, 'fresh');
     mkdirSync(join(freshProj, '.ijfw'), { recursive: true });
     srv = spawnMetrics(freshProj);
@@ -594,7 +595,7 @@ async function runTest() {
   if (existsSync(M_HARNESS)) rmSync(M_HARNESS, { recursive: true });
 
   // --- Phase 3 #2: Prompt-check detector ---
-  // Direct unit tests on the pure-JS detector (no MCP roundtrip — fast),
+  // Direct unit tests on the pure-JS detector (no MCP roundtrip - fast),
   // plus one MCP roundtrip to verify tool wiring.
   console.log('\nPrompt-check detector:');
   const { checkPrompt } = await import(join(__dirname, 'src', 'prompt-check.js'));
@@ -610,13 +611,13 @@ async function runTest() {
     return r;
   };
 
-  // True positives — should fire (≥2 signals, short, no target)
+  // True positives - should fire (≥2 signals, short, no target)
   expectVague('fix it',                         'bare verb + anaphora + no target');
   expectVague('refactor this',                  'bare verb + anaphora + no target');
   expectVague('make it better',                 'abstract goal + anaphora');
   expectVague('clean up the code',              'bare verb + abstract + no target');
 
-  // True negatives — should NOT fire
+  // True negatives - should NOT fire
   expectNotVague('refactor src/auth.py to use async',     'has file path');
   expectNotVague('fix the off-by-one in getUserById',     'has identifier');
   expectNotVague('explain how rate-limiting works in Express middleware and where I should add the per-IP cap',
@@ -627,7 +628,7 @@ async function runTest() {
   expectNotVague('ijfw off, just do this',                'override keyword');
   expectNotVague('',                                       'empty prompt bypass');
 
-  // Edge cases — UTF-8, emoji, multi-line, fenced
+  // Edge cases - UTF-8, emoji, multi-line, fenced
   expectNotVague('```\nfix it\n```',                       'fenced-code bypass');
   expectNotVague('this is fine for sources/build.py:42',  'has file:line target');
   // Emoji + bare verb is still a target-less ask but the bare-verb regex requires
@@ -643,7 +644,7 @@ async function runTest() {
   // Single signal alone (no_target only) does NOT fire
   expectNotVague('explain TypeScript decorators',          'single signal below threshold');
 
-  // MCP roundtrip — server returns wired tool result
+  // MCP roundtrip - server returns wired tool result
   const PC_HOME = join(tmpdir(), `ijfw-pc-${process.pid}`);
   mkdirSync(PC_HOME, { recursive: true });
   const pcSrv = spawn('node', [SERVER_PATH], {
@@ -662,12 +663,120 @@ async function runTest() {
   pcSrv.kill();
   if (existsSync(PC_HOME)) rmSync(PC_HOME, { recursive: true });
 
+  // --- 1.2.0 Phase 5: DESIGN picker via ijfw_memory_recall ---
+  // MCP-only extension for OpenCode / Qwen / Kimi / OpenClaw / Aider.
+  // Catalog mode + body mode + invalid-name guard + path-traversal guard.
+  // Prelude surfacing verified via a dedicated cwd with no DESIGN.md.
+  console.log('\nDESIGN picker (Phase 5):');
+  const D_HARNESS = join(tmpdir(), `ijfw-design-${process.pid}`);
+  const D_HOME = join(D_HARNESS, 'home');
+  const D_PROJ = join(D_HARNESS, 'design-proj');
+  const D_WITH_DESIGN = join(D_HARNESS, 'has-design');
+  if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true });
+  mkdirSync(join(D_HOME, '.ijfw'), { recursive: true });
+  mkdirSync(join(D_PROJ, '.ijfw', 'memory'), { recursive: true });
+  mkdirSync(join(D_WITH_DESIGN, '.ijfw', 'memory'), { recursive: true });
+  writeFileSync(join(D_WITH_DESIGN, 'DESIGN.md'), '# Existing design contract\n');
+
+  function spawnDesign(projectDir, cwd) {
+    return spawn('node', [SERVER_PATH], {
+      env: { ...process.env, HOME: D_HOME, IJFW_PROJECT_DIR: projectDir },
+      cwd: cwd || projectDir,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+  }
+
+  try {
+    // Catalog mode -- bare 'design_template'.
+    let srv = spawnDesign(D_PROJ);
+    let resp = await callTool(srv, 500, 'ijfw_memory_recall', { context_hint: 'design_template' });
+    let txt = resp.result?.content?.[0]?.text || '';
+    const catalogNames = [
+      'bento-grid', 'brutalist-luxe', 'cinematic-dark', 'data-dense-dashboard',
+      'editorial-warm', 'glassmorphic', 'magazine-editorial', 'maximalist-vibrant',
+      'neo-swiss-tech', 'swiss-minimal', 'terminal-native', 'warm-organic'
+    ];
+    const allPresent = catalogNames.every(n => txt.includes(n));
+    assert(allPresent, 'Catalog lists all 12 template names');
+    assert(txt.includes('Pick one with: ijfw_memory_recall'), 'Catalog includes invocation footer');
+    assert(resp.result?.isError !== true, 'Catalog mode does not report isError');
+    srv.kill();
+
+    // Body mode -- swiss-minimal.
+    srv = spawnDesign(D_PROJ);
+    resp = await callTool(srv, 501, 'ijfw_memory_recall', { context_hint: 'design_template:swiss-minimal' });
+    txt = resp.result?.content?.[0]?.text || '';
+    assert(txt.includes('Swiss Minimal'), 'Body mode returns the swiss-minimal template body');
+    assert(txt.length > 500, 'Body mode body exceeds 500 chars');
+    assert(resp.result?.isError !== true, 'Body mode does not report isError');
+    srv.kill();
+
+    // Unknown name -- isError.
+    srv = spawnDesign(D_PROJ);
+    resp = await callTool(srv, 502, 'ijfw_memory_recall', { context_hint: 'design_template:nonexistent' });
+    assert(resp.result?.isError === true, 'Unknown template name returns isError:true');
+    srv.kill();
+
+    // Path-traversal attempt -- rejected by name validator.
+    srv = spawnDesign(D_PROJ);
+    resp = await callTool(srv, 503, 'ijfw_memory_recall', { context_hint: 'design_template:../etc/passwd' });
+    assert(resp.result?.isError === true, 'Path-traversal in template name is rejected');
+    srv.kill();
+
+    // Prelude -- includes Design picker block when cwd has no DESIGN.md.
+    srv = spawnDesign(D_PROJ);
+    resp = await callTool(srv, 504, 'ijfw_memory_prelude', {});
+    txt = resp.result?.content?.[0]?.text || '';
+    assert(txt.includes('## Design picker'), 'Prelude includes Design picker block when no DESIGN.md in cwd');
+    assert(txt.includes('design_template'), 'Prelude picker block references the context_hint');
+    srv.kill();
+
+    // Prelude -- omits Design picker block when DESIGN.md already exists in cwd.
+    srv = spawnDesign(D_WITH_DESIGN);
+    resp = await callTool(srv, 505, 'ijfw_memory_prelude', {});
+    txt = resp.result?.content?.[0]?.text || '';
+    assert(!txt.includes('## Design picker'), 'Prelude omits Design picker block when DESIGN.md exists');
+    srv.kill();
+
+    // Codex R4 audit close: PROJECT_DIR is authoritative, not cwd. Spawn with
+    // IJFW_PROJECT_DIR = D_WITH_DESIGN (has DESIGN.md) but cwd = D_PROJ (no
+    // DESIGN.md). Pre-fix, prelude keyed off cwd and showed the picker; post-
+    // fix, prelude reads PROJECT_DIR and omits it.
+    srv = spawnDesign(D_WITH_DESIGN, D_PROJ);
+    resp = await callTool(srv, 506, 'ijfw_memory_prelude', {});
+    txt = resp.result?.content?.[0]?.text || '';
+    assert(!txt.includes('## Design picker'), 'Prelude uses IJFW_PROJECT_DIR not cwd (codex R4 regression)');
+    srv.kill();
+
+    // Codex R4 audit close: symlink escape inside templates/design/ is
+    // rejected. Pre-fix, a symlink whose target pointed outside the dir would
+    // pass the lexical resolve()+startsWith() check; post-fix, realpath on
+    // both sides catches it. Create link at the live templates dir, test,
+    // always clean up.
+    const linkPath = join(TEMPLATES_DIR_LIVE, 'foo.md');
+    try { unlinkSync(linkPath); } catch {}
+    symlinkSync('/etc/passwd', linkPath);
+    try {
+      srv = spawnDesign(D_PROJ);
+      resp = await callTool(srv, 507, 'ijfw_memory_recall', { context_hint: 'design_template:foo' });
+      assert(resp.result?.isError === true, 'Symlink escape via template name is rejected (realpath guard)');
+      srv.kill();
+    } finally {
+      try { unlinkSync(linkPath); } catch {}
+    }
+  } catch (err) {
+    console.log(`  [x] design picker error: ${err.message}`);
+    failed++;
+  }
+
+  if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true });
+
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
 
   // Summary
-  console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`\n---------------------------------------`);
   console.log(`Results: ${passed}/${total} passed, ${failed} failed`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`---------------------------------------`);
 
   process.exit(failed > 0 ? 1 : 0);
 }

@@ -3,14 +3,14 @@
 **Date:** 2026-04-14
 **Task:** `01-bug-paginator` (single-file off-by-one bug fix)
 **Model:** `claude-sonnet-4-5` via `claude -p --output-format json`
-**Epochs:** 1 per arm (n=1, scaffold — wide uncertainty)
+**Epochs:** 1 per arm (n=1, scaffold - wide uncertainty)
 **Total spend:** $0.675 (well under the $2.25 cap)
 
 ## Arms
 
-- **A** — `CLAUDE_DISABLE_PLUGINS=1` (baseline, no IJFW)
-- **B** — `IJFW_TERSE_ONLY=1` (IJFW output rules only)
-- **C** — full IJFW (all skills, hooks, routing active)
+- **A** - `CLAUDE_DISABLE_PLUGINS=1` (baseline, no IJFW)
+- **B** - `IJFW_TERSE_ONLY=1` (IJFW output rules only)
+- **C** - full IJFW (all skills, hooks, routing active)
 
 ## Results
 
@@ -22,35 +22,35 @@
 
 ## Deltas vs baseline (Arm A)
 
-| Contrast | Cost Δ | Output-token Δ | Cache-create Δ |
+| Contrast | Cost delta | Output-token delta | Cache-create delta |
 |----------|--------|----------------|----------------|
-| B − A | **−15.6%** | −18.5% | −1.8% |
-| **C − A** | **−41.0%** | **−20.3%** | **−51.1%** |
-| C − B | −30.1% | −2.2% | −50.2% |
+| B - A | **-15.6%** | -18.5% | -1.8% |
+| **C - A** | **-41.0%** | **-20.3%** | **-51.1%** |
+| C - B | -30.1% | -2.2% | -50.2% |
 
 ## What this tells us (honest read, n=1)
 
 - **Cost reduction is real.** Full IJFW (Arm C) on this task delivered a
   **41% cost reduction vs unconstrained baseline.** Most of that comes
-  from cache-creation (−51%) — IJFW's context discipline means Claude
+  from cache-creation (-51%) - IJFW's context discipline means Claude
   re-caches less per session.
 - **Output discipline pays.** Both B and C cut output tokens by ~20%
-  relative to baseline — the `ijfw-core` output rules are doing real work.
+  relative to baseline - the `ijfw-core` output rules are doing real work.
 - **C takes longer wall-clock** (146s vs 106s A) but costs less. More
   turns at lower per-turn cost. Acceptable trade.
-- **Terse-only (B) is surprisingly competitive on cost** (−15.6%) but
+- **Terse-only (B) is surprisingly competitive on cost** (-15.6%) but
   buys less than the full stack on cache-creation. The routing + context
   discipline beyond output rules is where the remaining savings live.
 
 ## Calibrating `IJFW_BASELINE_FACTOR`
 
-The Stop-hook savings reframe (W1.3) defaulted to **1.65×** as the
+The Stop-hook savings reframe (W1.3) defaulted to **1.65x** as the
 unconstrained/IJFW output ratio. Measured on this one task:
 
 | Comparison | Ratio |
 |------------|-------|
-| Arm A output / Arm C output | 4042 / 3221 = **1.255×** |
-| Arm A cost / Arm C cost     | $0.2770 / $0.1636 = **1.693×** |
+| Arm A output / Arm C output | 4042 / 3221 = **1.255x** |
+| Arm A cost / Arm C cost     | $0.2770 / $0.1636 = **1.693x** |
 
 The token ratio is lower than 1.65; the cost ratio is close to it
 (driven by cache-creation savings that don't show up in output-token

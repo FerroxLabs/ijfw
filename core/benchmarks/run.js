@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// IJFW benchmark runner — scaffold.
+// IJFW benchmark runner - scaffold.
 // Spawns `claude -p --output-format json` per (task, arm, epoch), parses usage+cost, writes JSONL.
 // Default cost cap $10; abort if running total exceeds cap.
 
@@ -29,7 +29,7 @@ function parseArgs(argv) {
     else if (a === '--really') out.really = true;
     else if (a === '--max-cost-usd') out.maxCostUsd = parseFloat(argv[++i]);
     else if (a === '--model') out.model = argv[++i];
-    // A5 — skill-variant: path to a SKILL.md that replaces ijfw-core during this run.
+    // A5 - skill-variant: path to a SKILL.md that replaces ijfw-core during this run.
     // Useful for A/B testing skill rewrites without permanently changing the plugin.
     else if (a === '--skill-variant') out.skillVariant = argv[++i];
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
@@ -105,7 +105,7 @@ async function main() {
     process.exit(2);
   }
 
-  // A5 — skill-variant swap. Backup the live ijfw-core SKILL.md, copy the
+  // A5 - skill-variant swap. Backup the live ijfw-core SKILL.md, copy the
   // variant into its place for the duration of the run, restore in finally.
   let skillSwap = null;
   if (opts.skillVariant) {

@@ -57,7 +57,7 @@ test('v3 record has new fields populated', () => {
 test('v1 and v2 records still parse without errors (forward compat)', () => {
   const raw = readFileSync(join(sandbox, '.ijfw', 'metrics', 'sessions.jsonl'), 'utf8');
   const rows = raw.split('\n').filter(Boolean).map(l => JSON.parse(l));
-  // Sum tokens across versions — missing fields should default to 0.
+  // Sum tokens across versions - missing fields should default to 0.
   const totalIn = rows.reduce((s, r) => s + (r.input_tokens || 0), 0);
   const totalOut = rows.reduce((s, r) => s + (r.output_tokens || 0), 0);
   assert.equal(totalIn, 7000);  // 0 + 3000 + 4000

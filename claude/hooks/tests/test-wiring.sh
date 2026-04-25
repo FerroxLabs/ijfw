@@ -17,7 +17,7 @@ assert_event() {
     echo "  ✗ $event → expected scripts/$want_script, got scripts/${got:-<none>}" >&2
     FAILED=$((FAILED+1))
   else
-    echo "  ✓ $event → scripts/$got"
+    echo "  [ok] $event → scripts/$got"
   fi
 }
 

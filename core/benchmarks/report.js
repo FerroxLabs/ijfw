@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Read JSONL run records, emit markdown table per research §6.
+// Read JSONL run records, emit markdown table per research sec6.
 // Usage: node report.js runs/*.jsonl
 
 import { readFileSync } from 'node:fs';
@@ -73,13 +73,13 @@ function main() {
   }
 
   console.log('\n## Paired deltas (cost_usd, 95% bootstrap CI)\n');
-  console.log('| Task | Contrast | Δ mean | 95% CI | n |');
+  console.log('| Task | Contrast | delta mean | 95% CI | n |');
   console.log('|------|----------|--------|--------|---|');
   for (const t of tasks) {
     const A = (b.get(`${t}::A`) ?? []).map((r) => r.cost_usd || 0);
     const B = (b.get(`${t}::B`) ?? []).map((r) => r.cost_usd || 0);
     const C = (b.get(`${t}::C`) ?? []).map((r) => r.cost_usd || 0);
-    for (const [label, x, y] of [['C−A', C, A], ['C−B', C, B], ['B−A', B, A]]) {
+    for (const [label, x, y] of [['C-A', C, A], ['C-B', C, B], ['B-A', B, A]]) {
       const r = pairedBootstrapDelta(x, y);
       if (!r.n) continue;
       console.log(`| ${t} | ${label} | ${r.delta.toFixed(4)} | [${r.lo.toFixed(4)}, ${r.hi.toFixed(4)}] | ${r.n} |`);

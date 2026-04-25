@@ -147,7 +147,7 @@ test('picks returned by pickAuditors carry .family property', () => {
 // Since we can't actually install CLIs in tests, we monkey-patch spawnSync
 // by using the only escape hatch available: the `only` filter or a known-installed
 // binary. Instead, we test the logic by observing picks shape and the
-// installed=false handling — the diversity picker works on rosterWithStatus
+// installed=false handling - the diversity picker works on rosterWithStatus
 // which respects the real probe. We test the family-selection logic using
 // the real roster by simply asserting structural properties.
 
@@ -191,7 +191,7 @@ test('diversity strategy: missing entries have family + reason shape', () => {
 });
 
 test('diversity strategy: when openai+google both absent, missing covers both families', () => {
-  // Simulate caller=unknown (no self) but no CLIs installed — missing should
+  // Simulate caller=unknown (no self) but no CLIs installed - missing should
   // reflect what we aimed for. We assert at minimum that missing is an array
   // and any entries have the expected shape.
   const r = pickAuditors({ strategy: 'diversity', env: {} });
@@ -214,7 +214,7 @@ test('priority strategy (default) still returns same shape', () => {
   assert.deepEqual(r1, r2, 'default and explicit priority strategy must match');
 });
 
-// --- Fix 3: diversity dedupe — caller=codex, only gemini installed ---
+// --- Fix 3: diversity dedupe - caller=codex, only gemini installed ---
 // We test the deduplication logic using the _installedCache escape hatch:
 // override the module's cache so that only gemini appears installed.
 import { _installedCache } from './src/audit-roster.js';
@@ -322,7 +322,7 @@ test('isReachable: any=true when either cli or api is true', () => {
   assert.equal(r.any, true);
 });
 
-// --- Fix 1: API-only diversity picks — no CLIs but API keys set ---
+// --- Fix 1: API-only diversity picks - no CLIs but API keys set ---
 
 test('diversity picker: node env with no CLIs but OPENAI_API_KEY + GEMINI_API_KEY returns both with preferredSource:api', () => {
   const allIds = ['codex', 'gemini', 'opencode', 'aider', 'copilot', 'claude'];

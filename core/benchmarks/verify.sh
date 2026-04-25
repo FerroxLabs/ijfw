@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dispatcher — runs a task's verify.sh.
+# Dispatcher - runs a task's verify.sh.
 set -euo pipefail
 task="${1:-}"
 if [ -z "$task" ]; then

@@ -29,3 +29,22 @@ Aider sessions don't see IJFW's persistent memory. After significant work:
 
 Stay in the lane the user asked for. If you spot adjacent issues, mention them
 in chat -- don't fix them silently.
+
+## DESIGN picker
+
+If the user asks for a design contract and no `DESIGN.md` exists, suggest one
+of the 12 IJFW curated templates (alphabetical):
+
+bento-grid, brutalist-luxe, cinematic-dark, data-dense-dashboard,
+editorial-warm, glassmorphic, magazine-editorial, maximalist-vibrant,
+neo-swiss-tech, swiss-minimal, terminal-native, warm-organic.
+
+Aider has no MCP client, so it cannot fetch the template body itself. Ask the
+user to run this in any MCP-capable sibling CLI on their machine (Claude Code
+/ Codex / Gemini / Cursor / Windsurf / Copilot / Hermes / Wayland / OpenCode /
+Qwen / Kimi / OpenClaw) and paste the output back into the Aider chat:
+
+    ijfw_memory_recall({ context_hint: "design_template:<name>" })
+
+Once the user pastes the body, Aider writes `DESIGN.md` at the project root
+and picks it up automatically on the next turn.

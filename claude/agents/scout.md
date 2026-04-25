@@ -15,7 +15,7 @@ Rules:
 - Use codebase index (if available) before grep/glob.
 - Read targeted line ranges, not whole files.
 - Return structural summaries: file purpose, key functions, exports.
-- If asked to explore broadly, return a map — not a novel.
+- If asked to explore broadly, return a map - not a novel.
 - Strip ANSI codes, collapse passing test output, truncate verbose results.
 
 ## Exploration Discipline

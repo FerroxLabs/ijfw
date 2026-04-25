@@ -103,9 +103,24 @@ contract:
 
 Four dry-run scripts ship as ship-blockers: happy-path (3 criteria pass iter 1), fail-path (stagnation halt fires), unsafe-verify (task halts BEFORE rm -rf runs), multi-file refactor (iter 1 mis-edit caught + iter 2 verifies). All four + preflight-stale-count + three earlier phase dry-runs aggregate in `scripts/1.2.0-verify-all.sh`, which also flushes `rehearsal: true` ledger entries after the run (cleanup discipline).
 
+### Phase 5 -- DESIGN picker extension to 5 new platforms
+
+**Closes the README 1.2.0 promise** that the DESIGN picker + 12 curated templates "reach OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider." Those five platforms lack a Claude-style skills tree (MCP-only) or lack MCP entirely (Aider rules-only) -- the only cross-cutting delivery channel was the MCP server itself. Zero new MCP tools (10-tool cap held per CLAUDE.md policy); the catalog and the template bodies ride on `ijfw_memory_recall` via colon-syntax on `context_hint`.
+
+- **`context_hint: "design_template"`** returns the 12-name catalog with one-line descriptions and an invocation footer. Ordered alphabetically, self-contained, no external index.
+- **`context_hint: "design_template:<name>"`** returns the verbatim body of `mcp-server/templates/design/<name>.md`. Name validator is `/^[a-z][a-z0-9-]{0,40}$/` plus a resolved-path-contains check so `../etc/passwd` and oversized inputs never reach the filesystem.
+- **Prelude surfacing** -- `ijfw_memory_prelude` now appends a compact `## Design picker` block (5 lines) when the project cwd has no `DESIGN.md`. Placed after the update nudge and before team knowledge so Codex / Gemini / Cursor / Windsurf / OpenCode / Qwen / Kimi / OpenClaw see it on first-turn recall without drowning the more important team-memory surface.
+- **Aider carries the picker too** -- `aider/CONVENTIONS.md` gains a tight three-step "DESIGN picker (via IJFW MCP)" section. Aider itself has no MCP, but users invoke the picker from any MCP-capable sibling CLI, write the body to `DESIGN.md`, and Aider reads it natively on the next turn.
+- **Skill mirrors** -- `shared/skills/ijfw-design/SKILL.md` + the `claude/` and `codex/` mirrors each add one pre-list note so the three-option picker narrative stays intact while naming the MCP fallback for platforms without a skills tree.
+- **Templates are self-contained** in `mcp-server/templates/design/` so the MCP server ships the picker without path assumptions about sibling `claude/` / `codex/` trees. 12 files present; gated against drift via the new prelude+catalog test (all 12 names asserted present).
+
+Files changed: `mcp-server/src/server.js` (+79 lines: `handleDesignTemplate` helper, `DESIGN_TEMPLATE_CATALOG` constant, handleRecall + handlePrelude branches, one-line tool-description append), `mcp-server/test.js` (+13 assertions covering catalog / body / unknown-name / path-traversal / prelude present / prelude absent / PROJECT_DIR-not-cwd regression / symlink-escape regression), `aider/CONVENTIONS.md` (rewritten picker section, ~15 lines), `shared/skills/ijfw-design/SKILL.md` + `claude/skills/ijfw-design/SKILL.md` + `codex/skills/ijfw-design/SKILL.md` (+1 line each). 99/99 MCP tests green.
+
 ### Donahoe Loop audit trail
 
 Three rounds of codex + gemini cross-audit, all findings closed in the plan before execution. Round 1: codex BLOCK + gemini FLAG + self FLAG across 17 findings. Round 2: codex FLAG (3 new) + gemini PASS + gemini NOTE. Round 3: codex PATCH (4 FLAGs) + 4 codex execution warnings + gemini READY/GO (2 NOTEs + 2 warnings). Plan artifact at `.planning/1.2.0/PLAN.md` (801 lines) + full reconciliation at `.planning/1.2.0/AUDIT.md`.
+
+**Round 4 (ship-prep closing audit on Phase 5 + README + em-dash sweep):** codex FLAG (2) + gemini BLOCK (2). Consensus on `handlePrelude` using `process.cwd()` instead of `PROJECT_DIR` -- closed by keying the `DESIGN.md` existence check off `PROJECT_DIR`. Consensus on symlink escape inside `templates/design/` slipping past the lexical `resolve()+startsWith()` guard -- closed by switching to `realpathSync.native()` on base + target with exact-match comparison. Gemini-only BLOCK on `aider/CONVENTIONS.md` instructing Aider to call an MCP tool it has no client for -- closed by rewriting the picker section to instruct Aider to ask the user to run `ijfw_memory_recall` in a sibling MCP-capable CLI and paste the body back. Gemini FLAG on `inputSchema.properties.context_hint.description` not reflecting the colon-syntax -- closed by extending the property description. NOTE on 12-name order drift between `DESIGN_TEMPLATE_CATALOG` (alphabetical) and README line 311 (thematic) -- benign, same 12 items, deferred. Artifacts at `.ijfw/cross-audit/1.2.0-ship-prep/{codex,gemini}.md`.
 
 ### Sean Donahoe notes
 
@@ -115,7 +130,6 @@ Each phase shipped via isolated-context subagent (context discipline: the main p
 
 - Reproducible token-savings benchmark harness (3 task buckets x 3 model tiers x 10 runs x IJFW-on/off + public CSV).
 - Skill-catalogue consolidation pass (self-Trident + per-skill test coverage).
-- DESIGN.md picker + templates extension to OpenCode / Qwen Code / Kimi Code / OpenClaw / Aider.
 - Team tier memory (cross-user shared memory).
 
 ### Credits

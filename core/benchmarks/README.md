@@ -2,8 +2,8 @@
 
 Measures cost/quality deltas between three arms:
 
-- **A**: `CLAUDE_DISABLE_PLUGINS=1` — baseline (no IJFW)
-- **B**: `IJFW_TERSE_ONLY=1` — terse output rules only
+- **A**: `CLAUDE_DISABLE_PLUGINS=1` - baseline (no IJFW)
+- **B**: `IJFW_TERSE_ONLY=1` - terse output rules only
 - **C**: full IJFW
 
 ## Run
@@ -26,7 +26,7 @@ from prior epochs exceeds the cap. Set lower for smoke tests.
 
 ## Statistical caveats
 
-- Scaffold uses **n=2 epochs per (arm, task)** — wide bootstrap CIs expected.
+- Scaffold uses **n=2 epochs per (arm, task)** - wide bootstrap CIs expected.
 - Paired design: same task across all 3 arms.
 - 95% CIs via paired bootstrap on per-run deltas. Full suite deferred to Phase 3.5.
 
@@ -53,7 +53,7 @@ tasks/NN-name/
 
 ## Tasks in scaffold
 
-- `01-bug-paginator` — bug-fix (Python off-by-one)
-- `07-refactor-dedupe` — refactor (tests must stay green)
-- `10-explore-ratelimit` — explore (file-path match)
-- `11-memory-store` + `12-memory-recall` — paired memory test
+- `01-bug-paginator` - bug-fix (Python off-by-one)
+- `07-refactor-dedupe` - refactor (tests must stay green)
+- `10-explore-ratelimit` - explore (file-path match)
+- `11-memory-store` + `12-memory-recall` - paired memory test

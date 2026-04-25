@@ -16,7 +16,7 @@ import { createInterface } from 'readline';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
   appendFileSync, readdirSync, statSync, renameSync, unlinkSync,
-  openSync, closeSync
+  openSync, closeSync, realpathSync
 } from 'fs';
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
 import { homedir } from 'os';
@@ -536,17 +536,76 @@ function searchMemory(query, limit = 10, scope = 'project') {
   return boosted.slice(0, limit);
 }
 
+// --- DESIGN picker (1.2.0 Phase 5) ---
+// MCP-only delivery of the 12-template design catalog for OpenCode / Qwen
+// Code / Kimi Code / OpenClaw / Aider. No new tool -- served via existing
+// ijfw_memory_recall using context_hint colon-syntax:
+//   'design_template'         -> catalog of 12 names + descriptions
+//   'design_template:<name>'  -> full template body
+const DESIGN_TEMPLATES_DIR = join(__pkg_dirname, '..', 'templates', 'design');
+const DESIGN_TEMPLATE_NAME_RE = /^[a-z][a-z0-9-]{0,40}$/;
+const DESIGN_TEMPLATE_CATALOG = [
+  ['bento-grid',            'Modular card grid with varied sizes; Apple/Notion-style product pages.'],
+  ['brutalist-luxe',        'Raw concrete textures + luxury editorial restraint; fashion and architecture brands.'],
+  ['cinematic-dark',        'Film-grade dark UI with dramatic contrast; streaming, media, portfolio.'],
+  ['data-dense-dashboard',  'Monitoring/BI layout optimized for information density.'],
+  ['editorial-warm',        'Magazine feel in warm off-white; newsletters, blogs, long-form content.'],
+  ['glassmorphic',          'Frosted translucency with soft blur; creative SaaS and fintech premium.'],
+  ['magazine-editorial',    'Print-magazine hierarchy with bold display type; publishing, agency work.'],
+  ['maximalist-vibrant',    'Saturated palettes, bold pattern, high energy; consumer lifestyle brands.'],
+  ['neo-swiss-tech',        'Updated Swiss style with accent color and modern sans; dev tools, SaaS.'],
+  ['swiss-minimal',         'Classical Swiss typographic school; developer-facing and documentation sites.'],
+  ['terminal-native',       'Monospaced terminal aesthetic; CLIs, infra tools, hacker-brand products.'],
+  ['warm-organic',          'Soft curves and earthy tones; wellness, sustainable brands, lifestyle.'],
+];
+
+function designCatalogText() {
+  const lines = DESIGN_TEMPLATE_CATALOG.map(([n, d]) => `- ${n} -- ${d}`);
+  lines.push('');
+  lines.push('Pick one with: ijfw_memory_recall({context_hint: "design_template:<name>"}).');
+  return `# DESIGN templates (12)\n${lines.join('\n')}`;
+}
+
+function handleDesignTemplate(hint) {
+  // Catalog mode: bare 'design_template'.
+  if (hint === 'design_template') {
+    return { text: designCatalogText() };
+  }
+  // Body mode: 'design_template:<name>'.
+  const name = hint.slice('design_template:'.length);
+  const catalogNames = DESIGN_TEMPLATE_CATALOG.map(([n]) => n).join(', ');
+  if (!DESIGN_TEMPLATE_NAME_RE.test(name)) {
+    return { text: `Unknown template: ${name}. Catalog: ${catalogNames}`, isError: true };
+  }
+  const file = join(DESIGN_TEMPLATES_DIR, `${name}.md`);
+  // Defence-in-depth: realpath both sides so a symlink inside templates/design/
+  // can't escape the directory. Regex already blocks raw `..`, NUL, URL-encoded
+  // traversal; this closes the symlink hole caught by codex Round-4 audit.
+  try {
+    const baseReal = realpathSync.native(DESIGN_TEMPLATES_DIR);
+    const resolvedReal = realpathSync.native(file);
+    const expected = join(baseReal, `${name}.md`);
+    if (resolvedReal !== expected) {
+      return { text: `Unknown template: ${name}. Catalog: ${catalogNames}`, isError: true };
+    }
+    const body = readFileSync(resolvedReal, 'utf8');
+    return { text: body };
+  } catch {
+    return { text: `Unknown template: ${name}. Catalog: ${catalogNames}`, isError: true };
+  }
+}
+
 // --- MCP Tool Definitions ---
 const TOOLS = [
   {
     name: 'ijfw_memory_recall',
-    description: 'Wake up with project context intact -- past decisions, handoff state, and knowledge base in one call. Use at session start or when you need to remember why something was built a certain way. Pass from_project to pull from a different IJFW project by basename (simplest), 12-char hash, or absolute path.',
+    description: 'Wake up with project context intact -- past decisions, handoff state, and knowledge base in one call. Use at session start or when you need to remember why something was built a certain way. Pass from_project to pull from a different IJFW project by basename (simplest), 12-char hash, or absolute path. Also accepts context_hint "design_template" (12-template catalog) or "design_template:<name>" (full template body) for the DESIGN picker.',
     inputSchema: {
       type: 'object',
       properties: {
         context_hint: {
           type: 'string',
-          description: 'What context is needed: "session_start" for wake-up injection, "handoff" for last session state, "decisions" for recent decisions, or a natural language query.'
+          description: 'What context is needed: "session_start" for wake-up injection, "handoff" for last session state, "decisions" for recent decisions, "design_template" for the 12-template DESIGN picker catalog, "design_template:<name>" for a specific template body, or a natural language query.'
         },
         detail_level: {
           type: 'string',
@@ -670,6 +729,14 @@ function handleRecall({ context_hint, detail_level = 'standard', from_project })
       out.push(`## Journal [${tag}]\n${mem.journal}`);
     }
     return { text: out.join('\n\n') || `No memory found in project: ${tag}` };
+  }
+
+  // 1.2.0 Phase 5: DESIGN picker -- MCP-only delivery of the 12-template
+  // catalog to platforms without a skills tree (OpenCode/Qwen/Kimi/OpenClaw)
+  // or with MCP-less rules (Aider + CONVENTIONS.md).
+  if (typeof context_hint === 'string'
+      && (context_hint === 'design_template' || context_hint.startsWith('design_template:'))) {
+    return handleDesignTemplate(context_hint);
   }
 
   const parts = [];
@@ -851,6 +918,23 @@ function handlePrelude({ detail_level = 'summary' } = {}) {
   // Re-entrancy: suppressed when last_applied_version >= last_latest_seen.
   const updateNudge = composeUpdateNudge();
   if (updateNudge) parts.push(updateNudge, '');
+
+  // 1.2.0 Phase 5: surface the DESIGN picker to platforms without a skills tree.
+  // Skip when the project already has a DESIGN.md (contract exists; no picker).
+  try {
+    if (!existsSync(join(PROJECT_DIR, 'DESIGN.md'))) {
+      const names = DESIGN_TEMPLATE_CATALOG.map(([n]) => n);
+      parts.push('## Design picker');
+      parts.push('No DESIGN.md in project. 12 curated templates available:');
+      parts.push(names.slice(0, 5).join(', ') + ',');
+      parts.push(names.slice(5, 10).join(', ') + ',');
+      parts.push(names.slice(10).join(', ') + '.');
+      parts.push('');
+      parts.push('Pick one: ijfw_memory_recall({context_hint: "design_template:<name>"}).');
+      parts.push('Full catalog with descriptions: ijfw_memory_recall({context_hint: "design_template"}).');
+      parts.push('');
+    }
+  } catch { /* cwd unreadable -- skip picker block */ }
 
   // Team knowledge first -- shared decisions/patterns/stack rank above personal.
   const team = readTeamKnowledge();

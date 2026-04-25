@@ -303,7 +303,7 @@ Three parallel audits, findings reconciled into a consolidated table with a cons
 
 ### 6\. Design contract
 
-**One `DESIGN.md`, every AI builds on-brand.** Design is a first-class surface across the eight full-skill-tree platforms (Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) -- picker + 12 templates + brand atlas ship to all eight. The 1.1.7 additions (OpenCode, Qwen Code, Kimi Code, OpenClaw, Aider) read project-root `DESIGN.md` via their native rules/config surfaces today; the picker + templates extension reaches them in 1.2.0. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
+**One `DESIGN.md`, every AI builds on-brand.** Design is a first-class surface across all thirteen platforms. The eight full-skill-tree platforms (Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) ship the picker + 12 templates + brand atlas natively. The 1.1.7 additions (OpenCode, Qwen Code, Kimi Code, OpenClaw) reach the same 12-template catalog in 1.2.0 via the MCP server -- `ijfw_memory_recall` with `context_hint: "design_template"` returns the catalog, `design_template:<name>` returns the full body, so any MCP-connected agent can pick and write `DESIGN.md` without a local skill. Aider reads `DESIGN.md` once written and carries picker instructions inline in `~/CONVENTIONS.md`. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
 
 No `DESIGN.md` yet? Run a design task and `ijfw-design` fires a three-option picker:
 
@@ -329,10 +329,10 @@ A detached background check fires on every session start (Claude + Codex), polls
 
 | Where | When | What you see |
 |---|---|---|
-| Claude Code statusLine | Always visible | `^ 1.1.6 available  \|  #####..... 49% left` (autocompact-aware bar) |
-| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.1.6 available` (tokens via existing PreCompact estimate) |
-| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.1.6 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.1.5 -> v1.1.6 -- run 'ijfw update' in your TERMINAL` |
+| Claude Code statusLine | Always visible | `^ 1.2.0 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.0 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.0 available` injected via `additionalContext` |
+| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.1.9 -> v1.2.0 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
@@ -562,7 +562,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of thirteen platforms shipping in 1.1.8. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is deferred to 1.1.9 (awaiting live VS Code runtime verification).
+No. Claude Code is one of thirteen platforms shipping in 1.2.0. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is opt-in today (1.1.9) pending live VS Code runtime verification.
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.

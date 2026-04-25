@@ -29,7 +29,8 @@
   "files": [
     "bin/",
     "src/",
-    "fixtures/"
+    "fixtures/",
+    "templates/"
   ],
   "keywords": [
     "mcp",

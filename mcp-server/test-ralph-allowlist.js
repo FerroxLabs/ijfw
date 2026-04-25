@@ -14,7 +14,7 @@ let failed = 0;
 function assert(condition, label) {
   if (condition) {
     passed++;
-    console.log(`  ✓ ${label}`);
+    console.log(`  [ok] ${label}`);
   } else {
     failed++;
     console.log(`  ✗ FAIL: ${label}`);
@@ -64,8 +64,8 @@ assertUnsafe('foo bar baz',   'no allowlist match',               'unknown comma
 
 // --- Summary ---
 const total = passed + failed;
-console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+console.log(`\n---------------------------------------`);
 console.log(`Results: ${passed}/${total} passed, ${failed} failed`);
-console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+console.log(`---------------------------------------`);
 
 process.exit(failed > 0 ? 1 : 0);

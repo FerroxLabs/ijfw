@@ -100,7 +100,7 @@ test('anthropic: uses x-api-key header; short prompt skips cache_control', async
 
   const pick = makePick('anthropic', 'ANTHROPIC_API_KEY');
   const env = { ANTHROPIC_API_KEY: 'ak-test' };
-  // 'some target' is short — total tokens well below 1024 threshold.
+  // 'some target' is short - total tokens well below 1024 threshold.
   const result = await runViaApi(pick, 'audit', 'general', 'some target', env);
 
   assert.equal(result.status, 'ok');

@@ -34,7 +34,7 @@ test('question pack is capped at 3 questions', () => {
 
 test('duplicate signals do not produce duplicate questions', () => {
   const pack = buildQuestionPack(['bare_verb', 'no_target']);
-  // Both map to "which file, function, or line" — should appear once.
+  // Both map to "which file, function, or line" - should appear once.
   assert.equal(pack.length, 1);
 });
 

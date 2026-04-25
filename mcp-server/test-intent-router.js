@@ -52,7 +52,7 @@ test('cross-critique phrases → /cross-critique', () => {
   assert.equal(detectIntent('stress-test this claim').skill, '/cross-critique');
 });
 
-// Shadow-regression: cross-critique (priority 10) outranks generic critique (priority 1) —
+// Shadow-regression: cross-critique (priority 10) outranks generic critique (priority 1) -
 // result is priority-driven, not dependent on INTENTS array position.
 test('shadow-regression: "challenge this from every angle" → /cross-critique not critique (priority-driven)', () => {
   const r = detectIntent('challenge this from every angle');
@@ -131,7 +131,7 @@ test('brainstorm: greenfield phrases trigger', () => {
 
 // --- project-scale intent ---
 test('project-scale: long prompt with multiple deliverables fires ijfw-workflow', () => {
-  // Long prompt without brainstorm keyword patterns — only project-scale check() fires
+  // Long prompt without brainstorm keyword patterns - only project-scale check() fires
   const prompt = 'We need to coordinate the member portal rollout and configure the email nurture sequence and prepare a referral program and get it all live by end of next month for our coaching business so we can hit our quarterly revenue targets.';
   const r = detectIntent(prompt);
   assert.ok(r, 'should match');
@@ -158,7 +158,7 @@ test('project-scale: long prompt with timeline signal fires', () => {
 });
 
 test('project-scale: short prompt does NOT fire even with signals', () => {
-  // Under 40 words — must not fire project-scale
+  // Under 40 words - must not fire project-scale
   assert.notEqual(detectIntent('build a login button with a budget').intent, 'project-scale');
 });
 
@@ -171,7 +171,7 @@ test('project-scale: long prose without project signals does NOT fire', () => {
 
 // --- domain-adaptive nudge ---
 test('project-scale nudge: software domain uses "brainstorm the architecture"', () => {
-  // 47 words, "and" x3, timeline, budget — domain: SaaS/API/dashboard
+  // 47 words, "and" x3, timeline, budget - domain: SaaS/API/dashboard
   const prompt = 'We need to stand up a SaaS platform and wire up a REST API and build out a dashboard and integrate the billing layer and get it all deployed and tested before the launch next month with a budget of $80k and a team of five engineers.';
   const r = detectIntent(prompt);
   assert.ok(r);
@@ -180,7 +180,7 @@ test('project-scale nudge: software domain uses "brainstorm the architecture"', 
 });
 
 test('project-scale nudge: book domain routes to workflow', () => {
-  // Book prompts hit brainstorm (priority 8) via marketing patterns — correct routing
+  // Book prompts hit brainstorm (priority 8) via marketing patterns - correct routing
   const prompt = 'I am working on a business book and need to develop a full chapter arrangement and draft each section and work with an editor and get the manuscript polished and submitted to the publisher before the end of this month so we can hit the print deadline on time.';
   const r = detectIntent(prompt);
   assert.ok(r);
@@ -188,7 +188,7 @@ test('project-scale nudge: book domain routes to workflow', () => {
 });
 
 test('project-scale nudge: campaign domain routes to workflow', () => {
-  // Campaign prompts hit brainstorm (priority 8) via marketing patterns — correct routing
+  // Campaign prompts hit brainstorm (priority 8) via marketing patterns - correct routing
   const prompt = 'We are running a full marketing campaign and need the email nurture sequence and the social media content calendar and all conversions tracked and ROI reported before the end of this quarter with the full team of six people coordinating across multiple channels.';
   const r = detectIntent(prompt);
   assert.ok(r);
@@ -206,7 +206,7 @@ test('project-scale nudge: design domain uses "explore the design"', () => {
 
 // --- precision guard: short/specific prompts must not over-fire ---
 test('precision: "build the login button" does not fire brainstorm (too specific, short)', () => {
-  // "build" + noun triggers the pattern, but this is fine — the pattern is designed
+  // "build" + noun triggers the pattern, but this is fine - the pattern is designed
   // for high recall on the brainstorm intent, not for project-scale.
   // Verify project-scale specifically does NOT fire on this.
   const r = detectIntent('build the login button');
@@ -226,7 +226,7 @@ test('empty/invalid input returns null', () => {
 });
 
 test('priority-driven ordering: higher priority entry wins when both match', () => {
-  // brainstorm (priority 8) is a primary workflow entry point — beats remember (priority 5)
+  // brainstorm (priority 8) is a primary workflow entry point - beats remember (priority 5)
   const r = detectIntent('note to self: brainstorm the auth redesign');
   assert.ok(r);
   assert.equal(r.skill, 'ijfw-workflow', 'priority-8 brainstorm beats priority-5 remember');
@@ -246,7 +246,7 @@ test('specificity tiebreak: longer pattern wins when priorities tie', () => {
 });
 
 test('order-stable: array-order tiebreak when priority AND specificity tie', () => {
-  // "remember to brainstorm" — both remember (priority 5) and brainstorm (priority 1) match,
+  // "remember to brainstorm" - both remember (priority 5) and brainstorm (priority 1) match,
   // but remember wins on priority. For a true array-order tiebreak we need same priority AND
   // same match length. "ship it" (ship, priority 5) and "note to self" (remember, priority 5)
   // each fire on distinct prompts; verify determinism by running detectIntent twice.

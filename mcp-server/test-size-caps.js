@@ -71,7 +71,7 @@ test('truncation is codepoint-safe for emoji (no dangling surrogate)', () => {
   for (let i = 0; i < r.summary.length; i++) {
     const code = r.summary.charCodeAt(i);
     if (code >= 0xD800 && code <= 0xDBFF) {
-      // High surrogate — next unit must be a low surrogate.
+      // High surrogate - next unit must be a low surrogate.
       const next = r.summary.charCodeAt(i + 1);
       assert.ok(next >= 0xDC00 && next <= 0xDFFF, `lone high surrogate at ${i}`);
       i++; // skip low

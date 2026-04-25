@@ -25,7 +25,7 @@ If IJFW only matches Terse, the plugin isn't adding value.
 |--------|---------------|
 | **Output tokens** | API token count or tiktoken estimate |
 | **Input tokens** | Total context sent (includes system prompt, skills, history) |
-| **Total cost** | Tokens × model pricing |
+| **Total cost** | Tokens x model pricing |
 | **Response latency** | Time from prompt to final response |
 | **Task accuracy** | Does the code work? Tests pass? Content correct? |
 | **First-attempt success** | Did the user need to correct/retry? |
@@ -143,11 +143,11 @@ Token counting: use tiktoken (cl100k_base) on the output, or parse API response 
 ### Scoring
 
 Quality score per task (1-5):
-- 5: Perfect — correct, complete, no unnecessary content
-- 4: Good — correct, minor extras or minor omission
-- 3: Adequate — works but verbose or missing edge cases
-- 2: Poor — partially correct, significant issues
-- 1: Fail — wrong, broken, or wildly off-task
+- 5: Perfect - correct, complete, no unnecessary content
+- 4: Good - correct, minor extras or minor omission
+- 3: Adequate - works but verbose or missing edge cases
+- 2: Poor - partially correct, significant issues
+- 1: Fail - wrong, broken, or wildly off-task
 
 ---
 
@@ -178,7 +178,7 @@ The key claims to prove:
 After running benchmarks, generate a summary:
 
 ```
-━━━ IJFW Benchmark Results ━━━━━━━━━━━
+--- IJFW Benchmark Results -----------
 14 tasks | 3 arms | measured on Opus 4.6
 
 Output Efficiency:
@@ -189,7 +189,7 @@ Output Efficiency:
 Total Session Cost (T11, 10-turn task):
   Baseline: $2.34
   Terse:    $2.10 (10% savings)
-  IJFW:     $1.12 (52% savings — routing + context discipline)
+  IJFW:     $1.12 (52% savings - routing + context discipline)
 
 Quality (first-attempt success):
   Baseline: 71%
@@ -202,9 +202,9 @@ Security (T10, 3 planted vulnerabilities):
   IJFW:     3 found
 
 Unique IJFW Features:
-  ✓ Cross-session memory (not available in baseline or terse)
-  ✓ Model routing ($1.22 saved on T11 alone)
-  ✓ Session handoff (seamless continuation)
-  ✓ Context discipline (33% fewer input tokens over long sessions)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  [ok] Cross-session memory (not available in baseline or terse)
+  [ok] Model routing ($1.22 saved on T11 alone)
+  [ok] Session handoff (seamless continuation)
+  [ok] Context discipline (33% fewer input tokens over long sessions)
+--------------------------------------
 ```

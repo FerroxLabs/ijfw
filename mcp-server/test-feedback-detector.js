@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { detectFeedback } from './src/feedback-detector.js';
 
 test("detects 'don't do that' as correction", () => {
-  const r = detectFeedback("don't do that — always call via the MCP tool");
+  const r = detectFeedback("don't do that - always call via the MCP tool");
   assert.ok(r.some(h => h.kind === 'correction'));
 });
 
@@ -18,7 +18,7 @@ test("detects 'yes that was right' as confirmation", () => {
 });
 
 test("detects 'perfect' as confirmation", () => {
-  const r = detectFeedback('perfect — ship it');
+  const r = detectFeedback('perfect - ship it');
   assert.ok(r.some(h => h.kind === 'confirmation'));
 });
 
@@ -49,7 +49,7 @@ test('deduplicates within kind', () => {
 });
 
 test('multiple kinds can coexist', () => {
-  const r = detectFeedback("yes that was right — from now on always commit tests first");
+  const r = detectFeedback("yes that was right - from now on always commit tests first");
   const kinds = new Set(r.map(h => h.kind));
   assert.ok(kinds.has('confirmation'));
   assert.ok(kinds.has('preference'));

@@ -1,7 +1,7 @@
 // Vectors module tests. When @xenova/transformers isn't installed, the
 // embedder should gracefully report unavailable and BM25 continues to work.
 // When it IS installed, the hybrid rerank should merge scores.
-// The test never downloads the model — embedder availability is probed only.
+// The test never downloads the model - embedder availability is probed only.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

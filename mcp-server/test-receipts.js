@@ -107,11 +107,11 @@ test('renderHeroLine([]) returns safe empty-state string', () => {
 test('renderHeroLine with real receipt and no sessions omits delta', () => {
   const out = renderHeroLine([makeReceipt()], []);
   assert.ok(out.includes('findings'), 'should include findings count');
-  assert.ok(!out.includes('measured'), 'should NOT include measured Δ');
+  assert.ok(!out.includes('measured'), 'should NOT include measured delta');
   assert.ok(!out.includes('%'), 'should NOT include a percentage');
 });
 
-test('renderHeroLine with real receipt and sufficient sessions includes measured Δ', () => {
+test('renderHeroLine with real receipt and sufficient sessions includes measured delta', () => {
   const receipt = makeReceipt({ input_tokens: 12000 });
   const sessions = [
     makeSession({ input_tokens: 30000 }),
@@ -119,7 +119,7 @@ test('renderHeroLine with real receipt and sufficient sessions includes measured
     makeSession({ input_tokens: 32000 }),
   ];
   const out = renderHeroLine([receipt], sessions);
-  assert.ok(out.includes('measured'), `expected measured Δ in: ${out}`);
+  assert.ok(out.includes('measured'), `expected measured delta in: ${out}`);
   assert.ok(out.includes('%'), `expected % in: ${out}`);
   assert.ok(out.includes('3x'), `expected sample count in: ${out}`);
 });
