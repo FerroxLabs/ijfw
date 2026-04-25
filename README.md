@@ -308,7 +308,7 @@ Three parallel audits, findings reconciled into a consolidated table with a cons
 No `DESIGN.md` yet? Run a design task and `ijfw-design` fires a three-option picker:
 
 1. **Reference a brand.** Say "like Vercel" or "like Balenciaga" and the skill auto-detects your project domain from `package.json`, then suggests brands from a 12-domain brand atlas. 52 curated aesthetics across dev tools, SaaS, AI, fintech, luxury, automotive, and more -- every brand annotated with palette hints, typography hints, and the kind of project it best serves.
-2. **Pick a style.** 12 opinionated DESIGN.md templates: swiss-minimal, editorial-warm, terminal-native, cinematic-dark, glassmorphic, brutalist-luxe, maximalist-vibrant, neo-swiss-tech, data-dense-dashboard, warm-organic, bento-grid, magazine-editorial. Each follows the canonical 9-section spec (Visual Theme, Colors, Typography, Components, Layout, Depth, Do's, Responsive, Agent Prompt Guide). **Compatible with Claude Design (claude.ai/design)** out of the box -- drop the file into a new design system there and it scaffolds a full UI kit in one shot.
+2. **Pick a style.** 12 opinionated DESIGN.md templates: bento-grid, brutalist-luxe, cinematic-dark, data-dense-dashboard, editorial-warm, glassmorphic, magazine-editorial, maximalist-vibrant, neo-swiss-tech, swiss-minimal, terminal-native, warm-organic. Each follows the canonical 9-section spec (Visual Theme, Colors, Typography, Components, Layout, Depth, Do's, Responsive, Agent Prompt Guide). **Compatible with Claude Design (claude.ai/design)** out of the box -- drop the file into a new design system there and it scaffolds a full UI kit in one shot.
 3. **Blank slate.** Progressive one-question-at-a-time brainstorm if you want to design from first principles.
 
 On confirmation, the picker writes `DESIGN.md` to your project root so future sessions skip the picker and go straight to contract-driven builds. Downstream handoff is automatic: if you have `ui-ux-pro-max`, `frontend-design`, or Superpowers installed, `ijfw-design` dispatches to them with the contract already loaded. One design, every agent on your stack, zero drift.
@@ -329,10 +329,10 @@ A detached background check fires on every session start (Claude + Codex), polls
 
 | Where | When | What you see |
 |---|---|---|
-| Claude Code statusLine | Always visible | `^ 1.2.0 available  \|  #####..... 49% left` (autocompact-aware bar) |
-| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.0 available` (tokens via existing PreCompact estimate) |
-| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.0 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.1.9 -> v1.2.0 -- run 'ijfw update' in your TERMINAL` |
+| Claude Code statusLine | Always visible | `^ 1.2.1 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.1 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.1 available` injected via `additionalContext` |
+| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.2.0 -> v1.2.1 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
@@ -562,7 +562,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of thirteen platforms shipping in 1.2.0. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is opt-in today (1.1.9) pending live VS Code runtime verification.
+No. Claude Code is one of thirteen platforms shipping in 1.2.1. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is opt-in today (1.1.9) pending live VS Code runtime verification.
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.

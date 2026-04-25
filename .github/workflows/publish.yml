@@ -109,3 +109,29 @@ jobs:
             --title "$TAG_REF" \
             --notes "$notes" \
             --verify-tag
+
+  post-publish-smoke:
+    name: Post-publish E2E (install from registry)
+    needs: publish
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+    permissions:
+      contents: read
+    # First-run safety net: don't fail the release pipeline on a flaky smoke.
+    # Flip to false (or delete this line) once two consecutive releases pass.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install git inside container
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends git ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Run post-publish smoke
+        env:
+          TAG_REF: ${{ github.ref_name }}
+        run: |
+          bash scripts/post-publish-smoke.sh "$TAG_REF"

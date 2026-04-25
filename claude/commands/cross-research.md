@@ -157,7 +157,7 @@ probe returns the auditor as missing.
 Fire each in background via Bash tool with `run_in_background:true`:
 
 ```bash
-cat .ijfw/cross-audit/request-research-codex.md | codex exec - > .ijfw/cross-audit/response-research-codex.md
+cat .ijfw/cross-audit/request-research-codex.md | codex exec --skip-git-repo-check --sandbox read-only -c approval_policy="never" -c mcp_servers.ijfw-memory.enabled=false - > .ijfw/cross-audit/response-research-codex.md
 ```
 
 ```bash

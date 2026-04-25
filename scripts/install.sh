@@ -1038,6 +1038,28 @@ for target in "${TARGETS[@]}"; do
           cp "$EXT_SRC/$f" "$EXT_DST/$f" 2>/dev/null
         fi
       done
+      # Expand {{extensionPath}} in hooks.json to the absolute install dir.
+      # Gemini CLI does NOT expand this template variable (verified empirically
+      # 2026-04-25 on Ubuntu 24.04 + Gemini hook: "bash: {{extensionPath}}/...:
+      # No such file or directory"). The IJFW-shipped hooks.json carries the
+      # literal "{{extensionPath}}" string from the source tree, so we resolve
+      # it to "$EXT_DST" at install time. Idempotent: only acts when the
+      # literal placeholder is still present, so user-edited files are left
+      # alone. Replacement uses perl with \Q...\E literal-quote on the
+      # pattern and an env-var on the replacement: this is the only form
+      # that survives `&`, `|`, and `\` in $HOME without escape gymnastics
+      # (codex + gemini Round-5 audit close -- sed and awk gsub both treat
+      # `&` as the matched-text backref). Perl is on every Linux + macOS
+      # default install, so portability is fine.
+      if [ -f "$EXT_DST/hooks/hooks.json" ] && grep -q '{{extensionPath}}' "$EXT_DST/hooks/hooks.json" 2>/dev/null; then
+        # Pass $EXT_DST to perl as $ARGV[0] (literal) -- no env-var leak, no
+        # regex metacharacter risk, no shellcheck SC2097/SC2098 ambiguity.
+        # Perl shifts the path arg out of @ARGV before the file-loop processes
+        # the hooks.json target.
+        perl -pe 'BEGIN { $ext = shift @ARGV } s/\Q{{extensionPath}}\E/$ext/g' \
+          "$EXT_DST" "$EXT_DST/hooks/hooks.json" > "$EXT_DST/hooks/hooks.json.new" \
+          && mv "$EXT_DST/hooks/hooks.json.new" "$EXT_DST/hooks/hooks.json"
+      fi
       # Hook scripts -- always deploy latest; back up user-modified versions.
       for hscript in "$EXT_SRC/hooks/"*.sh; do
         bname=$(basename "$hscript")

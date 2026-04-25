@@ -1,5 +1,59 @@
 # Changelog
 
+## [1.2.1] -- 2026-04-26
+
+**Ship-discipline patch.** Six items closing the honest-disclosures from 1.2.0 plus two production bugs surfaced during a remote-host cross-audit diagnostic. No new features, no breaking changes.
+
+### Codex cross-audit invocation flags
+
+**Closes the user-reported "Codex cross-audit doesn't work on Linux"** observed on a remote Ubuntu 24.04 host (RTX PRO 6000, codex-cli 0.118.0). Four findings from live diagnostic + Trident audit close:
+
+1. **Trusted-directory gate**: codex-cli 0.118.0 added a guard that refuses to run outside a git repo unless `--skip-git-repo-check` is passed. IJFW's documented `codex exec -` invocation tripped this on every audit run launched from `/tmp` or any non-repo dir.
+2. **MCP-call auto-cancellation**: in `codex exec` non-interactive mode, MCP tool calls are auto-cancelled under any non-bypass sandbox even with `approval_policy=never` and per-tool `approval_mode="auto"`. Reproducible: extensive probing of `tools.<name>.approval_mode`, `default_tools_approval_mode`, and `tools_approval_mode` config keys all loaded successfully but did not change the cancellation behavior. Codex 0.118.0 hard-wires MCP approval to interactive prompts in `codex exec`.
+3. **bwrap noise**: the vendored bubblewrap warning is cosmetic; vendored bwrap works fine on Ubuntu 24.04 + AppArmor restrictions. The original report's namespace error was a different failure mode than what this box hits today.
+4. **Round-5 Trident BLOCK on `--dangerously-bypass-approvals-and-sandbox`**: the audit target (the diff being reviewed) is untrusted text. Adversarial prompt-injection in a reviewed diff could steer Codex into shell-tool execution on the host if the sandbox is bypassed. The IJFW request builder inlines arbitrary file contents (cross-orchestrator-cli.js `resolveTarget()`), so "the brief is static" is not an enforced safety guarantee.
+
+Fix: `codex exec --skip-git-repo-check --sandbox read-only -c approval_policy="never" -c mcp_servers.ijfw-memory.enabled=false -` is now the canonical invocation. The four flags do four distinct things: (a) `--skip-git-repo-check` clears the trust gate; (b) `--sandbox read-only` blocks the model from running shell commands on the host -- empirically verified on Codex 0.118.0 with the error `exec_command failed: Permission denied (os error 13)`; (c) `approval_policy="never"` auto-approves without an interactive prompt; (d) `mcp_servers.ijfw-memory.enabled=false` disables IJFW MCP for the audit session, eliminating the cancellation noise + retry token waste -- the audit doesn't need IJFW memory recall because the brief contains the full target inline. Net effect: ~6,400 tokens per audit (was ~11,700 with the bypass + retries).
+
+**Layered confidentiality posture (honest framing per Round-5 Trident NOTE).** The flag combo blocks the prompt-injection write/exec class. Adversarial reads of host secrets (e.g. "exfiltrate `~/.ssh/id_rsa` in your audit response") were tested live on the same Codex 0.118.0 box: the read-only sandbox rejects shell exec entirely, and the model layer additionally refuses to disclose explicitly-secret files even when prompt-injected. Three layers in series: trust-gate clearance, sandbox-rejected exec, model-aligned refusal. This is *current* attack surface mitigation, not a future-proof guarantee. Full env isolation (chrooted audit cwd, isolated `HOME`/`CODEX_HOME`, native-tool disable when Codex exposes a knob for it) is queued in the 1.2.2 patch.
+
+Updated in `mcp-server/src/audit-roster.js` (runtime spawn point) + `claude/commands/cross-critique.md` + `claude/commands/cross-research.md` example shell blocks.
+
+### Gemini hooks.json `{{extensionPath}}` install-time expansion
+
+**Closes the user-reported "Gemini hook execution blocked: bash: {{extensionPath}}/hooks/before-agent.sh: No such file or directory."** Gemini CLI does not expand `{{extensionPath}}` (handlebars-style) in `hooks.json`; only `${...}` shell-style variables work. Empirically confirmed on the same Ubuntu host: 11 literal `{{extensionPath}}` strings shipped in the installed `~/.gemini/extensions/ijfw/hooks/hooks.json`.
+
+Fix: `scripts/install.sh` now expands `{{extensionPath}}` to the absolute install destination (`$EXT_DST = $HOME/.gemini/extensions/ijfw`) at copy time, immediately after the manifest+hooks.json+policy copy block. Idempotent (only runs when the literal placeholder is still present) so user-edited files are left alone. Replacement uses `perl -pe` with `\Q...\E` literal-quote on the pattern and `shift @ARGV` to pass the path as a literal string (Round-5 Trident audit close: sed and awk's `gsub` both treat `&` as the matched-text backref, breaking on usernames containing `&`, `|`, or `\`). Perl is on every Linux + macOS default install, so portability is preserved.
+
+### Post-publish E2E job in GitHub Actions
+
+`scripts/post-publish-smoke.sh` (8-gate runnable harness) + a new `post-publish-smoke` job in `.github/workflows/publish.yml` that runs `needs: publish` inside a `node:20` container. Asserts: registry propagation, `ijfw --version` matches the tag, `ijfw-install --yes` clones cleanly, 12 templates ship, MCP `design_template` catalog returns 12 names, MCP `design_template:swiss-minimal` body contains the marker, MCP prelude includes the Design picker block. Replaces the manual mktemp E2E that 1.2.0 needed because no docker was available locally. Lands with `continue-on-error: true` so a flaky first run cannot retroactively fail a successful publish; flip after two consecutive greens.
+
+### eslint-plugin-security `non-literal-fs-filename` triage
+
+10 warnings from the 1.2.0 publish run silenced with cited reasons. Per-line audit of `installer/src/ijfw.js`:
+
+- 9 are internal-path constructions (repo-internal traversal, install-root constants, derived from `repoRoot()` / `homedir()`) -- per-call `// eslint-disable-next-line security/detect-non-literal-fs-filename -- <reason>` with the reason naming why the path is not user-controllable.
+- 1 (line 178, `existsSync(abs)` where `abs = resolve(argv[4])` for `ijfw design push <file>`) takes user CLI argv but the destination uses `basename(abs)` so writes are confined to `~/.ijfw/design-companion/content/`. Disabled with a reason that names the path-traversal mitigation.
+
+End state: zero `detect-non-literal-fs-filename` warnings on the next Release run. Every disable is auditable.
+
+### README template-order normalization (cosmetic)
+
+`README.md` line 311 12-template list reordered alphabetical to match `DESIGN_TEMPLATE_CATALOG` in `mcp-server/src/server.js`. Same 12 items, no behavior change. Closes the deferred R4 NOTE from 1.2.0's Trident audit.
+
+### Files changed
+
+`mcp-server/src/audit-roster.js`, `claude/commands/cross-critique.md`, `claude/commands/cross-research.md`, `scripts/install.sh`, `installer/src/ijfw.js`, `scripts/post-publish-smoke.sh` (new), `.github/workflows/publish.yml`, `README.md`, `installer/package.json` + `mcp-server/package.json` (1.2.0 -> 1.2.1).
+
+### Diagnostic credit
+
+Live SSH session on the user's remote Ubuntu 24.04 + RTX PRO 6000 box. Phase 1-4 environment fingerprint + Codex sandbox-mode probing identified the trusted-directory gate and the MCP-cancellation behavior. Round-5 adversarial probing (live prompt-injection attempts targeting `~/.ssh/id_rsa` and `~/.codex/auth.json`) verified the layered defense holds against the threat the Trident BLOCK was concerned about. Diagnostic key revoked at end of session.
+
+### Coming in 1.2.2
+
+- **Full env isolation for cross-audit Codex sessions.** Round-5 audits surfaced a residual confidentiality concern: the `--sandbox read-only` flag combo blocks write/exec but the model could in principle read host secrets and exfiltrate via response text if a future Codex version exposes a non-shell file-read path or if model alignment is jailbroken. 1.2.1's mitigation is empirically sufficient against today's Codex 0.118.0 attack surface; 1.2.2 will add belt-and-suspenders: chrooted audit cwd, isolated `HOME` / `CODEX_HOME`, and native-tool disable flags when Codex exposes them.
+
 ## [1.2.0] -- 2026-04-24
 
 **Workflow intelligence release.** Four improvements to how IJFW plans and executes work, plus the platform-count cleanup closing a three-release drift. Every change landed under Donahoe Loop discipline -- three rounds of codex + gemini cross-audit closed 33 findings (6 BLOCK, 16 FLAG, 6 NOTE, 6 execution warnings) before any code was written.
@@ -125,6 +179,13 @@ Three rounds of codex + gemini cross-audit, all findings closed in the plan befo
 ### Sean Donahoe notes
 
 Each phase shipped via isolated-context subagent (context discipline: the main planning conversation never saw the implementation bytes). Every commit atomic and gated by per-phase structural dry-runs plus the aggregate `scripts/1.2.0-verify-all.sh` harness. No push until explicit authorization per `feedback_no_push_without_authorization.md` -- the commits are local; v1.2.0 tag does not exist yet.
+
+### Coming in 1.2.1 (patch -- ship-discipline close)
+
+Carry-overs from 1.2.0's ship-prep honest-disclosures pass:
+
+- **Kernel-isolated ship E2E that doesn't require a local container runtime.** 1.2.0's install-from-registry verification ran in a mktemp-scoped `HOME` + `IJFW_HOME` + `NPM_CONFIG_PREFIX` sandbox because no docker / podman / colima was available on the ship machine. Acceptable for this release (shares kernel + system node only, no package/config state from the host) but not the strictest possible signal. Fix: add a post-publish GitHub Actions job that pulls `node:20` in a container, installs `@ijfw/install@<tag>`, runs `ijfw-install`, and executes the MCP picker + version smoke -- fully kernel-isolated, zero local tooling required. Guards against future runtime regressions the same way 1.1.8's live-CLI gates guarded against install regressions.
+- **eslint-plugin-security non-literal-fs warnings in `installer/src/ijfw.js`.** 10 occurrences flagged by the publish workflow (lines 15 x2, 56, 131, 137, 153, 169, 178, 186, 204): `existsSync` / `mkdirSync` / `readdirSync` called with variables that flow from user input (`--dir` argument, env vars). Pre-existing in 1.1.x but surfaced again on the 1.2.0 run. Fix: triage each call -- confirm the upstream validator (`validatePath`, the custom-dir canonicalization) is actually doing the work, then either add centralized sanitization at the entry points or add per-call `eslint-disable-next-line` with a cited reason. Not a known CVE surface today; closing it makes the lint run clean for real.
 
 ### Coming in 1.3.0 (evidence + reach)
 

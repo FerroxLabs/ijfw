@@ -12,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 function repoRoot() {
   let dir = __dirname;
   for (let i = 0; i < 6; i++) {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir derives from __dirname via bounded (max 6) parent traversal; not user-controllable.
     if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, '.git'))) return dir;
     dir = resolve(dir, '..');
   }
@@ -53,6 +54,7 @@ function findCli() {
     join(repoRoot(), 'mcp-server', 'src', 'cross-orchestrator-cli.js'),
     join(homedir(), '.ijfw', 'mcp-server', 'src', 'cross-orchestrator-cli.js'),
   ];
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- candidates is a static 2-element list of internal install paths; not user-controllable.
   return candidates.find(p => existsSync(p)) || null;
 }
 
@@ -128,12 +130,14 @@ async function main() {
       if (dashSub === 'start' || dashSub === 'stop' || dashSub === 'status') {
         // V1.1D: HTTP server subcommands via ijfw-dashboard bin
         const dashBin = join(root, 'mcp-server', 'bin', 'ijfw-dashboard');
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- internal install-root path; root from repoRoot() bounded traversal.
         if (existsSync(dashBin)) {
           const r = spawnSync('node', [dashBin, dashSub, ...argv.slice(4)], { stdio: 'inherit' });
           process.exit(r.status ?? 0);
         } else {
           // Fallback: run dashboard-server.js directly for start
           const serverJs = join(root, 'mcp-server', 'src', 'dashboard-server.js');
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- internal install-root path; root from repoRoot() bounded traversal.
           if (dashSub === 'start' && existsSync(serverJs)) {
             const { spawn } = await import('node:child_process');
             const child = spawn(process.execPath, [serverJs, '--daemon'], {
@@ -150,6 +154,7 @@ async function main() {
       } else if (dashSub === 'render' || !dashSub) {
         // V1.1C: render terminal dashboard
         const binJs = join(root, 'scripts', 'dashboard', 'bin.js');
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- internal install-root path; root from repoRoot() bounded traversal.
         if (existsSync(binJs)) {
           const r = spawnSync('node', [binJs, ...argv.slice(dashSub ? 4 : 3)], { stdio: 'inherit' });
           process.exit(r.status ?? 0);
@@ -166,6 +171,7 @@ async function main() {
     case 'design': {
       const designSub = argv[3];
       const contentDir = join(homedir(), '.ijfw', 'design-companion', 'content');
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- contentDir is a constant under $HOME/.ijfw/; not user-controllable.
       mkdirSync(contentDir, { recursive: true });
 
       if (designSub === 'push') {
@@ -175,6 +181,7 @@ async function main() {
           process.exit(1);
         }
         const abs = resolve(filePath);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- filePath is the user's own argv[4]; existsSync just checks readability, copy destination uses basename(abs) so writes are confined to contentDir.
         if (!existsSync(abs)) {
           console.error(`File not found: ${abs}`);
           process.exit(1);
@@ -183,6 +190,7 @@ async function main() {
         copyFileSync(abs, dest);
         console.log(`Design pushed: ${dest}`);
       } else if (designSub === 'clear') {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- contentDir is the same internal constant from line 168; not user-controllable.
         const files = readdirSync(contentDir);
         for (const f of files) rmSync(join(contentDir, f), { force: true });
         console.log('Design companion content cleared.');
@@ -201,6 +209,7 @@ async function main() {
         resolve(__dirname, '..', 'docs', 'GUIDE.md'),
         join(homedir(), '.ijfw', 'docs', 'GUIDE.md'),
       ];
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- candidates is a static 3-element list of internal install paths; not user-controllable.
       const guidePath = candidates.find(p => existsSync(p));
       if (!guidePath) {
         console.error('[ijfw] Guide not found. Run `ijfw install` to fetch the full guide, or visit https://github.com/TheRealSeanDonahoe/ijfw/blob/main/docs/GUIDE.md');
