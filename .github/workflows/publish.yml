@@ -118,9 +118,7 @@ jobs:
       image: node:20
     permissions:
       contents: read
-    # First-run safety net: don't fail the release pipeline on a flaky smoke.
-    # Flip to false (or delete this line) once two consecutive releases pass.
-    continue-on-error: true
+    # 1.2.1's first run was green; gating this job from 1.2.2 onward.
     steps:
       - uses: actions/checkout@v4
 

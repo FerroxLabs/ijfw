@@ -27,6 +27,20 @@ ROUTING="native"
 case "${OPENROUTER_API_KEY:-}" in ?*) ROUTING="OpenRouter" ;; esac
 [ -f "$HOME/.claude-code-router/config.json" ] && ROUTING="smart-routing"
 
+# Billing mode detection. ANTHROPIC_API_KEY in env is the unambiguous
+# paid-API signal. Without it, Claude Code is using OAuth (Max/Pro/Team
+# subscription) -- the OAuth token may live in ~/.claude/.credentials.json
+# (Linux/Windows) or in the macOS Keychain, both of which Claude Code
+# manages itself. Override with IJFW_BILLING_MODE=max|api.
+BILLING_MODE="${IJFW_BILLING_MODE:-}"
+if [ -z "$BILLING_MODE" ]; then
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    BILLING_MODE="api"
+  else
+    BILLING_MODE="max"
+  fi
+fi
+
 MEMORY_STORES=0
 if [ -f "$IJFW_DIR/memory/project-journal.md" ]; then
   MEMORY_STORES=$(grep -c '^- \[' "$IJFW_DIR/memory/project-journal.md" 2>/dev/null)
@@ -104,7 +118,7 @@ if command -v node >/dev/null 2>&1; then
       { prefix: "claude-sonnet-", p: { in:  3.0, out: 15.0, cr: 0.30, cc:  3.75 } },
       { prefix: "claude-haiku-",  p: { in:  0.8, out:  4.0, cr: 0.08, cc:  1.00 } }
     ];
-    function cost() {
+    function theoreticalCost() {
       if (!model) return 0;
       const normalized = String(model).replace(/-\d{8}.*$/, "").replace(/\[.*?\]$/, "");
       const fam = FAMILIES.find(f => normalized.startsWith(f.prefix));
@@ -114,6 +128,14 @@ if command -v node >/dev/null 2>&1; then
               + usage.cache_read_input_tokens * p.cr + usage.cache_creation_input_tokens * p.cc) / 1e6;
       return Math.round(c * 10000) / 10000;
     }
+
+    // Billing mode determines whether theoretical cost is what the user pays.
+    // Max-subscription sessions: cost_usd is 0 paid; theoretical_cost_usd
+    // captures the value covered by the subscription. Lowercased to tolerate
+    // IJFW_BILLING_MODE=MAX as well as max.
+    const billingMode = (process.argv[9] || "api").toLowerCase();
+    const theoretical = theoreticalCost();
+    const realCost = billingMode === "max" ? 0 : theoretical;
 
     // Baseline factor: average ratio of unconstrained-output tokens to
     // IJFW-constrained-output tokens. Starts at 1.65 (conservative estimate
@@ -130,7 +152,7 @@ if command -v node >/dev/null 2>&1; then
       : null;
 
     const o = {
-      v: 3,
+      v: 4,
       timestamp: process.argv[1],
       session: Number(process.argv[2]),
       mode: process.argv[3],
@@ -142,7 +164,14 @@ if command -v node >/dev/null 2>&1; then
       output_tokens: usage.output_tokens,
       cache_read_tokens: usage.cache_read_input_tokens,
       cache_creation_tokens: usage.cache_creation_input_tokens,
-      cost_usd: cost(),
+      // v4: explicit billing-mode split. cost_usd is what the user paid;
+      // theoretical_cost_usd is what equivalent paid-API usage would cost.
+      // For Max sessions cost_usd is 0 and theoretical_cost_usd shows the
+      // value captured by the subscription. v3 readers tolerate the new
+      // fields (cost_usd retained as primary).
+      billing_mode: billingMode,
+      cost_usd: realCost,
+      theoretical_cost_usd: theoretical,
       model: model,
       // Phase 4 W1.3 -- schema v3.
       baseline_tokens_estimate: baselineOut,
@@ -167,7 +196,7 @@ if command -v node >/dev/null 2>&1; then
     } catch {}
 
     process.stdout.write(JSON.stringify(o));
-  ' "$ISO_TIMESTAMP" "$SESSION_NUM" "$MODE" "$EFFORT" "$ROUTING" "$MEMORY_STORES" "$HAS_HANDOFF" "$HOOK_STDIN" 2>/dev/null)
+  ' "$ISO_TIMESTAMP" "$SESSION_NUM" "$MODE" "$EFFORT" "$ROUTING" "$MEMORY_STORES" "$HAS_HANDOFF" "$HOOK_STDIN" "$BILLING_MODE" 2>/dev/null)
   if [ -n "$JSONLINE" ]; then
     printf '%s\n' "$JSONLINE" >> "$METRICS_FILE" 2>/dev/null
   fi

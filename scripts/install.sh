@@ -223,32 +223,36 @@ fi
 #   ~/.ijfw/run/<sid>/    ephemeral per-session
 #   ~/.ijfw/logs/         observability, rotated at 1MB
 # Permissions: dir 0700, files 0600 -- only mutated in cold paths (here).
-if [ "$IJFW_CUSTOM_DIR" != "1" ]; then
-  IJFW_STATE_DIR="$HOME_REAL/.ijfw"
-  mkdir -p "$IJFW_STATE_DIR/cache" "$IJFW_STATE_DIR/run" "$IJFW_STATE_DIR/logs"
-  chmod 700 "$IJFW_STATE_DIR" 2>/dev/null || true
+# State writes are unconditional: even custom-dir installs need state.json
+# at $HOME/.ijfw because the MCP server resolves `homedir() + "/.ijfw"`
+# regardless of the user's chosen install location. Without this, the
+# version-detection path falls through to "0.0.0" and the in-band update
+# nudge becomes inaccurate.
+IJFW_STATE_DIR="$HOME_REAL/.ijfw"
+mkdir -p "$IJFW_STATE_DIR/cache" "$IJFW_STATE_DIR/run" "$IJFW_STATE_DIR/logs"
+chmod 700 "$IJFW_STATE_DIR" 2>/dev/null || true
 
-  # Detect install_method
-  INSTALL_METHOD="manual"
-  if [ -d "$REPO_ROOT/.git" ]; then
-    INSTALL_METHOD="git-clone"
-  fi
-  NPM_GROOT="$(command -v npm >/dev/null 2>&1 && npm root -g 2>/dev/null || true)"
-  if [ -n "$NPM_GROOT" ] && [ "${REPO_ROOT#"$NPM_GROOT"}" != "$REPO_ROOT" ]; then
-    INSTALL_METHOD="npm-global"
-  fi
+# Detect install_method
+INSTALL_METHOD="manual"
+if [ -d "$REPO_ROOT/.git" ]; then
+  INSTALL_METHOD="git-clone"
+fi
+NPM_GROOT="$(command -v npm >/dev/null 2>&1 && npm root -g 2>/dev/null || true)"
+if [ -n "$NPM_GROOT" ] && [ "${REPO_ROOT#"$NPM_GROOT"}" != "$REPO_ROOT" ]; then
+  INSTALL_METHOD="npm-global"
+fi
 
-  # Read installed version from installer/package.json
-  INSTALLED_VER="$( [ -n "${NODE_BIN:-}" ] && "$NODE_BIN" -e '
-    try { console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version || "0.0.0"); }
-    catch { console.log("0.0.0"); }
-  ' "$REPO_ROOT/installer/package.json" 2>/dev/null || echo "0.0.0" )"
+# Read installed version from installer/package.json
+INSTALLED_VER="$( [ -n "${NODE_BIN:-}" ] && "$NODE_BIN" -e '
+  try { console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version || "0.0.0"); }
+  catch { console.log("0.0.0"); }
+' "$REPO_ROOT/installer/package.json" 2>/dev/null || echo "0.0.0" )"
 
-  NOW_TS="$(date +%s)"
+NOW_TS="$(date +%s)"
 
-  # state.json -- always rewritten (durable facts, installer-owned)
-  STATE_TMP="$IJFW_STATE_DIR/state.json.tmp.$$"
-  cat > "$STATE_TMP" <<JSON
+# state.json -- always rewritten (durable facts, installer-owned)
+STATE_TMP="$IJFW_STATE_DIR/state.json.tmp.$$"
+cat > "$STATE_TMP" <<JSON
 {
   "schema_version": 1,
   "install_method": "$INSTALL_METHOD",
@@ -259,24 +263,27 @@ if [ "$IJFW_CUSTOM_DIR" != "1" ]; then
   "installed_at": $NOW_TS
 }
 JSON
-  mv -f "$STATE_TMP" "$IJFW_STATE_DIR/state.json"
-  chmod 600 "$IJFW_STATE_DIR/state.json" 2>/dev/null || true
+mv -f "$STATE_TMP" "$IJFW_STATE_DIR/state.json"
+chmod 600 "$IJFW_STATE_DIR/state.json" 2>/dev/null || true
 
-  # settings.json -- seed only if absent (preserve user prefs across upgrades)
-  if [ ! -f "$IJFW_STATE_DIR/settings.json" ]; then
-    if [ -f "$REPO_ROOT/installer/src/settings-seed.json" ]; then
-      cp "$REPO_ROOT/installer/src/settings-seed.json" "$IJFW_STATE_DIR/settings.json.tmp.$$"
-      mv -f "$IJFW_STATE_DIR/settings.json.tmp.$$" "$IJFW_STATE_DIR/settings.json"
-      chmod 600 "$IJFW_STATE_DIR/settings.json" 2>/dev/null || true
-    fi
+# settings.json -- seed only if absent (preserve user prefs across upgrades)
+if [ ! -f "$IJFW_STATE_DIR/settings.json" ]; then
+  if [ -f "$REPO_ROOT/installer/src/settings-seed.json" ]; then
+    cp "$REPO_ROOT/installer/src/settings-seed.json" "$IJFW_STATE_DIR/settings.json.tmp.$$"
+    mv -f "$IJFW_STATE_DIR/settings.json.tmp.$$" "$IJFW_STATE_DIR/settings.json"
+    chmod 600 "$IJFW_STATE_DIR/settings.json" 2>/dev/null || true
   fi
+fi
 
-  # install-method legacy file (back-compat for older callers)
-  printf '%s\n' "$INSTALL_METHOD" > "$IJFW_STATE_DIR/install-method"
-  chmod 600 "$IJFW_STATE_DIR/install-method" 2>/dev/null || true
+# install-method legacy file (back-compat for older callers)
+printf '%s\n' "$INSTALL_METHOD" > "$IJFW_STATE_DIR/install-method"
+chmod 600 "$IJFW_STATE_DIR/install-method" 2>/dev/null || true
 
-  printf "  [+] State seeded (%s, v%s)\n" "$INSTALL_METHOD" "$INSTALLED_VER"
+printf "  [+] State seeded (%s, v%s)\n" "$INSTALL_METHOD" "$INSTALLED_VER"
 
+# Statusline detection only runs on canonical-dir installs because it
+# touches Claude Code's own settings.json and bin links.
+if [ "$IJFW_CUSTOM_DIR" != "1" ]; then
   # ============================================================
   # 1.1.6b: statusline GSD detection + safe compose default.
   #
@@ -935,8 +942,9 @@ for target in "${TARGETS[@]}"; do
       mkdir -p "$HOME/.codex/hooks"
       _hooks_dst="$HOME/.codex/hooks.json"
       _hooks_src="$REPO_ROOT/codex/.codex/hooks.json"
-      # Build absolute-path IJFW entries: scripts live at ~/.ijfw/codex/.codex/hooks/
-      _hooks_base="$HOME/.ijfw/codex/.codex/hooks"
+      # Build absolute-path IJFW entries pointing at where the hook scripts
+      # are actually installed (line below: install_hook ... "$HOME/.codex/hooks/$bname").
+      _hooks_base="$HOME/.codex/hooks"
       node -e '
         const fs = require("fs");
         const dst = process.argv[1];
@@ -948,12 +956,24 @@ for target in "${TARGETS[@]}"; do
         // Valid events: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, PermissionRequest.
         // Read side: migrate from legacy shapes so users upgrading dont break.
         let doc = {};
+        let rawForBackup = null;
         if (fs.existsSync(dst)) {
-          try { doc = JSON.parse(fs.readFileSync(dst, "utf8") || "{}"); } catch { doc = {}; }
+          rawForBackup = fs.readFileSync(dst, "utf8");
+          try { doc = JSON.parse(rawForBackup || "{}"); } catch { doc = {}; }
+        }
+        // Detect legacy shape (bare array, or hooks-as-array) and snapshot the
+        // file before rewriting so non-IJFW entries are recoverable. Codex moved
+        // to {hooks: {EventName: [...]}} -- prior shapes do not survive the
+        // structural shift, but we never silently drop user data.
+        const isLegacyShape =
+          (Array.isArray(doc)) ||
+          (doc && typeof doc === "object" && doc.hooks && (Array.isArray(doc.hooks) || typeof doc.hooks !== "object"));
+        if (isLegacyShape && rawForBackup) {
+          const ts = new Date().toISOString().replace(/[:.]/g, "-");
+          const backup = dst + ".legacy.bak." + ts;
+          try { fs.writeFileSync(backup, rawForBackup); console.error("[install] preserved legacy hooks.json at " + backup); } catch {}
         }
         if (!doc || typeof doc !== "object" || Array.isArray(doc)) doc = {};
-        // If file was a bare array (our own previous misunderstanding), discard IJFW entries
-        // and start fresh; non-IJFW entries cant be rescued because they dont fit the new shape.
         if (!doc.hooks || typeof doc.hooks !== "object" || Array.isArray(doc.hooks)) doc.hooks = {};
         const VALID_EVENTS = ["SessionStart","UserPromptSubmit","PreToolUse","PostToolUse","Stop","PermissionRequest"];
         for (const ev of VALID_EVENTS) {
@@ -965,6 +985,17 @@ for target in "${TARGETS[@]}"; do
           });
         }
         // Load IJFW source (new nested shape) and rewrite command paths to absolute.
+        // Codex shell-parses the command value (verified empirically: a path with
+        // spaces fires "hook: ... Failed"), so single-quote any path containing
+        // shell-special chars. POSIX single-quote escape: end-quote + backslash-
+        // single-quote + start-quote to embed a literal single quote.
+        // Quote unless the path is fully POSIX-safe (alphanum + . _ / @ -).
+        // Allowlist is more conservative than a deny-set: catches []!*?<> etc.
+        // without enumerating every shell metachar.
+        function shellQuote(p) {
+          if (/^[A-Za-z0-9_./@-]+$/.test(p)) return p;
+          return "\x27" + p.replace(/\x27/g, "\x27\\\x27\x27") + "\x27";
+        }
         const ijfw = JSON.parse(fs.readFileSync(src, "utf8"));
         const srcHooks = (ijfw && ijfw.hooks) ? ijfw.hooks : {};
         for (const [ev, groups] of Object.entries(srcHooks)) {
@@ -974,7 +1005,7 @@ for target in "${TARGETS[@]}"; do
             if (!g || !Array.isArray(g.hooks)) continue;
             const rewritten = g.hooks.map(h => {
               if (!h || h.type !== "command" || !h.command) return h;
-              const cmd = base + "/" + String(h.command).replace(/^hooks\//, "");
+              const cmd = shellQuote(base + "/" + String(h.command).replace(/^hooks\//, ""));
               return { ...h, command: cmd };
             });
             doc.hooks[ev].push({ ...(g.matcher ? { matcher: g.matcher } : {}), hooks: rewritten });

@@ -47,12 +47,18 @@ function readAllTurns(days) {
 
 /**
  * Annotate each turn with its USD cost and return enriched turns.
+ *
+ * `theoretical_cost_usd` is what equivalent paid-API usage would cost.
+ * `cost_usd` is what the user actually paid: 0 for Max-subscription Claude
+ * sessions, equal to theoretical_cost_usd for paid-API sessions and for
+ * other platforms.
  */
 function annotateCosts(turns) {
-  return turns.map(t => ({
-    ...t,
-    cost_usd: computeCost(t.model, t),
-  }));
+  return turns.map(t => {
+    const theoretical = computeCost(t.model, t);
+    const real = t.billing_mode === 'max' ? 0 : theoretical;
+    return { ...t, cost_usd: real, theoretical_cost_usd: theoretical };
+  });
 }
 
 /**
@@ -73,6 +79,13 @@ export function buildCostReport(days, observations = []) {
   const estimatedCost = estimatedTurns.reduce((s, t) => s + t.cost_usd, 0);
   const totalCost     = measuredCost + estimatedCost;
 
+  // Theoretical totals: what equivalent paid-API usage would cost.
+  // For Max sessions this is the value captured by the subscription.
+  const measuredTheoretical  = measuredTurns.reduce((s, t) => s + (t.theoretical_cost_usd || 0), 0);
+  const estimatedTheoretical = estimatedTurns.reduce((s, t) => s + (t.theoretical_cost_usd || 0), 0);
+  const theoreticalTotal     = measuredTheoretical + estimatedTheoretical;
+  const valueCaptured        = theoreticalTotal - totalCost;
+
   // Token counts from measured turns only (estimated tokens are unreliable)
   const totalIn        = measuredTurns.reduce((s, t) => s + (t.input_tokens || 0), 0);
   const totalOut       = measuredTurns.reduce((s, t) => s + (t.output_tokens || 0), 0);
@@ -89,6 +102,10 @@ export function buildCostReport(days, observations = []) {
     measuredCost,
     estimatedCost,
     totalCost,
+    // What paid-API equivalent would have cost; for Max users the gap
+    // (theoreticalTotal - totalCost) is the subscription's captured value.
+    theoreticalCost: theoreticalTotal,
+    valueCaptured,
     estimationConfidence: estimatedTurns.length > 0 ? 'low' : null,
     // Legacy field kept for callers that haven't migrated yet
     cost: totalCost,
@@ -118,15 +135,18 @@ export function buildBreakdown(dim, days, _observations = []) {
   const groups = {};
   for (const t of turns) {
     const key = t[dim] || 'unknown';
-    if (!groups[key]) groups[key] = { key, cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, count: 0 };
-    groups[key].cost_usd        += t.cost_usd;
-    groups[key].input_tokens    += t.input_tokens || 0;
-    groups[key].output_tokens   += t.output_tokens || 0;
-    groups[key].cache_read_tokens += t.cache_read_tokens || 0;
+    if (!groups[key]) groups[key] = { key, cost_usd: 0, theoretical_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, count: 0 };
+    groups[key].cost_usd             += t.cost_usd;
+    groups[key].theoretical_cost_usd += t.theoretical_cost_usd || 0;
+    groups[key].input_tokens         += t.input_tokens || 0;
+    groups[key].output_tokens        += t.output_tokens || 0;
+    groups[key].cache_read_tokens    += t.cache_read_tokens || 0;
     groups[key].count++;
   }
 
-  return Object.values(groups).sort((a, b) => b.cost_usd - a.cost_usd);
+  // Sort by theoretical cost so Max-session breakdowns still rank by usage
+  // intensity even when cost_usd is uniformly zero.
+  return Object.values(groups).sort((a, b) => b.theoretical_cost_usd - a.theoretical_cost_usd);
 }
 
 /**
@@ -140,10 +160,11 @@ export function buildDailySeries(days = 30) {
   for (const t of turns) {
     if (!t.timestamp) continue;
     const d = t.timestamp.slice(0, 10); // YYYY-MM-DD
-    if (!byDay[d]) byDay[d] = { date: d, cost_usd: 0, input_tokens: 0, output_tokens: 0 };
-    byDay[d].cost_usd     += t.cost_usd;
-    byDay[d].input_tokens += t.input_tokens || 0;
-    byDay[d].output_tokens += t.output_tokens || 0;
+    if (!byDay[d]) byDay[d] = { date: d, cost_usd: 0, theoretical_cost_usd: 0, input_tokens: 0, output_tokens: 0 };
+    byDay[d].cost_usd             += t.cost_usd;
+    byDay[d].theoretical_cost_usd += t.theoretical_cost_usd || 0;
+    byDay[d].input_tokens         += t.input_tokens || 0;
+    byDay[d].output_tokens        += t.output_tokens || 0;
   }
 
   // Fill in zeros for missing days
@@ -151,7 +172,7 @@ export function buildDailySeries(days = 30) {
   const series = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now - i * MS_PER_DAY).toISOString().slice(0, 10);
-    series.push(byDay[d] || { date: d, cost_usd: 0, input_tokens: 0, output_tokens: 0 });
+    series.push(byDay[d] || { date: d, cost_usd: 0, theoretical_cost_usd: 0, input_tokens: 0, output_tokens: 0 });
   }
   return series;
 }
@@ -172,10 +193,11 @@ export function buildBlockUsage() {
     return new Date(t.timestamp).getTime() >= cutoff;
   });
 
-  const usedCost = blockTurns.reduce((s, t) => s + t.cost_usd, 0);
-  const usedTok  = blockTurns.reduce((s, t) => s + (t.input_tokens || 0) + (t.output_tokens || 0), 0);
-  const start    = new Date(cutoff).toISOString();
-  const end      = new Date(Date.now()).toISOString();
+  const usedCost        = blockTurns.reduce((s, t) => s + t.cost_usd, 0);
+  const usedTheoretical = blockTurns.reduce((s, t) => s + (t.theoretical_cost_usd || 0), 0);
+  const usedTok         = blockTurns.reduce((s, t) => s + (t.input_tokens || 0) + (t.output_tokens || 0), 0);
+  const start           = new Date(cutoff).toISOString();
+  const end             = new Date(Date.now()).toISOString();
 
   return {
     start,
@@ -183,6 +205,7 @@ export function buildBlockUsage() {
     window_minutes: 300,
     used_tok: usedTok,
     used_usd: usedCost,
+    used_usd_theoretical: usedTheoretical,
   };
 }
 

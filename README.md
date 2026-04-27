@@ -112,7 +112,7 @@ After it finishes, do these verifications and paste the results back to me:
      echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' | node ~/.ijfw/mcp-server/src/server.js | head -1
      expect a JSON response containing "result" and "ijfw-memory"
 
-If anything fails, read the error from the installer log at ~/.ijfw/install.log and tell me what is broken.
+If a step does not complete, read the installer log at ~/.ijfw/install.log and tell me what it shows so we can resolve it.
 
 When everything is green, tell me to fully exit my AI agent (not just a new tab -- full process quit) and restart it so IJFW loads on session start. Once restarted, run /mcp inside Claude Code to confirm plugin:ijfw:ijfw-memory shows as connected.
 ````
@@ -329,10 +329,10 @@ A detached background check fires on every session start (Claude + Codex), polls
 
 | Where | When | What you see |
 |---|---|---|
-| Claude Code statusLine | Always visible | `^ 1.2.1 available  \|  #####..... 49% left` (autocompact-aware bar) |
-| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.1 available` (tokens via existing PreCompact estimate) |
-| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.1 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.2.0 -> v1.2.1 -- run 'ijfw update' in your TERMINAL` |
+| Claude Code statusLine | Always visible | `^ 1.2.2 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.2 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.2 available` injected via `additionalContext` |
+| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.2.1 -> v1.2.2 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 

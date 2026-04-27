@@ -73,9 +73,36 @@ function printFindings(mode, merged) {
 // ---------------------------------------------------------------------------
 // Arg parser
 // ---------------------------------------------------------------------------
+// True when the caller wants machine-readable output: explicit --json flag,
+// or stdout is not a TTY (gh-CLI convention -- piped/redirected output is
+// presumed to be consumed by another process, including sub-agents shelling
+// out via bash).
+function wantsJson(opts) {
+  return Boolean(opts && opts.json) || !process.stdout.isTTY;
+}
+
+function emitJson(value) {
+  process.stdout.write(JSON.stringify(value, null, 2) + '\n');
+}
+
 function parseArgs(argv) {
   const args = argv.slice(2); // strip node + script path
 
+  // Global --json flag: any command can be forced to JSON output regardless
+  // of TTY. Strip it before per-command parsing so it doesn't confuse
+  // positional argument handling.
+  let json = false;
+  const rest = [];
+  for (const a of args) {
+    if (a === '--json') json = true;
+    else rest.push(a);
+  }
+  const out = parseArgsInner(rest);
+  if (out && typeof out === 'object') out.json = json;
+  return out;
+}
+
+function parseArgsInner(args) {
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
     return { cmd: 'help' };
   }
@@ -259,6 +286,11 @@ Options for ijfw cross:
   --confirm     Prompt for confirmation before firing
   --expand      Include extended swarm when available
 
+Global flags:
+  --json    Emit JSON instead of human output. status and doctor auto-JSON
+            on non-TTY (gh-CLI convention); version stays one-line on pipe
+            and only JSON-ifies with explicit --json. Other commands ignore.
+
 Environment:
   IJFW_AUDIT_BUDGET_USD   Session spend cap (default $2.00). First call is always
                           allowed (no cap). Cap enforced from the 2nd call on.
@@ -274,15 +306,25 @@ Examples:
 `.trim());
 }
 
-async function cmdStatus(projectDir) {
+async function cmdStatus(projectDir, opts = {}) {
   const receipts = readReceipts(projectDir);
+  const last = receipts[receipts.length - 1];
+
+  if (wantsJson(opts)) {
+    emitJson({
+      runs: receipts.length,
+      last: last ? { mode: last.mode || 'cross', timestamp: last.timestamp || null } : null,
+      hero: receipts.length > 0 ? renderHeroLine(receipts) : null,
+    });
+    return;
+  }
+
   if (receipts.length === 0) {
     console.log('No cross-audit runs recorded yet.');
     console.log('Recommended next: `ijfw cross audit <file>` to run your first Trident audit.');
     return;
   }
   const hero = renderHeroLine(receipts);
-  const last = receipts[receipts.length - 1];
   const mode = last?.mode || 'cross';
   const ts = last?.timestamp ? last.timestamp.slice(0, 10) : '';
   console.log(`Trident -- run ${receipts.length} -- ${mode}${ts ? ' (' + ts + ')' : ''}`);
@@ -479,58 +521,70 @@ const INTEGRATION_DEPTH = {
   },
 };
 
-function cmdDoctor() {
+function cmdDoctor(opts = {}) {
+  const auditors = [];
+  for (const entry of ROSTER) {
+    isReachable(entry.id, process.env); // side effect: prime probe cache
+    const cli = isInstalled(entry.id);
+    const apiOk = Boolean(entry.apiFallback && process.env[entry.apiFallback.authEnv]);
+    auditors.push({
+      id: entry.id,
+      name: entry.name,
+      cli_installed: cli,
+      api_env: entry.apiFallback ? entry.apiFallback.authEnv : null,
+      api_set: apiOk,
+    });
+  }
+
+  const integrations = [];
+  for (const [id, def] of Object.entries(INTEGRATION_DEPTH)) {
+    const detected = def.checks
+      .filter(c => { try { return c.detect(); } catch { return false; } })
+      .map(c => c.name);
+    if (detected.length > 0) integrations.push({ id, label: def.label, components: detected });
+  }
+
+  const anyReachable = ROSTER.some(e => isReachable(e.id, process.env).any);
+
+  if (wantsJson(opts)) {
+    emitJson({ auditors, integrations, any_reachable: anyReachable });
+    return;
+  }
+
   console.log('ijfw doctor -- roster + key probe');
   console.log('');
 
-  const rows = [];
-  for (const entry of ROSTER) {
-    // isReachable() is called for its side effects (probe caching); return unused.
-    isReachable(entry.id, process.env);
-    const cli = isInstalled(entry.id);
-    const apiKey = entry.apiFallback ? process.env[entry.apiFallback.authEnv] : null;
-    const apiOk = Boolean(apiKey);
-
-    if (cli) {
-      rows.push(`  [ ok ] ${entry.id} CLI -- ${entry.name} ready`);
+  for (const a of auditors) {
+    if (a.cli_installed) {
+      console.log(`  [ ok ] ${a.id} CLI -- ${a.name} ready`);
     } else {
-      const cmd = INSTALL_HINT[entry.id] || `npm install -g ${entry.invoke.split(' ')[0]}`;
-      rows.push(`  [ .. ] ${entry.id} CLI -- standing by`);
-      rows.push(`         fix: ${cmd}`);
+      const cmd = INSTALL_HINT[a.id] || `npm install -g ${a.id}`;
+      console.log(`  [ .. ] ${a.id} CLI -- standing by`);
+      console.log(`         fix: ${cmd}`);
     }
-
-    if (entry.apiFallback) {
-      if (apiOk) {
-        rows.push(`  [ ok ] ${entry.apiFallback.authEnv} -- set`);
+    if (a.api_env) {
+      if (a.api_set) {
+        console.log(`  [ ok ] ${a.api_env} -- set`);
       } else {
-        rows.push(`  [ .. ] ${entry.apiFallback.authEnv} -- standing by`);
-        rows.push(`         fix: export ${entry.apiFallback.authEnv}=<your-key> (or add to ~/.ijfw/env)`);
+        console.log(`  [ .. ] ${a.api_env} -- standing by`);
+        console.log(`         fix: export ${a.api_env}=<your-key> (or add to ~/.ijfw/env)`);
       }
     }
   }
-
-  for (const row of rows) console.log(row);
   console.log('');
 
-  const anyReachable = ROSTER.some(e => isReachable(e.id, process.env).any);
   if (anyReachable) {
     console.log('At least one auditor is reachable. Run `ijfw cross audit <file>` to start.');
   } else {
     console.log('IJFW has the Trident ready -- install codex or gemini (or set OPENAI_API_KEY / GEMINI_API_KEY), then run `ijfw demo`.');
   }
 
-  // Integration depth: per-platform capability report (positive-framed, detected only).
   console.log('');
   console.log('Integration depth:');
-  let anyDepth = false;
-  for (const [_id, def] of Object.entries(INTEGRATION_DEPTH)) {
-    const detected = def.checks.filter(c => { try { return c.detect(); } catch { return false; } });
-    if (detected.length === 0) continue;
-    anyDepth = true;
-    console.log(`  ${def.label}: ${detected.map(c => c.name).join(' + ')}`);
-  }
-  if (!anyDepth) {
+  if (integrations.length === 0) {
     console.log('  Run `bash scripts/install.sh` in your IJFW repo to activate platform bundles.');
+  } else {
+    for (const i of integrations) console.log(`  ${i.label}: ${i.components.join(' + ')}`);
   }
 }
 
@@ -1141,6 +1195,30 @@ function cmdVersion(opts = {}) {
   const pkgPath = join(root, 'installer', 'package.json');
   let version = 'unknown';
   try { version = JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown'; } catch { /* */ }
+
+  // `ijfw --version` is a stable shell-script contract -- only switch to
+  // JSON when --json is explicit. status/doctor follow the gh-CLI convention
+  // and auto-JSON on non-TTY, but version stays one-line on pipe.
+  if (opts.json) {
+    if (!opts.verbose) {
+      emitJson({ package: '@ijfw/install', version });
+      return;
+    }
+    const state = readState();
+    const settings = readSettings();
+    emitJson({
+      package: '@ijfw/install',
+      version,
+      install_method: state.install_method || null,
+      installed_at: state.installed_at ? new Date(state.installed_at * 1000).toISOString() : null,
+      last_applied: state.last_applied_version || null,
+      auto_update: settings.auto_update || 'ask',
+      update_check_interval_hours: (settings.update_check && settings.update_check.interval_hours) || 24,
+      ijfw_home: ijfwHome(),
+    });
+    return;
+  }
+
   if (!opts.verbose) {
     console.log(`@ijfw/install@${version}`);
     return;
@@ -1477,7 +1555,7 @@ if (isMainModule) {
   }
 
   if (parsed.cmd === 'status') {
-    cmdStatus(process.cwd()).catch(err => { console.error(err.message); process.exit(1); });
+    cmdStatus(process.cwd(), parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'demo') {
     cmdDemo().catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'cross') {
@@ -1487,7 +1565,7 @@ if (isMainModule) {
   } else if (parsed.cmd === 'import') {
     cmdImport(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'doctor') {
-    cmdDoctor();
+    cmdDoctor(parsed);
   } else if (parsed.cmd === 'update') {
     cmdUpdate(parsed);
   } else if (parsed.cmd === 'version') {

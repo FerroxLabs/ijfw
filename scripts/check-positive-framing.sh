@@ -86,5 +86,40 @@ if [ $VIOLATIONS -gt 0 ]; then
   exit 1
 fi
 
-echo "OK: positive-framing clean across $(echo "${ALL_SCAN[@]}" | wc -w | tr -d ' ') user-facing files."
+# ----------------------------------------------------------------------------
+# Brand-rule scan for shippable copy (CHANGELOG, README, release-notes drafts).
+# These surfaces go to npm tarballs / GitHub release pages / the user's terminal
+# via `ijfw update --changelog`. The rule per feedback_positive_framing_in_release_surfaces:
+# never lead with what was broken; lead with what works now.
+# ----------------------------------------------------------------------------
+COPY_SCAN=(CHANGELOG.md installer/CHANGELOG.md README.md)
+# Add any draft release notes parked under .planning/.
+while IFS= read -r f; do COPY_SCAN+=("$f"); done < <(find .planning -maxdepth 3 -name "*release-notes*.md" 2>/dev/null)
+
+# Word-boundaries around the brand-banned vocabulary. These words signal
+# backward-frame writing in release copy. Allow them inside fenced code blocks
+# (those are technical citations, not copy).
+COPY_BANNED='\b(bug|bugs|broken|fixed a |the fix |regression|crashed?|burned through|leak|leaked)\b'
+COPY_VIOLATIONS=0
+for cf in "${COPY_SCAN[@]}"; do
+  [ -f "$cf" ] || continue
+  # Strip fenced ```...``` blocks before the scan so technical citations pass.
+  matches=$(LC_ALL=C awk '/^```/{f=!f; next} !f{print NR ":" $0}' "$cf" \
+    | grep -inE -- "$COPY_BANNED" 2>/dev/null) || true
+  if [ -n "$matches" ]; then
+    while IFS= read -r m; do
+      printf '  %s:%s\n' "$cf" "$m" >&2
+      COPY_VIOLATIONS=$((COPY_VIOLATIONS + 1))
+    done <<< "$matches"
+  fi
+done
+if [ $COPY_VIOLATIONS -gt 0 ]; then
+  echo "" >&2
+  echo "FAIL: $COPY_VIOLATIONS brand-banned word(s) in shippable copy." >&2
+  echo "Release surfaces describe what works now, not what was wrong before." >&2
+  echo "Replace with: improved, optimized, enhanced, now does X, X now does Y." >&2
+  exit 1
+fi
+
+echo "OK: positive-framing clean across $(echo "${ALL_SCAN[@]}" | wc -w | tr -d ' ') user-facing files + $(echo "${COPY_SCAN[@]}" | wc -w | tr -d ' ') copy surfaces."
 exit 0

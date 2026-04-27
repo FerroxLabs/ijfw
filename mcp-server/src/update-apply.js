@@ -1,7 +1,10 @@
 // MCP tool: ijfw_update_apply
 //
-// Does NOT execute the update. Validates the token, writes a pending sentinel,
-// returns instruction telling the user to run the terminal-side confirm command.
+// Does NOT execute the update. Validates the token, writes (or overwrites)
+// the pending sentinel, returns instruction telling the user to run the
+// terminal-side confirm command. Idempotent against a matching sentinel
+// already written by ijfw_update_check -- the sentinel + token are the
+// same artifact, so re-writing with the same values is a no-op.
 // Air-gaps the MCP path from actual code execution -- per v3 sec 16 blocker fix.
 
 import { validateToken, writePendingSentinel } from './lib/token.js';

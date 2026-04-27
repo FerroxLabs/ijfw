@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readSafe, writeAtomic } from './lib/atomic-io.js';
 import { npmView, compareSemver } from './lib/npm-view.js';
-import { issueToken } from './lib/token.js';
+import { issueToken, writePendingSentinel, readPendingSentinel } from './lib/token.js';
 
 const PKG = '@ijfw/install';
 const REPO = 'TheRealSeanDonahoe/ijfw';
@@ -93,10 +93,25 @@ export function ijfwUpdateCheck(args = {}) {
 
   if (available) {
     const tok = issueToken(sessionId, latest);
-    result.confirmation_token = tok.token;
+    // Write the pending sentinel so the user can run `ijfw update --confirm
+    // <token>` in one step. The terminal command itself is the air-gap.
+    try { writePendingSentinel(sessionId, latest, tok.token); } catch { /* best-effort; the post-read below covers concurrent failures */ }
+    // Concurrent _check calls within the same session race on the token-file
+    // + sentinel writes. The last writer wins for both, so reflecting the
+    // sentinel's actual content in our response guarantees the returned
+    // token matches what `--confirm` will accept.
+    let finalToken = tok.token;
+    let finalTarget = latest;
+    const post = readPendingSentinel(sessionId);
+    if (post.ok && post.data && post.data.token) {
+      finalToken = post.data.token;
+      if (post.data.target_version) finalTarget = post.data.target_version;
+    }
+    result.confirmation_token = finalToken;
+    result.target_version = finalTarget;
     result.expires_at = tok.expires_at;
     result.instruction =
-      `To proceed, run in your TERMINAL: ijfw update --confirm ${tok.token}\n` +
+      `To proceed, run in your TERMINAL: ijfw update --confirm ${finalToken}\n` +
       `Token expires in 5 minutes. The MCP tool cannot execute the update directly.`;
   }
 

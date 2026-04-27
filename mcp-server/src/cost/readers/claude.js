@@ -10,6 +10,47 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects');
+const TRANSCRIPT_SUMMARY  = join(homedir(), '.ijfw', 'transcript-summary.json');
+
+/**
+ * Detect Claude Code billing mode for the local user.
+ * ANTHROPIC_API_KEY in env is the unambiguous paid-API signal. Without it,
+ * Claude Code is using OAuth (Max/Pro/Team subscription) -- the OAuth token
+ * may live in ~/.claude/.credentials.json (Linux/Windows) or in the macOS
+ * Keychain, both of which Claude Code manages itself. Override with
+ * IJFW_BILLING_MODE=max|api.
+ */
+export function detectBillingMode() {
+  const override = (process.env.IJFW_BILLING_MODE || '').toLowerCase();
+  if (override === 'max' || override === 'api') return override;
+  if (process.env.ANTHROPIC_API_KEY) return 'api';
+  return 'max';
+}
+
+/**
+ * Build a per-session billing_mode map from ~/.ijfw/transcript-summary.json.
+ * The transcript parser stamps the mode at parse time (first-parse-wins),
+ * so this preserves historical billing context across mode switches. Sessions
+ * that have not yet been parsed fall back to current env detection.
+ */
+function loadSessionBillingMap() {
+  if (!existsSync(TRANSCRIPT_SUMMARY)) return null;
+  let data;
+  try { data = JSON.parse(readFileSync(TRANSCRIPT_SUMMARY, 'utf8')); }
+  catch { return null; }
+  const map = new Map();
+  const projects = data && data.projects;
+  if (!projects || typeof projects !== 'object') return map;
+  for (const proj of Object.values(projects)) {
+    if (!proj || !Array.isArray(proj.sessions)) continue;
+    for (const sess of proj.sessions) {
+      if (sess && sess.file && sess.billingMode) {
+        map.set(sess.file.replace(/\.jsonl$/, ''), sess.billingMode);
+      }
+    }
+  }
+  return map;
+}
 
 /**
  * Walk ~/.claude/projects/<project>/<session>.jsonl and extract usage turns.
@@ -18,6 +59,10 @@ const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 export function readClaudeSessions(projectsDir = CLAUDE_PROJECTS_DIR) {
   if (!existsSync(projectsDir)) return [];
 
+  // Per-session billing mode preserves historical context across env-mode
+  // switches; current env detection is the fallback for unparsed sessions.
+  const sessionBillingMap = loadSessionBillingMap();
+  const fallbackMode = detectBillingMode();
   const turns = [];
   let projectDirs;
   try {
@@ -46,7 +91,10 @@ export function readClaudeSessions(projectsDir = CLAUDE_PROJECTS_DIR) {
           try {
             const record = JSON.parse(line);
             const turn = extractClaudeTurn(record, sessionId, projectName);
-            if (turn) turns.push(turn);
+            if (turn) {
+              turn.billing_mode = (sessionBillingMap && sessionBillingMap.get(sessionId)) || fallbackMode;
+              turns.push(turn);
+            }
           } catch {
             // corrupt line -- skip
           }
@@ -71,7 +119,10 @@ export function readClaudeSessions(projectsDir = CLAUDE_PROJECTS_DIR) {
             try {
               const record = JSON.parse(line);
               const turn = extractClaudeTurn(record, sessionId, projectName);
-              if (turn) turns.push(turn);
+              if (turn) {
+                turn.billing_mode = (sessionBillingMap && sessionBillingMap.get(sessionId)) || fallbackMode;
+                turns.push(turn);
+              }
             } catch {}
           }
         } catch {}

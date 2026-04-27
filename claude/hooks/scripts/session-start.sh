@@ -406,16 +406,32 @@ if [ -n "$INDEXER_SCRIPT" ]; then
 fi
 
 # Transcript parser -- incremental, background, silent.
-# Finds parse-transcripts.js the same way codebase indexer finds its script.
-TRANSCRIPT_PARSER=""
-for candidate in \
-    "$CLAUDE_PLUGIN_ROOT/../scripts/dashboard/parse-transcripts.js" \
-    "$HOME/.ijfw/scripts/dashboard/parse-transcripts.js" \
-    "$(pwd)/scripts/dashboard/parse-transcripts.js"; do
-  if [ -f "$candidate" ]; then TRANSCRIPT_PARSER="$candidate"; break; fi
-done
-if [ -n "$TRANSCRIPT_PARSER" ]; then
-  (node "$TRANSCRIPT_PARSER" --incremental >/dev/null 2>&1 &) 2>/dev/null
+# Single-process guard prevents pile-up across concurrent Claude Code sessions.
+# Set IJFW_SKIP_PARSE=1 to skip per shell.
+if [ "${IJFW_SKIP_PARSE:-}" != "1" ]; then
+  TRANSCRIPT_PARSER=""
+  for candidate in \
+      "$CLAUDE_PLUGIN_ROOT/../scripts/dashboard/parse-transcripts.js" \
+      "$HOME/.ijfw/scripts/dashboard/parse-transcripts.js" \
+      "$(pwd)/scripts/dashboard/parse-transcripts.js"; do
+    if [ -f "$candidate" ]; then TRANSCRIPT_PARSER="$candidate"; break; fi
+  done
+  if [ -n "$TRANSCRIPT_PARSER" ]; then
+    # Pre-spawn PID-file check (defense-in-depth; the .js also self-guards).
+    PARSE_PIDFILE="$IJFW_GLOBAL/.parse-transcripts.pid"
+    SPAWN_OK=1
+    if [ -f "$PARSE_PIDFILE" ]; then
+      OLD_PID=$(cat "$PARSE_PIDFILE" 2>/dev/null)
+      if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        SPAWN_OK=0
+      else
+        rm -f "$PARSE_PIDFILE" 2>/dev/null
+      fi
+    fi
+    if [ "$SPAWN_OK" = "1" ]; then
+      (node "$TRANSCRIPT_PARSER" --incremental >/dev/null 2>&1 &) 2>/dev/null
+    fi
+  fi
 fi
 
 if [ "$SESSION_COUNT" -gt 0 ] && [ $(( SESSION_COUNT % 5 )) -eq 0 ]; then

@@ -1,8 +1,58 @@
 # Changelog
 
+## [1.2.2] -- 2026-04-27
+
+**Reliability + accuracy patch.** Six improvements to dashboard truthfulness, hook efficiency, CLI scriptability, the in-band update flow, install-time state seeding, and Codex hooks resolution. No new features, no breaking changes.
+
+### Cost dashboard distinguishes Max vs API spend
+
+The session-end metrics, the transcript summarizer, and the MCP cost aggregator now all carry an explicit `billing_mode` field on every row. Claude Max sessions report `cost_usd: 0` paid alongside a new `theoretical_cost_usd` showing the value captured by the subscription -- so Max users see the real $0 they pay next to the equivalent paid-API cost they would have spent. Paid-API sessions retain `cost_usd` as before. Detection: `ANTHROPIC_API_KEY` present in env -> `api`; otherwise -> `max` (Claude Code OAuth, including macOS Keychain installs). Override with `IJFW_BILLING_MODE=max|api`.
+
+The MCP cost aggregator response gains two top-level fields: `theoreticalCost` (sum across all turns) and `valueCaptured` (`theoreticalCost - totalCost`). The breakdown and daily-series endpoints carry `theoretical_cost_usd` per group. Legacy callers reading `cost`/`totalCost` continue to work and now reflect what the user actually pays. The MCP reader preserves per-session billing mode via `~/.ijfw/transcript-summary.json`, so historical Claude turns keep their original mode across env-mode switches.
+
+Schema: session-end metrics line bumps to `v: 4`. Old readers tolerate the new fields (`cost_usd` retained as primary).
+
+Files: `claude/hooks/scripts/session-end.sh`, `scripts/dashboard/parse-transcripts.js`, `mcp-server/src/cost/readers/claude.js`, `mcp-server/src/cost/aggregator.js`.
+
+### Transcript summarizer is single-process, time-budgeted, and skippable
+
+`scripts/dashboard/parse-transcripts.js` now holds an atomic `O_CREAT|O_EXCL` PID-file lock at `~/.ijfw/.parse-transcripts.pid` so concurrent Claude Code session-starts cannot stack copies. The lock self-releases on clean exit and on SIGINT/SIGTERM; a stale lock from a dead PID is reclaimed on the next start. `claude/hooks/scripts/session-start.sh` checks the same lock pre-spawn as defense in depth.
+
+A 30-second wall-clock budget (override with `IJFW_PARSE_BUDGET_MS=N`) caps any single run. The work queue is sorted by mtime ASC so partial runs make forward progress -- each completed file advances the watermark, and the next run picks up where this one left off. Push-time deduplication preserves first-parse `billingMode` across re-parses. Set `IJFW_SKIP_PARSE=1` per shell to skip the summarizer entirely for that session.
+
+Files: `scripts/dashboard/parse-transcripts.js`, `claude/hooks/scripts/session-start.sh`.
+
+### `ijfw` CLI emits JSON on non-TTY
+
+`ijfw status` and `ijfw doctor` now follow the gh-CLI convention: when stdout is piped or otherwise non-interactive, output is JSON; on a TTY, output stays human-formatted as before. Sub-agents that shell out via bash get a clean parseable response without flag plumbing. Add `--json` to force JSON regardless of TTY. `ijfw --version` keeps its one-line shell-script contract on pipe and only switches to JSON when `--json` is explicit.
+
+Files: `mcp-server/src/cross-orchestrator-cli.js`.
+
+### In-band update flow streamlined
+
+`ijfw_update_check` now writes the pending sentinel atomically when it issues a confirmation token, so the user can run `ijfw update --confirm <token>` in one step. The terminal command remains the air-gap (the model still cannot execute the update); collapsing issuance and sentinel-write into one MCP call delivers a one-MCP-call, one-terminal-command flow with no intermediate ceremony, and preserves the security model. `_check` re-reads the sentinel post-write so concurrent callers receive the token that the sentinel actually carries. `ijfw_update_apply` stays for back-compat and is idempotent against the sentinel that `_check` already wrote. The `ijfw-update` skill across all four shipping trees (Claude, Codex, shared, Gemini) is updated to match the streamlined flow.
+
+Files: `mcp-server/src/update-check.js`, `mcp-server/src/update-apply.js`, `claude/skills/ijfw-update/SKILL.md` + three mirrors.
+
+### Install-time state seeding now covers every install path
+
+`scripts/install.sh` writes `~/.ijfw/state.json` on every install method, including custom-dir installs (`--dir`, `IJFW_HOME`, npm-global with non-canonical paths). The state.json + settings.json + `install-method` writes now run on the unconditional path so the MCP version-detection layer reads an accurate `installed_version` regardless of where the install lives; statusline detection (which touches Claude Code's own settings) stays canonical-only. Custom-dir users get correct version detection on first install with no extra steps.
+
+Files: `scripts/install.sh`.
+
+### Codex hooks resolve to the right location
+
+`scripts/install.sh` now writes `~/.codex/hooks.json` entries that point at `~/.codex/hooks/<script>.sh` -- the same directory where the install step physically copies each hook script. Codex SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, and Stop hooks fire `Completed` cleanly on every audit invocation, including the cross-audit safe-flag combo. The hooks.json merge is idempotent against prior IJFW matcher-groups (`_ijfw: true`), so existing installs get repaired automatically on the next `bash scripts/install.sh` or `ijfw update`. Hook command paths are shell-quoted so `$HOME` values containing spaces or other shell-special characters work end-to-end (Codex shell-parses the command value; verified empirically against codex-cli 0.118 with a spaced HOME). Pre-existing hooks.json files in legacy shapes (bare arrays, or `hooks` as an array) are snapshot to `~/.codex/hooks.json.legacy.bak.<timestamp>` before the migration so user data is always recoverable.
+
+Files: `scripts/install.sh`.
+
+### Files changed
+
+`.github/workflows/publish.yml`, `claude/hooks/scripts/session-end.sh`, `claude/hooks/scripts/session-start.sh`, `claude/skills/ijfw-update/SKILL.md` (+ 3 mirrors), `mcp-server/src/cost/aggregator.js`, `mcp-server/src/cost/readers/claude.js`, `mcp-server/src/cross-orchestrator-cli.js`, `mcp-server/src/update-apply.js`, `mcp-server/src/update-check.js`, `scripts/dashboard/parse-transcripts.js`, `scripts/install.sh`, `installer/package.json` + `mcp-server/package.json` (1.2.1 -> 1.2.2), `README.md`, `CLAUDE.md`.
+
 ## [1.2.1] -- 2026-04-26
 
-**Ship-discipline patch.** Six items closing the honest-disclosures from 1.2.0 plus two production bugs surfaced during a remote-host cross-audit diagnostic. No new features, no breaking changes.
+**Ship-discipline patch.** Six items closing the honest-disclosures from 1.2.0 plus two production hardenings surfaced during a remote-host cross-audit diagnostic. No new features, no breaking changes.
 
 ### Codex cross-audit invocation flags
 
@@ -50,10 +100,6 @@ End state: zero `detect-non-literal-fs-filename` warnings on the next Release ru
 
 Live SSH session on the user's remote Ubuntu 24.04 + RTX PRO 6000 box. Phase 1-4 environment fingerprint + Codex sandbox-mode probing identified the trusted-directory gate and the MCP-cancellation behavior. Round-5 adversarial probing (live prompt-injection attempts targeting `~/.ssh/id_rsa` and `~/.codex/auth.json`) verified the layered defense holds against the threat the Trident BLOCK was concerned about. Diagnostic key revoked at end of session.
 
-### Coming in 1.2.2
-
-- **Full env isolation for cross-audit Codex sessions.** Round-5 audits surfaced a residual confidentiality concern: the `--sandbox read-only` flag combo blocks write/exec but the model could in principle read host secrets and exfiltrate via response text if a future Codex version exposes a non-shell file-read path or if model alignment is jailbroken. 1.2.1's mitigation is empirically sufficient against today's Codex 0.118.0 attack surface; 1.2.2 will add belt-and-suspenders: chrooted audit cwd, isolated `HOME` / `CODEX_HOME`, and native-tool disable flags when Codex exposes them.
-
 ## [1.2.0] -- 2026-04-24
 
 **Workflow intelligence release.** Four improvements to how IJFW plans and executes work, plus the platform-count cleanup closing a three-release drift. Every change landed under Donahoe Loop discipline -- three rounds of codex + gemini cross-audit closed 33 findings (6 BLOCK, 16 FLAG, 6 NOTE, 6 execution warnings) before any code was written.
@@ -66,7 +112,7 @@ Three load-bearing primitives landed first, so feature phases could assume they 
 - **Structured metrics block in `ijfw-plan-check` output.** Downstream consumers now read machine-readable counters (`tasks_total`, `budget_overrun`, `dep_inversions`, `under_specified_pct`, `goal_alignment_fail`, `scope_leaks`, `verdict`) instead of parsing prose. Emitted as an HTML-comment block after the verdict text.
 - **Verify-command allowlist primitive.** `mcp-server/src/ralph-allowlist.js` exports `ALLOWLIST`, `FORBID_LIST`, and `isSafeVerifyCommand(cmd)`. Zero deps, ESM, matches mcp-server's flat-test convention at `mcp-server/test-ralph-allowlist.js`. Used by Phase 4's Ralph loop to gate verify commands before execution. 27/27 tests green.
 
-### Phase 0 -- stale "8 platforms" hunt + regression gate
+### Phase 0 -- stale "8 platforms" hunt + drift gate
 
 Five shippable surfaces (installer banner + uninstall comment + UPDATE-FLOW docs + `/ijfw` command description) corrected from `8 platforms` to `13 platforms`. Historical files (CHANGELOGs, archived `.planning/` docs) left frozen. The `installer/dist/install.js` bundle regenerates via `prepublishOnly` from `installer/src/install.js`.
 
@@ -168,7 +214,7 @@ Four dry-run scripts ship as ship-blockers: happy-path (3 criteria pass iter 1),
 - **Skill mirrors** -- `shared/skills/ijfw-design/SKILL.md` + the `claude/` and `codex/` mirrors each add one pre-list note so the three-option picker narrative stays intact while naming the MCP fallback for platforms without a skills tree.
 - **Templates are self-contained** in `mcp-server/templates/design/` so the MCP server ships the picker without path assumptions about sibling `claude/` / `codex/` trees. 12 files present; gated against drift via the new prelude+catalog test (all 12 names asserted present).
 
-Files changed: `mcp-server/src/server.js` (+79 lines: `handleDesignTemplate` helper, `DESIGN_TEMPLATE_CATALOG` constant, handleRecall + handlePrelude branches, one-line tool-description append), `mcp-server/test.js` (+13 assertions covering catalog / body / unknown-name / path-traversal / prelude present / prelude absent / PROJECT_DIR-not-cwd regression / symlink-escape regression), `aider/CONVENTIONS.md` (rewritten picker section, ~15 lines), `shared/skills/ijfw-design/SKILL.md` + `claude/skills/ijfw-design/SKILL.md` + `codex/skills/ijfw-design/SKILL.md` (+1 line each). 99/99 MCP tests green.
+Files changed: `mcp-server/src/server.js` (+79 lines: `handleDesignTemplate` helper, `DESIGN_TEMPLATE_CATALOG` constant, handleRecall + handlePrelude branches, one-line tool-description append), `mcp-server/test.js` (+13 assertions covering catalog / body / unknown-name / path-traversal / prelude present / prelude absent / PROJECT_DIR-not-cwd guard / symlink-escape guard), `aider/CONVENTIONS.md` (rewritten picker section, ~15 lines), `shared/skills/ijfw-design/SKILL.md` + `claude/skills/ijfw-design/SKILL.md` + `codex/skills/ijfw-design/SKILL.md` (+1 line each). 99/99 MCP tests green.
 
 ### Donahoe Loop audit trail
 
@@ -179,19 +225,6 @@ Three rounds of codex + gemini cross-audit, all findings closed in the plan befo
 ### Sean Donahoe notes
 
 Each phase shipped via isolated-context subagent (context discipline: the main planning conversation never saw the implementation bytes). Every commit atomic and gated by per-phase structural dry-runs plus the aggregate `scripts/1.2.0-verify-all.sh` harness. No push until explicit authorization per `feedback_no_push_without_authorization.md` -- the commits are local; v1.2.0 tag does not exist yet.
-
-### Coming in 1.2.1 (patch -- ship-discipline close)
-
-Carry-overs from 1.2.0's ship-prep honest-disclosures pass:
-
-- **Kernel-isolated ship E2E that doesn't require a local container runtime.** 1.2.0's install-from-registry verification ran in a mktemp-scoped `HOME` + `IJFW_HOME` + `NPM_CONFIG_PREFIX` sandbox because no docker / podman / colima was available on the ship machine. Acceptable for this release (shares kernel + system node only, no package/config state from the host) but not the strictest possible signal. Fix: add a post-publish GitHub Actions job that pulls `node:20` in a container, installs `@ijfw/install@<tag>`, runs `ijfw-install`, and executes the MCP picker + version smoke -- fully kernel-isolated, zero local tooling required. Guards against future runtime regressions the same way 1.1.8's live-CLI gates guarded against install regressions.
-- **eslint-plugin-security non-literal-fs warnings in `installer/src/ijfw.js`.** 10 occurrences flagged by the publish workflow (lines 15 x2, 56, 131, 137, 153, 169, 178, 186, 204): `existsSync` / `mkdirSync` / `readdirSync` called with variables that flow from user input (`--dir` argument, env vars). Pre-existing in 1.1.x but surfaced again on the 1.2.0 run. Fix: triage each call -- confirm the upstream validator (`validatePath`, the custom-dir canonicalization) is actually doing the work, then either add centralized sanitization at the entry points or add per-call `eslint-disable-next-line` with a cited reason. Not a known CVE surface today; closing it makes the lint run clean for real.
-
-### Coming in 1.3.0 (evidence + reach)
-
-- Reproducible token-savings benchmark harness (3 task buckets x 3 model tiers x 10 runs x IJFW-on/off + public CSV).
-- Skill-catalogue consolidation pass (self-Trident + per-skill test coverage).
-- Team tier memory (cross-user shared memory).
 
 ### Credits
 
@@ -249,21 +282,6 @@ While in the file: the "IJFW currently targets 8 platforms" line was stale (1.1.
 
 One marketing line added to the README "What this isn't" section, reframing IJFW's architectural discipline against the factory-mode-vs-craft-mode distinction that's surfaced in the wider 2026 Claude Code discourse (see claudecodecamp.com's "Boiling the Ocean" piece). IJFW is already craft mode by design -- single memory core, audit gates, receipts, $2 Trident budget cap, 99 ms hook floor. The line makes that implicit positioning explicit for the senior-engineer audience who parse the distinction.
 
-### Coming in 1.2.0 (workflow intelligence)
-
-Spec work from gstack + Ralph Loop research absorbed. All confirmed as genuine improvements, all scheduled for the next dedicated session:
-
-- **Ralph-style completion loop** in `/ijfw-execute` with `max-iterations=3` default + explicit completion contract per task + halt-as-ISSUE confidence tag on unmet criteria. Closes the "Claude stops mid-task at 60%" failure mode.
-- **Completeness score** on coverage-varying `AskUserQuestion` surfaces, with gstack's "options differ in kind, no score" discipline.
-- **Four-mode plan review** (SCOPE EXPANSION / SELECTIVE / HOLD / REDUCTION) in `/ijfw-plan` Deep mode with context-aware defaults.
-- **Temporal Interrogation** (HOUR 1 / 2-3 / 4-5 / 6+ pre-flight questions) in `/ijfw-plan` Deep mode.
-
-### Coming in 1.3.0 (evidence + reach)
-
-- Reproducible token-savings benchmark harness (3 task buckets x 3 model tiers x 10 runs x IJFW-on/off + public CSV).
-- Skill-catalogue consolidation pass (self-Trident + per-skill test coverage).
-- DESIGN.md picker + templates extension to OpenCode / Qwen Code / Kimi Code / OpenClaw / Aider.
-
 ### Credits
 
 - **Damir Zorcic** -- Five Laws suggestion (discipline adoption).
@@ -313,15 +331,9 @@ Cline is a VS Code extension without a shell CLI, so the "platform's own CLI say
 - `feedback_no_push_without_authorization.md`: "build / execute / implement" mean build + verify + commit locally and stop. Only "push / ship / go / tag" trigger actual push. Tag pushes are publish operations (Trusted Publishing fires on `v*`).
 - `feedback_copywriting_hooks_stay.md`: deliberate marketing register (README hero, taglines) is user-owned. Audit critiques about tone/register on copy surfaces need explicit sign-off, not a blanket rewrite.
 
-### Coming in 1.2.0
-
-- Reproducible token-savings benchmark harness (3 task buckets x 3 model tiers x 10 runs x IJFW-on/off, published CSV). Dedicated session with real API budget.
-- Skill-catalogue consolidation pass (self-Trident with per-skill test coverage for anything touched).
-- DESIGN.md picker + templates extension to the 1.1.7 platforms (OpenCode, Qwen Code, Kimi Code, OpenClaw, Aider).
-
 ### Back-compat
 
-- 1.1.8 will overwrite the 1.1.7 broken config files on reinstall. `.bak.<timestamp>` backups preserved as usual. Users on 1.1.7 should run `ijfw update` (or `npm i -g @ijfw/install@1.1.8 && ijfw-install`) to get the fixes.
+- 1.1.8 reinstall refreshes the 1.1.7 platform configs to apply the latest schema. `.bak.<timestamp>` backups preserved as usual. Users on 1.1.7 should run `ijfw update` (or `npm i -g @ijfw/install@1.1.8 && ijfw-install`) to pick up the improvements.
 
 ## [1.1.7] -- 2026-04-23
 
@@ -381,7 +393,7 @@ Platform count: **8 install targets -> 13 MCP-integrated + 1 rules-only**. Same 
 
 - 36 new Wave-1 unit tests + 15 new Wave-2 unit tests (status-card composer + statusline + hot-path budget + compose-safety). All green.
 - 23 new E2E gates in `scripts/e2e-smoke.sh` covering: state file presence, settings seed, atomic-write roundtrip, MCP tools registered, version reporting, re-entrancy suppression (statusline + prelude + status card), provenance workflow contract, skill cross-tree consistency, statusline behaviour + fail-open invariant, prelude update-nudge surfacing, Codex bg update-check wiring, Codex `Stop` + Gemini `AfterAgent` status-card emission.
-- Fixed pre-existing `isMainModule` bug in `cross-orchestrator-cli.js` -- macOS `/tmp` to `/private/tmp` symlink resolution now canonicalised on both sides so direct `node cli.js --version` works in any install path.
+- Hardened pre-existing `isMainModule` resolution in `cross-orchestrator-cli.js` -- macOS `/tmp` to `/private/tmp` symlinks now canonicalised on both sides so direct `node cli.js --version` works in any install path.
 - Existing `mcp-server/test.js` updated to assert exactly 10 tools.
 
 ## [1.1.5] -- 2026-04-22
@@ -411,7 +423,7 @@ Platform count: **8 install targets -> 13 MCP-integrated + 1 rules-only**. Same 
 ### Fix #6 -- cross audit/critique sends file contents, not path
 
 - `ijfw cross audit <file>` previously sent only the path string to auditors, who hallucinated findings from the filename/extension. Fixed via new `resolveTarget()` helper in `mcp-server/src/cross-orchestrator-cli.js`: if the argument resolves to a regular file on disk, substitutes `File: <path>\n\n<contents>` (64 KB size cap with truncation marker). Topics, git ranges, and non-existent paths pass through unchanged.
-- Reported by @shawnvink. 9 new unit tests cover real file, topic, git range, directory, oversize, relative path, and the regression case directly.
+- Reported by @shawnvink. 9 new unit tests cover real file, topic, git range, directory, oversize, relative path, and the guard case directly.
 
 ### Reliability + hygiene
 
