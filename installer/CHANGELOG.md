@@ -22,9 +22,11 @@ Files: `mcp-server/src/cross-orchestrator.js` (new `buildSpawnEnv` helper thread
 
 Every cross-audit / cross-critique / cross-research run now surfaces a "Heads up -- one or more auditors did not contribute this run" line when at least one auditor's leg failed, timed out, or produced no parseable findings alongside non-empty stderr. The line names the auditor id and a one-line reason (first 80 characters of stderr or exit code), then explicitly states that lineage diversity is reduced for the result and points to `--with <id>` for forcing a different combination on a re-run. Previously the merged-findings output displayed regardless of leg health, so a Trident run with one auditor crashed read identically to a Trident run with all three auditors clean. The "second-lineage" promise no longer breaks silently.
 
-A defense-in-depth prompt change reinforces the auditor role: every dispatcher request now carries an "Operating constraints (mandatory)" block instructing the auditor not to shell out, not to invoke other CLIs, and not to attempt to convene additional auditors -- the orchestrator already runs them in parallel. The codex `--sandbox read-only` flag remains the load-bearing control; the prompt change is layered guidance for the model.
+A defense-in-depth prompt change reinforces the auditor role: every dispatcher request now carries an "Operating constraints (mandatory)" block instructing the auditor not to shell out, not to invoke other CLIs, and not to attempt to convene additional auditors -- the orchestrator already runs them in parallel. Verified live on Codex 0.122.0: with the new prompt, codex obeys the directive and produces findings inline rather than attempting to spawn `gemini` or other CLIs.
 
-Files: `mcp-server/src/cross-dispatcher.js` (`buildRequest`), `mcp-server/src/cross-orchestrator-cli.js` (degraded-auditor warning surface in `cmdCross`).
+The Codex sandbox semantics were also re-verified empirically against Codex 0.122.0 and the audit-roster.js note has been corrected. `--sandbox read-only` blocks file *writes* on the host (`echo > /tmp/x` returns `operation not permitted`) but does NOT block shell exec or subprocess launching -- a `read-only` sandbox can still run `ls`, `curl`, or `gemini`. The load-bearing control against codex going meta is the prompt-layer "Operating constraints" block plus the visibility surface; the sandbox flag is layered file-write protection, not exec containment.
+
+Files: `mcp-server/src/cross-dispatcher.js` (`buildRequest`), `mcp-server/src/cross-orchestrator-cli.js` (degraded-auditor warning surface in `cmdCross`), `mcp-server/src/audit-roster.js` (corrected sandbox-semantics note).
 
 ### Verification
 
