@@ -4,9 +4,13 @@ import { ROSTER, detectSelf, rosterFor, defaultAuditor, formatRoster, pickAudito
 
 test('ROSTER has expected ids', () => {
   const ids = ROSTER.map(e => e.id);
-  for (const expected of ['codex', 'gemini', 'opencode', 'aider', 'copilot', 'claude']) {
+  for (const expected of ['codex', 'gemini', 'qwen', 'opencode', 'aider', 'copilot', 'claude']) {
     assert.ok(ids.includes(expected), `missing: ${expected}`);
   }
+});
+
+test('detectSelf returns qwen on QWEN_SESSION', () => {
+  assert.equal(detectSelf({ QWEN_SESSION: 'abc' }), 'qwen');
 });
 
 test('detectSelf returns claude when Claude Code env is set', () => {
