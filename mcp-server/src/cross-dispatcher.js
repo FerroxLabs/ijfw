@@ -226,6 +226,14 @@ Stamp:   ${new Date().toISOString()}
 
 ${system}
 
+## Operating constraints (mandatory)
+
+- You ARE the auditor. Do not delegate this work.
+- Do not shell out, do not invoke other CLIs, do not call gemini/codex/claude/aider/opencode/copilot, do not spawn subagents.
+- Do not attempt to convene additional auditors -- the orchestrator already runs them in parallel.
+- Produce findings inline in the response format below. Nothing else.
+- If the target is clean for your angle, return an empty findings array and say so in the prose.
+
 ${format}
 ${priorSection}
 ## Target

@@ -112,9 +112,29 @@ function angleFor(mode, id) {
   throw new Error(`Unknown mode: ${mode}`);
 }
 
+// buildSpawnEnv -- compose env for a given auditor pick.
+// Issue #9-A: when running the gemini CLI, if GEMINI_API_KEY is present,
+// strip gcloud-related env vars so gemini-cli's own auth precedence does not
+// silently pick up an unrelated gcloud project (cloudaicompanion.googleapis.com
+// billing collisions). Reproduced by Kat in issue #9.
+//
+// Precedence we enforce when GEMINI_API_KEY is set:
+//   GEMINI_API_KEY (kept) > GOOGLE_APPLICATION_CREDENTIALS (dropped)
+//                         > gcloud active-project env (dropped)
+export function buildSpawnEnv(pick, baseEnv) {
+  const env = { ...baseEnv };
+  if (pick && pick.id === 'gemini' && env.GEMINI_API_KEY) {
+    delete env.GOOGLE_APPLICATION_CREDENTIALS;
+    delete env.GOOGLE_CLOUD_PROJECT;
+    delete env.GCLOUD_PROJECT;
+    delete env.CLOUDSDK_CORE_PROJECT;
+  }
+  return env;
+}
+
 // spawnCli -- single-settlement guard + SIGKILL on timeout or abort signal.
 // Returns { stdout, stderr, exitCode, timedOut, aborted } or null on spawn error.
-function spawnCli(pick, request, timeoutMs, signal = null) {
+function spawnCli(pick, request, timeoutMs, signal = null, env = process.env) {
   return new Promise((resolve) => {
     const parts = pick.invoke.trim().split(/\s+/);
     const bin = parts[0];
@@ -151,7 +171,7 @@ function spawnCli(pick, request, timeoutMs, signal = null) {
     let stderr = '';
 
     try {
-      proc = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      proc = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSpawnEnv(pick, env) });
     } catch {
       clearTimeout(timer);
       settle(null);
@@ -215,7 +235,7 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
     return { stdout: '', stderr: apiResult.error, exitCode: null, status: 'failed', source: 'none', elapsedMs: elapsed() };
   }
 
-  const raw = await spawnCli(pick, request, timeoutMs, signal);
+  const raw = await spawnCli(pick, request, timeoutMs, signal, env);
 
   // Aborted by runAc
   if (raw && raw.aborted) {

@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.2.3] -- 2026-04-28
+
+**Cross-platform parity + Trident transparency patch.** Three improvements: Windows now reaches the same MCP-spawn quality as macOS and Linux across every supported platform, gemini-cli auth precedence honors `GEMINI_API_KEY` deterministically, and the Trident no longer fails silently when an auditor returns no findings. No new features, no breaking changes.
+
+### Every platform's MCP config now uses cross-platform `node + server.js` invocation
+
+`scripts/install.sh` now writes `command: "node", args: [<absolute-path-to-server.js>]` for every MCP-aware platform -- the same shape Claude Code already used. Previously the Gemini, Cursor, Windsurf, Copilot, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, Codex, Hermes, and Wayland configs received a path to the bash launcher script (`mcp-server/bin/ijfw-memory`). That works on macOS and Linux but Windows clients cannot directly spawn a `#!/usr/bin/env bash` file from a JSON command field, which is why MCP loading silently no-op'd on Windows after a successful install. The bash launcher remains in the repo as a manual-invocation tool; it is no longer baked into MCP configs.
+
+`cygpath -w` converts the server.js path to Windows-native form when the installer runs under Git Bash (Windows path-aware MCP clients need backslashes / drive letters, not POSIX `/c/Users/...` paths). Verified live: a fresh install on Windows 11 produces `command: ["node", "C:\\Users\\<you>\\.ijfw\\mcp-server\\src\\server.js"]` and `opencode mcp list` reports `ijfw-memory` connected against that exact node binary. macOS and Linux continue to work unchanged via the cross-platform `node` resolution.
+
+Files: `scripts/install.sh` (six merge functions: `merge_json`, `merge_toml`, `merge_yaml_mcp`, `opencode_merge`, `openclaw_merge`, `cline_merge` plus the Claude branch and the `openclaw mcp set` CLI invocation).
+
+### Gemini auditor honors `GEMINI_API_KEY` precedence deterministically
+
+When the cross-audit dispatcher invokes `gemini-cli` and `GEMINI_API_KEY` is set in the environment, the spawn now strips `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, and `CLOUDSDK_CORE_PROJECT` from the child process env before exec. This pins gemini-cli's auth to the explicit IJFW key and prevents it from picking up an unrelated active gcloud project for billing. When `GEMINI_API_KEY` is not set, gcloud creds remain intact -- legitimate gcloud-auth users are unaffected. The scrub is gemini-only; codex, opencode, aider, copilot, and claude auditors keep the full inherited environment.
+
+Files: `mcp-server/src/cross-orchestrator.js` (new `buildSpawnEnv` helper threaded through `spawnCli`), `mcp-server/test-cross-orchestrator.js` (three new unit tests covering scrub on/off and non-gemini passthrough).
+
+### Trident degraded-auditor visibility
+
+Every cross-audit / cross-critique / cross-research run now surfaces a "Heads up -- one or more auditors did not contribute this run" line when at least one auditor's leg failed, timed out, or produced no parseable findings alongside non-empty stderr. The line names the auditor id and a one-line reason (first 80 characters of stderr or exit code), then explicitly states that lineage diversity is reduced for the result and points to `--with <id>` for forcing a different combination on a re-run. Previously the merged-findings output displayed regardless of leg health, so a Trident run with one auditor crashed read identically to a Trident run with all three auditors clean. The "second-lineage" promise no longer breaks silently.
+
+A defense-in-depth prompt change reinforces the auditor role: every dispatcher request now carries an "Operating constraints (mandatory)" block instructing the auditor not to shell out, not to invoke other CLIs, and not to attempt to convene additional auditors -- the orchestrator already runs them in parallel. Verified live on Codex 0.122.0: with the new prompt, codex obeys the directive and produces findings inline rather than attempting to spawn `gemini` or other CLIs.
+
+The Codex sandbox semantics were also re-verified empirically against Codex 0.122.0 and the audit-roster.js note has been corrected. `--sandbox read-only` blocks file *writes* on the host (`echo > /tmp/x` returns `operation not permitted`) but does NOT block shell exec or subprocess launching -- a `read-only` sandbox can still run `ls`, `curl`, or `gemini`. The load-bearing control against codex going meta is the prompt-layer "Operating constraints" block plus the visibility surface; the sandbox flag is layered file-write protection, not exec containment.
+
+Files: `mcp-server/src/cross-dispatcher.js` (`buildRequest`), `mcp-server/src/cross-orchestrator-cli.js` (degraded-auditor warning surface in `cmdCross`), `mcp-server/src/audit-roster.js` (corrected sandbox-semantics note).
+
+### Verification
+
+515/515 unit tests across the mcp-server pass, including three new gemini-env-scrub tests. The full e2e smoke harness (60+ gates -- preflight, isolated-HOME install, every platform's config schema, Aider rules, live `opencode/qwen/kimi/openclaw mcp list` handshakes, MCP server initialize+tools/list handshake, atomic state-write invariants) all pass on macOS. Issue #8 was independently verified live on Windows 11: `opencode mcp list` reports `ijfw-memory` connected on a fresh install.
+
 ## [1.2.2] -- 2026-04-27
 
 **Reliability + accuracy patch.** Six improvements to dashboard truthfulness, hook efficiency, CLI scriptability, the in-band update flow, install-time state seeding, and Codex hooks resolution. No new features, no breaking changes.

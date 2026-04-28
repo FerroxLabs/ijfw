@@ -61,6 +61,32 @@ fi
 
 LAUNCHER="$REPO_ROOT/mcp-server/bin/ijfw-memory"
 
+# Cross-platform MCP command: every MCP config writes `node <server.js>` directly
+# (matching the Claude branch). The bash LAUNCHER above is preserved for manual
+# CLI invocation; MCP clients use the node path so the same JSON shape works on
+# macOS, Linux, and Windows. Fixes #8 (Windows OpenCode silent MCP-load failure
+# caused by writing a bash-script path into a Windows MCP config).
+is_windows_host() {
+  case "$(uname -s 2>/dev/null)" in
+    CYGWIN*|MINGW*|MSYS_NT*) return 0 ;;
+  esac
+  return 1
+}
+
+# Convert a Git Bash POSIX path to a Windows-native path on Windows; passthrough
+# elsewhere. Windows MCP clients (OpenCode, Codex, Cursor, ...) parse the JSON
+# natively and need backslash/drive-letter paths -- not /c/Users/... POSIX paths.
+winpath() {
+  if is_windows_host && command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+SERVER_JS="$REPO_ROOT/mcp-server/src/server.js"
+SERVER_JS_NATIVE="$(winpath "$SERVER_JS")"
+
 # ============================================================
 # PRE-FLIGHT: verify environment before touching anything
 # ============================================================
@@ -540,23 +566,25 @@ install_hook() {
 # Verified against opencode-ai 1.14.20: rejects mcpServers with
 # "Configuration is invalid ... Unrecognized key: mcpServers".
 opencode_merge() {
-  local dst="$1" launcher="$2"
+  local dst="$1" server_js="$2"
   mkdir -p "$(dirname "$dst")"
   backup "$dst"
   node -e '
     const fs = require("fs");
     const path = process.argv[1];
-    const launcher = process.argv[2];
+    const serverJs = process.argv[2];
     let doc = {};
     if (fs.existsSync(path)) {
       try { doc = JSON.parse(fs.readFileSync(path, "utf8") || "{}"); } catch { doc = {}; }
     }
     if (!doc || typeof doc !== "object") doc = {};
     doc.mcp = doc.mcp || {};
-    doc.mcp["ijfw-memory"] = { type: "local", command: [launcher] };
+    // Cross-platform: command:["node", serverJs] -- works on Windows where the
+    // bash launcher path cannot be spawned. Fixes #8.
+    doc.mcp["ijfw-memory"] = { type: "local", command: ["node", serverJs] };
     fs.writeFileSync(path + ".tmp", JSON.stringify(doc, null, 2));
     fs.renameSync(path + ".tmp", path);
-  ' "$dst" "$launcher"
+  ' "$dst" "$server_js"
 }
 
 # --- OpenClaw-shaped merge: ~/.openclaw/openclaw.json, mcp.servers.<name> nested ---
@@ -564,13 +592,13 @@ opencode_merge() {
 # + src/config/paths.ts. Config file is "openclaw.json" (NOT "config.json").
 # Used as fallback when `openclaw mcp set` CLI isn't on PATH.
 openclaw_merge() {
-  local dst="$1" launcher="$2"
+  local dst="$1" server_js="$2"
   mkdir -p "$(dirname "$dst")"
   backup "$dst"
   node -e '
     const fs = require("fs");
     const path = process.argv[1];
-    const launcher = process.argv[2];
+    const serverJs = process.argv[2];
     let doc = {};
     if (fs.existsSync(path)) {
       try { doc = JSON.parse(fs.readFileSync(path, "utf8") || "{}"); } catch { doc = {}; }
@@ -578,10 +606,11 @@ openclaw_merge() {
     if (!doc || typeof doc !== "object") doc = {};
     if (!doc.mcp || typeof doc.mcp !== "object") doc.mcp = {};
     if (!doc.mcp.servers || typeof doc.mcp.servers !== "object") doc.mcp.servers = {};
-    doc.mcp.servers["ijfw-memory"] = { command: launcher, args: [] };
+    // Cross-platform: command:"node", args:[serverJs]. Fixes #8.
+    doc.mcp.servers["ijfw-memory"] = { command: "node", args: [serverJs] };
     fs.writeFileSync(path + ".tmp", JSON.stringify(doc, null, 2));
     fs.renameSync(path + ".tmp", path);
-  ' "$dst" "$launcher"
+  ' "$dst" "$server_js"
 }
 
 # --- Cline-shaped merge: VS Code globalStorage per-extension path ---
@@ -591,7 +620,7 @@ openclaw_merge() {
 # code path; VS Code globalStorage is the only live location.
 # Writes stdout: the destination path (so callers can log it).
 cline_merge() {
-  local launcher="$1"
+  local server_js="$1"
   local user_dir=""
   case "$(uname -s 2>/dev/null)" in
     Darwin)                     user_dir="$HOME/Library/Application Support/Code/User" ;;
@@ -604,37 +633,40 @@ cline_merge() {
   node -e '
     const fs = require("fs");
     const path = process.argv[1];
-    const launcher = process.argv[2];
+    const serverJs = process.argv[2];
     let doc = {};
     if (fs.existsSync(path)) {
       try { doc = JSON.parse(fs.readFileSync(path, "utf8") || "{}"); } catch { doc = {}; }
     }
     if (!doc || typeof doc !== "object") doc = {};
     doc.mcpServers = doc.mcpServers || {};
+    // Cross-platform: command:"node", args:[serverJs]. Fixes #8.
     doc.mcpServers["ijfw-memory"] = {
       type: "stdio",
-      command: launcher,
-      args: [],
+      command: "node",
+      args: [serverJs],
       disabled: false,
       autoApprove: [],
       timeout: 60
     };
     fs.writeFileSync(path + ".tmp", JSON.stringify(doc, null, 2));
     fs.renameSync(path + ".tmp", path);
-  ' "$dst" "$launcher"
+  ' "$dst" "$server_js"
   printf '%s' "$dst"
 }
 
-# --- JSON merge helper (Gemini / Cursor / Windsurf / Copilot) ---
+# --- JSON merge helper (Gemini / Cursor / Windsurf / Copilot / Qwen / Kimi) ---
 # Parses existing JSON, sets mcpServers['ijfw-memory'], writes back formatted.
+# Cross-platform: writes `command: "node", args: [serverJs]` so the JSON shape
+# is identical on macOS, Linux, Windows (no bash launcher in config). Fixes #8.
 merge_json() {
-  local dst="$1" launcher="$2"
+  local dst="$1" server_js="$2"
   mkdir -p "$(dirname "$dst")"
   backup "$dst"
   node -e '
     const fs = require("fs");
     const path = process.argv[1];
-    const launcher = process.argv[2];
+    const serverJs = process.argv[2];
     let doc = {};
     if (fs.existsSync(path)) {
       try { doc = JSON.parse(fs.readFileSync(path, "utf8") || "{}"); } catch {
@@ -644,27 +676,29 @@ merge_json() {
     }
     if (!doc || typeof doc !== "object") doc = {};
     doc.mcpServers = doc.mcpServers || {};
+    // PATH override: macOS Claude strips PATH for spawned MCPs; harmless
+    // elsewhere. On Windows we omit it (Windows uses Path with different
+    // separator, and node is reliably on Path after preflight).
+    const isWin = process.platform === "win32";
     const nodeDir = require("path").dirname(process.execPath);
-    const envPath = [
+    const envPath = isWin ? "" : [
       nodeDir, "/opt/homebrew/bin", "/usr/local/bin",
       process.env.HOME + "/.nvm/versions/node/" + process.version + "/bin",
       "/usr/bin", "/bin"
     ].filter(d => { try { return typeof d === "string" && d.length > 0 && require("fs").existsSync(d); } catch { return false; } }).join(":");
-    doc.mcpServers["ijfw-memory"] = {
-      command: launcher,
-      args: [],
-      env: { PATH: envPath }
-    };
+    const entry = { command: "node", args: [serverJs] };
+    if (envPath) entry.env = { PATH: envPath };
+    doc.mcpServers["ijfw-memory"] = entry;
     fs.writeFileSync(path + ".tmp", JSON.stringify(doc, null, 2) + "\n");
     fs.renameSync(path + ".tmp", path);
-  ' "$dst" "$launcher"
+  ' "$dst" "$server_js"
 }
 
 # --- TOML merge helper (Codex) ---
 # S4 -- atomic variant: write to sibling .tmp, append block, then atomic rename.
 # Eliminates the crash-mid-pipeline window where $dst could be truncated.
 merge_toml() {
-  local dst="$1" launcher="$2"
+  local dst="$1" server_js="$2"
   mkdir -p "$(dirname "$dst")"
   backup "$dst"
   if [ ! -f "$dst" ]; then
@@ -707,12 +741,13 @@ merge_toml() {
     }
     fs.writeFileSync(f, text);
   ' "$tmp" || { rm -f "$tmp"; return 1; }
-  # Append the MCP server block.
-  escaped_launcher=$(printf '%s' "$launcher" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  # Append the MCP server block. Cross-platform: command="node", args=[serverJs].
+  # Fixes #8 (Windows Codex couldn't spawn the bash launcher).
+  escaped_server_js=$(printf '%s' "$server_js" | sed 's/\\/\\\\/g; s/"/\\"/g')
   {
     printf '\n[mcp_servers.ijfw-memory]\n'
-    printf 'command = "%s"\n' "$escaped_launcher"
-    printf 'args = []\n'
+    printf 'command = "node"\n'
+    printf 'args = ["%s"]\n' "$escaped_server_js"
     printf 'enabled = true\n'
     printf 'startup_timeout_sec = 10\n'
     printf 'tool_timeout_sec = 30\n'
@@ -726,15 +761,16 @@ merge_toml() {
 # prefer python3+PyYAML for parser-safe merging. If unavailable we fall back to
 # a sentinel-anchored append, which stays idempotent across re-runs.
 merge_yaml_mcp() {
-  local dst="$1" launcher="$2"
+  local dst="$1" server_js="$2"
   mkdir -p "$(dirname "$dst")"
   backup "$dst"
   [ ! -f "$dst" ] && : > "$dst"
   # Try python3+PyYAML first (clean, schema-preserving).
+  # Cross-platform: command="node", args=[serverJs]. Fixes #8.
   if python3 -c "import yaml" >/dev/null 2>&1; then
-    python3 - "$dst" "$launcher" <<'PY'
+    python3 - "$dst" "$server_js" <<'PY'
 import os, sys, yaml
-dst, launcher = sys.argv[1], sys.argv[2]
+dst, server_js = sys.argv[1], sys.argv[2]
 with open(dst, "r") as f:
     raw = f.read()
 doc = yaml.safe_load(raw) if raw.strip() else {}
@@ -744,8 +780,8 @@ doc.setdefault("mcp_servers", {})
 if not isinstance(doc["mcp_servers"], dict):
     doc["mcp_servers"] = {}
 doc["mcp_servers"]["ijfw-memory"] = {
-    "command": launcher,
-    "args": [],
+    "command": "node",
+    "args": [server_js],
     "enabled": True,
 }
 tmp = dst + ".tmp"
@@ -767,12 +803,12 @@ PY
   if ! grep -qE '^mcp_servers:' "$tmp"; then
     printf '\nmcp_servers:\n' >> "$tmp"
   fi
-  escaped_launcher=$(printf '%s' "$launcher" | sed 's/"/\\"/g')
+  escaped_server_js=$(printf '%s' "$server_js" | sed 's/"/\\"/g')
   {
     printf '# IJFW-MCP-BEGIN ijfw-memory\n'
     printf '  ijfw-memory:\n'
-    printf '    command: "%s"\n' "$escaped_launcher"
-    printf '    args: []\n'
+    printf '    command: "node"\n'
+    printf '    args: ["%s"]\n' "$escaped_server_js"
     printf '    enabled: true\n'
     printf '# IJFW-MCP-END ijfw-memory\n'
   } >> "$tmp"
@@ -873,8 +909,9 @@ for target in "${TARGETS[@]}"; do
       # own .mcp.json but provides a fallback when the plugin hasn't been
       # activated yet). Cross-platform: direct node invocation, no bash
       # launcher, no PATH manipulation. Stale absolute paths in existing
-      # settings get detected and rewritten.
-      SERVER_JS="$REPO_ROOT/mcp-server/src/server.js"
+      # settings get detected and rewritten. SERVER_JS_NATIVE is converted
+      # to a Windows-native path on Windows (Git Bash) so Claude Code Windows
+      # build can spawn node with the correct path.
       node -e '
         const fs = require("fs");
         const path = require("path");
@@ -911,7 +948,7 @@ for target in "${TARGETS[@]}"; do
         };
         fs.writeFileSync(settingsPath + ".tmp", JSON.stringify(settings, null, 2) + "\n");
         fs.renameSync(settingsPath + ".tmp", settingsPath);
-      ' "$CLAUDE_SETTINGS" "$SERVER_JS"
+      ' "$CLAUDE_SETTINGS" "$SERVER_JS_NATIVE"
 
       # Ensure launcher is executable (zip transfers may strip chmod +x).
       chmod +x "$LAUNCHER" 2>/dev/null
@@ -937,7 +974,7 @@ for target in "${TARGETS[@]}"; do
       fi
       # Merge MCP registration into user config.toml.
       dst="$HOME/.codex/config.toml"
-      merge_toml "$dst" "$LAUNCHER"
+      merge_toml "$dst" "$SERVER_JS_NATIVE"
       # Merge IJFW entries into ~/.codex/hooks.json (additive, idempotent).
       mkdir -p "$HOME/.codex/hooks"
       _hooks_dst="$HOME/.codex/hooks.json"
@@ -1054,7 +1091,7 @@ for target in "${TARGETS[@]}"; do
       fi
       # Merge MCP registration into user settings.json.
       dst="$HOME/.gemini/settings.json"
-      merge_json "$dst" "$LAUNCHER"
+      merge_json "$dst" "$SERVER_JS_NATIVE"
       # Drop full extension bundle to ~/.gemini/extensions/ijfw/.
       # Never overwrite files the user has modified (check mtime vs repo).
       EXT_DST="$HOME/.gemini/extensions/ijfw"
@@ -1129,7 +1166,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst=".cursor/mcp.json"
-      merge_json "$dst" "$LAUNCHER"
+      merge_json "$dst" "$SERVER_JS_NATIVE"
       mkdir -p .cursor/rules
       cp "$REPO_ROOT/cursor/.cursor/rules/ijfw.mdc" .cursor/rules/ijfw.mdc
       ok "Merged MCP + installed rule to project ./.cursor/"
@@ -1144,7 +1181,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst="$HOME/.codeium/windsurf/mcp_config.json"
-      merge_json "$dst" "$LAUNCHER"
+      merge_json "$dst" "$SERVER_JS_NATIVE"
       # W4.1 / E2 -- copy the .windsurfrules to the current project.
       if [ ! -f ".windsurfrules" ] && [ -f "$REPO_ROOT/windsurf/.windsurfrules" ]; then
         cp "$REPO_ROOT/windsurf/.windsurfrules" .windsurfrules 2>/dev/null \
@@ -1164,7 +1201,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst=".vscode/mcp.json"
-      merge_json "$dst" "$LAUNCHER"
+      merge_json "$dst" "$SERVER_JS_NATIVE"
       # W4.1 / E2 -- copy the copilot-instructions.md to .github/ (Copilot's
       # project-instructions convention) if not already present.
       if [ ! -f ".github/copilot-instructions.md" ] && [ -f "$REPO_ROOT/copilot/copilot-instructions.md" ]; then
@@ -1186,7 +1223,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst="$HOME/.hermes/config.yaml"
-      merge_yaml_mcp "$dst" "$LAUNCHER"
+      merge_yaml_mcp "$dst" "$SERVER_JS_NATIVE"
       # Drop HERMES.md context file if absent (don't overwrite user edits).
       if [ ! -f "$HOME/.hermes/HERMES.md" ] && [ -f "$REPO_ROOT/hermes/HERMES.md" ]; then
         mkdir -p "$HOME/.hermes" 2>/dev/null
@@ -1213,7 +1250,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst="$HOME/.wayland/config.yaml"
-      merge_yaml_mcp "$dst" "$LAUNCHER"
+      merge_yaml_mcp "$dst" "$SERVER_JS_NATIVE"
       # Drop WAYLAND.md context file if absent.
       if [ ! -f "$HOME/.wayland/WAYLAND.md" ] && [ -f "$REPO_ROOT/wayland/WAYLAND.md" ]; then
         mkdir -p "$HOME/.wayland" 2>/dev/null
@@ -1239,7 +1276,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst="$HOME/.config/opencode/opencode.json"
-      opencode_merge "$dst" "$LAUNCHER"
+      opencode_merge "$dst" "$SERVER_JS_NATIVE"
       ok "Merged MCP into $dst (opencode mcp.local schema)"
       ;;
     qwen)
@@ -1252,7 +1289,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst="$HOME/.qwen/settings.json"
-      merge_json "$dst" "$LAUNCHER"
+      merge_json "$dst" "$SERVER_JS_NATIVE"
       ok "Merged MCP into $dst"
       ;;
     cline)
@@ -1266,7 +1303,7 @@ for target in "${TARGETS[@]}"; do
       fi
       # Cline MCP config lives under VS Code's globalStorage for extension
       # saoudrizwan.claude-dev -- platform-specific path resolved inside cline_merge.
-      dst=$(cline_merge "$LAUNCHER")
+      dst=$(cline_merge "$SERVER_JS_NATIVE")
       ok "Merged MCP into $dst (cline globalStorage schema)"
       ;;
     kimi)
@@ -1279,7 +1316,7 @@ for target in "${TARGETS[@]}"; do
         continue
       fi
       dst="$HOME/.kimi/mcp.json"
-      merge_json "$dst" "$LAUNCHER"
+      merge_json "$dst" "$SERVER_JS_NATIVE"
       ok "Merged MCP into $dst"
       ;;
     openclaw)
@@ -1299,10 +1336,10 @@ for target in "${TARGETS[@]}"; do
       # isn't installed yet; it will be picked up the moment the user installs it.
       dst="$HOME/.openclaw/openclaw.json"
       if command -v openclaw >/dev/null 2>&1 \
-         && openclaw mcp set ijfw-memory "{\"command\":\"$LAUNCHER\",\"args\":[]}" >/dev/null 2>&1; then
+         && openclaw mcp set ijfw-memory "{\"command\":\"node\",\"args\":[\"$SERVER_JS_NATIVE\"]}" >/dev/null 2>&1; then
         ok "Registered ijfw-memory via 'openclaw mcp set' ($dst)"
       else
-        openclaw_merge "$dst" "$LAUNCHER"
+        openclaw_merge "$dst" "$SERVER_JS_NATIVE"
         ok "Merged MCP into $dst (openclaw mcp.servers schema)"
       fi
       ;;
