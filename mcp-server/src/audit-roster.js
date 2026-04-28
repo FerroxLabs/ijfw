@@ -35,6 +35,16 @@ export const ROSTER = [
     apiFallback: { provider: 'google', model: 'gemini-2.0-flash', authEnv: 'GEMINI_API_KEY', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent' },
   },
   {
+    id: 'qwen',
+    family: 'oss',
+    model: '',
+    name: 'Qwen Code',
+    invoke: 'qwen -p',
+    note: 'Apache-2.0 weights (Qwen3-Coder-480B-A35B), agentic-tuned (~67% SWE-Bench Verified). Fork of gemini-cli; supports qwen-oauth (free Coding Plan tier), plus openai/anthropic/gemini auth-types via `qwen auth`. Diversity value for Trident: third independent training lineage outside openai/google.',
+    detect: (env) => Boolean(env.QWEN_SESSION) || /(?:^|\W)qwen(?:\W|$)/i.test(env._ || ''),
+    apiFallback: { provider: 'openai-compat', model: 'qwen3-coder-plus', authEnv: 'DASHSCOPE_API_KEY', endpoint: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions' },
+  },
+  {
     id: 'opencode',
     family: 'oss',
     model: '',
