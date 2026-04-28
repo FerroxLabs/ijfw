@@ -694,7 +694,7 @@ async function cmdCross({ mode, target, only, confirm, expand }) {
     process.exit(1);
   }
 
-  const { merged, picks, note } = result;
+  const { merged, picks, note, auditorResults } = result;
 
   if (picks.length === 0) {
     console.log('\nIJFW has the Trident ready -- install codex or gemini (or set OPENAI_API_KEY / GEMINI_API_KEY), then run `ijfw demo`.');
@@ -706,6 +706,38 @@ async function cmdCross({ mode, target, only, confirm, expand }) {
 
   if (note) {
     console.log(`\nNote: ${note}`);
+  }
+
+  // Issue #9-B: surface silent auditor degradation. A Trident run with one
+  // auditor crashed/timed-out is not the same as a clean Trident run -- the
+  // "second lineage" promise quietly breaks if we say nothing. Warn explicitly
+  // and name the auditor + reason so the user can ground-truth the result.
+  if (auditorResults && auditorResults.length === picks.length) {
+    const degraded = [];
+    for (let i = 0; i < picks.length; i++) {
+      const r = auditorResults[i];
+      const id = picks[i].id;
+      if (r.status === 'failed') {
+        const reason = r.stderr ? r.stderr.split('\n')[0].slice(0, 80) : `exit ${r.exitCode}`;
+        degraded.push({ id, reason: `failed (${reason})` });
+      } else if (r.status === 'timeout') {
+        degraded.push({ id, reason: 'timed out' });
+      } else if (r.status === 'empty' && r.stderr && r.stderr.trim()) {
+        // Empty findings AND stderr present -- could be a soft fail (model
+        // emitted prose without the JSON fence). Don't pretend the target is
+        // clean -- flag it so the user can ground-truth.
+        const reason = r.stderr.split('\n')[0].slice(0, 80);
+        degraded.push({ id, reason: `produced no parseable findings (${reason})` });
+      }
+    }
+    if (degraded.length > 0) {
+      console.log('');
+      console.log('Heads up -- one or more auditors did not contribute this run:');
+      for (const d of degraded) {
+        console.log(`  - ${d.id}: ${d.reason}`);
+      }
+      console.log('Trident lineage diversity is reduced for this result. Re-run after fixing the auditor, or pass --with <id> to force a different combination.');
+    }
   }
 
   console.log('\nFindings:');

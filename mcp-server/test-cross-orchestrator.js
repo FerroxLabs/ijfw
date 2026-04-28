@@ -279,3 +279,54 @@ test('invalid IJFW_AUDIT_TIMEOUT_SEC falls back and emits no crash', async () =>
 
   assert.ok(result && typeof result === 'object');
 });
+
+// ---------------------------------------------------------------------------
+// Issue #9-A: gemini env scrub when GEMINI_API_KEY is set.
+// Prevents gemini-cli from silently picking up gcloud creds and billing
+// against an unrelated cloudaicompanion.googleapis.com project.
+// ---------------------------------------------------------------------------
+
+const { buildSpawnEnv } = await import('./src/cross-orchestrator.js');
+
+test('buildSpawnEnv: gemini + GEMINI_API_KEY strips gcloud env vars', () => {
+  const baseEnv = {
+    GEMINI_API_KEY: 'sk-test-123',
+    GOOGLE_APPLICATION_CREDENTIALS: '/tmp/creds.json',
+    GOOGLE_CLOUD_PROJECT: 'unrelated-project',
+    GCLOUD_PROJECT: 'unrelated-project',
+    CLOUDSDK_CORE_PROJECT: 'unrelated-project',
+    PATH: '/usr/bin',
+  };
+  const pick = { id: 'gemini' };
+  const out = buildSpawnEnv(pick, baseEnv);
+  assert.equal(out.GEMINI_API_KEY, 'sk-test-123', 'GEMINI_API_KEY preserved');
+  assert.equal(out.GOOGLE_APPLICATION_CREDENTIALS, undefined, 'GOOGLE_APPLICATION_CREDENTIALS scrubbed');
+  assert.equal(out.GOOGLE_CLOUD_PROJECT, undefined, 'GOOGLE_CLOUD_PROJECT scrubbed');
+  assert.equal(out.GCLOUD_PROJECT, undefined, 'GCLOUD_PROJECT scrubbed');
+  assert.equal(out.CLOUDSDK_CORE_PROJECT, undefined, 'CLOUDSDK_CORE_PROJECT scrubbed');
+  assert.equal(out.PATH, '/usr/bin', 'unrelated env preserved');
+});
+
+test('buildSpawnEnv: gemini WITHOUT GEMINI_API_KEY leaves gcloud creds intact', () => {
+  // User legitimately wants gcloud auth path -- don't break it.
+  const baseEnv = {
+    GOOGLE_APPLICATION_CREDENTIALS: '/tmp/creds.json',
+    GOOGLE_CLOUD_PROJECT: 'real-project',
+  };
+  const pick = { id: 'gemini' };
+  const out = buildSpawnEnv(pick, baseEnv);
+  assert.equal(out.GOOGLE_APPLICATION_CREDENTIALS, '/tmp/creds.json');
+  assert.equal(out.GOOGLE_CLOUD_PROJECT, 'real-project');
+});
+
+test('buildSpawnEnv: non-gemini auditors are not env-scrubbed', () => {
+  const baseEnv = {
+    GEMINI_API_KEY: 'sk-test-123',
+    GOOGLE_APPLICATION_CREDENTIALS: '/tmp/creds.json',
+  };
+  for (const id of ['codex', 'claude', 'opencode', 'aider', 'copilot']) {
+    const out = buildSpawnEnv({ id }, baseEnv);
+    assert.equal(out.GOOGLE_APPLICATION_CREDENTIALS, '/tmp/creds.json', `${id}: gcloud creds preserved`);
+    assert.equal(out.GEMINI_API_KEY, 'sk-test-123', `${id}: GEMINI_API_KEY preserved`);
+  }
+});
