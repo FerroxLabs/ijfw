@@ -25,7 +25,7 @@
     "prepublishOnly": "npm run build && npm run preflight"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.0",
     "marked": "^18.0.2"
   },
   "engines": {
