@@ -45,7 +45,7 @@ if ! command -v node >/dev/null 2>&1; then
   fail "node not on PATH"
   exit 1
 fi
-(cd mcp-server && node --test --test-reporter=spec 2>&1 | tail -200)
+(cd mcp-server && node --test 2>&1 | tail -8)
 ok "mcp-server suite passed"
 
 echo

@@ -53,16 +53,21 @@ test('rosterFor with only: unknown returns empty', () => {
   assert.deepEqual(rosterFor({ only: 'bogus' }), []);
 });
 
-test('defaultAuditor picks first non-self', () => {
-  const self = detectSelf({ CLAUDECODE: '1' });
-  const d = defaultAuditor({ CLAUDECODE: '1' });
+test('defaultAuditor picks first reachable non-self', () => {
+  // OPENAI_API_KEY makes codex reachable via API; CLAUDECODE makes claude self.
+  // defaultAuditor (1.2.4+) prefers reachable entries -- codex is the first
+  // reachable non-self in roster order, so it should be returned.
+  const env = { CLAUDECODE: '1', OPENAI_API_KEY: 'sk-test' };
+  const self = detectSelf(env);
+  const d = defaultAuditor(env);
   assert.ok(d);
   assert.notEqual(d.id, self);
-  assert.equal(d.id, 'codex'); // first in roster order after claude-excluded
+  assert.equal(d.id, 'codex');
 });
 
-test('defaultAuditor when caller unknown returns first in roster', () => {
-  const d = defaultAuditor({});
+test('defaultAuditor when caller unknown returns first reachable', () => {
+  // OPENAI_API_KEY makes codex API-reachable -- deterministic across hosts.
+  const d = defaultAuditor({ OPENAI_API_KEY: 'sk-test' });
   assert.equal(d.id, 'codex');
 });
 
