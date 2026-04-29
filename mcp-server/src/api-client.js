@@ -12,9 +12,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // Provider request builders
 // ---------------------------------------------------------------------------
 
-function buildOpenAI(system, user, model, key, timeoutMs) {
+// Optional `endpoint` argument lets OpenAI-compatible providers (Qwen via
+// DashScope, Together, Groq, etc.) reuse the same request/response shape
+// while pointing at their own URL. When omitted, falls back to OpenAI's
+// canonical chat-completions endpoint.
+function buildOpenAI(system, user, model, key, timeoutMs, endpoint) {
   return {
-    url: 'https://api.openai.com/v1/chat/completions',
+    url: endpoint || 'https://api.openai.com/v1/chat/completions',
     options: {
       method: 'POST',
       headers: {
@@ -91,7 +95,9 @@ function buildAnthropic(system, user, model, key, timeoutMs) {
 // ---------------------------------------------------------------------------
 
 function extractText(provider, json) {
-  if (provider === 'openai') {
+  // openai-compat (Qwen via DashScope, Together, Groq, etc.) reuses the
+  // OpenAI chat-completions response shape, so the extractor is shared.
+  if (provider === 'openai' || provider === 'openai-compat') {
     return json?.choices?.[0]?.message?.content ?? '';
   }
   if (provider === 'google') {
@@ -142,6 +148,10 @@ export async function runViaApi(pick, mode, angle, target, env = process.env, ti
   let req;
   if (fb.provider === 'openai') {
     req = buildOpenAI(system, user, fb.model, key, timeoutMs);
+  } else if (fb.provider === 'openai-compat') {
+    // OpenAI-compatible endpoints (Qwen via DashScope, Together, Groq, etc.)
+    // share the chat-completions request/response shape and only differ on URL.
+    req = buildOpenAI(system, user, fb.model, key, timeoutMs, fb.endpoint);
   } else if (fb.provider === 'google') {
     req = buildGemini(system, user, fb.model, key, timeoutMs, fb.endpoint);
   } else if (fb.provider === 'anthropic') {

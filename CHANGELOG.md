@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.2.4] -- 2026-04-29
+
+**Trident lineage diversity + Windows Git Bash parity + auditor reachability sharpening.** Three substantive improvements: a new third foundation-model lineage in the cross-audit roster, end-to-end Windows Git Bash support for the `ijfw` CLI itself (companion to 1.2.3's Windows MCP-spawn parity), and a set of polish improvements to how IJFW detects and surfaces auditor availability. Two community contributions land in this release. No breaking changes.
+
+### Qwen 3 Coder joins the Trident as a third lineage
+
+The cross-audit roster gains **qwen-code** (Qwen 3 Coder, Alibaba, Apache-2.0) alongside codex (openai) and gemini (google). The CLI is a maintained fork of gemini-cli (`npm install -g @qwen-code/qwen-code`), so the invocation pattern is already compatible with the existing dispatcher contract. ~67% SWE-Bench Verified per Qwen3-Coder-480B-A35B's published numbers, comparable to Kimi K2 with a smaller activated model.
+
+Strategic value: when the caller itself is in the openai or google family, the diversity strategy now has a real third lineage to draw from instead of falling back to opencode/aider (which most users don't have installed). Apache-licensed weights also enable a locally-runnable backbone via Ollama for zero-API-cost auditing. Authentication supports `qwen-oauth` (free Coding Plan tier) plus openai/anthropic/gemini auth-types via `qwen auth`.
+
+The roster entry sits between gemini and opencode by deliberate priority placement -- qwen has both a maintained CLI and a working API fallback, so it wins backfill ahead of opencode's weaker SWE-Bench numbers.
+
+Files: `mcp-server/src/audit-roster.js`, `mcp-server/test-audit-roster.js`. Contributed by [@carrmjw](https://github.com/carrmjw) (PR #11).
+
+### Windows Git Bash CLI now works end-to-end
+
+Companion to 1.2.3's MCP-spawn parity. The `ijfw` CLI itself now operates correctly on Windows 11 + Git Bash + MINGW64.
+
+Two issues fixed: the `isMainModule` check at the bottom of `cross-orchestrator-cli.js` previously compared `import.meta.url` against `` `file://${process.argv[1]}` `` directly. On Git Bash, `process.argv[1]` arrives as `/c/Users/.../cli.js` while `import.meta.url` arrives as `file:///C:/Users/.../cli.js` -- neither branch of the comparison matched, the dispatch block was skipped, and Node exited 0 with no output for every subcommand. Replaced with `pathToFileURL(process.argv[1]).href`, which normalizes both Windows drive paths and MSYS-style paths into the same `file:///C:/...` form. Realpath fallback retained so macOS `/tmp -> /private/tmp` symlink hops still resolve. The new behavior verifies live: `ijfw doctor`, `ijfw --help`, and `ijfw status` all produce expected output on a fresh Git Bash session.
+
+Second: `scripts/install.sh`'s symlink wiring at `~/.local/bin` previously trusted `ln -s`'s exit code. On Windows MINGW64 without admin or Developer Mode, `ln -s` silently falls back to a file copy and still returns 0, so the installer printed "5 commands linked" while the launcher's `readlink` walk later failed at runtime. The installer now follows up with a `[ -L "$dst" ]` check, removes copy-fallbacks, and surfaces a yellow hint listing three concrete fixes (Developer Mode, Admin shell, `MSYS=winsymlinks:nativestrict`) plus the PATH-edit fallback. Zero behavior change on macOS or Linux where `ln -s` always produces real symlinks.
+
+Files: `mcp-server/src/cross-orchestrator-cli.js`, `scripts/install.sh`. Contributed by [@BrewsterNZ](https://github.com/BrewsterNZ) (PR #7).
+
+### Auditor reachability sharpening
+
+Reviewing the qwen contribution led us to improve several other things in the surrounding code:
+
+- **Codex now actually participates as the OpenAI leg of the Trident more often.** `detectSelf` previously matched both `CODEX_SESSION_ID` (an active-session marker) AND `CODEX_HOME` (a config-path env var that's set whenever codex is *installed*). On any machine that had codex installed alongside another agent, codex was being silently excluded from every Trident run as if it were the active caller. Self-detection now keys off `CODEX_SESSION_ID` only, so the openai-lineage leg is genuinely available whenever the caller is Claude Code, Cursor, Gemini CLI, or anything non-codex.
+- **OpenAI-compatible provider in `api-client.js`.** `buildOpenAI` accepts an optional endpoint parameter, and `runViaApi` now recognizes `provider: "openai-compat"`. Any chat-completions-shaped backend (Qwen via DashScope, Together, Groq, etc.) can serve as an API fallback without bespoke plumbing -- directly enables qwen's DashScope path added in this release, and keeps the door open for future openai-compatible auditors.
+- **`defaultAuditor` respects reachability.** Previously returned the first non-self entry even when neither its CLI nor its API key was available, so callers got a misleading "ready" pick that fell over on first invoke. Now returns the highest-priority reachable entry.
+- **`formatRoster` reflects API-only reachability.** A user with `OPENAI_API_KEY` set but no codex binary on PATH used to see `install` in the roster output, missing that the API path was already configured. The role label is now `ready` whenever the auditor is reachable via either CLI or API.
+- **`pickAuditors({only:"<self>"})` skips self-audit explicitly.** Requesting the caller's own ID via `--with` collapses the Trident to a single source. The orchestrator now surfaces a clear note explaining the skip instead of silently degrading.
+
+Files: `mcp-server/src/audit-roster.js`, `mcp-server/src/api-client.js`, `mcp-server/test-audit-roster.js`, `mcp-server/test-api-client.js`.
+
+### Verification
+
+522/522 unit tests across the mcp-server pass at 1.2.4 (six new tests covering the auditor-reachability improvements and the openai-compat provider). The full e2e smoke harness (60+ gates including isolated-HOME install, every platform's config schema, live `opencode/qwen/kimi/openclaw mcp list` handshakes, MCP server initialize+tools/list handshake) all pass on macOS at 1.2.4.
+
 ## [1.2.3] -- 2026-04-28
 
 **Cross-platform parity + Trident transparency patch.** Three improvements: Windows now reaches the same MCP-spawn quality as macOS and Linux across every supported platform, gemini-cli auth precedence honors `GEMINI_API_KEY` deterministically, and the Trident no longer fails silently when an auditor returns no findings. No new features, no breaking changes.

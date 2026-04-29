@@ -8,7 +8,7 @@
 // Zero external deps. Parse argv manually.
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, readdirSync, rmSync, renameSync, realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -1558,11 +1558,16 @@ host.appendChild(range.createContextualFragment(marked.parse(md)));
 // Only dispatch when run directly. When imported as a module (e.g. by tests),
 // skip the CLI entry so the test runner can use exported helpers.
 
+// Two-layer check:
+//   1. pathToFileURL normalizes Windows drive paths (C:\...) and MSYS-style
+//      paths (/c/...) into the same file:///C:/... form that import.meta.url
+//      uses on Git Bash / MINGW64, where literal string interpolation breaks.
+//   2. Realpath fallback for macOS symlink hops (/tmp -> /private/tmp etc.)
+//      that would otherwise make a string-equality check spuriously false.
 const isMainModule = (() => {
   try {
-    // Canonicalize both sides -- macOS /tmp -> /private/tmp + similar symlinks
-    // would otherwise make the equality check spuriously false.
     if (!process.argv[1]) return false;
+    if (import.meta.url === pathToFileURL(process.argv[1]).href) return true;
     let argvPath = process.argv[1];
     let metaPath = fileURLToPath(import.meta.url);
     try { argvPath = realpathSync(argvPath); } catch { /* */ }

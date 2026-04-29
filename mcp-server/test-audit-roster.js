@@ -4,9 +4,13 @@ import { ROSTER, detectSelf, rosterFor, defaultAuditor, formatRoster, pickAudito
 
 test('ROSTER has expected ids', () => {
   const ids = ROSTER.map(e => e.id);
-  for (const expected of ['codex', 'gemini', 'opencode', 'aider', 'copilot', 'claude']) {
+  for (const expected of ['codex', 'gemini', 'qwen', 'opencode', 'aider', 'copilot', 'claude']) {
     assert.ok(ids.includes(expected), `missing: ${expected}`);
   }
+});
+
+test('detectSelf returns qwen on QWEN_SESSION', () => {
+  assert.equal(detectSelf({ QWEN_SESSION: 'abc' }), 'qwen');
 });
 
 test('detectSelf returns claude when Claude Code env is set', () => {
@@ -49,16 +53,21 @@ test('rosterFor with only: unknown returns empty', () => {
   assert.deepEqual(rosterFor({ only: 'bogus' }), []);
 });
 
-test('defaultAuditor picks first non-self', () => {
-  const self = detectSelf({ CLAUDECODE: '1' });
-  const d = defaultAuditor({ CLAUDECODE: '1' });
+test('defaultAuditor picks first reachable non-self', () => {
+  // OPENAI_API_KEY makes codex reachable via API; CLAUDECODE makes claude self.
+  // defaultAuditor (1.2.4+) prefers reachable entries -- codex is the first
+  // reachable non-self in roster order, so it should be returned.
+  const env = { CLAUDECODE: '1', OPENAI_API_KEY: 'sk-test' };
+  const self = detectSelf(env);
+  const d = defaultAuditor(env);
   assert.ok(d);
   assert.notEqual(d.id, self);
-  assert.equal(d.id, 'codex'); // first in roster order after claude-excluded
+  assert.equal(d.id, 'codex');
 });
 
-test('defaultAuditor when caller unknown returns first in roster', () => {
-  const d = defaultAuditor({});
+test('defaultAuditor when caller unknown returns first reachable', () => {
+  // OPENAI_API_KEY makes codex API-reachable -- deterministic across hosts.
+  const d = defaultAuditor({ OPENAI_API_KEY: 'sk-test' });
   assert.equal(d.id, 'codex');
 });
 
@@ -350,4 +359,54 @@ test('diversity picker: node env with no CLIs but OPENAI_API_KEY + GEMINI_API_KE
   for (const p of r.picks) {
     assert.equal(p.preferredSource, 'api', `${p.id} should have preferredSource:'api'`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 1.2.4 follow-on improvements (surfaced during PR #11 review)
+// ---------------------------------------------------------------------------
+
+test('detectSelf does NOT match codex on CODEX_HOME alone', () => {
+  // CODEX_HOME is a config-path env var that's set whenever codex is installed
+  // -- not whenever codex is the active session. Using it for self-detection
+  // false-excludes codex from every Trident run on machines with codex
+  // installed but a non-codex caller (Claude Code, Cursor, etc.).
+  const env = { CODEX_HOME: '/Users/test/.codex' };
+  assert.notEqual(detectSelf(env), 'codex', 'CODEX_HOME alone must not flag self');
+});
+
+test('detectSelf still matches codex on CODEX_SESSION_ID', () => {
+  // The active-session env var should still produce a self match.
+  assert.equal(detectSelf({ CODEX_SESSION_ID: 'sess-123' }), 'codex');
+});
+
+test('defaultAuditor returns a reachable pick when one is available', () => {
+  // CLAUDECODE=1 makes claude=self. With OPENAI_API_KEY set codex is reachable
+  // via API even without the CLI; defaultAuditor should pick a reachable entry.
+  const env = { CLAUDECODE: '1', OPENAI_API_KEY: 'sk-test' };
+  const pick = defaultAuditor(env);
+  assert.ok(pick, 'defaultAuditor should return a pick');
+  assert.notEqual(pick.id, 'claude', 'caller (claude) must be excluded');
+  assert.equal(isReachable(pick.id, env).any, true, `${pick.id} should be reachable`);
+});
+
+test('formatRoster shows ready when API key is set even without CLI', () => {
+  // OPENAI_API_KEY makes codex reachable via API. Roster line should say
+  // "ready", not "install" -- otherwise the user thinks they need to install
+  // when they're already configured.
+  const env = { OPENAI_API_KEY: 'sk-test' };
+  const out = formatRoster(env);
+  // Only verify codex line says "ready" -- gemini/others still depend on host
+  // PATH (test machine may have them installed).
+  const codexLine = out.split('\n').find(l => l.startsWith('  codex'));
+  assert.ok(codexLine, 'codex line should be present');
+  assert.match(codexLine, /\bready\b/, 'codex must show "ready" when OPENAI_API_KEY is set');
+});
+
+test('pickAuditors({only:"claude"}) excludes self when caller is claude', () => {
+  // --with claude on a claude session collapses Trident to a single source.
+  // Surface the skip instead of silently producing a self-audit.
+  const env = { CLAUDECODE: '1', ANTHROPIC_API_KEY: 'sk-test' };
+  const r = pickAuditors({ only: 'claude', env });
+  assert.equal(r.picks.length, 0, 'self must not appear in picks');
+  assert.match(r.note, /Skipped self-audit/, 'note should explain the skip');
 });
