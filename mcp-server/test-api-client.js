@@ -224,3 +224,40 @@ test('network timeout returns status: failed with timeout error', async () => {
 
   restoreFetch();
 });
+
+// --- OpenAI-compat (Qwen/DashScope, Together, Groq, etc.) ---
+// Verifies the new openai-compat provider added in 1.2.4: shares the OpenAI
+// chat-completions request/response shape but routes to a custom endpoint.
+
+test('openai-compat: posts to custom endpoint with Bearer auth + OpenAI body', async () => {
+  const calls = mockFetch(200, {
+    choices: [{ message: { content: 'qwen findings here' } }],
+  });
+
+  const pick = {
+    id: 'qwen',
+    invoke: 'qwen -p',
+    apiFallback: {
+      provider: 'openai-compat',
+      model: 'qwen3-coder-plus',
+      authEnv: 'DASHSCOPE_API_KEY',
+      endpoint: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
+    },
+  };
+  const env = { DASHSCOPE_API_KEY: 'sk-dashscope-test' };
+  const result = await runViaApi(pick, 'audit', 'general', 'def foo(): pass', env);
+
+  assert.equal(result.status, 'ok');
+  assert.equal(result.raw, 'qwen findings here');
+  assert.equal(calls.length, 1);
+
+  // Custom endpoint, NOT api.openai.com
+  assert.equal(calls[0].url, 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions');
+  // Same auth + body shape as canonical openai
+  assert.equal(calls[0].opts.headers['Authorization'], 'Bearer sk-dashscope-test');
+  const body = JSON.parse(calls[0].opts.body);
+  assert.equal(body.model, 'qwen3-coder-plus');
+  assert.ok(Array.isArray(body.messages));
+
+  restoreFetch();
+});

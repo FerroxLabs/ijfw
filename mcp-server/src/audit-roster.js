@@ -21,7 +21,13 @@ export const ROSTER = [
     name: 'Codex CLI',
     invoke: 'codex exec --skip-git-repo-check --sandbox read-only -c approval_policy="never" -c mcp_servers.ijfw-memory.enabled=false -',
     note: 'Different training lineage; fast on review tasks. The - flag reads prompt from stdin. --skip-git-repo-check bypasses the trusted-directory gate added in codex-cli 0.118.0. --sandbox read-only blocks file WRITES on the host (verified Codex 0.122.0: `echo > /tmp/x` returns `operation not permitted`); it does NOT block shell exec or subprocess launching -- a `read-only` sandbox can still run `ls`, `curl`, or `gemini`. The defense against codex going meta and shelling out to other auditors is the prompt-layer "Operating constraints" block in cross-dispatcher.js buildRequest, not the sandbox flag. The model layer additionally refuses to read explicitly-secret files like ~/.ssh/id_rsa or ~/.codex/auth.json even when prompt-injected to do so. The visibility surface in cross-orchestrator-cli.js cmdCross catches any residual silent failure. approval_policy="never" auto-approves without an interactive prompt. mcp_servers.ijfw-memory.enabled=false disables IJFW MCP for this session because Codex in `codex exec` mode under a non-bypass sandbox auto-cancels MCP tool calls -- the cancellation noise wastes tokens and the audit does not need IJFW memory recall (the brief contains the full target inline).',
-    detect: (env) => Boolean(env.CODEX_SESSION_ID || env.CODEX_HOME) || /codex/i.test(env._ || ''),
+    // CODEX_SESSION_ID is set by codex itself when running INSIDE a codex
+    // session; CODEX_HOME is a config-path env var that's set whenever codex
+    // is *installed* (not just when active), so checking it here would falsely
+    // self-exclude codex from every Trident run on machines that have codex
+    // installed but where the caller is something else (Claude Code, Cursor,
+    // etc.). Surface noted by carrmjw during the qwen roster review (#11).
+    detect: (env) => Boolean(env.CODEX_SESSION_ID) || /codex/i.test(env._ || ''),
     apiFallback: { provider: 'openai', model: 'gpt-4o-mini', authEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1/chat/completions' },
   },
   {
@@ -144,12 +150,21 @@ export function pickAuditors({ count = 2, env = process.env, only = null, strate
   if (only) {
     const ids = String(only).split(/[ ,]+/).map(s => s.toLowerCase()).filter(Boolean);
     const picks = ids.map(id => all.find(e => e.id === id)).filter(Boolean);
-    const reachablePicks = picks.filter(e => isReachable(e.id, env).any);
-    const missing = picks.filter(e => !isReachable(e.id, env).any);
+    // Self-exclusion applies to --with too -- the Trident's value is
+    // multi-lineage diversity, so requesting the caller's own family ID
+    // collapses to a single-source review. Surface it instead of running it.
+    const selfPicks = picks.filter(e => e.isSelf);
+    const nonSelfPicks = picks.filter(e => !e.isSelf);
+    const reachablePicks = nonSelfPicks.filter(e => isReachable(e.id, env).any);
+    const unreachable = nonSelfPicks.filter(e => !isReachable(e.id, env).any);
+    const missing = [...unreachable, ...selfPicks];
+    const noteParts = [];
+    if (unreachable.length) noteParts.push(`Requested but not reachable: ${unreachable.map(e => e.id).join(', ')}.`);
+    if (selfPicks.length) noteParts.push(`Skipped self-audit on ${selfPicks.map(e => e.id).join(', ')} -- pass a different auditor for cross-lineage review.`);
     return {
       picks: reachablePicks.map(annotatePick),
       missing,
-      note: missing.length ? `Requested but not reachable: ${missing.map(e => e.id).join(', ')}.` : '',
+      note: noteParts.join(' '),
     };
   }
 
@@ -249,10 +264,13 @@ export function rosterFor({ excludeSelf = true, only = null, env = process.env }
   return list;
 }
 
-// Pick the top default auditor (first non-self).
+// Pick the top default auditor: highest-priority non-self entry that is
+// actually reachable via CLI or API key. Returning a non-reachable pick used
+// to give callers a misleading "ready" answer that fell over on first invoke.
 export function defaultAuditor(env = process.env) {
   const list = rosterFor({ excludeSelf: true, env });
-  return list[0] || null;
+  const reachable = list.find(e => isReachable(e.id, env).any);
+  return reachable || list[0] || null;
 }
 
 // Pretty-print the roster for user consumption. Now shows install status
@@ -262,7 +280,12 @@ export function formatRoster(env = process.env) {
   const all = rosterWithStatus(env);
   const lines = [];
   for (const e of all) {
-    const role = e.isSelf ? 'self    ' : (e.installed ? 'ready   ' : 'install ');
+    // 'ready' covers CLI-installed AND API-only-reachable (e.g., user has
+    // OPENAI_API_KEY set but no codex binary on PATH). Previously this only
+    // checked installed and would suggest "install" even when the API path
+    // would have worked.
+    const reach = isReachable(e.id, env);
+    const role = e.isSelf ? 'self    ' : (reach.any ? 'ready   ' : 'install ');
     lines.push(`  ${e.id.padEnd(9)} ${role}-- ${e.name} (${e.invoke}) -- ${e.note}`);
   }
   const header = self
