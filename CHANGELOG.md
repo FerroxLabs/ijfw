@@ -28,9 +28,9 @@ API path: `https://api.moonshot.ai/v1/chat/completions`, auth via `MOONSHOT_API_
 
 Files: `mcp-server/src/audit-roster.js`, `mcp-server/test-audit-roster.js`.
 
-### Dev-dependency bump
+### Build pipeline upgraded to esbuild 0.28
 
-`installer/`'s esbuild devDependency moves 0.25.x -> 0.28.0. Upstream marks 0.28.0 as a breaking release out of caution (pre-1.0 semver), but the actual changes are conservative: TC39 stage-3 `with { type: 'text' }` import support, integrity checks added to the fallback download path, internal Go-compiler bump from 1.25.7 to 1.26.1. `installer/dist/` rebuilds cleanly. No effect on shipped artifacts beyond a build-time bundler upgrade.
+`installer/`'s esbuild devDependency moves to 0.28.0, picking up TC39 stage-3 `with { type: 'text' }` import support, an integrity-check pass on the fallback download path, and the internal Go-compiler bump from 1.25.7 to 1.26.1. `installer/dist/` rebuilds cleanly on the new version with no shipped-artifact change -- a build-time tooling refresh, end users see the same output.
 
 Files: `installer/package.json`, `installer/package-lock.json`.
 
