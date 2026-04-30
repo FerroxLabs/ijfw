@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.2.5] -- 2026-04-30
+
+**Trident roster opens to the community.** A one-page contribution playbook plus two new worked examples ship the auditor roster from "what Sean ships" to "what the community can grow." DeepSeek and Kimi land as openai-compat API entries, both ride the unified provider added in 1.2.4. The 1.2.4 community contribution from [@carrmjw](https://github.com/carrmjw) is the canonical worked example referenced throughout. Plus a routine dev-dependency bump.
+
+### Auditor contribution playbook
+
+`docs/CONTRIBUTING-AUDITORS.md` is the new one-page guide for proposing a new auditor for the Trident. It covers when to propose (lineage diversity, reachability gap, local/zero-cost path), the roster entry shape with a fully annotated worked example, what tests are needed, and -- importantly -- what gets declined and why. The goal is to lower the friction for a community contribution from "read three source files and guess" to "fill in the template, copy the qwen entry, ship a 10-line PR."
+
+A companion GitHub issue template at `.github/ISSUE_TEMPLATE/auditor-proposal.yml` lets contributors propose a new auditor without writing a line of code first. It captures the load-bearing answers up front (lineage, diversity gain, access path, auth env var, maintenance commitment) so triage is one read, not a back-and-forth.
+
+Files: `docs/CONTRIBUTING-AUDITORS.md` (new), `.github/ISSUE_TEMPLATE/auditor-proposal.yml` (new), `README.md` (auditor section now references the six-lineage roster and the playbook).
+
+### DeepSeek joins the Trident
+
+DeepSeek-V4 (Chinese open-source lineage, MIT-licensed weights, `deepseek-v4-flash` for the audit path) lands as an openai-compat roster entry. Distinct training data and posttraining recipe from the existing OpenAI / Google / Anthropic / Alibaba lineages, which is exactly what adversarial review wants. Pricing is among the cheapest of any reasoning-capable model on the roster, which makes it attractive for high-volume audit cycles.
+
+API path: `https://api.deepseek.com/v1/chat/completions`, auth via `DEEPSEEK_API_KEY`. No first-party canonical CLI -- multiple third-party CLIs exist, none standardized; this entry treats the API as load-bearing and lets the dispatcher fall back to a CLI if one is on PATH. Self-detection deliberately returns false to avoid false-excluding the entry on machines that have any of the third-party CLIs installed without an active session.
+
+Files: `mcp-server/src/audit-roster.js`, `mcp-server/test-audit-roster.js`.
+
+### Kimi (Moonshot) joins the Trident
+
+Moonshot AI Kimi K2 series (Chinese open-source lineage, separate from DeepSeek; current alias `kimi-k2.6`). Long-context strength makes Kimi useful for whole-file or whole-module audits where context-window budget matters. OpenAI-compatible API via `platform.moonshot.ai`.
+
+API path: `https://api.moonshot.ai/v1/chat/completions`, auth via `MOONSHOT_API_KEY`. Self-detection returns false for the same reason as DeepSeek -- prefer double-coverage over false self-exclusion.
+
+Files: `mcp-server/src/audit-roster.js`, `mcp-server/test-audit-roster.js`.
+
+### Dev-dependency bump
+
+`installer/`'s esbuild devDependency moves 0.25.x -> 0.28.0. Upstream marks 0.28.0 as a breaking release out of caution (pre-1.0 semver), but the actual changes are conservative: TC39 stage-3 `with { type: 'text' }` import support, integrity checks added to the fallback download path, internal Go-compiler bump from 1.25.7 to 1.26.1. `installer/dist/` rebuilds cleanly. No effect on shipped artifacts beyond a build-time bundler upgrade.
+
+Files: `installer/package.json`, `installer/package-lock.json`.
+
+### Verification
+
+524/524 unit tests across the mcp-server pass at 1.2.5 (two new reachability tests covering DeepSeek + Kimi via their respective API keys). The full e2e smoke harness (60+ gates including isolated-HOME install, every platform's config schema, live `opencode/qwen/kimi/openclaw mcp list` handshakes, MCP server initialize+tools/list handshake) all pass on macOS at 1.2.5.
+
 ## [1.2.4] -- 2026-04-29
 
 **Trident lineage diversity + Windows Git Bash parity + auditor reachability sharpening.** Three substantive improvements: a new third foundation-model lineage in the cross-audit roster, end-to-end Windows Git Bash support for the `ijfw` CLI itself (companion to 1.2.3's Windows MCP-spawn parity), and a set of polish improvements to how IJFW detects and surfaces auditor availability. Two community contributions land in this release. No breaking changes.

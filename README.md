@@ -291,7 +291,9 @@ ijfw cross audit src/auth.js
 
 Codex and Gemini audit your file in parallel. Findings tagged **consensus** (both AIs agree, high priority) or **contested** (they disagree, your judgment call). The Claude specialist swarm runs alongside on the same target. Receipts logged locally with cache savings, duration, and findings count.
 
-Default Trident picks two auditors from different lineages so blind spots do not compound. Background fires by default so you keep working while the audit runs. Every commit can auto-fire Trident via the optional post-commit hook. Every run appends to `.ijfw/receipts/cross-runs.jsonl` with duration, tokens, and finding counts. The method travels with the memory, the receipts, and the brief, so every future decision inherits the scrutiny.
+Default Trident picks two auditors from different lineages so blind spots do not compound. The roster spans six independent training lineages -- OpenAI (Codex / Copilot), Google (Gemini), Anthropic (Claude), Alibaba (Qwen), DeepSeek, and Moonshot (Kimi) -- with an OSS path (opencode / aider) for the privacy-first crowd. Background fires by default so you keep working while the audit runs. Every commit can auto-fire Trident via the optional post-commit hook. Every run appends to `.ijfw/receipts/cross-runs.jsonl` with duration, tokens, and finding counts. The method travels with the memory, the receipts, and the brief, so every future decision inherits the scrutiny.
+
+Adding your own auditor is a roughly ten-line addition to the roster. See [`docs/CONTRIBUTING-AUDITORS.md`](docs/CONTRIBUTING-AUDITORS.md) for the playbook -- the Qwen entry from [@carrmjw](https://github.com/carrmjw) (PR #11) is the canonical worked example.
 
 **What this looks like in practice.** A real cross-audit run from a shipping project (Bangkok Big Bike V1):
 
@@ -329,10 +331,10 @@ A detached background check fires on every session start (Claude + Codex), polls
 
 | Where | When | What you see |
 |---|---|---|
-| Claude Code statusLine | Always visible | `^ 1.2.4 available  \|  #####..... 49% left` (autocompact-aware bar) |
-| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.4 available` (tokens via existing PreCompact estimate) |
-| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.4 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.2.3 -> v1.2.4 -- run 'ijfw update' in your TERMINAL` |
+| Claude Code statusLine | Always visible | `^ 1.2.5 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.5 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.5 available` injected via `additionalContext` |
+| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.2.4 -> v1.2.5 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
