@@ -16,7 +16,7 @@ import { createInterface } from 'readline';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
   appendFileSync, readdirSync, statSync, renameSync, unlinkSync,
-  openSync, closeSync, realpathSync
+  openSync, closeSync, fsyncSync, realpathSync
 } from 'fs';
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
 import { homedir } from 'os';
@@ -168,6 +168,7 @@ function atomicWrite(filepath, content) {
   try {
     fd = openSync(tmp, 'w');
     writeFileSync(fd, content, 'utf-8');
+    fsyncSync(fd);
     closeSync(fd);
     fd = null;
     renameSync(tmp, filepath);
@@ -1278,7 +1279,6 @@ rl.on('line', (line) => {
 });
 
 process.on('SIGINT', () => process.exit(0));
-process.on('SIGINT',  () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));
 process.on('uncaughtException', (err) => {
   process.stderr.write(`IJFW: uncaught: ${err.stack || err.message}\n`);
