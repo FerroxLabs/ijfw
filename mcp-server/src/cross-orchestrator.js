@@ -191,9 +191,18 @@ function spawnCli(pick, request, timeoutMs, signal = null, env = process.env) {
       settle({ stdout, stderr, exitCode: code, timedOut: false, aborted: false });
     });
 
+    // 1.2.5 (1.3 audit fix): respect backpressure on the stdin write. For
+    // typical 1-50 KB prompts the pipe buffer absorbs the write, but very
+    // large requests (long synthesis prompts, big file targets) can return
+    // false from .write() and require a 'drain' event before .end() to avoid
+    // dropping bytes on certain CLI implementations.
     try {
-      proc.stdin.write(request);
-      proc.stdin.end();
+      const flushed = proc.stdin.write(request);
+      if (flushed) {
+        proc.stdin.end();
+      } else {
+        proc.stdin.once('drain', () => { try { proc.stdin.end(); } catch { /* */ } });
+      }
     } catch {
       // stdin may already be closed on some CLI tools
     }
@@ -289,22 +298,39 @@ async function fanOut(tasks, concurrency = 3) {
   return results;
 }
 
-// minResponsesFanOut -- abort stragglers once minResponses auditors settle.
-// Takes a shared AbortController (runAc) so pending picks get killed on threshold.
+// minResponsesFanOut -- abort stragglers once minResponses auditors settle
+// productively. Takes a shared AbortController (runAc) so pending picks get
+// killed on threshold.
+//
+// 1.2.5 audit fixes:
+//   - 1.4 (HIGH): only "productive" results (status null = CLI exit 0, or
+//     'fallback-used' = API succeeded) count toward minResponses. Failed /
+//     timeout / aborted results count toward all-settled detection so the
+//     promise still resolves, but they no longer prematurely satisfy
+//     minResponses. Previously: 2 immediate failures with minResponses=2
+//     could abort still-running productive auditors.
+//   - 1.1 (HIGH): .catch() guard on fireExternal so a synchronous throw
+//     can never leave the orchestrator promise unresolved forever.
 async function minResponsesFanOut(requests, picks, resolvedTimeoutSec, env, concurrency, minResponses, runAc) {
   const total = requests.length;
   const results = Array.from({ length: total }, () => null);
+  let productiveCount = 0;
   let settledCount = 0;
   let nextIdx = 0;
   let done = false;
 
+  function isProductive(raw) {
+    return Boolean(raw) && (raw.status === null || raw.status === 'fallback-used');
+  }
+
   return new Promise((resolveAll) => {
     function check() {
       if (done) return;
-      if (settledCount >= Math.min(minResponses, total) || settledCount >= total) {
+      const enoughProductive = productiveCount >= Math.min(minResponses, total);
+      const allDone = settledCount >= total;
+      if (enoughProductive || allDone) {
         done = true;
         runAc.abort();  // signal remaining in-flight picks to terminate
-        // Fill un-launched slots with aborted sentinel
         for (let j = 0; j < total; j++) {
           if (results[j] === null) {
             results[j] = { stdout: '', stderr: 'aborted', exitCode: null, status: 'aborted', source: 'none', elapsedMs: 0 };
@@ -317,12 +343,24 @@ async function minResponsesFanOut(requests, picks, resolvedTimeoutSec, env, conc
       if (done || nextIdx >= total) return;
       const i = nextIdx++;
       const { pick, payload } = requests[i];
-      fireExternal(pick, payload, timeoutForPick(pick, resolvedTimeoutSec), env, runAc.signal).then(raw => {
-        results[i] = raw;
-        settledCount++;
-        check();
-        launchNext();
-      });
+      fireExternal(pick, payload, timeoutForPick(pick, resolvedTimeoutSec), env, runAc.signal)
+        .then(raw => {
+          results[i] = raw;
+          settledCount++;
+          if (isProductive(raw)) productiveCount++;
+          check();
+          launchNext();
+        })
+        .catch(err => {
+          results[i] = {
+            stdout: '',
+            stderr: `unexpected: ${err && err.message ? err.message : 'unknown'}`,
+            exitCode: null, status: 'failed', source: 'none', elapsedMs: 0,
+          };
+          settledCount++;
+          check();
+          launchNext();
+        });
     }
     for (let w = 0; w < Math.min(concurrency, total); w++) launchNext();
   });

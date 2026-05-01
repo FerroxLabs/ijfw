@@ -46,6 +46,16 @@ A new `docs/OBSIDIAN.md` walks through opening your IJFW memory directory as an 
 
 Files: `docs/OBSIDIAN.md` (new).
 
+### Dispatcher reliability hardening
+
+A second-pass full-lineage Trident audit on the 1.2.5 branch (codex + gemini + kimi consensus) surfaced three reliability surfaces in the cross-audit dispatcher itself, all in `minResponsesFanOut` and `spawnCli`. Fixed before ship:
+
+- **`minResponsesFanOut` no longer counts failed/timeout/aborted auditors toward the minResponses threshold.** Previously a user passing `--with codex,gemini,deepseek` with no `DEEPSEEK_API_KEY` would have deepseek fail fast and count toward minResponses=2, which could abort still-running productive auditors before they returned findings. Productive results (CLI exit 0 or API-fallback success) now count toward the threshold; non-productive settlements still count toward all-done detection so the promise never deadlocks.
+- **`minResponsesFanOut` now `.catch()`-guards the `fireExternal` promise.** `fireExternal` should always resolve with a result object, but a defensive catch arm prevents a synchronous throw anywhere in the future from leaving the orchestrator promise unresolved forever.
+- **`spawnCli` respects stdin backpressure.** For typical 1-50 KB prompts nothing changes (the pipe buffer absorbs the write). For very large requests (long synthesis prompts, big file targets), the write now waits for `drain` before calling `.end()` to avoid dropping bytes on CLI implementations that don't buffer fully on their end.
+
+Files: `mcp-server/src/cross-orchestrator.js` (both functions).
+
 ### Audit-cleanup pass
 
 A full-system Trident audit on the 1.2.5 branch surfaced six small surfaces worth landing alongside the new features rather than carrying as backlog:
