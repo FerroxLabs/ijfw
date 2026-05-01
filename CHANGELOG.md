@@ -2,7 +2,7 @@
 
 ## [1.2.5] -- 2026-04-30
 
-**Trident roster opens to the community.** A one-page contribution playbook plus two new worked examples ship the auditor roster from "what Sean ships" to "what the community can grow." DeepSeek and Kimi land as openai-compat API entries, both ride the unified provider added in 1.2.4. The 1.2.4 community contribution from [@carrmjw](https://github.com/carrmjw) is the canonical worked example referenced throughout. Plus a routine dev-dependency bump.
+**Trident roster opens to the community + actionable auditor errors + Obsidian-friendly memory + audit-cleanup pass.** A one-page contribution playbook plus two new worked examples ship the auditor roster from "what Sean ships" to "what the community can grow." DeepSeek and Kimi land as openai-compat API entries. The 1.2.4 visibility surface gets a translation layer that tells you exactly how to fix a stalled auditor. Memory layer reaffirmed as Obsidian-vault-compatible with a walkthrough. Six surfaces from a full-system Trident audit land alongside as polish. Plus a routine dev-dependency bump.
 
 ### Auditor contribution playbook
 
@@ -34,9 +34,34 @@ Files: `mcp-server/src/audit-roster.js`, `mcp-server/test-audit-roster.js`.
 
 Files: `installer/package.json`, `installer/package-lock.json`.
 
+### Trident now tells you exactly what to do when an auditor stalls
+
+The 1.2.4 visibility surface that flagged degraded Trident runs got noisier in the right way: instead of dumping the first 80 characters of an auditor's stderr, the new `translateAuditorError()` pattern-matches the common stall signatures and renders one actionable line. Codex auth-refresh failure now reads `Codex auth token expired or stale. Run \`codex login\` to refresh, then re-run.` instead of `codex_models_manager::manager: failed to refre`. Qwen with no auth configured tells you to run `qwen auth`. Gemini's safety filter explains it may be a false negative on this target. Generic 401/403, 429 / quota, ENOTFOUND / network, missing API keys, and spawn-ENOENT each get their own one-line fix. The catch-all preserves the raw error head so nothing's hidden. Thirteen new unit tests cover each pattern.
+
+Files: `mcp-server/src/cross-orchestrator-cli.js` (`translateAuditorError` + degraded surface rewire), `mcp-server/test-translate-auditor-error.js` (new).
+
+### Memory layer is Obsidian-friendly out of the box
+
+A new `docs/OBSIDIAN.md` walks through opening your IJFW memory directory as an Obsidian vault. Plain markdown plus YAML frontmatter is exactly Obsidian's native format; full-text search, property view, graph view of the `MEMORY.md` index, and per-type filtering all work today with zero conversion. You can hand-edit memories from Obsidian and IJFW reads them on the next session.
+
+Files: `docs/OBSIDIAN.md` (new).
+
+### Audit-cleanup pass
+
+A full-system Trident audit on the 1.2.5 branch surfaced six small surfaces worth landing alongside the new features rather than carrying as backlog:
+
+- **`atomicWrite` honors its fsync claim** -- the function comment promised "write to .tmp, fsync, rename"; the implementation was missing the `fsyncSync(fd)` step. Added so the durability contract matches the documentation. Cost: one syscall per persisted memory write (microseconds). Benefit: data survives a kernel panic between `close()` and `rename()`. (`mcp-server/src/server.js`)
+- **Duplicate SIGINT listener removed** -- two consecutive `process.on('SIGINT', ...)` lines registered the same handler. Cosmetic but obviously unintentional. (`mcp-server/src/server.js`)
+- **`buildGemini` defensive endpoint guard** -- explicit `Error` if `apiFallback.endpoint` is missing instead of an opaque `TypeError` from `String.prototype.replace`. (`mcp-server/src/api-client.js`)
+- **Dropped redundant `?key=` URL parameter on Gemini API calls** -- auth flows entirely through the `x-goog-api-key` header. The URL form was redundant and slightly leakier (logs / proxies can capture URLs more easily than headers). (`mcp-server/src/api-client.js`)
+- **Hook input over 1 MiB exits cleanly with a stderr note** -- the post-tool-use signal-capture hook used to slice mid-JSON and silently exit on `JSON.parse` failure. Now logs an explicit "tool_response > 1 MiB, skipping signal extraction" before exiting. Hooks still never block, but they no longer fail invisibly on edge-case oversize inputs. (`claude/hooks/scripts/post-tool-use.js`)
+- **`install_hook` no longer skips silently when no checksum util is on host** -- on stripped containers without `md5sum`, `md5`, or `sha1sum`, both checksum reads returned empty strings and compared equal, so updates were silently skipped. The function now detects empty checksums, takes a precautionary backup, and forces the copy through. (`scripts/install.sh`)
+
+Audit report at `.planning/audit-1.2.5/REPORT.md` (local). Backlog of remaining deferred items tracked separately.
+
 ### Verification
 
-524/524 unit tests across the mcp-server pass at 1.2.5 (two new reachability tests covering DeepSeek + Kimi via their respective API keys). The full e2e smoke harness (60+ gates including isolated-HOME install, every platform's config schema, live `opencode/qwen/kimi/openclaw mcp list` handshakes, MCP server initialize+tools/list handshake) all pass on macOS at 1.2.5.
+537/537 unit tests across the mcp-server pass at 1.2.5 (two new reachability tests for DeepSeek + Kimi, thirteen new tests for the actionable-error translator). The full e2e smoke harness (60+ gates including isolated-HOME install, every platform's config schema, live `opencode/qwen/kimi/openclaw mcp list` handshakes, MCP server initialize+tools/list handshake) all pass on macOS at 1.2.5.
 
 ## [1.2.4] -- 2026-04-29
 

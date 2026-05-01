@@ -38,7 +38,16 @@ function buildOpenAI(system, user, model, key, timeoutMs, endpoint) {
 }
 
 function buildGemini(system, user, model, key, timeoutMs, endpoint) {
-  const url = endpoint.replace('{model}', model) + `?key=${key}`;
+  // 1.2.5: defensive guard against missing endpoint (B3.1) -- the roster entry
+  // always supplies one for provider:'google', but the runtime guard means a
+  // misconfigured fallback fails with a clear error instead of TypeError.
+  if (!endpoint || typeof endpoint !== 'string') {
+    throw new Error('buildGemini: apiFallback.endpoint is required for provider="google"');
+  }
+  // 1.2.5: drop the redundant ?key= URL parameter (B3.2). Auth flows entirely
+  // through the x-goog-api-key header below; the URL form was redundant +
+  // slightly leakier (logs / proxies can capture URLs more easily than headers).
+  const url = endpoint.replace('{model}', model);
   return {
     url,
     options: {

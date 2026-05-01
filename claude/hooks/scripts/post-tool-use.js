@@ -19,7 +19,13 @@ import { spawn } from 'node:child_process';
 let INPUT;
 try {
   INPUT = fs.readFileSync(0, 'utf8');
-  if (INPUT.length > 1048576) INPUT = INPUT.slice(0, 1048576);
+  // 1.2.5 (B5.2): if input exceeds 1 MiB, exit cleanly with a stderr note
+  // instead of slicing mid-JSON and silently failing on parse. Hooks must
+  // never block, but they should not fail invisibly either.
+  if (INPUT.length > 1048576) {
+    process.stderr.write('[ijfw post-tool-use] tool_response > 1 MiB, skipping signal extraction\n');
+    process.exit(0);
+  }
 } catch { process.exit(0); }
 if (!INPUT) process.exit(0);
 

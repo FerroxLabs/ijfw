@@ -20,6 +20,71 @@ import { aggregatePortfolioFindings } from './cross-project-search.js';
 import { runImport, runImportAll, listImporters } from './importers/cli.js';
 
 // ---------------------------------------------------------------------------
+// Auditor error translator (1.2.5)
+// ---------------------------------------------------------------------------
+// Pattern-match common auditor failure signatures and turn the raw stderr
+// into one actionable sentence. Returns a short string the degraded-auditor
+// surface in cmdCross renders directly.
+//
+// Order matters: more specific patterns come first so a generic "401" or
+// "timeout" doesn't shadow a tool-specific re-auth instruction.
+export function translateAuditorError(id, status, stderr, exitCode) {
+  const s = String(stderr || '');
+  const lower = s.toLowerCase();
+
+  // Tool-specific re-auth signatures (highest specificity)
+  if (id === 'codex' && (
+        /failed to refre/i.test(s) ||
+        /codex_models_manager/i.test(s) ||
+        /token.*(expired|invalid)/i.test(s)
+      )) {
+    return 'Codex auth token expired or stale. Run `codex login` to refresh, then re-run.';
+  }
+  if (id === 'qwen' && /no auth type is selected/i.test(s)) {
+    return 'No auth configured. Run `qwen auth` and pick a provider, then re-run.';
+  }
+  if (id === 'gemini' && (/safety/i.test(s) || /blocked/i.test(s) || /BLOCKED_BY_SAFETY/i.test(s))) {
+    return 'Safety filter blocked output -- may be a false negative on this target. Try a different file or pass --with to swap auditor.';
+  }
+  if (id === 'claude' && /credit balance.*too low/i.test(lower)) {
+    return 'Anthropic credits low. Top up at console.anthropic.com or use the CLI path instead of API.';
+  }
+
+  // Status-driven generic patterns
+  if (status === 'timeout' || /(operation was )?aborted due to timeout/i.test(s) || /etimedout/i.test(lower)) {
+    return 'API timed out. Check network, retry, or pass --with to drop this auditor on the next run.';
+  }
+
+  // Generic auth signatures
+  if (/\b(401|403)\b/.test(s) || /unauthorized/i.test(s) || /forbidden/i.test(s)) {
+    return `Authentication rejected (HTTP 401/403). Re-check the API key for ${id}, then re-run.`;
+  }
+  if (/(api[_ ]?key|auth(env)?)\s+not\s+set/i.test(s)) {
+    return `API key not set. Export the auth env var for ${id} in your shell, then re-run.`;
+  }
+  if (/\b429\b/.test(s) || /rate[ -]?limit/i.test(lower) || /quota/i.test(lower)) {
+    return 'Rate-limited or quota exhausted. Wait a minute or top up your provider, then re-run.';
+  }
+  if (/enotfound|econnrefused|getaddrinfo/i.test(s)) {
+    return 'Network unreachable. Check connectivity, then re-run.';
+  }
+
+  // Empty + stderr usually means model emitted prose without the JSON fence.
+  if (status === 'empty') {
+    return 'Returned no parseable findings (model may have emitted prose without the JSON fence). Re-run or pass --with to swap auditor.';
+  }
+
+  // Spawn / exec issues
+  if (/spawn .* enoent/i.test(lower) || /command not found/i.test(lower)) {
+    return `CLI binary not found on PATH. Install ${id} or set its API key to use the API fallback.`;
+  }
+
+  // Catch-all: short raw, but suffix the right action
+  const head = s.split('\n')[0].slice(0, 80) || `exit ${exitCode}`;
+  return `Failed (${head}). Run \`ijfw doctor\` to diagnose, or pass --with to drop this auditor.`;
+}
+
+// ---------------------------------------------------------------------------
 // Findings printer
 // ---------------------------------------------------------------------------
 function printFindings(mode, merged) {
@@ -708,26 +773,19 @@ async function cmdCross({ mode, target, only, confirm, expand }) {
     console.log(`\nNote: ${note}`);
   }
 
-  // Issue #9-B: surface silent auditor degradation. A Trident run with one
-  // auditor crashed/timed-out is not the same as a clean Trident run -- the
-  // "second lineage" promise quietly breaks if we say nothing. Warn explicitly
-  // and name the auditor + reason so the user can ground-truth the result.
+  // Issue #9-B + 1.2.5: surface silent auditor degradation AND translate the
+  // raw error signature into one actionable line. Old behavior dumped the
+  // first 80 chars of stderr, which read like a stack trace. New behavior:
+  // pattern-match common auth/timeout/safety/no-key signatures and render
+  // "this is what's wrong, this is how to fix it" -- so the user knows
+  // whether to re-auth, retry, or change combo without reading source.
   if (auditorResults && auditorResults.length === picks.length) {
     const degraded = [];
     for (let i = 0; i < picks.length; i++) {
       const r = auditorResults[i];
       const id = picks[i].id;
-      if (r.status === 'failed') {
-        const reason = r.stderr ? r.stderr.split('\n')[0].slice(0, 80) : `exit ${r.exitCode}`;
-        degraded.push({ id, reason: `failed (${reason})` });
-      } else if (r.status === 'timeout') {
-        degraded.push({ id, reason: 'timed out' });
-      } else if (r.status === 'empty' && r.stderr && r.stderr.trim()) {
-        // Empty findings AND stderr present -- could be a soft fail (model
-        // emitted prose without the JSON fence). Don't pretend the target is
-        // clean -- flag it so the user can ground-truth.
-        const reason = r.stderr.split('\n')[0].slice(0, 80);
-        degraded.push({ id, reason: `produced no parseable findings (${reason})` });
+      if (r.status === 'failed' || r.status === 'timeout' || (r.status === 'empty' && r.stderr && r.stderr.trim())) {
+        degraded.push({ id, reason: translateAuditorError(id, r.status, r.stderr || '', r.exitCode) });
       }
     }
     if (degraded.length > 0) {
