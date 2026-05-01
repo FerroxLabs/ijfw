@@ -21,11 +21,11 @@ Triggers: "update ijfw", "upgrade ijfw", "is there a new version", "latest versi
 
 2. **If up to date**: report it. Stop.
 
-   > IJFW is up to date (v1.2.4).
+   > IJFW is up to date (v1.2.5).
 
 3. **If update available**: present the version delta + changelog link, then surface the OOB instruction verbatim. The terminal command is the air-gap; the model never runs the update itself.
 
-   > Update available: v1.2.3 -> v1.2.4
+   > Update available: v1.2.4 -> v1.2.5
    >   Changelog: <changelog_url>
    >
    > To proceed, run in your TERMINAL:

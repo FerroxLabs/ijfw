@@ -552,11 +552,19 @@ install_hook() {
     local src_sum dst_sum
     src_sum=$(md5sum "$src" 2>/dev/null || md5 -q "$src" 2>/dev/null || sha1sum "$src" 2>/dev/null | cut -d' ' -f1)
     dst_sum=$(md5sum "$dst" 2>/dev/null || md5 -q "$dst" 2>/dev/null || sha1sum "$dst" 2>/dev/null | cut -d' ' -f1)
-    if [ "$src_sum" = "$dst_sum" ]; then
+    # 1.2.5 (B4.5): if no checksum util is on host (md5sum + md5 + sha1sum all
+    # missing -- rare but real on stripped containers), both vars are empty
+    # and would compare equal, so updates would be silently skipped. Force a
+    # back-up-then-copy in that case so updates always apply.
+    if [ -z "$src_sum" ] || [ -z "$dst_sum" ]; then
+      cp "$dst" "$dst.bak.$TS" 2>/dev/null
+      log "  [--] Updated $(basename "$dst") (no checksum util on host -- precautionary backup)"
+    elif [ "$src_sum" = "$dst_sum" ]; then
       return 0  # identical -- nothing to do
+    else
+      cp "$dst" "$dst.bak.$TS" 2>/dev/null
+      log "  [--] Updated $(basename "$dst") (your custom version backed up to $(basename "$dst").bak.$TS)"
     fi
-    cp "$dst" "$dst.bak.$TS" 2>/dev/null
-    log "  [--] Updated $(basename "$dst") (your custom version backed up to $(basename "$dst").bak.$TS)"
   fi
   cp "$src" "$dst"
   chmod +x "$dst" 2>/dev/null

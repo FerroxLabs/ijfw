@@ -4,7 +4,7 @@ import { ROSTER, detectSelf, rosterFor, defaultAuditor, formatRoster, pickAudito
 
 test('ROSTER has expected ids', () => {
   const ids = ROSTER.map(e => e.id);
-  for (const expected of ['codex', 'gemini', 'qwen', 'opencode', 'aider', 'copilot', 'claude']) {
+  for (const expected of ['codex', 'gemini', 'qwen', 'deepseek', 'kimi', 'opencode', 'aider', 'copilot', 'claude']) {
     assert.ok(ids.includes(expected), `missing: ${expected}`);
   }
 });
@@ -400,6 +400,23 @@ test('formatRoster shows ready when API key is set even without CLI', () => {
   const codexLine = out.split('\n').find(l => l.startsWith('  codex'));
   assert.ok(codexLine, 'codex line should be present');
   assert.match(codexLine, /\bready\b/, 'codex must show "ready" when OPENAI_API_KEY is set');
+});
+
+test('deepseek is reachable via API when DEEPSEEK_API_KEY is set', () => {
+  // 1.2.5: DeepSeek joins as openai-compat API-only entry. Reachability is
+  // purely via DEEPSEEK_API_KEY; no first-party CLI.
+  const env = { DEEPSEEK_API_KEY: 'sk-test' };
+  const reach = isReachable('deepseek', env);
+  assert.equal(reach.api, true, 'deepseek should be API-reachable');
+  assert.equal(reach.any, true, 'deepseek should be reachable');
+});
+
+test('kimi is reachable via API when MOONSHOT_API_KEY is set', () => {
+  // 1.2.5: Kimi (Moonshot) joins as openai-compat API-only entry.
+  const env = { MOONSHOT_API_KEY: 'sk-test' };
+  const reach = isReachable('kimi', env);
+  assert.equal(reach.api, true, 'kimi should be API-reachable');
+  assert.equal(reach.any, true, 'kimi should be reachable');
 });
 
 test('pickAuditors({only:"claude"}) excludes self when caller is claude', () => {

@@ -1,0 +1,114 @@
+name: Auditor proposal
+description: Propose a new auditor for the Trident roster (DeepSeek, Mistral, your favorite local model, etc.)
+title: "[auditor] "
+labels: ["auditor-proposal", "good-first-issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for thinking about expanding the Trident roster. Read [`docs/CONTRIBUTING-AUDITORS.md`](../blob/main/docs/CONTRIBUTING-AUDITORS.md) before filing -- it covers what gets accepted and what gets declined. This template asks for the load-bearing answers up front so we can decide quickly.
+
+  - type: input
+    id: auditor-name
+    attributes:
+      label: Auditor
+      description: Model or service name (e.g., DeepSeek, Mistral Codestral, Llama 3 via Ollama).
+      placeholder: e.g., DeepSeek
+    validations:
+      required: true
+
+  - type: dropdown
+    id: family
+    attributes:
+      label: Training lineage / family
+      description: What's the closest match? Be honest -- "fine-tuned Llama" is a different lineage from "Llama trained from scratch."
+      options:
+        - openai
+        - google
+        - anthropic
+        - oss (Chinese-trained, e.g., DeepSeek / Kimi / Qwen)
+        - oss (Western-trained, e.g., Mistral / Llama-derived)
+        - new family (explain below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: diversity-gain
+    attributes:
+      label: What perspective does this add the existing roster cannot give?
+      description: The Trident's whole pitch is multi-source diversity. If this is the same lineage as something already in the roster, what's the genuine angle? "Better quality" is not the bar -- we're not benchmarking models, we're reconciling perspectives.
+      placeholder: e.g., First Mistral / European-trained option in the roster -- distinct training data and posttraining recipe from the OpenAI / Google / Chinese-OSS triangle.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: access
+    attributes:
+      label: Primary access path
+      options:
+        - First-party CLI (canonical, stable)
+        - Third-party CLI (multiple options, none canonical)
+        - API only
+        - Local via Ollama or similar
+    validations:
+      required: true
+
+  - type: input
+    id: auth-env
+    attributes:
+      label: Auth env var
+      description: What env var holds the API key (or "n/a" for local).
+      placeholder: e.g., DEEPSEEK_API_KEY
+    validations:
+      required: true
+
+  - type: input
+    id: endpoint
+    attributes:
+      label: API endpoint (if API or compat)
+      description: Full chat-completions URL.
+      placeholder: e.g., https://api.deepseek.com/v1/chat/completions
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Request shape
+      description: openai-compat covers most chat-completions-shaped backends. Pick "new shape" only if the request body is genuinely different from openai/google/anthropic.
+      options:
+        - openai-compat (any chat-completions-shaped backend)
+        - openai (canonical OpenAI chat-completions)
+        - google (Gemini)
+        - anthropic (Claude / messages)
+        - new shape (requires api-client.js extension)
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What prompted you to file this? "I use this model daily and want it in my Trident" is a stronger reason than "it would be cool to have."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: maintenance
+    attributes:
+      label: Maintenance commitment
+      description: Will you be the one debugging it when the upstream API changes? Be honest.
+      options:
+        - I'll send the PR and stay on as the de facto maintainer
+        - I'll send the PR; happy to help if it breaks but can't commit to it
+        - I'm filing the issue; someone else can implement
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: read-the-playbook
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I read `docs/CONTRIBUTING-AUDITORS.md`.
+          required: true
+        - label: I checked that this lineage isn't already covered in the roster.
+          required: true
