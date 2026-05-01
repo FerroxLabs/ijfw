@@ -40,6 +40,9 @@ import { sanitizeContent } from './sanitizer.js';
 // Per CLAUDE.md policy: future growth triggers retirement review, not raise.
 import { ijfwUpdateCheck, TOOL_DEF as UPDATE_CHECK_TOOL } from './update-check.js';
 import { ijfwUpdateApply, TOOL_DEF as UPDATE_APPLY_TOOL } from './update-apply.js';
+// ijfw_run: sandbox large command output to disk, return terse summary to context.
+import { runCommand, detectDomain, summarize, writeToSandbox, readFromSandbox, purgeSandboxOld, stripAnsi } from './sandbox.js';
+const SANDBOX_DIR = join(process.env.HOME || homedir(), '.ijfw', 'session-sandbox');
 
 // --- Constants ---
 const SCHEMA_VERSION = 1;
@@ -639,21 +642,17 @@ const TOOLS = [
   },
   {
     name: 'ijfw_memory_search',
-    description: 'Keyword search across memory sources. Up to 20 results. Scope defaults to current project; pass scope:"all" to search across every IJFW project ever opened on this machine (results tagged [project:<name>]).',
+    description: 'Keyword search across memory sources. Up to 20 results. Scope defaults to current project; pass scope:"all" to search across every IJFW project ever opened on this machine (results tagged [project:<name>]). Pass scope:"sandbox" to retrieve sandboxed ijfw_run output -- include label to get the full output of a specific run, or omit label to list all available sandbox entries.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Natural language search query.' },
+        query: { type: 'string', description: 'Natural language search query. Not required when scope is "sandbox".' },
         limit: { type: 'number', description: 'Max results (default 10, max 20).' },
-        scope: { type: 'string', enum: ['project', 'all'], description: 'project (default) = this project only. all = every known IJFW project on this machine.' }
+        scope: { type: 'string', enum: ['project', 'all', 'sandbox'], description: 'project (default) = this project only. all = every known IJFW project on this machine. sandbox = retrieve sandboxed ijfw_run output.' },
+        label: { type: 'string', description: 'Sandbox entry label to retrieve. Only used when scope is "sandbox". Omit to list all available entries.' }
       },
-      required: ['query']
+      required: []
     }
-  },
-  {
-    name: 'ijfw_memory_status',
-    description: 'Ready-to-inject project brief (~200 tokens) -- active mode, pending work, last handoff, memory count. One call at session start gives the agent everything it needs to pick up where work left off.',
-    inputSchema: { type: 'object', properties: {}, required: [] }
   },
   {
     name: 'ijfw_memory_prelude',
@@ -706,7 +705,20 @@ const TOOLS = [
     }
   },
   UPDATE_CHECK_TOOL,
-  UPDATE_APPLY_TOOL
+  UPDATE_APPLY_TOOL,
+  {
+    name: 'ijfw_run',
+    description: 'Run a shell command. For commands likely to produce large output (builds, test suites, grep -r, log tails), use this instead of Bash -- full output is sandboxed to disk and a smart summary is returned to context. For git/nav/quick ops, use Bash directly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'Shell command to run' },
+        label: { type: 'string', description: 'Optional label for sandbox retrieval. Auto-generated if omitted.' },
+        cwd: { type: 'string', description: 'Working directory. Defaults to process.cwd().' },
+      },
+      required: ['command'],
+    },
+  }
 ];
 
 // --- Tool Handlers ---
@@ -993,7 +1005,29 @@ function handlePrelude({ detail_level = 'summary' } = {}) {
   return { text };
 }
 
-function handleSearch({ query, limit = 10, scope = 'project' }) {
+function handleSearch({ query, limit = 10, scope = 'project', label }) {
+  if (scope === 'sandbox') {
+    if (label) {
+      const content = readFromSandbox(label);
+      if (content === null) return { text: `Sandbox entry not found: ${label}` };
+      return { text: content };
+    }
+    // List available sandbox entries.
+    if (!existsSync(SANDBOX_DIR)) return { text: 'No sandbox entries found.' };
+    let files;
+    try { files = readdirSync(SANDBOX_DIR).filter(f => f.endsWith('.json')); }
+    catch { return { text: 'No sandbox entries found.' }; }
+    if (files.length === 0) return { text: 'No sandbox entries found.' };
+    const entries = [];
+    for (const f of files) {
+      try {
+        const meta = JSON.parse(readFileSync(join(SANDBOX_DIR, f), 'utf8'));
+        entries.push(`${meta.label} | ${meta.command} | exit=${meta.exitCode} | ${meta.lines} lines | ${meta.timestamp}`);
+      } catch { /* skip malformed */ }
+    }
+    return { text: entries.length > 0 ? entries.join('\n') : 'No sandbox entries found.' };
+  }
+
   if (!query || typeof query !== 'string') {
     return { text: 'query is required and must be a string.', isError: true };
   }
@@ -1171,6 +1205,9 @@ function handleMessage(msg) {
 
     case 'tools/call': {
       const { name, arguments: args } = params || {};
+      // ijfw_run is async; wrap the entire case in a Promise so the caller
+      // can await it. All other cases resolve synchronously via Promise.resolve().
+      return (async () => {
       let result;
       try {
         switch (name) {
@@ -1214,6 +1251,36 @@ function handleMessage(msg) {
             result = { text };
             break;
           }
+          case 'ijfw_run': {
+            purgeSandboxOld();
+            const { command, label: userLabel, cwd } = args || {};
+            if (!command || typeof command !== 'string') {
+              result = { text: 'command is required and must be a string.', isError: true };
+              break;
+            }
+            const runResult = await runCommand(command, { cwd });
+            const { stdout, exitCode, durationMs, lines, bytes, timedOut } = runResult;
+
+            const INLINE_LINES = 40;
+            const INLINE_BYTES = 50 * 1024;
+
+            if (lines <= INLINE_LINES && bytes <= INLINE_BYTES && !timedOut) {
+              result = { text: stdout || '(no output)', isError: exitCode !== 0 };
+              break;
+            }
+
+            const stripped = stripAnsi(stdout);
+            const domain = detectDomain(stripped);
+            const label = userLabel || `run-${Date.now()}`;
+            const summary = summarize(stripped, domain, command, exitCode, durationMs);
+            writeToSandbox(label, command, stripped, { exitCode, lines, bytes });
+
+            result = {
+              text: summary + '\n\nFull output sandboxed. Retrieve: ijfw_memory_search({ scope: "sandbox", label: "' + label + '" })',
+              isError: exitCode !== 0,
+            };
+            break;
+          }
           default:
             return createError(id, -32601, `Unknown tool: ${name}`);
         }
@@ -1230,6 +1297,7 @@ function handleMessage(msg) {
           isError: true
         });
       }
+      })(); // end async IIFE for tools/call
     }
 
     case 'resources/list':
@@ -1268,7 +1336,17 @@ rl.on('line', (line) => {
   }
   try {
     const response = handleMessage(msg);
-    if (response) process.stdout.write(response + '\n');
+    if (response && typeof response.then === 'function') {
+      response.then(r => { if (r) process.stdout.write(r + '\n'); }).catch(err => {
+        process.stdout.write(JSON.stringify({
+          jsonrpc: '2.0',
+          id: msg && msg.id ? msg.id : null,
+          error: { code: -32603, message: `Internal error: ${err.message}` }
+        }) + '\n');
+      });
+    } else if (response) {
+      process.stdout.write(response + '\n');
+    }
   } catch (err) {
     process.stdout.write(JSON.stringify({
       jsonrpc: '2.0',

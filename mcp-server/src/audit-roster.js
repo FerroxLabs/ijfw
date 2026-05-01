@@ -58,7 +58,7 @@ export const ROSTER = [
     invoke: 'deepseek',
     note: 'DeepSeek-V4 (Chinese open-source lineage, MIT-licensed weights). Distinct training data and posttraining recipe from openai/google/anthropic, which is exactly what the Trident wants for adversarial review. No first-party canonical CLI -- multiple third-party CLIs exist; API path via DeepSeek Platform is the load-bearing one for this entry. Pricing is among the cheapest of any reasoning-capable model on the roster.',
     detect: () => false,
-    apiFallback: { provider: 'openai-compat', model: 'deepseek-v4-flash', authEnv: 'DEEPSEEK_API_KEY', endpoint: 'https://api.deepseek.com/v1/chat/completions' },
+    apiFallback: { provider: 'openai-compat', model: 'deepseek-v4-pro', authEnv: 'DEEPSEEK_API_KEY', endpoint: 'https://api.deepseek.com/v1/chat/completions' },
   },
   {
     id: 'kimi',

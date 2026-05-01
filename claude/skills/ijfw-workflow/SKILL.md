@@ -258,7 +258,18 @@ Values: `HOUR_1` / `HOUR_2_3` / `HOUR_4_5` / `HOUR_6_PLUS`.
 | HOUR_6_PLUS | unlimited | unlimited | deep | yes |
 
 Three sub-steps:
-1. **High-level plan with dependency analysis:** Execution strategy with tasks assigned to team. For each task, check: does it read/write files another task touches? Does it depend on another task's output? Organize into waves -- parallel (independent files/modules) or sequential (dependencies). Show the user WHY each wave is parallel or sequential. See `references/build-phase.md` for the dependency checklist.
+1. **High-level plan with dependency analysis:** Execution strategy with tasks assigned to team. For each task pair, run the dependency test: (a) do both write the same file? (b) does one read what the other writes? (c) does one need the other's output? Yes to any → sequential. All no → parallel. Organize into waves and write a **Wave Table** as the first section of `plan.md`:
+
+```
+| Wave | Tasks | Mode | Depends on | Reason |
+|------|-------|------|------------|--------|
+| W1   | t1, t2, t3 | PARALLEL | — | independent files |
+| W2   | t4 | SEQUENTIAL | W1 | needs t2 output |
+| W3   | t5, t6 | PARALLEL | W2 | independent of each other |
+```
+
+This table is the execution contract. Step 6 reads it directly — do not leave parallelism to inference from prose.
+
 2. **Implementation breakdown:** Each task broken into bite-sized steps (2-5 min each) with TDD where applicable and verifiable success criteria.
 
 User approves the combined plan. Write `.ijfw/memory/plan.md`. Render as HTML and open in browser. Mark completed.
@@ -271,7 +282,12 @@ Second Opinion on plan: check CLI availability, fire if available. Print "all cl
 
 Offer execution mode: Sequential (< 5 tasks) or Subagent swarm (5+ tasks).
 
-**Subagent swarm (parallel):** For each wave, send ALL Agent tool calls in a SINGLE response so they run concurrently. Do NOT dispatch one agent, wait for it, then dispatch the next -- that's sequential. Example: if Wave A has 3 tasks, your response contains 3 Agent tool calls at once. Use `run_in_background: true` on each.
+**Subagent swarm (parallel):** Read the Wave Table from `plan.md`. For each wave in order:
+- **PARALLEL wave:** emit ALL tasks as Agent tool calls in ONE response block — they run concurrently. 3 tasks in wave = 3 Agent calls in your single response. Never emit one, wait, then emit the next.
+- **SEQUENTIAL wave:** emit ONE Agent call, wait for its result, then advance.
+- Never start Wave N until all Wave N-1 agents have returned.
+
+If plan.md has no Wave Table, build one now using the dependency test before dispatching anything: shared file writes → sequential; output dependencies → sequential; otherwise → parallel.
 
 **Sequential:** Execute tasks one at a time in the current session.
 

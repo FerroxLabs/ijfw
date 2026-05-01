@@ -105,7 +105,7 @@ async function runTest() {
     assert(toolNames.includes('ijfw_memory_search'), 'Has search tool');
     assert(toolNames.includes('ijfw_update_check'), 'Has update-check tool (1.1.6)');
     assert(toolNames.includes('ijfw_update_apply'), 'Has update-apply tool (1.1.6)');
-    assert(toolNames.includes('ijfw_memory_status'), 'Has status tool');
+    assert(toolNames.includes('ijfw_run'), 'Has ijfw_run tool');
     assert(toolNames.includes('ijfw_memory_prelude'), 'Has prelude tool');
     assert(toolNames.includes('ijfw_cross_project_search'), 'Has cross-project-search tool');
 
@@ -125,12 +125,12 @@ async function runTest() {
     resp = await waitForResponse(5);
     assert(resp.result !== undefined, 'Ping responds');
 
-    // --- Test 7: Status (empty memory) ---
-    console.log('\nTools - status:');
-    send({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'ijfw_memory_status', arguments: {} } });
+    // --- Test 7: ijfw_run (small command, inline output) ---
+    console.log('\nTools - ijfw_run:');
+    send({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'ijfw_run', arguments: { command: 'echo hello' } } });
     resp = await waitForResponse(10);
-    const statusText = resp.result?.content?.[0]?.text || '';
-    assert(statusText.includes('Fresh project'), 'Status shows fresh project for empty memory');
+    const runText = resp.result?.content?.[0]?.text || '';
+    assert(runText.includes('hello'), 'ijfw_run returns inline output for small commands');
 
     // --- Test 8: Store a decision ---
     console.log('\nTools - store:');

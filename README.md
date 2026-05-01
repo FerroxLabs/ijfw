@@ -232,6 +232,7 @@ IJFW is not one thing. It is seven connected engines under one install.
 | **Smart routing** | Haiku for reads, Sonnet for code, Opus for architecture. 5-25x cheaper per turn across the tiers | Anthropic's per-model pricing (Claude Code sub-agent tiers) |
 | **Output discipline** | Banned openers, lead-with-answer, no monologues -- strips 20-40% of typical output | Measured per session, dashboard logs it |
 | **Skill hot-load** | A 55-line core is always resident. 19 other skills load on trigger and unload after, instead of sitting in context all day | Architecture fact: only one always-on skill by design |
+| **Command sandbox** | Large-output commands (builds, test suites, grep -r, log tails) route to `ijfw_run`, which streams to disk and returns a terse summary instead of flooding context. Git, nav, and quick ops go through Bash. 90%+ context tokens saved on large commands | Mechanical: full output in `~/.ijfw/session-sandbox/`, summary in context |
 | **Memory recall** | `ijfw_memory_prelude` replaces the 10-20-tool grep cascade every session normally starts with. One MCP call, indexed answer | Mechanical fact: one call vs N |
 | **Compression** | `/compress` shrinks handoffs and memory artifacts 40-50% | Measurable per artifact |
 
@@ -256,6 +257,8 @@ IJFW ships an opinionated brainstorm, plan, execute, verify, ship spine. Two mod
 **Deep mode** (six modules, 20 to 45 minutes) for new projects, major refactors, launches. FRAME. RECON. HMW. DIVERGE. CONVERGE. LOCK. Plus auto-triggered modules for external-facing briefs (mini PR / FAQ), anti-scope ("what we will not do"), and Trident cross-critique before the brief is finalized.
 
 Every phase is conversational. One question at a time. No monologues. Every artifact is summarized in chat before it is written. Every gate is a user-facing checklist, not a silent pass. No "plan complete, 25 tasks ready to dispatch" surprises.
+
+**Parallel execution by design.** Step 5 of Deep mode emits an explicit Wave Table -- every wave labeled PARALLEL or SEQUENTIAL with a one-line dependency justification. Step 6 reads the Wave Table directly for deterministic agent dispatch: parallel waves fire together, sequential waves wait for their dependency. No re-inference from prose, no ambiguity about what runs when.
 
 ### 3\. Custom agent teams, generated on demand per project
 
@@ -291,7 +294,7 @@ ijfw cross audit src/auth.js
 
 Codex and Gemini audit your file in parallel. Findings tagged **consensus** (both AIs agree, high priority) or **contested** (they disagree, your judgment call). The Claude specialist swarm runs alongside on the same target. Receipts logged locally with cache savings, duration, and findings count.
 
-Default Trident picks two auditors from different lineages so blind spots do not compound. The roster spans six independent training lineages -- OpenAI (Codex / Copilot), Google (Gemini), Anthropic (Claude), Alibaba (Qwen), DeepSeek, and Moonshot (Kimi) -- with an OSS path (opencode / aider) for the privacy-first crowd. Background fires by default so you keep working while the audit runs. Every commit can auto-fire Trident via the optional post-commit hook. Every run appends to `.ijfw/receipts/cross-runs.jsonl` with duration, tokens, and finding counts. The method travels with the memory, the receipts, and the brief, so every future decision inherits the scrutiny.
+Default Trident picks two auditors from different lineages so blind spots do not compound. The roster spans six independent training lineages -- OpenAI (Codex / Copilot), Google (Gemini), Anthropic (Claude), Alibaba (Qwen), DeepSeek (`deepseek-v4-pro`, 1.6T parameter frontier model), and Moonshot (Kimi) -- with an OSS path (opencode / aider) for the privacy-first crowd. Background fires by default so you keep working while the audit runs. Every commit can auto-fire Trident via the optional post-commit hook. Every run appends to `.ijfw/receipts/cross-runs.jsonl` with duration, tokens, and finding counts. The method travels with the memory, the receipts, and the brief, so every future decision inherits the scrutiny.
 
 Adding your own auditor is a roughly ten-line addition to the roster. See [`docs/CONTRIBUTING-AUDITORS.md`](docs/CONTRIBUTING-AUDITORS.md) for the playbook -- the Qwen entry from [@carrmjw](https://github.com/carrmjw) (PR #11) is the canonical worked example.
 
@@ -331,9 +334,9 @@ A detached background check fires on every session start (Claude + Codex), polls
 
 | Where | When | What you see |
 |---|---|---|
-| Claude Code statusLine | Always visible | `^ 1.2.5 available  \|  #####..... 49% left` (autocompact-aware bar) |
-| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.5 available` (tokens via existing PreCompact estimate) |
-| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.5 available` injected via `additionalContext` |
+| Claude Code statusLine | Always visible | `^ 1.2.6 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.6 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.6 available` injected via `additionalContext` |
 | Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.2.4 -> v1.2.5 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
@@ -397,12 +400,13 @@ Node.js. 40 KB. Zero runtime dependencies. Stdio transport. No sockets, no daemo
 |------|---------|
 | `ijfw_memory_recall` | Wake up with full project context. Cross-project via `from_project`. |
 | `ijfw_memory_store` | Persist decisions, patterns, handoffs, preferences, observations. |
-| `ijfw_memory_search` | BM25-ranked search over local memory. `scope:"all"` for cross-project. |
+| `ijfw_memory_search` | BM25-ranked search over local memory. `scope:"all"` for cross-project. `scope:"sandbox"` retrieves sandboxed command output. |
 | `ijfw_memory_status` | Roughly 200-token project brief. Mode, pending, last handoff. |
 | `ijfw_memory_prelude` | Full first-turn memory bundle for agents without SessionStart hooks. |
 | `ijfw_prompt_check` | Deterministic regex detector for vague prompts. Zero LLM cost. |
 | `ijfw_metrics` | Tokens, cost, routing mix, session totals. |
 | `ijfw_cross_project_search` | BM25 across every registered IJFW project on the machine. |
+| `ijfw_run` | Token sandbox for large command output. Spawns the command, streams stdout/stderr to `~/.ijfw/session-sandbox/`, returns a terse domain-aware summary (test runner / build / grep / log / raw). Triggers on >40 lines or >50 KB. Saves 90%+ context tokens on builds, test suites, grep -r, and log tails. Full output retrievable via `ijfw_memory_search(scope: "sandbox", label: "...")`. |
 
 Hard cap at 10 (raised from 8 in 1.1.6 to land the update-check + update-apply admin tools). Every tool earns its slot or it gets cut; future growth triggers a retirement review, not another cap raise.
 
@@ -564,7 +568,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of thirteen platforms shipping in 1.2.1. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is opt-in today (1.1.9) pending live VS Code runtime verification.
+No. Claude Code is one of thirteen platforms shipping in 1.2.6. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is opt-in today (1.1.9) pending live VS Code runtime verification.
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.

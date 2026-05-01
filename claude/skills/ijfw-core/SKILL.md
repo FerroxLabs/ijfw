@@ -29,6 +29,7 @@ If `IJFW_TERSE_ONLY` or mode=brutal: code-only + 1-sentence answers; no explanat
 - Don't re-read files already in context.
 - Prefer codebase index queries over grep when available.
 - At task boundaries: compact with key decisions preserved.
+- Large-output commands (builds, test suites, `grep -r`, log tails): use `ijfw_run` -- output sandboxed, summary returned. Git/nav/quick ops: use Bash.
 
 ## Memory
 `<ijfw-memory>` block at session start IS project memory; if missing call `ijfw_memory_prelude`. If neither block nor tool is available, check `.ijfw/memory/knowledge.md` directly -- it is plain markdown.
@@ -36,8 +37,7 @@ If `IJFW_TERSE_ONLY` or mode=brutal: code-only + 1-sentence answers; no explanat
 
 ## Routing (smart mode, opusplan-style)
 - Explore/read/search → scout, Haiku. Build/boilerplate/tests → builder, Sonnet.
-- Architecture/security/complex debug → architect, Opus. Keep Opus for high-stakes
-  only; switch back to Sonnet for implementation after design settles.
+- Architecture/security/complex debug → architect, Opus. Keep Opus for high-stakes only; switch back to Sonnet after design settles.
 
 ## Quality Gates
 - State assumptions; if ambiguous, ask. Touch only what was asked.

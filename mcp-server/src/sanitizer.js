@@ -41,3 +41,29 @@ export function sanitizeContent(s) {
 
   return out;
 }
+
+export function sanitizeForSandbox(s) {
+  if (typeof s !== 'string') return '';
+  let out = s;
+
+  // 1. Strip ANSI escape codes (colors, cursor movement).
+  // oxlint-disable-next-line no-control-regex -- intentional: strip ANSI from sandbox output
+  out = out.replace(/\x1b\[[0-9;]*[mGKHF]/g, '');
+
+  // 2. Strip lines starting with # (headings) -- defang prompt-injection via markdown headings.
+  out = out.replace(/^[ \t]*#+[ \t].*/gm, '');
+
+  // 3. Neutralize fenced code blocks (``` and ~~~).
+  out = out.replace(/^[ \t]*(```|~~~).*$/gm, '');
+
+  // 4. Strip <system>, <prompt>, <assistant> tag patterns (open and close).
+  out = out.replace(/<\/?(system|prompt|assistant)[^>]*>/gi, '');
+
+  // 5. Truncate any single line exceeding 2000 chars (minified JS, base64 blobs).
+  out = out
+    .split('\n')
+    .map(line => (line.length > 2000 ? line.slice(0, 200) + '...[truncated]' : line))
+    .join('\n');
+
+  return out;
+}
