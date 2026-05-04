@@ -1,5 +1,64 @@
 # Changelog
 
+## [Unreleased]
+
+**Wayland and Hermes graduate to first-class plugins.** Six lifecycle hooks, six slash commands, deterministic memory hydration, native `register(ctx)` integration -- the same depth IJFW ships on Claude Code, now running on the Hermes lineage. One Python codebase serves both hosts via `sys.path` injection, so adding a feature to Wayland adds it to Hermes for free.
+
+### Shared-core architecture
+
+Behavior lives once. Hook logic delegates to existing MCP tools; shared regex / data lives in `shared/lib/patterns.json`; canonical behavioral rules live in `shared/rules/IJFW.md` with per-platform headers generated at install time. The shared layer is the existing `mcp-server` (10 tools, unchanged) plus one JSON file -- no fictional second core.
+
+### Wayland plugin (`wayland/plugins/ijfw/`)
+
+A real Wayland plugin with `plugin.yaml` + `register(ctx)` entry point. Six hooks wired:
+
+- `on_session_start` -- calls `ijfw_memory_prelude` for first-turn memory hydration
+- `pre_llm_call` -- vague-prompt detection + memory hydration backstop on turn 1
+- `pre_tool_call` -- destructive-command guard reads from `patterns.json` (17 patterns covering rm -rf with `--` separator, `--no-preserve-root`, git push --force with intermediate args, force-with-lease, etc.)
+- `post_tool_call` -- output trim + observation ledger
+- `post_llm_call` -- auto-memorize signal capture
+- `on_session_end` -- savings receipt + journal entry
+
+Six slash commands (`/cross-audit`, `/cross-research`, `/cross-critique`, `/workflow`, `/handoff`, `/compress`) tab-complete in the Wayland CLI and surface in gateway menus (Telegram, Discord, Slack).
+
+User-facing strings centralized in `_strings.py` with snapshot tests so wording stays consistent and Sutherland-framed (lead with what works, never with "failed"/"missing").
+
+### Hermes shim (`hermes/plugins/ijfw/`)
+
+38-line Python shim that imports the Wayland plugin source via `importlib.util` with a unique module key, aliases `hermes_cli` into `wayland_cli` for namespace mapping, and threads Hermes's `args_hint` parameter through `register_command()` for Discord gateway compatibility. One source maintained, two platforms running.
+
+### Installer (`scripts/install.sh`, `installer/src/install.ps1`)
+
+Provisions `~/.wayland/plugins/ijfw/` and `~/.hermes/plugins/ijfw/`. Deploys `shared/lib/patterns.json` to `~/.ijfw/shared/lib/`. Adds `"ijfw"` to `plugins.enabled[]` in `~/.hermes/config.yaml` (Hermes uses an opt-in allow-list -- without this the plugin sits inert). New `merge_yaml_plugins_enabled()` helper for bash; new `Merge-PluginsEnabled` for PowerShell; both deduplicate. Idempotent on re-run.
+
+### Per-platform rules generator (`scripts/generate-platform-rules.js`)
+
+Reads `shared/rules/IJFW.md` once, prepends platform-specific headers, writes `wayland/WAYLAND.md`, `hermes/HERMES.md`, and `claude/rules/IJFW-CLAUDE.md`. `scripts/test-rules-fidelity.js` confirms every level-2 heading from the canonical source appears in each output. Generator runs at install time -- per-platform rules stay in sync with the canonical source automatically.
+
+### Claude hook refactor
+
+`pre-tool-use.sh` now reads `shared/lib/patterns.json` for destructive-command patterns instead of inline regex. Behavior preserved; logic relocated to share with the Python adapters. New `scripts/perf-hook.sh` enforces a 5-run median latency budget; `post-tool-use.sh` clocks 12ms median against a 120ms ceiling.
+
+### Live verification
+
+Three smoke scripts exercise the actual installer against `~/.wayland` and `~/.hermes`:
+
+- `scripts/wayland-smoke.sh` -- clean install + plugin loader + idempotency check
+- `scripts/hermes-smoke.sh` -- clean install + `plugins.enabled` confirmation
+- `scripts/install-recovery-smoke.sh` -- wedges the broken github-source state and confirms the installer heals it to directory source on re-run (regression guard for the v1.2.6 marketplace bug)
+
+All three auto-restore backups on failure so the user is never left in a wedged state.
+
+### MCP wire format hardening
+
+The Wayland/Hermes MCP dispatcher wraps every tool response as `{"result": ...}`. The plugin's `_mcp.call()` unwraps that envelope so callers see structured payloads directly. Mock fixtures match the production wire format -- if envelope handling regresses, tests fail.
+
+### Build receipts
+
+5 atomic wave commits + 4 hygiene commits. 21 plugin tests passing. 50+ source citations in `host-contracts.md` validate every load-bearing fact about the Wayland plugin contract before any adapter code was written. Two pre-build Trident audits (codex + gemini) caught architectural gaps before code landed; one post-build Trident caught two integration bugs (envelope unwrap, store schema) the live smokes had passed through. Fixes applied; all gates green.
+
+---
+
 ## [1.2.6] -- 2026-05-01
 
 **Token sandbox + parallel workflow dispatch + DeepSeek frontier upgrade.** A new `ijfw_run` MCP tool keeps large command output out of your context window entirely -- builds, test suites, grep runs, and log tails are sandboxed to disk and summarized in a few lines instead of flooding thousands of tokens. The `ijfw-workflow` execution engine gains a formal Wave Table that makes parallel agent dispatch deterministic rather than inferred. DeepSeek moves to `deepseek-v4-pro` -- the actual frontier model -- so the Trident gets Frontier AI checking Frontier AI.
