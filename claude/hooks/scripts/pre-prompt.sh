@@ -8,10 +8,14 @@
 #   - hookSpecificOutput.additionalContext (positive-framed hint, if vague)
 #   - .ijfw/.prompt-check-state (JSON consumed by session-end metrics)
 #
+# Backend: delegates to mcp-server/src/prompt-check.js, which implements the
+# ijfw_prompt_check MCP tool logic. Vague-prompt signals sourced from
+# shared/lib/patterns.json (vague_prompt_signals array) via prompt-check.js.
+#
 # Bypass conditions:
-#   - severity1 prompt-improver plugin installed → defer entirely (no double prompt)
-#   - .ijfw/config.json {"promptCheck": "off"} → skip
-#   - prompt starts with `*`, `/`, or `#`; or contains "ijfw off" → skip
+#   - severity1 prompt-improver plugin installed -- defer entirely (no double prompt)
+#   - .ijfw/config.json {"promptCheck": "off"} -- skip
+#   - prompt starts with `*`, `/`, or `#`; or contains "ijfw off" -- skip
 #
 # NOTE: never crash Claude Code. Every step guards itself.
 

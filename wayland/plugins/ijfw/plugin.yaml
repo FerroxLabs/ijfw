@@ -1,0 +1,21 @@
+name: ijfw
+version: 1.2.6
+description: IJFW -- memory hydration, vague-prompt nudge, destructive-command guard, session receipts.
+author: Sean Donahoe
+entry: __init__.py
+hooks:
+  - on_session_start
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - post_llm_call
+  - on_session_end
+commands:
+  - cross-audit
+  - cross-research
+  - cross-critique
+  - workflow
+  - handoff
+  - compress
+requires_mcp:
+  - ijfw-memory

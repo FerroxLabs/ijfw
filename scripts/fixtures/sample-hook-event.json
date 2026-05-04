@@ -1,0 +1,12 @@
+{
+  "session_id": "test-session-abc123",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls -la"
+  },
+  "tool_response": {
+    "output": "total 8\ndrwxr-xr-x  2 user user 4096 Jan 01 00:00 .\ndrwxr-xr-x 10 user user 4096 Jan 01 00:00 ..",
+    "exit_code": 0
+  },
+  "prompt": "ls -la"
+}

@@ -11,54 +11,56 @@
 #
 # Positive framing: phrases actions as "confirm X" not "Warning: Y".
 # Never blocks execution -- only augments context.
+#
+# Patterns source: shared/lib/patterns.json (shared with all platform adapters).
+# Installs to ~/.ijfw/shared/lib/patterns.json; repo copy used as fallback.
 
 IJFW_DIR=".ijfw"
 INPUT=$(head -c 1048576)
 [ -z "$INPUT" ] && exit 0
 
-# Detection patterns match against the command string embedded in the
-# PreToolUse JSON payload (tool_input.command for Bash; tool_input fields
-# for other tools carry paths/queries which are also safe to grep).
+# Resolve patterns.json: installed location first, repo fallback for dev/CI.
+PATTERNS_JSON=""
+for _cand in \
+    "$HOME/.ijfw/shared/lib/patterns.json" \
+    "${IJFW_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)}/shared/lib/patterns.json"; do
+  if [ -f "$_cand" ]; then PATTERNS_JSON="$_cand"; break; fi
+done
+
 DETECTED=""
 
-# Destructive filesystem
-if echo "$INPUT" | grep -Eiq '\brm[[:space:]]+(-[rRf]+[[:space:]]+)+(/|\$|~)' 2>/dev/null; then
-  DETECTED="$DETECTED- Recursive delete at a top-level path. Verify target before confirming.\n"
-fi
-if echo "$INPUT" | grep -Eiq '\brm[[:space:]]+-rf[[:space:]]+\*' 2>/dev/null; then
-  DETECTED="$DETECTED- Glob-wildcard recursive delete. Confirm scope.\n"
-fi
+if [ -n "$PATTERNS_JSON" ] && command -v node >/dev/null 2>&1; then
+  # Read destructive_commands array from patterns.json and match against input.
+  # node prints one regex per line; bash iterates and applies each with grep -Eiq.
+  PATTERNS=$(node -e '
+    try {
+      const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      process.stdout.write((p.destructive_commands || []).join("\n"));
+    } catch { process.exit(0); }
+  ' "$PATTERNS_JSON" 2>/dev/null)
 
-# Git dangers
-if echo "$INPUT" | grep -Eiq '\bgit[[:space:]]+push[[:space:]]+(-[a-zA-Z]*f|--force|-f[[:space:]])' 2>/dev/null; then
-  DETECTED="$DETECTED- Force push detected. Confirm branch and remote before proceeding.\n"
-fi
-if echo "$INPUT" | grep -Eiq '\bgit[[:space:]]+reset[[:space:]]+--hard' 2>/dev/null; then
-  DETECTED="$DETECTED- Hard reset will discard uncommitted changes. Confirm HEAD target.\n"
-fi
-if echo "$INPUT" | grep -Eiq '\bgit[[:space:]]+clean[[:space:]]+-[a-zA-Z]*[fdx]' 2>/dev/null; then
-  DETECTED="$DETECTED- git clean removes untracked files permanently. Confirm list first with -n.\n"
-fi
-
-# Database dangers
-if echo "$INPUT" | grep -Eiq '\b(drop|truncate)[[:space:]]+(table|database|schema)\b' 2>/dev/null; then
-  DETECTED="$DETECTED- Destructive DB operation (DROP/TRUNCATE). Confirm target + backup.\n"
-fi
-if echo "$INPUT" | grep -Eiq '\bdelete[[:space:]]+from[[:space:]]+[a-z_]+[[:space:]]*(;|$)' 2>/dev/null; then
-  DETECTED="$DETECTED- DELETE without WHERE clause. Confirm this is intended.\n"
-fi
-
-# Shell dangers
-if echo "$INPUT" | grep -Eiq ':\(\)\{.*;:\|:&\};:' 2>/dev/null; then
-  DETECTED="$DETECTED- Fork bomb pattern. Do not execute.\n"
-fi
-if echo "$INPUT" | grep -Eiq '\bchmod[[:space:]]+-R[[:space:]]+777' 2>/dev/null; then
-  DETECTED="$DETECTED- chmod -R 777 grants world write. Use tighter permissions.\n"
-fi
-
-# Package/dependency danger
-if echo "$INPUT" | grep -Eiq '\bnpm[[:space:]]+publish\b' 2>/dev/null; then
-  DETECTED="$DETECTED- npm publish goes to the registry. Confirm version bump + scope.\n"
+  if [ -n "$PATTERNS" ]; then
+    while IFS= read -r pat; do
+      [ -z "$pat" ] && continue
+      if echo "$INPUT" | grep -Eiq "$pat" 2>/dev/null; then
+        DETECTED="${DETECTED}- Potentially destructive command matched. Verify intent before proceeding.\n"
+        break
+      fi
+    done <<EOF
+$PATTERNS
+EOF
+  fi
+else
+  # Fallback: inline patterns when patterns.json or node is unavailable.
+  if echo "$INPUT" | grep -Eiq '\brm[[:space:]]+(-[rRf]+[[:space:]]+)+(/|\$|~)' 2>/dev/null; then
+    DETECTED="${DETECTED}- Recursive delete at a top-level path. Verify target before confirming.\n"
+  fi
+  if echo "$INPUT" | grep -Eiq '\bgit[[:space:]]+push[[:space:]]+(-[a-zA-Z]*f|--force|-f[[:space:]])' 2>/dev/null; then
+    DETECTED="${DETECTED}- Force push detected. Confirm branch and remote before proceeding.\n"
+  fi
+  if echo "$INPUT" | grep -Eiq '\bnpm[[:space:]]+publish\b' 2>/dev/null; then
+    DETECTED="${DETECTED}- npm publish goes to the registry. Confirm version bump + scope.\n"
+  fi
 fi
 
 if [ -n "$DETECTED" ]; then
