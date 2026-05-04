@@ -17,26 +17,32 @@ class MockPluginContext:
 
     def dispatch_tool(self, name, args):
         self._dispatch_log.append((name, args))
-        # Canned responses keyed by tool suffix.
+        # Wayland/Hermes wrap every MCP response as {"result": <text-or-struct>}
+        # or {"error": "<msg>"}. The mock mirrors that envelope so the
+        # plugin's _mcp.call() unwrapping is exercised by tests -- if the
+        # envelope handling regresses, tests fail (the prior mock returned
+        # bare structured dicts, which masked the live envelope bug).
+        def env(payload):
+            return json.dumps({"result": json.dumps(payload)})
         if "ijfw_memory_prelude" in name:
-            return json.dumps({
+            return env({
                 "text": "<canned prelude: 3 active decisions>",
                 "memories_loaded": 5,
                 "token_savings_pct": 12,
             })
         if "ijfw_prompt_check" in name:
-            return json.dumps({"vague": False})
+            return env({"text": "vague: no"})
         if "ijfw_run" in name:
-            return json.dumps({"ok": True})
+            return env({"text": "ok"})
         if "ijfw_memory_store" in name:
-            return json.dumps({"stored": True})
+            return env({"text": "stored"})
         if "ijfw_memory_status" in name:
-            return json.dumps({
+            return env({
                 "tokens_saved": 1200,
                 "cost_saved_usd": "0.04",
                 "decisions_stored": 3,
             })
-        return json.dumps({"ok": True})
+        return env({"text": "ok"})
 
     # Convenience: invoke a registered hook by name.
     def invoke_hook(self, hook_name, **kwargs):

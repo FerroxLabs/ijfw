@@ -190,10 +190,12 @@ def build_register_fn(host="wayland"):
             response = kwargs.get("response", "")
             # Look for decision/conclusion signals and store.
             if response and _is_memorable(response):
+                # type "observation" maps to the journal-only memory tier
+                # per ijfw_memory_store schema (mcp-server/src/server.js:640).
                 mcp.memory_store(
                     ctx,
                     content=str(response)[:500],
-                    category="auto",
+                    type="observation",
                     session_id=session_id,
                 )
             return None
@@ -220,7 +222,7 @@ def build_register_fn(host="wayland"):
             mcp.memory_store(
                 ctx,
                 content=f"session_end receipt: {receipt}",
-                category="session",
+                type="observation",
                 session_id=session_id,
             )
             return None

@@ -1,8 +1,9 @@
 {
   "destructive_commands": [
-    "\\brm[[:space:]]+(-[rRf]+[[:space:]]+)+(/|\\$|~)",
+    "\\brm[[:space:]]+(-[rRf]+[[:space:]]+)+(--[[:space:]]+)?(/|\\$|~)",
     "\\brm[[:space:]]+-rf[[:space:]]+\\*",
-    "\\bgit[[:space:]]+push[[:space:]]+(-[a-zA-Z]*f|--force|-f[[:space:]])",
+    "\\brm[[:space:]]+(-[rRf]+[[:space:]]+)+--no-preserve-root",
+    "\\bgit[[:space:]]+push([[:space:]]+\\S+){0,4}[[:space:]]+(--force(-with-lease)?|-[a-zA-Z]*f)([[:space:]]|$)",
     "\\bgit[[:space:]]+reset[[:space:]]+--hard",
     "\\bgit[[:space:]]+clean[[:space:]]+-[a-zA-Z]*[fdx]",
     "\\b(drop|truncate)[[:space:]]+(table|database|schema)\\b",
