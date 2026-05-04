@@ -17,10 +17,18 @@ echo "== banned-char lint =="
 # multiplication sign, unicode minus, check marks, middle dot. Covers the same
 # surfaces Phase 10+11+12 audited.
 TARGETS=(
+  ".planning/wayland-parity"
   "claude/skills" "claude/commands" "claude/hooks/scripts" "claude/rules"
-  "mcp-server/src" "mcp-server/bin" "installer/src" "installer/README.md" "installer/CHANGELOG.md"
-  "scripts" "codex/.codex-plugin" "codex/.codex" "codex/skills" "codex/.agents"
-  "gemini/extensions/ijfw" "cursor" "windsurf" "copilot" "universal" "shared/skills"
+  "codex/.codex-plugin" "codex/.codex" "codex/skills" "codex/.agents"
+  "cursor" "copilot"
+  "gemini/extensions/ijfw"
+  "hermes/plugins/ijfw"
+  "installer/src" "installer/README.md" "installer/CHANGELOG.md"
+  "mcp-server/src" "mcp-server/bin"
+  "scripts"
+  "shared/lib" "shared/rules" "shared/skills"
+  "universal" "windsurf"
+  "wayland/plugins/ijfw"
   "README.md" "CHANGELOG.md" "CLAUDE.md" "PUBLISH-CHECKLIST.md" "NO_TELEMETRY.md" "docs"
 )
 HITS=0
@@ -70,6 +78,33 @@ bash shared/skills/ijfw-design/tests/test-design-pass.sh 2>&1 | tail -2
 ok "ijfw-design design-pass.sh suite passed"
 bash shared/skills/ijfw-design/tests/test-dispatch.sh 2>&1 | tail -2
 ok "ijfw-design dispatch.sh suite passed"
+
+echo
+echo "== JSON validity =="
+PATTERNS_JSON="shared/lib/patterns.json"
+if [ -e "$PATTERNS_JSON" ]; then
+  if ! node -e "JSON.parse(require('fs').readFileSync('$PATTERNS_JSON','utf8'))" 2>/dev/null; then
+    fail "$PATTERNS_JSON is not valid JSON"
+    exit 1
+  fi
+  ok "$PATTERNS_JSON is valid JSON"
+else
+  ok "$PATTERNS_JSON not present -- skipped"
+fi
+
+echo
+echo "== plugin Python syntax =="
+for pydir in "wayland/plugins/ijfw" "hermes/plugins/ijfw"; do
+  [ -e "$pydir" ] || continue
+  while IFS= read -r -d '' pyfile; do
+    if ! python3 -m py_compile "$pyfile" 2>/dev/null; then
+      fail "Python syntax error: $pyfile"
+      exit 1
+    fi
+    ok "py_compile: $pyfile"
+  done < <(find "$pydir" -name '*.py' -print0)
+done
+ok "plugin Python syntax clean"
 
 echo
 echo "All checks passed."

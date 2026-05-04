@@ -1,0 +1,39 @@
+{
+  "destructive_commands": [
+    "\\brm[[:space:]]+(-[rRf]+[[:space:]]+)+(/|\\$|~)",
+    "\\brm[[:space:]]+-rf[[:space:]]+\\*",
+    "\\bgit[[:space:]]+push[[:space:]]+(-[a-zA-Z]*f|--force|-f[[:space:]])",
+    "\\bgit[[:space:]]+reset[[:space:]]+--hard",
+    "\\bgit[[:space:]]+clean[[:space:]]+-[a-zA-Z]*[fdx]",
+    "\\b(drop|truncate)[[:space:]]+(table|database|schema)\\b",
+    "\\bdelete[[:space:]]+from[[:space:]]+[a-z_]+[[:space:]]*(;|$)",
+    ":\\(\\)\\{.*;:\\|:&\\};:",
+    "\\bchmod[[:space:]]+-R[[:space:]]+777",
+    "\\bnpm[[:space:]]+publish\\b",
+    "\\bsudo[[:space:]]+rm\\b",
+    "\\bkill[[:space:]]+-9\\b",
+    "\\bdd[[:space:]]+if=",
+    "\\bmkfs\\b",
+    "\\bshutdown\\b",
+    "\\bhalt\\b",
+    "\\breboot\\b"
+  ],
+  "vague_prompt_signals": [
+    "^(fix|refactor|improve|clean\\s*up|optimi[sz]e|update|review|check|test|debug|analy[sz]e|handle|sort\\s*out|tidy)\\b",
+    "^(this|that|it|these|those|the\\s+(bug|issue|file|code|function|error|problem))\\b",
+    "\\b(better|cleaner|nicer|more\\s+robust|production[\\s-]?ready|proper|correct|good|nice|right)\\b",
+    "\\b(the\\s+tests|all\\s+the\\s+(things|stuff|files)|everything|stuff|things)\\b",
+    "^(source|build|run|deploy|ship|release|setup|set\\s*up)\\.?\\s*$"
+  ],
+  "banned_chars_unicode": [
+    "\\u00A7",
+    "\\u2501",
+    "\\u2014",
+    "\\u0394",
+    "\\u00D7",
+    "\\u2212",
+    "\\u2713",
+    "\\u2714",
+    "\\u00B7"
+  ]
+}
