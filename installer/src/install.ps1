@@ -208,6 +208,130 @@ function ConvertFrom-Jsonc($raw) {
   return ($intermediate -replace ',(\s*[}\]])','$1')
 }
 
+function Provision-Plugin {
+  param(
+    [string]$Src,   # Source dir inside repo (relative to $IjfwHome), e.g. "wayland\plugins\ijfw"
+    [string]$Dst,   # Absolute destination path, e.g. "$env:USERPROFILE\.wayland\plugins\ijfw"
+    [string]$IjfwHome
+  )
+  $srcPath = Join-Path $IjfwHome $Src
+  if (-not (Test-Path $srcPath)) {
+    Write-Info "Plugin source not found at $srcPath -- skipping."
+    return
+  }
+  New-Item -ItemType Directory -Force -Path $Dst | Out-Null
+  Copy-Item -Recurse -Force -Path (Join-Path $srcPath "*") -Destination $Dst
+}
+
+function Merge-PluginsEnabled {
+  param(
+    [string]$ConfigPath  # Full path to ~/.hermes/config.yaml
+  )
+  $pluginName = "ijfw"
+  $configDir = Split-Path -Parent $ConfigPath
+
+  # Ensure the directory exists.
+  if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Force -Path $configDir | Out-Null }
+
+  # Backup before modifying (mirrors Merge-Marketplace pattern).
+  if (Test-Path $ConfigPath) {
+    $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backup = "$ConfigPath.bak.plugins.$ts"
+    Copy-Item -LiteralPath $ConfigPath -Destination $backup -Force
+  }
+
+  # Read existing YAML or start from empty string.
+  $content = if (Test-Path $ConfigPath) { Get-Content -Raw -LiteralPath $ConfigPath } else { "" }
+  if ($null -eq $content) { $content = "" }
+
+  # Strategy: try python3 first (has real YAML support); fall back to sentinel-anchored
+  # regex that appends to a plugins.enabled: block or creates one.
+
+  $python = Get-Command python3 -ErrorAction SilentlyContinue
+  if ($python) {
+    $pyScript = @"
+import sys, re
+path = sys.argv[1]
+name = sys.argv[2]
+try:
+    with open(path, 'r', encoding='utf-8') as f:
+        text = f.read()
+except FileNotFoundError:
+    text = ''
+
+# Find or create plugins.enabled block.
+block_re = re.compile(r'(?m)^(plugins\s*:\s*\n(?:[ \t]+\S[^\n]*\n)*[ \t]+enabled\s*:\s*\[)([^\]]*)\]')
+inline_re = re.compile(r'(?m)^([ \t]+enabled\s*:\s*\[)([^\]]*)\]')
+plugins_section_re = re.compile(r'(?m)^plugins\s*:', re.MULTILINE)
+
+def ensure_name(lst_str, name):
+    items = [x.strip().strip('"').strip("'") for x in lst_str.split(',') if x.strip()]
+    if name in items:
+        return lst_str
+    items.append(name)
+    return ', '.join(repr(i) for i in items)
+
+m = block_re.search(text)
+if m:
+    new_list = ensure_name(m.group(2), name)
+    text = text[:m.start(2)] + new_list + text[m.end(2):]
+else:
+    m2 = inline_re.search(text)
+    if m2:
+        new_list = ensure_name(m2.group(2), name)
+        text = text[:m2.start(2)] + new_list + text[m2.end(2):]
+    elif plugins_section_re.search(text):
+        # plugins: exists but no enabled key -- append it.
+        text = plugins_section_re.sub(lambda mo: mo.group(0) + '\n  enabled: [' + repr(name) + ']', text, count=1)
+    else:
+        # No plugins section at all.
+        if text and not text.endswith('\n'):
+            text += '\n'
+        text += 'plugins:\n  enabled: [' + repr(name) + ']\n'
+
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(text)
+sys.exit(0)
+"@
+    $tmp = [System.IO.Path]::GetTempFileName() + ".py"
+    [System.IO.File]::WriteAllText($tmp, $pyScript)
+    try {
+      & python3 $tmp $ConfigPath $pluginName
+      $ok = ($LASTEXITCODE -eq 0)
+    } finally {
+      Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+    }
+    if ($ok) { return $true }
+  }
+
+  # Fallback: pure PowerShell sentinel-anchored regex approach.
+  # If the file has a plugins.enabled: [...] line, splice in the name.
+  # Otherwise append a plugins.enabled block.
+  $enabledRe = [regex]'(?m)^([ \t]+enabled\s*:\s*\[)([^\]]*)\]'
+  $pluginsSectionRe = [regex]'(?m)^plugins\s*:'
+
+  $m = $enabledRe.Match($content)
+  if ($m.Success) {
+    $lst = $m.Groups[2].Value
+    $items = $lst -split ',' | ForEach-Object { $_.Trim().Trim('"').Trim("'") } | Where-Object { $_ -ne '' }
+    if ($pluginName -notin $items) {
+      $items += $pluginName
+      $newLst = ($items | ForEach-Object { '"' + $_ + '"' }) -join ', '
+      $content = $content.Substring(0, $m.Groups[2].Index) + $newLst + $content.Substring($m.Groups[2].Index + $m.Groups[2].Length)
+    }
+  } elseif ($pluginsSectionRe.IsMatch($content)) {
+    $content = $pluginsSectionRe.Replace($content, "plugins:`n  enabled: [""$pluginName""]", 1)
+  } else {
+    if ($content -and -not $content.EndsWith("`n")) { $content += "`n" }
+    $content += "plugins:`n  enabled: [""$pluginName""]`n"
+  }
+
+  $tmp2 = "$ConfigPath.tmp"
+  [System.IO.File]::WriteAllText($tmp2, $content, [System.Text.Encoding]::UTF8)
+  Move-Item -Force -LiteralPath $tmp2 -Destination $ConfigPath
+  return $true
+}
+
 function Merge-Marketplace {
   param(
     [string]$IjfwHome  # Install root; the plugin lives at "$IjfwHome\claude".
@@ -274,6 +398,32 @@ $target = Get-Target
 Invoke-CloneOrPull $target $Branch | Out-Null
 
 Invoke-InstallScript $target
+
+# Provision Wayland plugin (~/.wayland/plugins/ijfw/).
+$waylandPluginDst = Join-Path $env:USERPROFILE ".wayland\plugins\ijfw"
+Provision-Plugin -Src "wayland\plugins\ijfw" -Dst $waylandPluginDst -IjfwHome $target
+
+# Provision Hermes plugin (~/.hermes/plugins/ijfw/).
+$hermesPluginDst = Join-Path $env:USERPROFILE ".hermes\plugins\ijfw"
+Provision-Plugin -Src "hermes\plugins\ijfw" -Dst $hermesPluginDst -IjfwHome $target
+
+# Deploy shared patterns.json (~/.ijfw/shared/lib/patterns.json).
+$patternsDir = Join-Path $env:USERPROFILE ".ijfw\shared\lib"
+$patternsSrc = Join-Path $target "shared\lib\patterns.json"
+if (Test-Path $patternsSrc) {
+  New-Item -ItemType Directory -Force -Path $patternsDir | Out-Null
+  Copy-Item -Force -LiteralPath $patternsSrc -Destination (Join-Path $patternsDir "patterns.json")
+}
+
+# Add "ijfw" to plugins.enabled[] in ~/.hermes/config.yaml (Hermes opt-in allow-list).
+$hermesConfig = Join-Path $env:USERPROFILE ".hermes\config.yaml"
+[void](Merge-PluginsEnabled -ConfigPath $hermesConfig)
+
+# Regenerate per-platform rules from shared source.
+if (Get-Command node -ErrorAction SilentlyContinue) {
+  $rulesGen = Join-Path $target "scripts\generate-platform-rules.js"
+  if (Test-Path $rulesGen) { & node $rulesGen }
+}
 
 if (-not $NoMarketplace) {
   # Best-effort: returns $true on success, prints its own message on fallback.

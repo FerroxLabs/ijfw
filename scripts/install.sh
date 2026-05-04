@@ -823,6 +823,70 @@ PY
   mv "$tmp" "$dst"
 }
 
+# --- YAML plugins.enabled merge helper (Hermes opt-in allow-list) ---
+# Hermes requires plugins.enabled[] in config.yaml (opt-in allow-list).
+# This function adds <plugin_name> to that list, deduplicating if already
+# present. Uses python3+PyYAML when available; falls back to sentinel-anchored
+# append (same pattern as merge_yaml_mcp).
+merge_yaml_plugins_enabled() {
+  local dst="$1" plugin_name="$2"
+  mkdir -p "$(dirname "$dst")"
+  backup "$dst"
+  [ ! -f "$dst" ] && : > "$dst"
+  if python3 -c "import yaml" >/dev/null 2>&1; then
+    python3 - "$dst" "$plugin_name" <<'PY'
+import os, sys, yaml
+dst, plugin_name = sys.argv[1], sys.argv[2]
+with open(dst, "r") as f:
+    raw = f.read()
+doc = yaml.safe_load(raw) if raw.strip() else {}
+if not isinstance(doc, dict):
+    doc = {}
+doc.setdefault("plugins", {})
+if not isinstance(doc["plugins"], dict):
+    doc["plugins"] = {}
+enabled = doc["plugins"].get("enabled", [])
+if not isinstance(enabled, list):
+    enabled = []
+if plugin_name not in enabled:
+    enabled.append(plugin_name)
+doc["plugins"]["enabled"] = enabled
+tmp = dst + ".tmp"
+with open(tmp, "w") as f:
+    yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)
+os.replace(tmp, dst)
+PY
+    return 0
+  fi
+  # Fallback: sentinel-anchored strip-and-append (idempotent).
+  local tmp="$dst.pluginsenable.$$.tmp"
+  awk '
+    BEGIN { skip = 0 }
+    /^# IJFW-PLUGINS-BEGIN$/ { skip = 1; next }
+    /^# IJFW-PLUGINS-END$/   { skip = 0; next }
+    skip { next }
+    { print }
+  ' "$dst" > "$tmp" || { rm -f "$tmp"; return 1; }
+  if ! grep -qE '^plugins:' "$tmp"; then
+    printf '\nplugins:\n' >> "$tmp"
+  fi
+  if ! grep -qE '^\s+enabled:' "$tmp"; then
+    printf '  enabled: []\n' >> "$tmp"
+  fi
+  {
+    printf '# IJFW-PLUGINS-BEGIN\n'
+    printf '# plugin %s registered by IJFW installer\n' "$plugin_name"
+    printf '# IJFW-PLUGINS-END\n'
+  } >> "$tmp"
+  # Inline-append the name into the enabled list if not already present.
+  if ! grep -qE "^\s+- $plugin_name\$" "$tmp"; then
+    sed -i.bak "s/^  enabled: \[\]/  enabled:\n    - $plugin_name/" "$tmp" 2>/dev/null || \
+    printf '    - %s\n' "$plugin_name" >> "$tmp"
+    rm -f "$tmp.bak" 2>/dev/null
+  fi
+  mv "$tmp" "$dst"
+}
+
 # Route verbose per-platform chatter to a logfile. The console gets the
 # tight Live-now / Standing-by summary at the end. Power users hit --verbose
 # to see everything, or tail the log.
@@ -1246,7 +1310,15 @@ for target in "${TARGETS[@]}"; do
           cp -r "$skill_dir" "$HOME/.hermes/skills/$skill_name" 2>/dev/null
         fi
       done
-      ok "Installed Hermes bundle: MCP + HERMES.md + skills"
+      # Plugin: copy wayland-parity plugin layer to ~/.hermes/plugins/ijfw/.
+      if [ -d "$REPO_ROOT/hermes/plugins/ijfw" ]; then
+        mkdir -p "$HOME/.hermes/plugins/ijfw" 2>/dev/null
+        find "$REPO_ROOT/hermes/plugins/ijfw" -mindepth 1 -maxdepth 1 \
+          ! -name '__pycache__' -exec cp -r {} "$HOME/.hermes/plugins/ijfw/" \; 2>/dev/null
+      fi
+      # Hermes uses an opt-in allow-list -- add "ijfw" to plugins.enabled[].
+      merge_yaml_plugins_enabled "$HOME/.hermes/config.yaml" "ijfw"
+      ok "Installed Hermes bundle: MCP + HERMES.md + skills + plugin"
       ;;
     wayland)
       log "[Wayland]"
@@ -1272,7 +1344,13 @@ for target in "${TARGETS[@]}"; do
           cp -r "$skill_dir" "$HOME/.wayland/skills/$skill_name" 2>/dev/null
         fi
       done
-      ok "Installed Wayland bundle: MCP + WAYLAND.md + skills"
+      # Plugin: copy wayland-parity plugin layer to ~/.wayland/plugins/ijfw/.
+      if [ -d "$REPO_ROOT/wayland/plugins/ijfw" ]; then
+        mkdir -p "$HOME/.wayland/plugins/ijfw" 2>/dev/null
+        find "$REPO_ROOT/wayland/plugins/ijfw" -mindepth 1 -maxdepth 1 \
+          ! -name '__pycache__' -exec cp -r {} "$HOME/.wayland/plugins/ijfw/" \; 2>/dev/null
+      fi
+      ok "Installed Wayland bundle: MCP + WAYLAND.md + skills + plugin"
       ;;
     opencode)
       log "[OpenCode]"
@@ -1385,6 +1463,19 @@ for target in "${TARGETS[@]}"; do
     STANDBY+=("$(pretty_name "$target")")
   fi
 done
+
+# --- Shared post-install steps (run once, platform-agnostic) ---
+# Deploy patterns.json to ~/.ijfw/shared/lib/ so all plugin adapters can read it.
+if [ -f "$REPO_ROOT/shared/lib/patterns.json" ]; then
+  mkdir -p "$HOME/.ijfw/shared/lib" 2>/dev/null
+  cp "$REPO_ROOT/shared/lib/patterns.json" "$HOME/.ijfw/shared/lib/patterns.json" 2>/dev/null
+fi
+# Regenerate per-platform rules files from shared/rules/IJFW.md.
+# Output files (wayland/WAYLAND.md, hermes/HERMES.md, claude/rules/IJFW-CLAUDE.md)
+# are committed to the repo; this keeps them in sync after any install.
+if command -v node >/dev/null 2>&1; then
+  node "$REPO_ROOT/scripts/generate-platform-rules.js" 2>/dev/null || true
+fi
 
 # --- Polished summary (Homebrew + rustup aesthetic) ---
 NATIVE_REPO="$(native_path "$REPO_ROOT")"
