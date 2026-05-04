@@ -209,9 +209,14 @@ function ConvertFrom-Jsonc($raw) {
 }
 
 function Merge-Marketplace {
+  param(
+    [string]$IjfwHome  # Install root; the plugin lives at "$IjfwHome\claude".
+  )
   $settingsPath = Join-Path $env:USERPROFILE ".claude\settings.json"
   $settingsDir = Split-Path -Parent $settingsPath
   if (-not (Test-Path $settingsDir)) { New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null }
+  if (-not $IjfwHome) { $IjfwHome = Join-Path $env:USERPROFILE ".ijfw" }
+  $pluginPath = Join-Path $IjfwHome "claude"
 
   $settings = @{}
   if (Test-Path $settingsPath) {
@@ -236,7 +241,11 @@ function Merge-Marketplace {
     }
   }
   if (-not $settings.ContainsKey('extraKnownMarketplaces')) { $settings['extraKnownMarketplaces'] = @{} }
-  $settings.extraKnownMarketplaces['ijfw'] = @{ source = @{ source = 'github'; repo = 'TheRealSeanDonahoe/ijfw' } }
+  # Self-heal: write the directory source matching the actual install. Prior
+  # installs (<= 1.2.6) wrote a github source pointing at TheRealSeanDonahoe/
+  # ijfw, but Claude Code never clones that repo into its marketplaces cache,
+  # so the entry resolved to "Marketplace file not found". Idempotent.
+  $settings.extraKnownMarketplaces['ijfw'] = @{ source = @{ source = 'directory'; path = $pluginPath } }
   if (-not $settings.ContainsKey('enabledPlugins')) { $settings['enabledPlugins'] = @{} }
   # Opportunistically clean up the legacy key written by v1.0.0-1.0.2.
   if ($settings.enabledPlugins.ContainsKey('ijfw-core@ijfw')) {
@@ -268,7 +277,9 @@ Invoke-InstallScript $target
 
 if (-not $NoMarketplace) {
   # Best-effort: returns $true on success, prints its own message on fallback.
-  [void](Merge-Marketplace)
+  # Pass the resolved install root so the marketplace path matches reality
+  # for both default and --dir installs.
+  [void](Merge-Marketplace -IjfwHome $target)
 }
 
 $log = Join-Path $env:USERPROFILE ".ijfw\install.log"

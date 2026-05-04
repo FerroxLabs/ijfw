@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/TheRealSeanDonahoe/ijfw/releases/download/v1.1.1/ijfw-hero.png" alt="IJFW -- Shared memory, smart routing, disciplined workflow, multi-AI audits across every AI coding agent" width="100%"/>
+  <img src="docs/guide/assets/hero.png" alt="Sean Donahoe's IJFW (It Just F*cking Works) -- one memory, smart routing, fewer tokens, cross-AI audits, disciplined workflow, every agent you use. Claude, Codex, Gemini, Cursor, Windsurf and nine more AI coding agents." width="100%"/>
 </p>
 
 ![CI](https://github.com/TheRealSeanDonahoe/ijfw/actions/workflows/ci.yml/badge.svg)
@@ -8,16 +8,28 @@
 
 # IJFW (It Just F*cking Works!)
 
-**Your AI is brilliant. It's also forgetful, undisciplined, alone, and quietly burning tokens you never needed to spend.** One install fixes all four. Richest on Claude Code, connected through Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider.  
-  
-Thirteen AI coding agents sharing one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.  
-  
-An on-demand three-AI critique puts a second lineage in the room so one model's blind spot never reaches production. Tasks dispatched to the right model for the job, output rules that strip the padding, prompt-cache discipline that compounds every session. Your bill goes down while your quality goes up.  
-  
-A portable design contract keeps every AI on-brand: drop a `DESIGN.md` in your project root, or pick from 12 curated templates (Claude Design compatible), and the same palette, typography, and component rules carry across every agent on your stack. No more "make it look nice" as a prompt. No more cross-agent drift.  
-  
-**Whatever AI tools you use today, whatever you switch to tomorrow, IJFW makes them work as one brain.** You bring the AI accounts you already use; IJFW adds nothing to pay for, runs entirely on your machine, and keeps every byte local.  
-  
+**One memory • Smart routing • Fewer tokens • Cross-AI audits • Disciplined workflow • Every agent you use.**
+
+```
+1   ijfw memory recall    ->  742 things, 95% token savings
+2   ijfw cross-audit      ->  3 AIs in parallel, 1,382 findings
+3   ijfw ship             ->  preflight passed, deployed
+```
+
+**Claude. Codex. Gemini. Cursor. Windsurf. + 9 more.** If your AI codes, IJFW already runs there.
+
+* * *
+
+Your AI is brilliant. It's also forgetful, undisciplined, alone, and quietly burning tokens you never needed to spend. One install fixes all four.
+
+Fourteen AI coding agents share one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.
+
+An on-demand three-AI critique puts a second lineage in the room so one model's blind spot never reaches production. Tasks dispatched to the right model for the job, output rules that strip the padding, prompt-cache discipline that compounds every session. Your bill goes down while your quality goes up.
+
+A portable design contract keeps every AI on-brand: drop a `DESIGN.md` in your project root, or pick from 12 curated templates (Claude Design compatible), and the same palette, typography, and component rules carry across every agent on your stack. No more "make it look nice" as a prompt. No more cross-agent drift.
+
+**Whatever AI tools you use today, whatever you switch to tomorrow, IJFW makes them work as one brain.** You bring the AI accounts you already use; IJFW adds nothing to pay for, runs entirely on your machine, and keeps every byte local.
+
 **One command to install. Then your AI starts behaving like a senior partner that's already read the brief. And you start wondering how anyone still works the old way.**
 
 * * *
@@ -28,7 +40,7 @@ A portable design contract keeps every AI on-brand: drop a `DESIGN.md` in your p
 npm install -g @ijfw/install && ijfw-install
 ```
 
-One command. Thirteen AI coding agents configured. Nothing to log into.
+One command. Fourteen AI coding agents configured. Nothing to log into.
 
 **Windows** (PowerShell 5.1 or 7+):
 
@@ -308,7 +320,7 @@ Three parallel audits, findings reconciled into a consolidated table with a cons
 
 ### 6\. Design contract
 
-**One `DESIGN.md`, every AI builds on-brand.** Design is a first-class surface across all thirteen platforms. The eight full-skill-tree platforms (Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) ship the picker + 12 templates + brand atlas natively. The 1.1.7 additions (OpenCode, Qwen Code, Kimi Code, OpenClaw) reach the same 12-template catalog in 1.2.0 via the MCP server -- `ijfw_memory_recall` with `context_hint: "design_template"` returns the catalog, `design_template:<name>` returns the full body, so any MCP-connected agent can pick and write `DESIGN.md` without a local skill. Aider reads `DESIGN.md` once written and carries picker instructions inline in `~/CONVENTIONS.md`. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
+**One `DESIGN.md`, every AI builds on-brand.** Design is a first-class surface across every platform IJFW configures. The eight full-skill-tree platforms (Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) ship the picker + 12 templates + brand atlas natively. The 1.1.7 additions (OpenCode, Qwen Code, Kimi Code, OpenClaw) reach the same 12-template catalog in 1.2.0 via the MCP server -- `ijfw_memory_recall` with `context_hint: "design_template"` returns the catalog, `design_template:<name>` returns the full body, so any MCP-connected agent can pick and write `DESIGN.md` without a local skill. Aider reads `DESIGN.md` once written and carries picker instructions inline in `~/CONVENTIONS.md`. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
 
 No `DESIGN.md` yet? Run a design task and `ijfw-design` fires a three-option picker:
 
@@ -441,7 +453,7 @@ ijfw insight                       Alias for ijfw dashboard start.
 ijfw receipt last                  Redacted, shareable block from the last Trident run.
 ```
 
-### Thirteen platforms, one install, one workflow
+### Fourteen platforms, one install, one workflow
 
 | Platform | What ships |
 |----------|------------|
@@ -568,7 +580,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of thirteen platforms shipping in 1.2.6. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other twelve (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, and Aider) through their native MCP and rules-file integrations. Cline is opt-in today (1.1.9) pending live VS Code runtime verification.
+No. Claude Code is one of fourteen platforms shipping in 1.2.6. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other thirteen (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, and Aider) through their native MCP and rules-file integrations. Cline ships as opt-in today (1.1.9) pending live VS Code runtime verification.
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.
@@ -624,6 +636,6 @@ If you ship code with AI, you need this. If you write with AI, run a business wi
 
 * * *
 
-[github.com/TheRealSeanDonahoe/ijfw](https://github.com/TheRealSeanDonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, thirteen platforms, six engines, three AI families, zero apologies.
+[github.com/TheRealSeanDonahoe/ijfw](https://github.com/TheRealSeanDonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, fourteen platforms, six engines, three AI families, zero apologies.
 
 **Install it. Inspect it. Fork it. Ship it. It just fucking works.**

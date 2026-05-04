@@ -249,7 +249,11 @@ async function main() {
 
   if (!opts.noMarketplace) {
     const settingsPath = claudeSettingsPath();
-    mergeMarketplace(settingsPath);
+    // Pass the resolved install root so the marketplace entry's directory
+    // path matches the actual install -- including --dir and IJFW_HOME paths.
+    // Without this, custom-dir installs would write the canonical ~/.ijfw
+    // path that doesn't exist on that machine.
+    mergeMarketplace(settingsPath, { rootDir: target });
     console.log(`  marketplace registered in ${settingsPath}`);
   }
 

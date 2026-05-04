@@ -263,12 +263,12 @@ Three sub-steps:
 ```
 | Wave | Tasks | Mode | Depends on | Reason |
 |------|-------|------|------------|--------|
-| W1   | t1, t2, t3 | PARALLEL | — | independent files |
+| W1   | t1, t2, t3 | PARALLEL | -- | independent files |
 | W2   | t4 | SEQUENTIAL | W1 | needs t2 output |
 | W3   | t5, t6 | PARALLEL | W2 | independent of each other |
 ```
 
-This table is the execution contract. Step 6 reads it directly — do not leave parallelism to inference from prose.
+This table is the execution contract. Step 6 reads it directly -- do not leave parallelism to inference from prose.
 
 2. **Implementation breakdown:** Each task broken into bite-sized steps (2-5 min each) with TDD where applicable and verifiable success criteria.
 
@@ -283,7 +283,7 @@ Second Opinion on plan: check CLI availability, fire if available. Print "all cl
 Offer execution mode: Sequential (< 5 tasks) or Subagent swarm (5+ tasks).
 
 **Subagent swarm (parallel):** Read the Wave Table from `plan.md`. For each wave in order:
-- **PARALLEL wave:** emit ALL tasks as Agent tool calls in ONE response block — they run concurrently. 3 tasks in wave = 3 Agent calls in your single response. Never emit one, wait, then emit the next.
+- **PARALLEL wave:** emit ALL tasks as Agent tool calls in ONE response block -- they run concurrently. 3 tasks in wave = 3 Agent calls in your single response. Never emit one, wait, then emit the next.
 - **SEQUENTIAL wave:** emit ONE Agent call, wait for its result, then advance.
 - Never start Wave N until all Wave N-1 agents have returned.
 

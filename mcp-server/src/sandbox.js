@@ -115,7 +115,7 @@ export function detectDomain(output) {
 
   // test: pass/fail keywords + test count or suite name
   if (
-    /\b(PASS|FAIL|passed|failed|✓|✗|ok|not ok)\b/i.test(output) &&
+    /\b(PASS|FAIL|passed|failed|\u2713|\u2717|ok|not ok)\b/i.test(output) &&
     (/\d+\s+(test|spec|suite|passing|failing|pending)/i.test(output) || /^(PASS|FAIL)\s+/m.test(output))
   ) {
     return 'test';
@@ -166,7 +166,7 @@ export function summarize(output, domain, command, exitCode, durationMs) {
       parts.push(`Tests: ${p} passed, ${f} failed`);
     }
     // Failing test names
-    const failLines = lines.filter(l => /\b(FAIL|✗|not ok|× )\b/.test(l) || /^\s+●/.test(l));
+    const failLines = lines.filter(l => /\b(FAIL|\u2717|not ok|\u00d7 )\b/.test(l) || /^\s+●/.test(l));
     if (failLines.length > 0) {
       parts.push('Failures:');
       failLines.slice(0, 10).forEach(l => parts.push('  ' + l.trim()));
@@ -234,7 +234,7 @@ export function writeToSandbox(label, command, output, meta) {
 }
 
 /**
- * purgeSandboxOld(maxAgeMs) — deletes .txt + .json pairs older than maxAgeMs.
+ * purgeSandboxOld(maxAgeMs) -- deletes .txt + .json pairs older than maxAgeMs.
  * Called on every ijfw_run invocation. Fast (stat+unlink only).
  */
 export function purgeSandboxOld(maxAgeMs = 24 * 60 * 60 * 1000) {

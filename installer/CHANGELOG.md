@@ -2,11 +2,11 @@
 
 ## [1.2.6] -- 2026-05-01
 
-**Token sandbox + parallel workflow dispatch + DeepSeek frontier upgrade.** A new `ijfw_run` MCP tool keeps large command output out of your context window entirely — builds, test suites, grep runs, and log tails are sandboxed to disk and summarized in a few lines instead of flooding thousands of tokens. The `ijfw-workflow` execution engine gains a formal Wave Table that makes parallel agent dispatch deterministic rather than inferred. DeepSeek moves to `deepseek-v4-pro` — the actual frontier model — so the Trident gets Frontier AI checking Frontier AI.
+**Token sandbox + parallel workflow dispatch + DeepSeek frontier upgrade.** A new `ijfw_run` MCP tool keeps large command output out of your context window entirely -- builds, test suites, grep runs, and log tails are sandboxed to disk and summarized in a few lines instead of flooding thousands of tokens. The `ijfw-workflow` execution engine gains a formal Wave Table that makes parallel agent dispatch deterministic rather than inferred. DeepSeek moves to `deepseek-v4-pro` -- the actual frontier model -- so the Trident gets Frontier AI checking Frontier AI.
 
-### `ijfw_run` — command output sandbox
+### `ijfw_run` -- command output sandbox
 
-Large shell commands (builds, test suites, `grep -r`, log tails) routinely produce hundreds or thousands of lines that consume a disproportionate share of the context window. `ijfw_run` solves this at the tool level: run the command via `child_process.spawn` (never `exec` — no RAM buffer ceiling), stream output to `~/.ijfw/session-sandbox/`, and return a domain-aware summary to context instead of the raw flood.
+Large shell commands (builds, test suites, `grep -r`, log tails) routinely produce hundreds or thousands of lines that consume a disproportionate share of the context window. `ijfw_run` solves this at the tool level: run the command via `child_process.spawn` (never `exec` -- no RAM buffer ceiling), stream output to `~/.ijfw/session-sandbox/`, and return a domain-aware summary to context instead of the raw flood.
 
 **Domain-aware summarizers** detect output type by pattern and extract only what matters:
 - **Test runner** (Jest/Vitest/pytest/go test/cargo test): pass/fail counts + failing test names only
@@ -15,23 +15,23 @@ Large shell commands (builds, test suites, `grep -r`, log tails) routinely produ
 - **Log**: ERROR/WARN lines + counts
 - **Raw fallback**: first 15 + last 10 lines + "N lines omitted"
 
-Every summary appends the last 10 raw lines as a reliability backstop (catches segfaults, OOM kills, and non-standard failures that heuristics miss), and includes the command, exit code, duration, and a retrieval label. Commands at or under 40 lines / 50 KB return inline with zero overhead — `ijfw_run` only sandboxes when it pays off.
+Every summary appends the last 10 raw lines as a reliability backstop (catches segfaults, OOM kills, and non-standard failures that heuristics miss), and includes the command, exit code, duration, and a retrieval label. Commands at or under 40 lines / 50 KB return inline with zero overhead -- `ijfw_run` only sandboxes when it pays off.
 
 **Retrieval**: full output is indexed to `~/.ijfw/session-sandbox/{label}.txt` with a `.json` metadata sidecar. Retrieve with `ijfw_memory_search({ scope: "sandbox", label: "..." })` or list all current sandbox entries with `ijfw_memory_search({ scope: "sandbox" })`. Sandbox files auto-purge after 24 hours (TTL sweep runs on every `ijfw_run` call).
 
 **Security**: all labels are sanitized before becoming filenames; sandbox files are written at mode `0o600` (user-read-only); all SQLite interactions use parameterized queries; ANSI escape codes are stripped before heuristic detection and before content is returned to the LLM context.
 
-**Routing rule**: `ijfw-core` SKILL.md now carries the one-line routing rule — large-output commands → `ijfw_run`; git, navigation, and quick ops → Bash directly.
+**Routing rule**: `ijfw-core` SKILL.md now carries the one-line routing rule -- large-output commands → `ijfw_run`; git, navigation, and quick ops → Bash directly.
 
 **`ijfw_memory_status` retired** to free the MCP tool slot. The case handler is preserved for backward compatibility; the tool no longer appears in `tools/list`. Status information remains available via `ijfw_memory_prelude`.
 
 **New `sanitizeForSandbox()`** in `sanitizer.js`: a sandbox-specific sanitizer that preserves newlines (unlike `sanitizeContent` which collapses to `" | "`), strips ANSI codes, defangs structural markdown elements (`#` headings, fenced code delimiters, `<system>/<prompt>/<assistant>` tags), and truncates lines over 2000 characters. Used for all LLM-facing sandbox output.
 
-**`sandbox-nudge.sh` PreToolUse hook**: registered alongside the existing `pre-tool-use.sh`, this advisory hook pattern-matches known large-output command prefixes (`npm test`, `jest`, `vitest`, `pytest`, `cargo build`, `cargo test`, `make`, `gradle`, `mvn`, `go test`, `node --test`, `tsc --`, `webpack`, `vite build`, `rollup`, `grep -r`, `find /`) and emits a one-line nudge. Advisory only — never blocks.
+**`sandbox-nudge.sh` PreToolUse hook**: registered alongside the existing `pre-tool-use.sh`, this advisory hook pattern-matches known large-output command prefixes (`npm test`, `jest`, `vitest`, `pytest`, `cargo build`, `cargo test`, `make`, `gradle`, `mvn`, `go test`, `node --test`, `tsc --`, `webpack`, `vite build`, `rollup`, `grep -r`, `find /`) and emits a one-line nudge. Advisory only -- never blocks.
 
 Files: `mcp-server/src/sandbox.js` (new), `mcp-server/src/server.js`, `mcp-server/src/sanitizer.js`, `mcp-server/test-sandbox.js` (new, 32 tests), `mcp-server/test.js` (slot-swap update), `claude/skills/ijfw-core/SKILL.md`, `claude/hooks/hooks.json`, `claude/hooks/scripts/sandbox-nudge.sh` (new).
 
-### Parallel workflow dispatch — Wave Table
+### Parallel workflow dispatch -- Wave Table
 
 The `ijfw-workflow` execution engine had a structural gap: Step 5 (Plan) described dependency relationships in prose, which meant Step 6 (Execute) had to re-infer parallelism at dispatch time. Re-inference defaults to sequential to avoid mistakes. The result: agents that could run concurrently ran one-by-one.
 
@@ -40,12 +40,12 @@ The `ijfw-workflow` execution engine had a structural gap: Step 5 (Plan) describ
 ```
 | Wave | Tasks     | Mode       | Depends on | Reason              |
 |------|-----------|------------|------------|---------------------|
-| W1   | t1, t2, t3 | PARALLEL  | —          | independent files   |
+| W1   | t1, t2, t3 | PARALLEL  | --          | independent files   |
 | W2   | t4         | SEQUENTIAL | W1         | needs t2 output     |
 | W3   | t5, t6     | PARALLEL   | W2         | independent of each |
 ```
 
-Wave mode is determined by a four-question dependency test before the table is written: (a) shared file writes? (b) one reads what the other writes? (c) output dependency? (d) otherwise → PARALLEL. The Wave Table is the execution contract — decided once at plan time.
+Wave mode is determined by a four-question dependency test before the table is written: (a) shared file writes? (b) one reads what the other writes? (c) output dependency? (d) otherwise → PARALLEL. The Wave Table is the execution contract -- decided once at plan time.
 
 **Step 6 reads the Wave Table directly**: PARALLEL waves → all tasks dispatched as Agent tool calls in a single response (they run concurrently); SEQUENTIAL waves → one Agent call, wait for result, advance. If `plan.md` has no Wave Table (legacy plans, quick-mode tasks), Step 6 builds one on the spot using the same four-question test before dispatching anything. The instruction is now unambiguous: parallel waves produce multiple tool calls in one response block, not one-by-one messages.
 
@@ -53,7 +53,7 @@ Files: `claude/skills/ijfw-workflow/SKILL.md`.
 
 ### DeepSeek Trident auditor upgraded to `deepseek-v4-pro`
 
-The 1.2.5 DeepSeek roster entry used `deepseek-v4-flash` as the API model ID — a model that does not exist on DeepSeek Platform. Calls returned 4xx errors that surfaced as apparent timeouts. The entry is corrected to `deepseek-v4-pro`: DeepSeek's 1.6T-parameter frontier model (49B activated), supporting 1M context and dual thinking/non-thinking modes. `deepseek-chat` and `deepseek-reasoner` — the previous canonical aliases — are deprecated aliases for V4-Flash non-thinking and thinking modes respectively, scheduled for removal 2026-07-24. `deepseek-v4-pro` is the correct Trident-grade choice: Frontier AI checking Frontier AI.
+The 1.2.5 DeepSeek roster entry used `deepseek-v4-flash` as the API model ID -- a model that does not exist on DeepSeek Platform. Calls returned 4xx errors that surfaced as apparent timeouts. The entry is corrected to `deepseek-v4-pro`: DeepSeek's 1.6T-parameter frontier model (49B activated), supporting 1M context and dual thinking/non-thinking modes. `deepseek-chat` and `deepseek-reasoner` -- the previous canonical aliases -- are deprecated aliases for V4-Flash non-thinking and thinking modes respectively, scheduled for removal 2026-07-24. `deepseek-v4-pro` is the correct Trident-grade choice: Frontier AI checking Frontier AI.
 
 Files: `mcp-server/src/audit-roster.js`.
 

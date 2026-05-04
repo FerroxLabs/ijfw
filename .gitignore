@@ -37,3 +37,6 @@ mcp-server/.github/
 # IJFW source checkout itself. Must NOT be tracked or user clones will refuse
 # to install. Recreate locally with: touch .ijfw-source
 .ijfw-source
+
+# wayland-parity local rollback registry
+.ijfw/state/waves.json

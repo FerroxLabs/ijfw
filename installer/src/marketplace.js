@@ -2,11 +2,21 @@
 // Atomic write via .tmp + rename. Never deletes unrelated keys.
 
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
 export function claudeSettingsPath() {
   return join(homedir(), '.claude', 'settings.json');
+}
+
+// Resolve the plugin install location. Mirrors the bash installer
+// (scripts/install.sh: CLAUDE_PLUGIN_PATH="$HOME/.ijfw/claude") and honors
+// --dir / IJFW_HOME the same way installer/src/install.js's resolveTarget does.
+// Caller can pass an explicit rootDir to short-circuit the env lookup.
+export function pluginInstallPath(rootDir) {
+  if (rootDir) return resolve(rootDir, 'claude');
+  if (process.env.IJFW_HOME) return resolve(process.env.IJFW_HOME, 'claude');
+  return join(homedir(), '.ijfw', 'claude');
 }
 
 // C3 (audit R1) + R2-F -- tokenizer-aware JSONC comment strip. A naive
@@ -69,7 +79,17 @@ export function tolerantJsonParse(raw, filepath) {
   }
 }
 
-export function mergeMarketplace(settingsPath = claudeSettingsPath()) {
+// mergeMarketplace registers the ijfw plugin marketplace as a *directory*
+// source. The directory shape matches what scripts/install.sh writes and what
+// known_marketplaces.json caches at runtime; using the github shape here was
+// the bug behind "Marketplace file not found at .../TheRealSeanDonahoe-ijfw/
+// .claude-plugin/marketplace.json" -- Claude Code expected a clone at that
+// path but the install only ever writes the local directory.
+//
+// options.pluginPath -- absolute path to the plugin directory (~/.ijfw/claude
+// by default, or <rootDir>/claude when --dir is in play). Resolved via
+// pluginInstallPath() if omitted.
+export function mergeMarketplace(settingsPath = claudeSettingsPath(), options = {}) {
   let settings = {};
   if (existsSync(settingsPath)) {
     const raw = readFileSync(settingsPath, 'utf8');
@@ -78,9 +98,15 @@ export function mergeMarketplace(settingsPath = claudeSettingsPath()) {
     mkdirSync(dirname(settingsPath), { recursive: true });
   }
 
+  const pluginPath = options.pluginPath || pluginInstallPath(options.rootDir);
+
   settings.extraKnownMarketplaces = settings.extraKnownMarketplaces || {};
+  // Self-heal: prior installs (<= 1.2.6) wrote a github source pointing at
+  // TheRealSeanDonahoe/ijfw. Claude Code never clones that repo into the
+  // marketplaces cache, so the entry resolves to a missing file. Overwrite
+  // with the correct directory source on every install. Idempotent.
   settings.extraKnownMarketplaces.ijfw = {
-    source: { source: 'github', repo: 'TheRealSeanDonahoe/ijfw' },
+    source: { source: 'directory', path: pluginPath },
   };
   settings.enabledPlugins = settings.enabledPlugins || {};
   // Opportunistically clean up the legacy key written by v1.0.0-1.0.2.
