@@ -40,3 +40,8 @@ mcp-server/.github/
 
 # wayland-parity local rollback registry
 .ijfw/state/waves.json
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
