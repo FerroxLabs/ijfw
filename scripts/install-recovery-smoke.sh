@@ -50,21 +50,24 @@ fi
 # Step 2: wedge -- write settings.json with broken github marketplace source.
 # Reads real settings, merges in broken ijfw entry, writes back.
 printf "install-recovery-smoke: wedging ~/.claude/settings.json with broken github source...\n"
-node - "$SETTINGS" <<'JSEOF' || fail "could not wedge settings.json"
-const fs = require("fs");
-const p = process.argv[2];  // argv[1] == "-" when using heredoc; path is argv[2]
-let s = {};
-try { s = JSON.parse(fs.readFileSync(p, "utf8") || "{}"); } catch { s = {}; }
-if (!s || typeof s !== "object") s = {};
-s.extraKnownMarketplaces = s.extraKnownMarketplaces || {};
-// This is the broken state: github source instead of directory source.
-s.extraKnownMarketplaces["ijfw"] = {
-  source: { source: "github", repo: "TheRealSeanDonahoe/ijfw" }
-};
-fs.writeFileSync(p + ".tmp", JSON.stringify(s, null, 2) + "\n");
-fs.renameSync(p + ".tmp", p);
-console.log("  wedged: extraKnownMarketplaces.ijfw.source.source = github");
-JSEOF
+# Pass path via env var, not argv -- avoids `node -` argv quirks that
+# wrote a stray "-" file in cwd on the prior run.
+SETTINGS_PATH="$SETTINGS" node -e '
+  const fs = require("fs");
+  const p = process.env.SETTINGS_PATH;
+  if (!p) { console.error("SETTINGS_PATH env var missing"); process.exit(1); }
+  let s = {};
+  try { s = JSON.parse(fs.readFileSync(p, "utf8") || "{}"); } catch { s = {}; }
+  if (!s || typeof s !== "object") s = {};
+  s.extraKnownMarketplaces = s.extraKnownMarketplaces || {};
+  // The broken state: github source instead of directory source.
+  s.extraKnownMarketplaces["ijfw"] = {
+    source: { source: "github", repo: "TheRealSeanDonahoe/ijfw" }
+  };
+  fs.writeFileSync(p + ".tmp", JSON.stringify(s, null, 2) + "\n");
+  fs.renameSync(p + ".tmp", p);
+  console.log("  wedged: extraKnownMarketplaces.ijfw.source.source = github");
+' || fail "could not wedge settings.json"
 WEDGED=1
 
 # Confirm wedge took effect.
