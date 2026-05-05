@@ -45,3 +45,6 @@ mcp-server/.github/
 __pycache__/
 *.pyc
 *.pyo
+
+# npm pack artifacts
+installer/*.tgz

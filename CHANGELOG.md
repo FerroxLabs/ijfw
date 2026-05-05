@@ -59,6 +59,54 @@ The Wayland/Hermes MCP dispatcher wraps every tool response as `{"result": ...}`
 
 ---
 
+## [1.2.7] -- 2026-05-05
+
+**Windows update flow restored + canonical home moved to GitLab.** Two
+Windows-only bugs caught in one excellent customer report. `ijfw update
+--check` now succeeds on Windows where it previously returned "npm view
+failed" or opened the launcher in Notepad.
+
+### `npm` resolves through `.cmd` shim on Windows
+
+`spawnSync('npm', [...])` returned ENOENT on Windows because Node won't
+resolve `.cmd` / `.bat` files unless `shell: true` is set. Eleven npm
+spawn sites across four files now pass `shell: process.platform ===
+'win32'`. POSIX path is unchanged. Same fix unblocks `ijfw preflight`
+on Windows.
+
+### Stale POSIX launcher sweep
+
+`install.ps1` now removes any leftover `~/.local/bin/ijfw*` bash
+launchers from pre-1.2.7 installs. Without this, Windows PATH lookup
+found the shebang script first, didn't know what to do with it, and
+handed it to Notepad instead of running npm's `ijfw.cmd` shim.
+Defensive: only files beginning with `#!` get removed; anything else
+is left untouched. Idempotent on a clean machine.
+
+### Better `npm view` error surfacing
+
+`npmViewVersion` now reports `r.error.message` when present, so
+spawn-time failures (ENOENT, EACCES) show the real cause instead of
+the generic "npm view failed" string.
+
+### Canonical home moved to GitLab
+
+Project URL is now `gitlab.com/therealseandonahoe/ijfw`. README links,
+installer `DEFAULT_REPO`, raw-asset references, plugin manifest author
+URLs, and the CI badge URL all updated. Anonymous traffic now reaches
+the project; the npm package README on npmjs.com renders all images
+correctly. GitHub repo retained as a dormant fallback.
+
+### Bug report credit
+
+Both Windows symptoms in this release came from one report by
+**John H.** Reproducer included exact line numbers, root cause analysis
+of the spawnSync ENOENT, and the suggested `shell: true` fix. The
+secondary Notepad-on-bash-launcher symptom was caught in the follow-up
+investigation. Caught two real bugs in one ticket. Thank you.
+
+---
+
 ## [1.2.6] -- 2026-05-01
 
 **Token sandbox + parallel workflow dispatch + DeepSeek frontier upgrade.** A new `ijfw_run` MCP tool keeps large command output out of your context window entirely -- builds, test suites, grep runs, and log tails are sandboxed to disk and summarized in a few lines instead of flooding thousands of tokens. The `ijfw-workflow` execution engine gains a formal Wave Table that makes parallel agent dispatch deterministic rather than inferred. DeepSeek moves to `deepseek-v4-pro` -- the actual frontier model -- so the Trident gets Frontier AI checking Frontier AI.
