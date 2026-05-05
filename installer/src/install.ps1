@@ -208,6 +208,39 @@ function ConvertFrom-Jsonc($raw) {
   return ($intermediate -replace ',(\s*[}\]])','$1')
 }
 
+function Remove-StalePosixLaunchers {
+  # Pre-1.2.7 installs (and any install run from WSL) wrote POSIX bash
+  # launchers into ~/.local/bin/ even on Windows. Windows can't execute
+  # files without an extension, so PATH lookup finds them ahead of npm's
+  # ijfw.cmd shim and Windows hands them to Notepad as plain text.
+  #
+  # On every install, sweep ~/.local/bin/ for the five known POSIX
+  # launchers. Defensive: only remove files whose first line is a shebang
+  # ("#!") so we never delete user content or Windows binaries that
+  # happened to share a name.
+  $localBin = Join-Path $env:USERPROFILE ".local\bin"
+  if (-not (Test-Path $localBin)) { return }
+
+  $launchers = @("ijfw", "ijfw-dashboard", "ijfw-dispatch-plan", "ijfw-memorize", "ijfw-memory")
+  $removed = 0
+  foreach ($name in $launchers) {
+    $path = Join-Path $localBin $name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+    try {
+      $first = (Get-Content -LiteralPath $path -TotalCount 1 -ErrorAction Stop)
+      if ($first -and $first.StartsWith("#!")) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        $removed++
+      }
+    } catch {
+      # Best-effort: keep going on locked / inaccessible files.
+    }
+  }
+  if ($removed -gt 0) {
+    Write-Ok "Cleared $removed stale POSIX launcher$(if ($removed -ne 1) { 's' }) from $localBin (npm shim now wins PATH)"
+  }
+}
+
 function Provision-Plugin {
   param(
     [string]$Src,   # Source dir inside repo (relative to $IjfwHome), e.g. "wayland\plugins\ijfw"
@@ -392,6 +425,12 @@ if ($issues.Count -gt 0) {
 }
 
 $target = Get-Target
+
+# Sweep stale POSIX bash launchers from ~/.local/bin/ before any other
+# install logic. Without this, leftover #!/usr/bin/env bash files from a
+# pre-1.2.7 install (or one run from WSL) shadow npm's ijfw.cmd shim and
+# Windows opens them in Notepad. (Bug report: John H.)
+Remove-StalePosixLaunchers
 
 # scripts/install.sh owns the summary (Live now / Standing by / next step).
 # Keep clone/pull output suppressed so the final banner reads clean.
