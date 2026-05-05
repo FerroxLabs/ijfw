@@ -2,7 +2,7 @@
   <img src="docs/guide/assets/hero.png" alt="Sean Donahoe's IJFW (It Just F*cking Works) -- one memory, smart routing, fewer tokens, cross-AI audits, disciplined workflow, every agent you use. Claude, Codex, Gemini, Cursor, Windsurf and nine more AI coding agents." width="100%"/>
 </p>
 
-![CI](https://github.com/TheRealSeanDonahoe/ijfw/actions/workflows/ci.yml/badge.svg)
+![CI](https://gitlab.com/therealseandonahoe/ijfw/badges/main/pipeline.svg)
 [![npm version](https://img.shields.io/npm/v/@ijfw/install.svg)](https://www.npmjs.com/package/@ijfw/install)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -45,7 +45,7 @@ One command. Fourteen AI coding agents configured. Nothing to log into.
 **Windows** (PowerShell 5.1 or 7+):
 
 ```powershell
-iwr https://raw.githubusercontent.com/TheRealSeanDonahoe/ijfw/main/installer/src/install.ps1 -OutFile install.ps1
+iwr https://gitlab.com/therealseandonahoe/ijfw/-/raw/main/installer/src/install.ps1 -OutFile install.ps1
 .\install.ps1
 ```
 
@@ -636,6 +636,6 @@ If you ship code with AI, you need this. If you write with AI, run a business wi
 
 * * *
 
-[github.com/TheRealSeanDonahoe/ijfw](https://github.com/TheRealSeanDonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, fourteen platforms, six engines, three AI families, zero apologies.
+[gitlab.com/therealseandonahoe/ijfw](https://gitlab.com/therealseandonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, fourteen platforms, six engines, three AI families, zero apologies.
 
 **Install it. Inspect it. Fork it. Ship it. It just fucking works.**

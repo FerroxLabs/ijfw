@@ -102,7 +102,7 @@ export function mergeMarketplace(settingsPath = claudeSettingsPath(), options = 
 
   settings.extraKnownMarketplaces = settings.extraKnownMarketplaces || {};
   // Self-heal: prior installs (<= 1.2.6) wrote a github source pointing at
-  // TheRealSeanDonahoe/ijfw. Claude Code never clones that repo into the
+  // therealseandonahoe/ijfw. Claude Code never clones that repo into the
   // marketplaces cache, so the entry resolves to a missing file. Overwrite
   // with the correct directory source on every install. Idempotent.
   settings.extraKnownMarketplaces.ijfw = {

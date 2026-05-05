@@ -1102,7 +1102,7 @@ function cmdUpdateCheck() {
     process.exit(0);
   }
   console.log(`Update available: v${current} -> v${r.version}`);
-  console.log(`  Release notes: https://github.com/TheRealSeanDonahoe/ijfw/releases/tag/v${r.version}`);
+  console.log(`  Release notes: https://gitlab.com/therealseandonahoe/ijfw/-/releases/v${r.version}`);
   console.log(`  Run: ijfw update`);
   process.exit(3);
 }
@@ -1137,11 +1137,11 @@ function cmdUpdateChangelog() {
     console.error(`could not fetch latest version: ${r.message}`);
     process.exit(1);
   }
-  const url = `https://api.github.com/repos/TheRealSeanDonahoe/ijfw/releases/tags/v${r.version}`;
+  const url = `https://api.github.com/repos/therealseandonahoe/ijfw/releases/tags/v${r.version}`;
   const fetchRes = spawnSync('curl', ['-fsSL', '-H', 'User-Agent: ijfw', url], { encoding: 'utf8', timeout: 10_000 });
   if (fetchRes.status !== 0) {
     console.log(`No release notes available for v${r.version}.`);
-    console.log(`Visit: https://github.com/TheRealSeanDonahoe/ijfw/releases/tag/v${r.version}`);
+    console.log(`Visit: https://gitlab.com/therealseandonahoe/ijfw/-/releases/v${r.version}`);
     process.exit(0);
   }
   let body = '';
@@ -1161,7 +1161,7 @@ function cmdUpdateChangelog() {
   console.log(`Changelog for v${r.version}`);
   console.log('');
   console.log(stripped);
-  if (body.length > 4096) console.log(`\n... (truncated; full notes at https://github.com/TheRealSeanDonahoe/ijfw/releases/tag/v${r.version})`);
+  if (body.length > 4096) console.log(`\n... (truncated; full notes at https://gitlab.com/therealseandonahoe/ijfw/-/releases/v${r.version})`);
   process.exit(0);
 }
 
@@ -1561,7 +1561,7 @@ async function handleGuide(useBrowser) {
   ];
   const guidePath = candidates.find(p => existsSync(p));
   if (!guidePath) {
-    console.error('[ijfw] Guide not found. Visit https://github.com/TheRealSeanDonahoe/ijfw/blob/main/docs/GUIDE.md');
+    console.error('[ijfw] Guide not found. Visit https://gitlab.com/therealseandonahoe/ijfw/-/blob/main/docs/GUIDE.md');
     process.exit(1);
   }
   const md = readFileSync(guidePath, 'utf8');

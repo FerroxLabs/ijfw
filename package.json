@@ -6,9 +6,9 @@
   "description": "IJFW monorepo workspace. The published npm package lives at installer/ (@ijfw/install).",
   "author": "Sean Donahoe",
   "license": "MIT",
-  "homepage": "https://github.com/TheRealSeanDonahoe/ijfw",
+  "homepage": "https://gitlab.com/therealseandonahoe/ijfw",
   "repository": {
     "type": "git",
-    "url": "https://github.com/TheRealSeanDonahoe/ijfw"
+    "url": "https://gitlab.com/therealseandonahoe/ijfw"
   }
 }

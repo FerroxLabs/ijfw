@@ -3,12 +3,12 @@
   "version": "1.1.0",
   "description": "IJFW -- It Just Fucking Works. 15 workflow skills + 6 hook events + persistent project memory. Native Codex plugin with full parity to the Claude Code and Gemini bundles.",
   "author": "Sean Donahoe",
-  "homepage": "https://github.com/TheRealSeanDonahoe/ijfw",
+  "homepage": "https://gitlab.com/therealseandonahoe/ijfw",
   "license": "MIT",
   "category": "productivity",
   "keywords": ["workflow", "memory", "audit", "efficiency", "trident"],
   "install_path": "codex",
   "plugin_manifest": "codex/.codex-plugin/plugin.json",
-  "repository": "https://github.com/TheRealSeanDonahoe/ijfw",
+  "repository": "https://gitlab.com/therealseandonahoe/ijfw",
   "marketplace": "repo"
 }

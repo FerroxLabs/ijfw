@@ -1,6 +1,6 @@
 # @ijfw/install
 
-One-command installer for [IJFW](https://github.com/TheRealSeanDonahoe/ijfw) -- the AI
+One-command installer for [IJFW](https://gitlab.com/therealseandonahoe/ijfw) -- the AI
 efficiency layer for Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot.
 
 ## Install
@@ -43,7 +43,7 @@ Requires `node >=18`, `git`, `bash`. On native Windows use the PowerShell
 installer (PS 5.1+), which shells Git Bash under the hood -- no WSL required:
 
 ```powershell
-iwr https://raw.githubusercontent.com/TheRealSeanDonahoe/ijfw/main/installer/src/install.ps1 -OutFile install.ps1
+iwr https://gitlab.com/therealseandonahoe/ijfw/-/raw/main/installer/src/install.ps1 -OutFile install.ps1
 .\install.ps1 -Dir $env:USERPROFILE\.ijfw
 ```
 

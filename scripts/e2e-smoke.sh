@@ -353,7 +353,7 @@ check_picker_resources "wayland (installed)" "$ISO_HOME/.wayland/skills/ijfw-des
 # ---- Issue #6 regression gate ----
 # Verify the installed cross-orchestrator-cli.js ships the resolveTarget fix.
 # Bug: bare path was sent to auditors; fix reads file contents when target is
-# a regular file. See https://github.com/TheRealSeanDonahoe/ijfw/issues/6
+# a regular file. See https://gitlab.com/therealseandonahoe/ijfw/-/issues/6
 CLI_JS="$ISO_HOME/.ijfw/mcp-server/src/cross-orchestrator-cli.js"
 if [ -f "$CLI_JS" ] \
    && grep -q "export function resolveTarget" "$CLI_JS" \

@@ -29,11 +29,11 @@ Detects your agents, configures everything, done.
 
 ```bash
 # From the plugin marketplace
-/plugin marketplace add TheRealSeanDonahoe/ijfw
+/plugin marketplace add therealseandonahoe/ijfw
 /plugin install ijfw
 
 # Or manually
-git clone https://github.com/TheRealSeanDonahoe/ijfw.git
+git clone https://gitlab.com/therealseandonahoe/ijfw.git
 cd ijfw/claude
 claude plugin install .
 ```

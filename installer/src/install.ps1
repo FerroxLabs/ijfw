@@ -6,7 +6,7 @@
 #   -> merge marketplace into %USERPROFILE%\.claude\settings.json -> summary.
 #
 # Usage:
-#   Invoke-Expression (iwr https://raw.githubusercontent.com/TheRealSeanDonahoe/ijfw/main/installer/src/install.ps1).Content
+#   Invoke-Expression (iwr https://gitlab.com/therealseandonahoe/ijfw/-/raw/main/installer/src/install.ps1).Content
 #   or:
 #   .\install.ps1 -Dir C:\Users\me\.ijfw -Branch main
 
@@ -19,7 +19,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$DEFAULT_REPO = "https://github.com/TheRealSeanDonahoe/ijfw.git"
+$DEFAULT_REPO = "https://gitlab.com/therealseandonahoe/ijfw.git"
 
 function Write-Ok($msg) { Write-Host "  [ok] $msg" -ForegroundColor Green }
 function Write-Info($msg) { Write-Host "  ... $msg" -ForegroundColor Gray }

@@ -2,7 +2,7 @@
   "name": "ijfw",
   "owner": {
     "name": "Sean Donahoe",
-    "url": "https://github.com/TheRealSeanDonahoe"
+    "url": "https://gitlab.com/therealseandonahoe"
   },
   "plugins": [
     {
@@ -10,9 +10,9 @@
       "source": "./",
       "description": "AI efficiency framework. Smarter output, intelligent routing, persistent memory, context discipline, project workflows. One install. Zero config. It just fucking works.",
       "version": "1.0.0",
-      "author": { "name": "Sean Donahoe", "url": "https://github.com/TheRealSeanDonahoe" },
+      "author": { "name": "Sean Donahoe", "url": "https://gitlab.com/therealseandonahoe" },
       "license": "MIT",
-      "homepage": "https://github.com/TheRealSeanDonahoe/ijfw",
+      "homepage": "https://gitlab.com/therealseandonahoe/ijfw",
       "keywords": ["efficiency", "memory", "routing", "workflow", "terse", "optimization"]
     }
   ]

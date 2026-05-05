@@ -91,10 +91,10 @@ To save your time:
 4. Run `npm test` in `mcp-server/` -- expect existing tests + your new ones to pass.
 5. Update the README's auditor list if you're adding a new family.
 6. Open the PR with a description that includes: which family, what diversity gain, what use case prompted you to add it, and your willingness to maintain.
-7. Tag `@TheRealSeanDonahoe` in the PR description.
+7. Tag `` in the PR description.
 
 The Qwen contribution from [@carrmjw](https://github.com/carrmjw) (PR #11) is the model for "what a great auditor PR looks like." Worth reading before you draft yours.
 
 ## Questions
 
-If the playbook doesn't cover your case, [open an issue](https://github.com/TheRealSeanDonahoe/ijfw/issues/new?template=auditor-proposal.yml) before writing code. The proposal template is short and helps avoid wasted PRs.
+If the playbook doesn't cover your case, [open an issue](https://gitlab.com/therealseandonahoe/ijfw/-/issues/new?issuable_template=auditor-proposal.yml) before writing code. The proposal template is short and helps avoid wasted PRs.

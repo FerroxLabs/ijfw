@@ -14,7 +14,7 @@ import { npmView, compareSemver } from './lib/npm-view.js';
 import { issueToken, writePendingSentinel, readPendingSentinel } from './lib/token.js';
 
 const PKG = '@ijfw/install';
-const REPO = 'TheRealSeanDonahoe/ijfw';
+const REPO = 'therealseandonahoe/ijfw';
 
 function ijfwHome() {
   return process.env.IJFW_HOME || join(homedir(), '.ijfw');

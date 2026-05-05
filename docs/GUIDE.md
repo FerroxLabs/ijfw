@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/TheRealSeanDonahoe/ijfw/releases/download/v1.1.1/ijfw-hero.png" alt="IJFW" width="100%"/>
+  <img src="https://gitlab.com/therealseandonahoe/ijfw/releases/download/v1.1.1/ijfw-hero.png" alt="IJFW" width="100%"/>
 </p>
 
 # The IJFW Guide
@@ -503,7 +503,7 @@ cat ~/.ijfw/dashboard.port
 
 ### Still stuck
 
-Every install writes a log to `~/.ijfw/install.log`. Every session writes observations to `~/.ijfw/observations.jsonl`. Open an issue at [github.com/TheRealSeanDonahoe/ijfw/issues](https://github.com/TheRealSeanDonahoe/ijfw/issues) with both files redacted and attached.
+Every install writes a log to `~/.ijfw/install.log`. Every session writes observations to `~/.ijfw/observations.jsonl`. Open an issue at [gitlab.com/therealseandonahoe/ijfw/-/issues](https://gitlab.com/therealseandonahoe/ijfw/-/issues) with both files redacted and attached.
 
 ---
 
@@ -546,7 +546,7 @@ Yes. `.ijfw/team/` is git-committed by default. Decisions, patterns, and stack c
 </p>
 
 <p align="center">
-<a href="https://github.com/TheRealSeanDonahoe/ijfw">github.com/TheRealSeanDonahoe/ijfw</a>
+<a href="https://gitlab.com/therealseandonahoe/ijfw">gitlab.com/therealseandonahoe/ijfw</a>
 &nbsp;|&nbsp;
 <a href="https://www.npmjs.com/package/@ijfw/install">npm</a>
 &nbsp;|&nbsp;
