@@ -1049,8 +1049,19 @@ function readJsonSafe(path) {
 }
 
 function npmViewVersion(pkg = '@ijfw/install') {
-  const r = spawnSync('npm', ['view', pkg, 'version', '--json'], { encoding: 'utf8', timeout: 10_000 });
-  if (r.status !== 0) return { ok: false, message: (r.stderr || '').trim() || 'npm view failed' };
+  // shell:true on Windows so npm.cmd / npm.bat resolve. Without it, Node's
+  // spawnSync can't find npm and returns ENOENT before the command runs.
+  // pkg is hardcoded internally so there is no injection surface.
+  const r = spawnSync('npm', ['view', pkg, 'version', '--json'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    shell: process.platform === 'win32',
+  });
+  if (r.status !== 0) {
+    const stderr = (r.stderr || '').trim();
+    const errMsg = r.error ? r.error.message : '';
+    return { ok: false, message: stderr || errMsg || 'npm view failed' };
+  }
   const raw = (r.stdout || '').trim().replace(/^"|"$/g, '');
   if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(raw)) return { ok: false, message: `malformed: ${raw.slice(0, 80)}` };
   return { ok: true, version: raw };
@@ -1121,7 +1132,11 @@ function cmdUpdateVerify() {
   }
   console.log(`  registry latest: v${r.version}`);
   // Provenance check via npm audit signatures
-  const sig = spawnSync('npm', ['audit', 'signatures', `@ijfw/install@${r.version}`], { encoding: 'utf8', timeout: 15_000 });
+  const sig = spawnSync('npm', ['audit', 'signatures', `@ijfw/install@${r.version}`], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    shell: process.platform === 'win32',
+  });
   if (sig.status === 0) {
     console.log(`  provenance: VERIFIED (npm audit signatures)`);
   } else {
@@ -1239,7 +1254,11 @@ function cmdUpdateInteractive(opts = {}) {
   console.log(`IJFW update v${current} -> v${r.version}`);
   console.log('');
   // Provenance check (best-effort; report but don't block on transient failures)
-  const sig = spawnSync('npm', ['audit', 'signatures', `@ijfw/install@${r.version}`], { encoding: 'utf8', timeout: 15_000 });
+  const sig = spawnSync('npm', ['audit', 'signatures', `@ijfw/install@${r.version}`], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    shell: process.platform === 'win32',
+  });
   if (sig.status === 0) {
     console.log('  Provenance: verified');
   } else {
@@ -1255,7 +1274,10 @@ function cmdUpdateInteractive(opts = {}) {
   let installRes;
   if (method === 'npm-global') {
     console.log('  Running: npm install -g @ijfw/install@latest');
-    installRes = spawnSync('npm', ['install', '-g', `@ijfw/install@${r.version}`], { stdio: 'inherit' });
+    installRes = spawnSync('npm', ['install', '-g', `@ijfw/install@${r.version}`], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
   } else if (method === 'git-clone') {
     const repoRoot = repoRootFromCli();
     const installSh = join(repoRoot, 'scripts', 'install.sh');

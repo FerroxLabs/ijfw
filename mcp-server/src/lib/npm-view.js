@@ -17,6 +17,8 @@ export function npmView(pkg = PKG, opts = {}) {
     const res = spawnSync('npm', ['view', pkg, 'version', '--json'], {
       encoding: 'utf8',
       timeout: timeoutMs,
+      // shell:true on Windows so npm.cmd resolves; harmless on POSIX.
+      shell: process.platform === 'win32',
     });
     if (res.error) {
       lastErr = res.error.message || String(res.error);

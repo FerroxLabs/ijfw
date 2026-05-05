@@ -18,6 +18,7 @@ export async function run(ctx) {
     encoding: 'utf8',
     cwd: installerDir,
     timeout: 60_000,
+    shell: process.platform === 'win32',
   });
   if (build.status !== 0) {
     return {
@@ -33,6 +34,7 @@ export async function run(ctx) {
     encoding: 'utf8',
     cwd: installerDir,
     timeout: 30_000,
+    shell: process.platform === 'win32',
   });
   if (pack.status !== 0) {
     return {
@@ -67,6 +69,7 @@ export async function run(ctx) {
       cwd: installDir,
       timeout: 60_000,
       env: { ...process.env, HOME: fakeHome, npm_config_prefix: fakeHome },
+      shell: process.platform === 'win32',
     });
 
     if (install.status !== 0) {
