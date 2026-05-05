@@ -1278,6 +1278,22 @@ function cmdUpdateInteractive(opts = {}) {
       stdio: 'inherit',
       shell: process.platform === 'win32',
     });
+    // npm install -g only refreshes the CLI shim. The mcp-server payload under
+    // ~/.ijfw/mcp-server/ comes from the git tree and is only refreshed when
+    // ijfw-install runs. Without this, `ijfw update` reports "updated" while
+    // the actual MCP tools keep running stale code until the next manual
+    // ijfw-install. Auto-invoke ijfw-install so the upgrade self-completes.
+    if (installRes && installRes.status === 0) {
+      console.log('  Refreshing ~/.ijfw/ via ijfw-install...');
+      const refresh = spawnSync('ijfw-install', [], {
+        stdio: 'inherit',
+        shell: process.platform === 'win32',
+      });
+      if (!refresh || refresh.status !== 0) {
+        console.error(`Auto-refresh did not complete (exit ${refresh ? refresh.status : 'no-exec'}). Run \`ijfw-install\` manually to finish the upgrade.`);
+        process.exit(1);
+      }
+    }
   } else if (method === 'git-clone') {
     const repoRoot = repoRootFromCli();
     const installSh = join(repoRoot, 'scripts', 'install.sh');

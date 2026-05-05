@@ -59,6 +59,36 @@ The Wayland/Hermes MCP dispatcher wraps every tool response as `{"result": ...}`
 
 ---
 
+## [1.2.8] -- 2026-05-05
+
+**`ijfw update` is now self-completing on every platform.** Two refinements
+land the upgrade flow end-to-end so a single command moves the CLI shim
+*and* the MCP payload to the new version, including across host migrations.
+
+### `ijfw update` auto-refreshes the MCP payload
+
+`npm install -g @ijfw/install@latest` updates the CLI shim, but the
+MCP-tool payload under `~/.ijfw/mcp-server/` ships through the git tree
+and is refreshed by `ijfw-install`. The npm-global update path now
+auto-invokes `ijfw-install` after `npm install -g` succeeds, so MCP
+tools pick up the new version on the same command. No second-step
+required.
+
+### Origin URL self-heals across host migrations
+
+`cloneOrPull` now reads the existing `origin` URL on every upgrade and
+runs `git remote set-url origin <DEFAULT_REPO>` whenever it points at a
+prior canonical home. Idempotent: a no-op when origin already matches.
+Users who installed IJFW before the GitLab migration get a clean
+`fetch` on their next `ijfw update` instead of a 404.
+
+### Credit
+
+Both surfaced from John H.'s ongoing Windows debug session -- the same
+ticket that produced 1.2.7. Thanks again, John.
+
+---
+
 ## [1.2.7] -- 2026-05-05
 
 **Windows update flow restored + canonical home moved to GitLab.** Two

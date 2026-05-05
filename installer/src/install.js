@@ -162,8 +162,15 @@ function cloneOrPull(dir, branch) {
   // Upgrade path.
   const hasGit = existsSync(join(dir, '.git'));
   if (hasGit) {
-    const { status: remoteStatus } = runCheck('git', ['-C', dir, 'remote', 'get-url', 'origin']);
+    const { status: remoteStatus, stdout } = runCheck('git', ['-C', dir, 'remote', 'get-url', 'origin']);
     if (remoteStatus === 0) {
+      // Re-point origin if a host migration moved the canonical home.
+      // Without this, users from a prior canonical host see fetch 404s and abort.
+      const currentOrigin = (stdout || '').trim();
+      if (currentOrigin && currentOrigin !== DEFAULT_REPO) {
+        console.log(`  origin migration: ${currentOrigin} -> ${DEFAULT_REPO}`);
+        spawnSync('git', ['-C', dir, 'remote', 'set-url', 'origin', DEFAULT_REPO], { stdio: 'inherit' });
+      }
       // fetch + hard checkout avoids ff-only failures from local divergence.
       const fetch = spawnSync('git', ['-C', dir, 'fetch', '--depth', '1', 'origin', branch], { stdio: 'inherit' });
       if (fetch.status !== 0) throw new Error(`IJFW fetch did not complete (exit ${fetch.status}) -- check network access and retry.`);
