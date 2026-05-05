@@ -703,7 +703,10 @@ function applyTheme(l) {
 // ====== LIVE SSE (observation stream) ======
 if (typeof EventSource !== 'undefined') {
   var es = new EventSource('/stream');
-  es.addEventListener('observation', function(e) {
+  // 1.2.9: server emits unnamed SSE frames (no `event:` line), so the
+  // EventSource default channel is the only one that fires. addEventListener
+  // for a named event would never trigger.
+  es.onmessage = function(e) {
     try {
       var obs = JSON.parse(e.data);
       var feed = document.querySelector('[data-section="live"] .scard');
@@ -714,7 +717,7 @@ if (typeof EventSource !== 'undefined') {
         feed.prepend(row);
       }
     } catch(err) {}
-  });
+  };
   es.addEventListener('close', function() { es.close(); });
 }
 
@@ -755,6 +758,27 @@ function fmtDollars(n) {
   if (n >= 10) return '$' + Math.round(n);
   return '$' + n.toFixed(2);
 }
+// 1.2.9: server emits cost_usd / theoretical_cost_usd, never `cost` -- read
+// the canonical fields with a Max-plan fallback to theoretical so flat-rate
+// users see something other than $0.
+function extractCost(row) {
+  if (!row) return 0;
+  if (row.cost_usd != null) return Number(row.cost_usd) || 0;
+  if (row.theoretical_cost_usd != null) return Number(row.theoretical_cost_usd) || 0;
+  if (row.measuredCost != null) return Number(row.measuredCost) || 0;
+  if (row.cost != null) return Number(row.cost) || 0;
+  if (row.value != null) return Number(row.value) || 0;
+  return 0;
+}
+// Server returns cache_read_tokens + input_tokens; derive hit-rate per row.
+function extractCacheHit(row) {
+  if (!row) return null;
+  if (row.cache_hit != null) return Number(row.cache_hit);
+  var cr = Number(row.cache_read_tokens) || 0;
+  var inp = Number(row.input_tokens) || 0;
+  if (cr + inp === 0) return null;
+  return cr / (cr + inp);
+}
 
 function noData(el) {
   if (!el) return;
@@ -768,7 +792,7 @@ async function loadCostToday() {
   try {
     var r = await fetch('/api/cost/today');
     var d = await r.json();
-    var cost = d.measuredCost || d.cost || 0;
+    var cost = extractCost(d);
     var el = document.querySelector('[data-live="cost-today"]');
     if (el) el.textContent = fmtDollars(cost);
     var sub = document.querySelector('[data-live="cost-today-sub"]');
@@ -781,7 +805,7 @@ async function loadCost30d() {
   try {
     var r = await fetch('/api/cost/period?days=30');
     var d = await r.json();
-    var cost = d.measuredCost || d.cost || 0;
+    var cost = extractCost(d);
     var el = document.querySelector('[data-live="cost-30d"]');
     if (el) el.textContent = fmtDollars(cost);
   } catch(e) {}
@@ -838,7 +862,7 @@ async function loadSpendProjects() {
         var tr = document.createElement('tr');
         var td1 = document.createElement('td'); td1.textContent = row.key || row.project || '--';
         var td2 = document.createElement('td'); td2.textContent = row.last_active || '--';
-        var td3 = document.createElement('td'); td3.className = 'nr'; td3.textContent = fmtDollars(row.cost || 0);
+        var td3 = document.createElement('td'); td3.className = 'nr'; td3.textContent = fmtDollars(extractCost(row));
         var td4 = document.createElement('td');
         var chip = document.createElement('span'); chip.className = 'chip co'; chip.textContent = 'Opus 4.6';
         td4.appendChild(chip);
@@ -867,9 +891,11 @@ async function loadSpendModels() {
       var td1 = document.createElement('td');
       var chip = document.createElement('span'); chip.className = 'chip co'; chip.textContent = row.key || row.model || '--';
       td1.appendChild(chip);
-      var td2 = document.createElement('td'); td2.className = 'nr'; td2.textContent = fmtDollars(row.cost || 0);
-      var td3 = document.createElement('td'); td3.className = 'nr'; td3.textContent = row.cache_hit != null ? (row.cache_hit * 100).toFixed(1) + '%' : '--';
-      var td4 = document.createElement('td'); td4.className = 'nr'; td4.textContent = row.sessions != null ? String(row.sessions) : '--';
+      var td2 = document.createElement('td'); td2.className = 'nr'; td2.textContent = fmtDollars(extractCost(row));
+      var hit = extractCacheHit(row);
+      var td3 = document.createElement('td'); td3.className = 'nr'; td3.textContent = hit != null ? (hit * 100).toFixed(1) + '%' : '--';
+      var sessions = row.sessions != null ? row.sessions : row.count;
+      var td4 = document.createElement('td'); td4.className = 'nr'; td4.textContent = sessions != null ? String(sessions) : '--';
       tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
       tbody.appendChild(tr);
     });
@@ -1080,7 +1106,7 @@ async function loadTrendSparkline() {
     var r = await fetch('/api/cost/history?days=30');
     var series = await r.json();
     if (!Array.isArray(series) || series.length < 2) return;
-    var values = series.map(function(p) { return p.cost || p.value || 0; });
+    var values = series.map(extractCost);
     var maxV = Math.max.apply(null, values) || 1;
     var w = 700; var h = 80; var n = values.length;
     var pts = values.map(function(v, i) {
@@ -1115,13 +1141,21 @@ async function loadBlockUsage() {
     var bar = document.querySelector('[data-section="window"] .wseg');
     var meta = document.querySelector('[data-section="window"] .wmeta');
     if (!bar || !meta) return;
-    var pct = Math.min(100, Math.round((d.usedMinutes || 0) / (d.windowMinutes || 300) * 100));
+    // 1.2.9: server emits { start, end, window_minutes, used_tok, used_usd, used_usd_theoretical }.
+    // Derive elapsed minutes from start; previous code read usedMinutes/windowMinutes/remainingMinutes
+    // which the server has never emitted, so the panel rendered 0% used / 5h remaining forever.
+    var windowMin = Number(d.window_minutes) || 300;
+    var startMs = d.start ? new Date(d.start).getTime() : NaN;
+    var nowMs = Date.now();
+    var elapsedMin = isFinite(startMs) ? Math.max(0, Math.min(windowMin, Math.floor((nowMs - startMs) / 60000))) : 0;
+    var remainMin = Math.max(0, windowMin - elapsedMin);
+    var pct = Math.min(100, Math.round(elapsedMin / windowMin * 100));
     bar.style.width = pct + '%';
     var used = document.createElement('span');
-    used.textContent = Math.floor((d.usedMinutes || 0) / 60) + 'h ' + ((d.usedMinutes || 0) % 60) + 'm used of 5h window';
+    used.textContent = Math.floor(elapsedMin / 60) + 'h ' + (elapsedMin % 60) + 'm into 5h window';
     var remaining = document.createElement('span');
     remaining.className = 'wok';
-    remaining.textContent = Math.floor((d.remainingMinutes || 300) / 60) + 'h ' + ((d.remainingMinutes || 300) % 60) + 'm remaining -- ' + (100 - pct) + '%';
+    remaining.textContent = Math.floor(remainMin / 60) + 'h ' + (remainMin % 60) + 'm remaining -- ' + (100 - pct) + '%';
     meta.innerHTML = '';
     meta.appendChild(used); meta.appendChild(remaining);
   } catch(e) {}

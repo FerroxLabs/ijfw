@@ -59,6 +59,56 @@ The Wayland/Hermes MCP dispatcher wraps every tool response as `{"result": ...}`
 
 ---
 
+## [1.2.9] -- 2026-05-05
+
+**Deep audit ship: customer-facing surfaces hardened across CLI, install, dashboard, and hooks.** Sean ran a multi-agent audit against the customer-visible surface area after one customer ticket surfaced four Windows bugs in one day. The shipped fixes close out a class of "test passes / reality is broken" failure modes, plus a real data-loss bug in the auto-memorize path.
+
+### `ijfw dashboard` works for npm-installed users
+
+The CLI's dashboard handler hardcoded the repo-root layout, so `ijfw dashboard start` failed with "Dashboard bin not found" for anyone whose `ijfw` shim came from `npm install -g`. The handler now falls back through `IJFW_HOME` → `~/.ijfw/` to find the bin, mirroring the same pattern used elsewhere in the CLI. The same fix shape now applies to `ijfw install`, `ijfw uninstall`, `ijfw preflight`, `ijfw dashboard`, and `ijfw --version` dispatch paths via a shared `findCliAsset` helper.
+
+### Windows install flow restored end-to-end
+
+Three Critical Windows bugs in `installer/src/install.ps1`:
+
+- `Rename-Item -NewName <absolute-path>` is rejected by PowerShell. The broken-repo backup-and-reclone path silently lost user `memory/` data when triggered. Now uses `Move-Item -Destination` (idempotent absolute-path rename).
+- The 1.2.8 origin-URL self-heal landed only on the Node side (`install.js`); Windows users on the pre-GitLab origin still 404'd on every upgrade. The PowerShell path now compares and re-points origin too.
+- `-Dir <custom>` did not propagate to the bash sub-call's environment. With a custom target, MCP entries scribbled into the user's real `~/.codex` / `~/.gemini` / `~/.claude` dirs pointing at the scratch location. `IJFW_HOME` is now plumbed through.
+
+Plus `scripts/install.sh:404` had been writing `C\Windows\System32` (missing colon) into the Windows env.PATH on every install. One-character fix.
+
+### Dashboard panels read the actual server payload
+
+The customer-facing dashboard binds and renders, but four panels rendered `$0` / `--` / never-update because the served HTML read field names the server has never produced. None of this surfaced in unit tests against the server -- it only shows up by opening the dashboard and looking at the numbers. Fixed:
+
+- Per-project / per-model / 30-day-trend cost cells now read `cost_usd` (with `theoretical_cost_usd` fallback for Max-plan users so they see what they would have paid).
+- Per-model `sessions` / cache-hit columns now derive from the canonical `count` / `cache_read_tokens+input_tokens` fields.
+- The 5-hour usage block computes elapsed minutes from `start` instead of reading three never-emitted fields.
+- Live observation feed uses the EventSource default channel (server emits unnamed SSE frames, so the named-event listener never fired).
+
+### Silent-failure hardening across hooks and CLI dispatch
+
+- Auto-memorize at session end (`session-end.sh`) now captures stderr to `~/.ijfw/logs/memorize.log` and only clears signal/feedback files when the binary exited 0. Previously a memorize crash silently deleted the captured signals.
+- `post-tool-use.js` now logs JSON-parse and stdin-read failures to `~/.ijfw/logs/post-tool-use.log` instead of silently turning into a no-op forever.
+- `pre-tool-use.sh` writes a `~/.ijfw/.patterns-fallback-active` sentinel when `patterns.json` parse fails, so the doctor can flag when the destructive-command catalog has silently degraded from 17 patterns to 3.
+- `cmdCrossProjectAudit` now reports `r.signal` explicitly so killed children are not silently aggregated as "ok with empty findings".
+- `npm view` failure paths now distinguish spawn-error (with `r.error.code`), signal kill (timeout), and exit code so users get actionable text instead of "npm view failed".
+- `git pull` in the git-clone update path captures stderr explicitly and prints it on failure.
+
+### Platform manifests aligned
+
+Plugin manifests in `claude/`, `codex/`, `hermes/`, `wayland/`, and `gemini/extensions/ijfw/` now stamp `1.2.9` consistently (previously drifted across `1.0.0`, `1.1.0`, `1.2.6`). The Gemini extension manifest also now points its MCP at `server.js` (not the never-existing `index.js`) and reflects "19 workflow skills, 13 platforms" in its description.
+
+### Verification
+
+`scripts/dashboard-smoke.sh` is new in this release: 9 gates across start (daemon detach), status (live HTTP probe), HTTP 200, stop (clean shutdown + port file removal), and render (terminal). All gates pass on macOS. Live install-from-registry smoke against the published v1.2.8 was green before this release was assembled.
+
+### Audit follow-on
+
+Several Medium / Low items from the audit remain open in `.planning/1.2.9/REVIEW-*.md` and are queued for 1.2.10: Cline detection paths for Flatpak / VS Codium / Insiders, Cursor `.cursorrules` vs `.mdc` reconciliation, `generate-platform-rules.js` extension to all rules files, dashboard cost cache TTL, dashboard memory endpoint cache, `pre-prompt.sh` stderr redirect, and a handful of perf / observability sharpenings. Critical and High customer-facing fixes all landed in 1.2.9.
+
+---
+
 ## [1.2.8] -- 2026-05-05
 
 **`ijfw update` is now self-completing on every platform.** Two refinements

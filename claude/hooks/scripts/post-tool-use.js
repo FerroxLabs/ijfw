@@ -26,7 +26,19 @@ try {
     process.stderr.write('[ijfw post-tool-use] tool_response > 1 MiB, skipping signal extraction\n');
     process.exit(0);
   }
-} catch { process.exit(0); }
+} catch (e) {
+  // 1.2.9: leave a breadcrumb so a payload-shape change or stdin failure is
+  // diagnosable from ~/.ijfw/logs/. Previously the bare catch swallowed
+  // every read failure and turned the hook into a no-op forever.
+  try {
+    const path = require('node:path');
+    const dir = path.join(process.env.HOME || '', '.ijfw', 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'post-tool-use.log'),
+      `${new Date().toISOString()} stdin-read ${(e.message || String(e)).slice(0, 200)}\n`);
+  } catch { /* logging is best-effort */ }
+  process.exit(0);
+}
 if (!INPUT) process.exit(0);
 
 // --- 2) Parse payload, extract tool_response text ---
@@ -45,7 +57,18 @@ try {
     }
     responseText = parts.join('\n');
   }
-} catch { process.exit(0); }
+} catch (e) {
+  // 1.2.9: payload-shape change or malformed JSON should leave a diagnostic
+  // trail rather than silently turning the hook into a no-op forever.
+  try {
+    const path = require('node:path');
+    const dir = path.join(process.env.HOME || '', '.ijfw', 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'post-tool-use.log'),
+      `${new Date().toISOString()} parse-fail ${(e.message || String(e)).slice(0, 200)}\n`);
+  } catch { /* logging is best-effort */ }
+  process.exit(0);
+}
 if (!responseText) process.exit(0);
 
 // --- 3) Signal capture (ERROR/FATAL/Exception + test-fail) ---

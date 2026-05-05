@@ -83,8 +83,15 @@ function Invoke-CloneOrPull($target, $branch) {
   # Upgrade path.
   $hasGit = Test-Path (Join-Path $target ".git")
   if ($hasGit) {
-    & git -C $target remote get-url origin 2>$null | Out-Null
+    $currentOriginRaw = & git -C $target remote get-url origin 2>$null
     if ($LASTEXITCODE -eq 0) {
+      # Self-heal stale origin URLs across host migrations (1.2.9 parity with install.js).
+      # Without this, Windows users on the pre-GitLab origin still 404 on every upgrade.
+      $currentOrigin = ($currentOriginRaw | Out-String).Trim()
+      if ($currentOrigin -and $currentOrigin -ne $DEFAULT_REPO) {
+        Write-Host "  origin migration: $currentOrigin -> $DEFAULT_REPO"
+        & git -C $target remote set-url origin $DEFAULT_REPO
+      }
       # fetch + hard checkout avoids ff-only failures from local divergence.
       & git -C $target fetch --depth 1 origin $branch
       if ($LASTEXITCODE -ne 0) { throw "Could not reach the IJFW repo (exit $LASTEXITCODE). Check your network connection and retry." }
@@ -95,9 +102,12 @@ function Invoke-CloneOrPull($target, $branch) {
   }
 
   # Broken repo or no origin: backup user data, re-clone, restore.
+  # Rename-Item -NewName requires a leaf name; Move-Item -Destination accepts an
+  # absolute path. Using Rename-Item with an absolute path silently lost user data
+  # on Windows pre-1.2.9 because PowerShell rejected the call.
   $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $backupDir = "$target.bak.$ts"
-  Rename-Item -LiteralPath $target -NewName $backupDir
+  Move-Item -LiteralPath $target -Destination $backupDir -Force
   try {
     & git clone --depth 1 --branch $branch $DEFAULT_REPO $target
     if ($LASTEXITCODE -ne 0) { throw "Could not reach the IJFW repo (exit $LASTEXITCODE). Check your network connection and retry." }
@@ -106,14 +116,14 @@ function Invoke-CloneOrPull($target, $branch) {
       if (Test-Path $src) {
         $dst = Join-Path $target $item
         if (Test-Path $dst) { Remove-Item -Recurse -Force -LiteralPath $dst }
-        Move-Item -LiteralPath $src -Destination $dst
+        Move-Item -LiteralPath $src -Destination $dst -Force
       }
     }
     Remove-Item -Recurse -Force -LiteralPath $backupDir
     return "updated"
   } catch {
     if (Test-Path $target) { Remove-Item -Recurse -Force -LiteralPath $target }
-    Rename-Item -LiteralPath $backupDir -NewName $target
+    Move-Item -LiteralPath $backupDir -Destination $target -Force
     throw
   }
 }
@@ -123,6 +133,13 @@ function Invoke-InstallScript($target) {
   if (-not (Test-Path $script)) { throw "The installer script is not at $script yet. Run the full install from a fresh clone." }
   $gitBash = Resolve-GitBash
   if (-not $gitBash) { throw "IJFW needs Git Bash to complete setup. Install Git for Windows (includes bash.exe) and rerun." }
+  # Propagate IJFW_HOME into the bash sub-call so a custom -Dir target lands
+  # platform configs / sentinels under the user's chosen tree instead of the
+  # default ~/.ijfw. Without this, .\install.ps1 -Dir D:\custom would scribble
+  # MCP entries into the user's real ~/.codex / ~/.gemini / ~/.claude pointing
+  # at the scratch dir.
+  $priorIjfwHome = $env:IJFW_HOME
+  $env:IJFW_HOME = $target
   Push-Location $target
   try {
     $env:IJFW_NONINTERACTIVE = if ($env:CI -or $Yes) { "1" } else { "" }
@@ -134,6 +151,7 @@ function Invoke-InstallScript($target) {
   } finally {
     Pop-Location
     Remove-Item Env:\IJFW_SKIP_CLOSER -ErrorAction SilentlyContinue
+    if ($priorIjfwHome) { $env:IJFW_HOME = $priorIjfwHome } else { Remove-Item Env:\IJFW_HOME -ErrorAction SilentlyContinue }
   }
 }
 

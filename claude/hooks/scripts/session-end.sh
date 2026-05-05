@@ -296,14 +296,21 @@ for candidate in \
   if [ -x "$candidate" ]; then MEMORIZE="$candidate"; break; fi
 done
 if [ -n "$MEMORIZE" ]; then
-  MEMO_OUT=$("$MEMORIZE" 2>/dev/null)
+  # Capture stderr so a memorize crash leaves a diagnostic trail; previously
+  # 2>/dev/null swallowed it, so signal files got cleared anyway and the
+  # captured signals/feedback were lost forever (1.2.9 audit H7 -- data loss).
+  mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+  MEMO_OUT=$("$MEMORIZE" 2>>"$HOME/.ijfw/logs/memorize.log")
+  MEMO_RC=$?
   if [ -n "$MEMO_OUT" ]; then
     echo "$MEMO_OUT"
   fi
-  # Clear the signal files so next session starts fresh (ran or not -- only
-  # clear after the synthesizer had its chance).
-  [ -f "$IJFW_DIR/.session-signals.jsonl" ]  && : > "$IJFW_DIR/.session-signals.jsonl"
-  [ -f "$IJFW_DIR/.session-feedback.jsonl" ] && : > "$IJFW_DIR/.session-feedback.jsonl"
+  # Only clear signal files when the synthesizer actually succeeded. On
+  # failure, leave them in place so the next session retries.
+  if [ "$MEMO_RC" -eq 0 ]; then
+    [ -f "$IJFW_DIR/.session-signals.jsonl" ]  && : > "$IJFW_DIR/.session-signals.jsonl"
+    [ -f "$IJFW_DIR/.session-feedback.jsonl" ] && : > "$IJFW_DIR/.session-feedback.jsonl"
+  fi
 fi
 
 HOOK_LOG="$HOME/.ijfw/logs/hooks.log"

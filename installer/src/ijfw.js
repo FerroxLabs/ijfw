@@ -126,19 +126,27 @@ async function main() {
     case 'dashboard': {
       const dashSub = argv[3]; // start | stop | status | render
       const root = repoRoot();
+      const ijfwHome = join(homedir(), '.ijfw');
+
+      // Resolve an internal asset against (repo clone) -> (~/.ijfw post-install).
+      // npm installs ship only the CLI shim; the dashboard bins live under
+      // ~/.ijfw/mcp-server/ once `ijfw-install` has run, so we must check both.
+      const findInTree = (...rel) => {
+        const candidates = [join(root, ...rel), join(ijfwHome, ...rel)];
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- candidates is a static 2-element list of internal install paths.
+        return candidates.find(p => existsSync(p)) || null;
+      };
 
       if (dashSub === 'start' || dashSub === 'stop' || dashSub === 'status') {
         // V1.1D: HTTP server subcommands via ijfw-dashboard bin
-        const dashBin = join(root, 'mcp-server', 'bin', 'ijfw-dashboard');
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- internal install-root path; root from repoRoot() bounded traversal.
-        if (existsSync(dashBin)) {
+        const dashBin = findInTree('mcp-server', 'bin', 'ijfw-dashboard');
+        if (dashBin) {
           const r = spawnSync('node', [dashBin, dashSub, ...argv.slice(4)], { stdio: 'inherit' });
           process.exit(r.status ?? 0);
         } else {
           // Fallback: run dashboard-server.js directly for start
-          const serverJs = join(root, 'mcp-server', 'src', 'dashboard-server.js');
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- internal install-root path; root from repoRoot() bounded traversal.
-          if (dashSub === 'start' && existsSync(serverJs)) {
+          const serverJs = findInTree('mcp-server', 'src', 'dashboard-server.js');
+          if (dashSub === 'start' && serverJs) {
             const { spawn } = await import('node:child_process');
             const child = spawn(process.execPath, [serverJs, '--daemon'], {
               detached: true,
@@ -148,14 +156,13 @@ async function main() {
             console.log('Dashboard starting... (check: ijfw dashboard status)');
             process.exit(0);
           }
-          console.log('[ijfw] Dashboard bin not found. Run from the IJFW repo root.');
+          console.log('[ijfw] Dashboard not found. Try `ijfw-install` to deploy ~/.ijfw/, or run from the IJFW repo root.');
           process.exit(1);
         }
       } else if (dashSub === 'render' || !dashSub) {
         // V1.1C: render terminal dashboard
-        const binJs = join(root, 'scripts', 'dashboard', 'bin.js');
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- internal install-root path; root from repoRoot() bounded traversal.
-        if (existsSync(binJs)) {
+        const binJs = findInTree('scripts', 'dashboard', 'bin.js');
+        if (binJs) {
           const r = spawnSync('node', [binJs, ...argv.slice(dashSub ? 4 : 3)], { stdio: 'inherit' });
           process.exit(r.status ?? 0);
         } else {

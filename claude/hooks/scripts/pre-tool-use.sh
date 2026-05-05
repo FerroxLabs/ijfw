@@ -33,10 +33,26 @@ if [ -n "$PATTERNS_JSON" ] && command -v node >/dev/null 2>&1; then
   # Read destructive_commands array from patterns.json and match against input.
   # node prints one regex per line; bash iterates and applies each with grep -Eiq.
   PATTERNS=$(node -e '
+    const fs = require("fs");
     try {
-      const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
       process.stdout.write((p.destructive_commands || []).join("\n"));
-    } catch { process.exit(0); }
+    } catch (e) {
+      // 1.2.9: write a fallback sentinel so /ijfw doctor can flag that the
+      // hook is running on the inline 3-pattern fallback instead of the
+      // full 17-pattern catalog. Without this, a corrupted patterns.json
+      // silently degraded destructive-command detection.
+      try {
+        const path = require("path");
+        const home = process.env.HOME || "";
+        if (home) {
+          fs.mkdirSync(path.join(home, ".ijfw"), { recursive: true });
+          fs.writeFileSync(path.join(home, ".ijfw", ".patterns-fallback-active"),
+            new Date().toISOString() + " " + (e.message || String(e)).slice(0, 200) + "\n");
+        }
+      } catch { /* sentinel is best-effort */ }
+      process.exit(0);
+    }
   ' "$PATTERNS_JSON" 2>/dev/null)
 
   if [ -n "$PATTERNS" ]; then

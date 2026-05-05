@@ -863,9 +863,15 @@ async function cmdCrossProjectAudit({ rule, dryRun }) {
       cwd: p.path,
       encoding: 'utf8',
       timeout: 5 * 60 * 1000,
+      // shell:true on Windows so ijfw.cmd resolves through PATH.
+      shell: process.platform === 'win32',
     });
     if (r.error) {
-      results.push({ project: tag, path: p.path, status: 'failed', findings: '', error: r.error.message });
+      results.push({ project: tag, path: p.path, status: 'failed', findings: '', error: `spawn-${r.error.code || 'unknown'}: ${r.error.message}` });
+    } else if (r.signal) {
+      // Without surfacing r.signal, killed children would otherwise report
+      // "exit null" -- portfolio aggregator treated that as silently OK.
+      results.push({ project: tag, path: p.path, status: 'failed', findings: r.stdout || '', error: `killed by ${r.signal} (timeout or OS signal)` });
     } else if (r.status !== 0) {
       results.push({ project: tag, path: p.path, status: 'failed', findings: r.stdout || '', error: (r.stderr || '').trim().split('\n')[0] || `exit ${r.status}` });
     } else {
@@ -1057,10 +1063,20 @@ function npmViewVersion(pkg = '@ijfw/install') {
     timeout: 10_000,
     shell: process.platform === 'win32',
   });
+  // Distinguish three failure modes so users + bug reports get actionable text
+  // instead of a generic "npm view failed".
+  if (r.error) {
+    const code = r.error.code || 'unknown';
+    return { ok: false, message: `spawn-${code}: ${(r.error.message || '').slice(0, 120)}` };
+  }
+  if (r.signal) {
+    return { ok: false, message: `killed by ${r.signal} (likely network timeout)` };
+    // r.status === null when killed by signal; explicit branch keeps the next
+    // check clean.
+  }
   if (r.status !== 0) {
     const stderr = (r.stderr || '').trim();
-    const errMsg = r.error ? r.error.message : '';
-    return { ok: false, message: stderr || errMsg || 'npm view failed' };
+    return { ok: false, message: stderr || `npm view exited ${r.status} with no stderr` };
   }
   const raw = (r.stdout || '').trim().replace(/^"|"$/g, '');
   if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(raw)) return { ok: false, message: `malformed: ${raw.slice(0, 80)}` };
@@ -1298,8 +1314,15 @@ function cmdUpdateInteractive(opts = {}) {
     const repoRoot = repoRootFromCli();
     const installSh = join(repoRoot, 'scripts', 'install.sh');
     console.log('  Running: git pull + scripts/install.sh');
-    const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only'], { stdio: 'inherit' });
-    if (pull.status !== 0) { console.error('git pull failed'); process.exit(1); }
+    // Capture stderr explicitly so bug reports include the why -- previously a
+    // network/auth/conflict failure surfaced only as "git pull failed".
+    const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only'], { encoding: 'utf8' });
+    if (pull.status !== 0) {
+      console.error('git pull failed:');
+      if (pull.stderr) console.error(pull.stderr.trim().split('\n').map(l => '  ' + l).join('\n'));
+      console.error(`  Run \`git -C ${repoRoot} status\` to inspect.`);
+      process.exit(1);
+    }
     installRes = spawnSync('bash', [installSh], { stdio: 'inherit' });
   } else {
     console.log('  Manual install detected -- run: npx @ijfw/install');
@@ -1732,24 +1755,34 @@ if (isMainModule) {
 // These shell out to the existing scripts/installer modules so there is one
 // CLI entry point that covers every command named in the README, regardless
 // of how the user installed (git clone + install.sh OR npm @ijfw/install).
+// Resolve internal assets across both the repo-clone layout and the
+// post-install ~/.ijfw layout. Same shape as installer/src/ijfw.js findInTree.
+// Without this, dispatch paths fail for any user whose CLI shim originates
+// from npm-global without a sibling scripts/ tree.
 function repoRootFromCli() {
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, '..', '..');
 }
+function findCliAsset(...rel) {
+  const candidates = [
+    join(repoRootFromCli(), ...rel),
+    process.env.IJFW_HOME ? join(process.env.IJFW_HOME, ...rel) : null,
+    join(homedir(), '.ijfw', ...rel),
+  ].filter(Boolean);
+  return candidates.find(p => existsSync(p)) || null;
+}
 function cmdInstall() {
-  const root = repoRootFromCli();
-  const script = join(root, 'scripts', 'install.sh');
-  if (!existsSync(script)) {
-    console.error('install.sh not found. Re-clone the IJFW repo and retry.');
+  const script = findCliAsset('scripts', 'install.sh');
+  if (!script) {
+    console.error('install.sh not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
     process.exit(1);
   }
   const res = spawnSync('bash', [script, ...process.argv.slice(3)], { stdio: 'inherit' });
   process.exit(res.status ?? 1);
 }
 function cmdUninstall() {
-  const root = repoRootFromCli();
-  const script = join(root, 'installer', 'src', 'uninstall.js');
-  if (!existsSync(script)) {
+  const script = findCliAsset('installer', 'src', 'uninstall.js');
+  if (!script) {
     console.error('uninstall.js not found. Remove ~/.ijfw manually and strip ijfw keys from ~/.claude/settings.json.');
     process.exit(1);
   }
@@ -1757,20 +1790,18 @@ function cmdUninstall() {
   process.exit(res.status ?? 1);
 }
 function cmdPreflight() {
-  const root = repoRootFromCli();
-  const script = join(root, 'scripts', 'check-all.sh');
-  if (!existsSync(script)) {
-    console.error('check-all.sh not found. Re-clone the IJFW repo and retry.');
+  const script = findCliAsset('scripts', 'check-all.sh');
+  if (!script) {
+    console.error('check-all.sh not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
     process.exit(1);
   }
   const res = spawnSync('bash', [script, ...process.argv.slice(3)], { stdio: 'inherit' });
   process.exit(res.status ?? 1);
 }
 function cmdDashboard(sub) {
-  const root = repoRootFromCli();
-  const script = join(root, 'scripts', 'dashboard', 'bin.js');
-  if (!existsSync(script)) {
-    console.error('dashboard/bin.js not found. Re-clone the IJFW repo and retry.');
+  const script = findCliAsset('scripts', 'dashboard', 'bin.js');
+  if (!script) {
+    console.error('dashboard/bin.js not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
     process.exit(1);
   }
   const res = spawnSync(process.execPath, [script, sub], { stdio: 'inherit' });

@@ -1,15 +1,12 @@
 {
   "name": "ijfw",
-  "version": "1.1.0",
-  "description": "IJFW -- AI efficiency layer for Gemini CLI. 15 workflow skills, 11-event hooks, persistent project memory via MCP. Native policy engine + checkpointing integration. Same skills and memory as Claude Code and Codex -- one workflow, three native homes.",
+  "version": "1.2.9",
+  "description": "IJFW -- AI efficiency layer for Gemini CLI. 19 workflow skills, 11-event hooks, persistent project memory via MCP. Native policy engine + checkpointing integration. One install layer across 13 AI coding platforms.",
   "contextFileName": "IJFW.md",
   "mcpServers": {
     "ijfw-memory": {
       "command": "node",
-      "args": ["${IJFW_MCP_PATH:-~/.ijfw/mcp-server/src/index.js}"],
-      "env": {
-        "IJFW_MEMORY_DIR": "${cwd}/.ijfw/memory"
-      },
+      "args": ["${IJFW_MCP_PATH:-~/.ijfw/mcp-server/src/server.js}"],
       "trust": true
     }
   },

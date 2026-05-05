@@ -401,7 +401,7 @@ if [ "$IJFW_CUSTOM_DIR" != "1" ] && [ "$PLUGIN_TARGETS_SOURCE" != "1" ] \
     d.mcpServers["ijfw-memory"].args = [serverJs];
     const envSep = process.platform === "win32" ? ";" : ":";
     const commonPaths = process.platform === "win32"
-      ? [nodeDir, "C\\Windows\\System32"]
+      ? [nodeDir, "C:\\Windows\\System32"]
       : [nodeDir, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
     const dedup = [...new Set(commonPaths.filter(x => x && fs.existsSync(x)))];
     d.mcpServers["ijfw-memory"].env = { PATH: dedup.join(envSep) };
