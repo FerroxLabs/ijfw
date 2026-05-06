@@ -15,8 +15,10 @@ INPUT=$(head -c 65536 2>/dev/null)
 [ -z "$INPUT" ] && exit 0
 
 mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
-( export IJFW_PLATFORM=gemini; printf '%s' "$INPUT" | \
-  node "$CAPTURE" 2>>"$HOME/.ijfw/logs/obs-capture.log" ) &
+export IJFW_PLATFORM=gemini
+# NOTE: do NOT add `</dev/null` here. The pipe IS node's stdin;
+# `</dev/null` would override it and node would receive an empty stream.
+printf '%s' "$INPUT" | node "$CAPTURE" >>"$HOME/.ijfw/logs/obs-capture.log" 2>&1 &
 disown $! 2>/dev/null || true
 
 exit 0

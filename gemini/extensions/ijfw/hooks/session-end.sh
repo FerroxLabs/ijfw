@@ -8,6 +8,8 @@
 
 [ "${IJFW_DISABLE:-}" = "1" ] && printf '{"decision":"allow"}\n' && exit 0
 
+mkdir -p "$HOME/.ijfw/logs" 2>/dev/null || true
+
 IJFW_DIR=".ijfw"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 ISO_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || TZ=UTC date +"%Y-%m-%dT%H:%M:%SZ")
@@ -65,7 +67,7 @@ if command -v node >/dev/null 2>&1; then
       fs.mkdirSync(".ijfw/metrics", { recursive: true });
       fs.appendFileSync(".ijfw/metrics/sessions.jsonl", JSON.stringify(rec) + "\n");
     } catch {}
-  ' "$ISO_TIMESTAMP" "$SESSION_NUM" "$MODE" "$MEMORY_STORES" "$HAS_HANDOFF" 2>/dev/null
+  ' "$ISO_TIMESTAMP" "$SESSION_NUM" "$MODE" "$MEMORY_STORES" "$HAS_HANDOFF" 2>>"$HOME/.ijfw/logs/gemini-session-end.log"
 fi
 
 # Write session file.
@@ -76,10 +78,21 @@ SESSION_FILE="$IJFW_DIR/sessions/session_$TIMESTAMP.md"
   printf 'mode: %s\n' "$MODE"
   printf 'platform: gemini\n'
   printf 'memory_stores: %s\n' "$MEMORY_STORES"
-} > "$SESSION_FILE" 2>/dev/null
+} > "$SESSION_FILE" 2>>"$HOME/.ijfw/logs/gemini-session-end.log"
 
-# Clean up turn counter.
+# Clean up turn counter and banner-dedup flag for this session.
 rm -f "$IJFW_DIR/.turn-count" 2>/dev/null
+SESSION_ID_END=""
+if command -v node >/dev/null 2>&1 && [ -n "$HOOK_STDIN" ]; then
+  SESSION_ID_END=$(printf '%s' "$HOOK_STDIN" | node -e '
+    let buf = "";
+    process.stdin.on("data", c => buf += c);
+    process.stdin.on("end", () => {
+      try { const j = JSON.parse(buf); process.stdout.write(j.session_id || ""); } catch {}
+    });
+  ' 2>>"$HOME/.ijfw/logs/gemini-session-end.log" || true)
+fi
+[ -n "$SESSION_ID_END" ] && rmdir "$IJFW_DIR/.banner-shown.${SESSION_ID_END}.lock" 2>/dev/null || true
 
 # Emit receipt.
 RECEIPT="[ijfw] Session $SESSION_NUM complete ($MEMORY_STORES memory entries)."
@@ -89,6 +102,6 @@ node -e '
   const out = { decision: "allow" };
   if (receipt) out.systemMessage = receipt;
   process.stdout.write(JSON.stringify(out) + "\n");
-' "$RECEIPT" 2>/dev/null || printf '{"decision":"allow"}\n'
+' "$RECEIPT" 2>>"$HOME/.ijfw/logs/gemini-session-end.log" || printf '{"decision":"allow"}\n'
 
 exit 0

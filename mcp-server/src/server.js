@@ -1212,7 +1212,7 @@ function handleMessage(msg) {
       try {
         switch (name) {
           case 'ijfw_update_check': {
-            const r = ijfwUpdateCheck(args || {});
+            const r = await ijfwUpdateCheck(args || {});
             result = { text: JSON.stringify(r, null, 2), isError: !!(r && r.error) };
             break;
           }

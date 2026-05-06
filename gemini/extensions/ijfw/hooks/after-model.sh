@@ -13,17 +13,33 @@
 
 [ "${IJFW_DISABLE:-}" = "1" ] && printf '{"decision":"allow"}\n' && exit 0
 
+mkdir -p "$HOME/.ijfw/logs" 2>/dev/null || true
+
 HOOK_STDIN=$(head -c 131072 2>/dev/null)
 [ -z "$HOOK_STDIN" ] && printf '{"decision":"allow"}\n' && exit 0
 
 command -v node >/dev/null 2>&1 || { printf '{"decision":"allow"}\n'; exit 0; }
 
-node -e '
+# Node emits exactly one envelope (either on parse error or after signal scan).
+# The shell never emits -- avoids double-emit on success path.
+NODE_OUT=$(node -e '
   const fs = require("fs");
+  const os = require("os");
+  const raw = process.argv[1] || "{}";
   let payload = {};
-  try { payload = JSON.parse(process.argv[1] || "{}"); } catch {}
+  try {
+    payload = JSON.parse(raw);
+  } catch (e) {
+    try {
+      const logPath = os.homedir() + "/.ijfw/logs/gemini-after-model.log";
+      fs.mkdirSync(os.homedir() + "/.ijfw/logs", { recursive: true });
+      const ts = new Date().toISOString();
+      fs.appendFileSync(logPath, ts + " parse-error: " + raw.slice(0, 120) + "\n");
+    } catch {}
+    process.stdout.write("{\"decision\":\"allow\"}\n");
+    process.exit(0);
+  }
   const response = payload.response || "";
-  if (!response) { process.exit(0); }
 
   // Decision patterns: lines containing decision markers.
   const decisionPat = /\b(decided|decision|will use|going with|chosen|locked|approach:|pattern:)\b/i;
@@ -48,7 +64,13 @@ node -e '
       }
     } catch {}
   }
-' "$HOOK_STDIN" 2>/dev/null
 
-printf '{"decision":"allow"}\n'
+  process.stdout.write("{\"decision\":\"allow\"}\n");
+' "$HOOK_STDIN" 2>>"$HOME/.ijfw/logs/gemini-after-model.log")
+
+if [ -n "$NODE_OUT" ]; then
+  printf '%s\n' "$NODE_OUT"
+else
+  printf '{"decision":"allow"}\n'
+fi
 exit 0

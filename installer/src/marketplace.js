@@ -1,7 +1,23 @@
 // Deep-merge ~/.claude/settings.json to register the ijfw marketplace + enable plugin.
 // Atomic write via .tmp + rename. Never deletes unrelated keys.
 
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+
+// Inline atomic-write helper. Cleans tmp file on rename failure (EXDEV / EACCES /
+// EBUSY on Windows) so we don't accumulate `.tmp.<rand>` droppings. Same shape
+// as `mcp-server/src/lib/atomic-io.js` writeAtomic, kept inline because installer
+// is a separate package (no cross-package imports at install time).
+function atomicWriteJson(path, data) {
+  const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+  try {
+    renameSync(tmp, path);
+  } catch (err) {
+    try { unlinkSync(tmp); } catch { /* */ }
+    throw new Error(`atomic write failed for ${path}: ${err.message}`);
+  }
+}
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -115,9 +131,7 @@ export function mergeMarketplace(settingsPath = claudeSettingsPath(), options = 
   }
   settings.enabledPlugins['ijfw@ijfw'] = true;
 
-  const tmp = settingsPath + '.tmp';
-  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n');
-  renameSync(tmp, settingsPath);
+  atomicWriteJson(settingsPath, settings);
   return settings;
 }
 
@@ -132,8 +146,6 @@ export function unmergeMarketplace(settingsPath = claudeSettingsPath()) {
     if ('ijfw-core@ijfw' in settings.enabledPlugins) delete settings.enabledPlugins['ijfw-core@ijfw'];
     if ('ijfw@ijfw' in settings.enabledPlugins) delete settings.enabledPlugins['ijfw@ijfw'];
   }
-  const tmp = settingsPath + '.tmp';
-  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n');
-  renameSync(tmp, settingsPath);
+  atomicWriteJson(settingsPath, settings);
   return settings;
 }

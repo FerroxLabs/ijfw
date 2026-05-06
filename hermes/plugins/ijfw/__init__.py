@@ -6,21 +6,27 @@ import sys
 import os
 import importlib.util
 
+_SELF_DIR = os.path.dirname(os.path.abspath(__file__))
+
 _CANDIDATES = [
+    # Bundled Hermes modules win. Wayland paths are fallbacks for hosts without
+    # a bundled install (rare; avoids stale Wayland code loading under Hermes).
+    _SELF_DIR,
     os.path.expanduser("~/.wayland/plugins/ijfw"),
-    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "wayland", "plugins", "ijfw")),
+    os.path.normpath(os.path.join(_SELF_DIR, "..", "..", "..", "wayland", "plugins", "ijfw")),
 ]
 WAYLAND_PLUGIN = next((p for p in _CANDIDATES if os.path.isdir(p)), None)
 if WAYLAND_PLUGIN is None:
     raise RuntimeError(
-        "IJFW Hermes shim cannot find Wayland plugin source. "
-        "Expected at ~/.wayland/plugins/ijfw or repo-local sibling dir."
+        "IJFW Hermes shim cannot find plugin source. "
+        "Expected at ~/.wayland/plugins/ijfw, repo-local sibling, or bundled in this dir."
     )
 
 if WAYLAND_PLUGIN not in sys.path:
     sys.path.insert(0, WAYLAND_PLUGIN)
 
-# Alias hermes_cli -> wayland_cli so Wayland's internal imports resolve.
+# Alias hermes_cli -> wayland_cli so Wayland's internal imports resolve
+# (only needed when resolving from the Wayland tree, harmless otherwise).
 try:
     sys.modules["wayland_cli"] = importlib.import_module("hermes_cli")
 except ModuleNotFoundError:

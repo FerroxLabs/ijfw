@@ -15,11 +15,20 @@
  */
 
 import { createServer } from 'http';
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync, mkdirSync, realpathSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync, mkdirSync, realpathSync, renameSync } from 'fs';
 import { homedir } from 'os';
 import { join, dirname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
+
+// Probe sqlite3 binary once at startup. All callers check this before querying.
+const SQLITE3_AVAILABLE = (() => {
+  const r = spawnSync('sqlite3', ['--version'], { encoding: 'utf8', timeout: 3000 });
+  return !r.error && r.status === 0;
+})();
+const SQLITE3_MISSING_REASON = SQLITE3_AVAILABLE
+  ? null
+  : 'sqlite3 not installed -- run: brew install sqlite3 (macOS) or apt install sqlite3 (Linux)';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOME = homedir();
@@ -102,6 +111,7 @@ function findCodburn() {
 
 // --- Local DB helper (hardcoded SQL only, no user input) ---
 function querySqlite(dbPath, sql) {
+  if (!SQLITE3_AVAILABLE) return [];
   try {
     const out = execSync(`sqlite3 "${dbPath}" "${sql}"`, { encoding: 'utf8', timeout: 5000 });
     return out.trim().split('\n').filter(Boolean);
@@ -113,6 +123,7 @@ function querySqlite(dbPath, sql) {
 
 // --- Codex conversation data ---
 function readCodexData() {
+  if (!SQLITE3_AVAILABLE) return { available: false, reason: SQLITE3_MISSING_REASON };
   const dbPath = join(HOME, '.codex', 'state_5.sqlite');
   if (!existsSync(dbPath)) return null;
 
@@ -434,11 +445,21 @@ function loadConfig() {
   if (existsSync(CONFIG_FILE)) {
     try { return JSON.parse(readFileSync(CONFIG_FILE, 'utf8')); }
     catch (err) {
-      process.stderr.write(`[ijfw-dashboard] loadConfig(): ${err.message}\n`);
-      return { ...DEFAULT_CONFIG };
+      // Corrupt config: rename to .corrupt.<ts> so the user has a recoverable
+      // copy AND the next run regenerates from defaults instead of getting
+      // stuck on the corrupted file forever.
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const corruptPath = `${CONFIG_FILE}.corrupt.${stamp}`;
+      try {
+        renameSync(CONFIG_FILE, corruptPath);
+        process.stderr.write(`[ijfw-dashboard] loadConfig(): ${err.message} -- moved corrupt config to ${corruptPath}; regenerating from defaults\n`);
+      } catch (renameErr) {
+        process.stderr.write(`[ijfw-dashboard] loadConfig(): ${err.message} (rename of corrupt config also failed: ${renameErr.message})\n`);
+      }
+      // Fall through to "create with defaults" branch below.
     }
   }
-  // Create with defaults
+  // Create with defaults (file absent, or corrupt-and-renamed-aside).
   try {
     mkdirSync(IJFW_GLOBAL, { recursive: true });
     writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_CONFIG, null, 2));

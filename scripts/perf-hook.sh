@@ -34,7 +34,7 @@ for i in $(seq 1 $RUNS); do
   # Use bash builtin time with TIMEFORMAT to get real ms.
   # TIMEFORMAT outputs to stderr in the form %R (seconds with decimals).
   MS=$( { TIMEFORMAT='%R'; time bash "$HOOK_PATH" < "$FIXTURE" >/dev/null 2>/dev/null; } 2>&1 | \
-        awk '{ printf "%d\n", $1 * 1000 }' )
+        awk '{ printf "%.2f\n", $1 * 1000 }' )
   printf '%s\n' "$MS" >> "$TIMES_FILE"
 done
 
@@ -42,7 +42,7 @@ done
 MEDIAN=$(sort -n "$TIMES_FILE" | awk 'NR==3{print}')
 [ -z "$MEDIAN" ] && MEDIAN=0
 
-if [ "$MEDIAN" -lt "$BUDGET" ]; then
+if awk "BEGIN { exit !(${MEDIAN} < ${BUDGET}) }"; then
   VERDICT="PASS"
   RC=0
 else
@@ -50,5 +50,5 @@ else
   RC=1
 fi
 
-printf 'perf: %s median %dms budget %dms %s\n' "$HOOK_NAME" "$MEDIAN" "$BUDGET" "$VERDICT"
+printf 'perf: %s median %.2fms budget %dms %s\n' "$HOOK_NAME" "$MEDIAN" "$BUDGET" "$VERDICT"
 exit $RC

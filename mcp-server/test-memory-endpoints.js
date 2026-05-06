@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync, cpSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, cpSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -98,6 +98,31 @@ test('GET /api/memory/file returns body for valid path', async () => {
     const d = await fetchJson(`http://localhost:${port}/api/memory/file?path=` + encodeURIComponent(f.path));
     assert.ok(typeof d.body === 'string' && d.body.length > 0, 'body should be non-empty string');
   } finally { server.close(); }
+});
+
+test('GET /api/memory/file denies symlink escaping memory root', async () => {
+  // Creates a real symlink inside the memory dir pointing OUTSIDE the allowed root.
+  // realpathSync resolves the symlink target, which isUnder() then rejects with 403.
+  // Note: on Windows this requires Developer Mode or admin privileges -- test will
+  // fail loud (EPERM) rather than be skipped, so Windows CI surfaces the gap clearly.
+  const { port, server } = await startServer({ port: BASE_PORT + 6 });
+  const outsideDir = join(tmpdir(), 'ijfw-ep-outside-' + Date.now());
+  const outsideFile = join(outsideDir, 'secret.txt');
+  const symlink = join(MEM_DIR, 'escape-link.md');
+  try {
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(outsideFile, 'secret content');
+    symlinkSync(outsideFile, symlink);
+    const res = await fetch(
+      `http://localhost:${port}/api/memory/file?path=` + encodeURIComponent(symlink),
+      { signal: AbortSignal.timeout(3000) }
+    );
+    assert.equal(res.status, 403, 'symlink escaping memory root must be denied');
+  } finally {
+    server.close();
+    try { rmSync(symlink); } catch {}
+    try { rmSync(outsideDir, { recursive: true }); } catch {}
+  }
 });
 
 process.on('exit', () => {

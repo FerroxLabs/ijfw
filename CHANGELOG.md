@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.10] -- 2026-05-06
+
 **Wayland and Hermes graduate to first-class plugins.** Six lifecycle hooks, six slash commands, deterministic memory hydration, native `register(ctx)` integration -- the same depth IJFW ships on Claude Code, now running on the Hermes lineage. One Python codebase serves both hosts via `sys.path` injection, so adding a feature to Wayland adds it to Hermes for free.
 
 ### Shared-core architecture
@@ -56,6 +58,21 @@ The Wayland/Hermes MCP dispatcher wraps every tool response as `{"result": ...}`
 ### Build receipts
 
 5 atomic wave commits + 4 hygiene commits. 21 plugin tests passing. 50+ source citations in `host-contracts.md` validate every load-bearing fact about the Wayland plugin contract before any adapter code was written. Two pre-build Trident audits (codex + gemini) caught architectural gaps before code landed; one post-build Trident caught two integration bugs (envelope unwrap, store schema) the live smokes had passed through. Fixes applied; all gates green.
+
+### Deep audit hardening across every surface
+
+A multi-agent audit pass reviewed the cumulative diff against the 1.2.9 ship and surfaced 90+ findings across CLI dispatch, install scripts, hooks, dashboard server, platform configs, and tests. Six fix waves closed every Critical, High, Medium, and Low — then five audit rounds (codex + gemini + 3 Claude specialists per round) re-checked the patched code until every reachable auditor signed off READY. Net trajectory: 63 -> 14 -> 3 -> 4 -> 3 -> 3 -> 0 net findings.
+
+Highlights:
+
+- **Hook supervision** is now canonical across Claude / Codex / Gemini. Every detached spawn closes stdin, redirects to a scoped log under `~/.ijfw/logs/`, and disowns the actual child PID (no more subshell-PID drift). 11 distinct log files keep crashes visible -- the silent-failure class that drove the 1.2.9 audit is gone.
+- **Atomic writes** unified through `mcp-server/src/lib/atomic-io.js`. State, settings, port files, marketplace JSON, uninstall configs, and context-monitor state all use the canonical `writeAtomic` (or an inline equivalent in installer/hook contexts that can't import it) -- temp files clean up on rename failure on every platform.
+- **Dashboard server** is faster and safer. The `ttlCache` invalidator is now lazy (cache hits skip the filesystem walk entirely), the cache key includes the `~/.ijfw/metrics/sessions.jsonl` ledger so cost panels stay fresh after Codex/Gemini sessions write, `/api/memory/file` canonicalizes both sides via `path.relative` so Windows backslash paths work, SSE backfill caps at 50 with `?offset` pagination, and corrupt config files are renamed aside (`<file>.corrupt.<ts>`) instead of silently returning defaults.
+- **`ijfw update --confirm`** holds the pending sentinel through install via explicit SIGINT/SIGTERM handlers + a return-code refactor (Node's `try/finally` does not run on `process.exit()` — the previous shape leaked the sentinel on every happy path). Real subprocess tests exercise spawn-error / non-zero / signal-kill cleanup paths.
+- **Install scripts** got `set -euo pipefail` with a 38-guard audit on every tolerable-failure operation. `cp -r` of plugin/MCP source is no longer suppressed with `|| true` (disk-full / AV-quarantine fail loud now). Origin migration uses a 4-entry HTTPS-only allow-list -- SSH remotes and forks stay untouched on `npm install -g @ijfw/install` and `ijfw update`. Cline detection extended to 11 paths across 3 OSes (VS Codium, VS Code Insiders, Flatpak, Snap variants).
+- **Wayland + Hermes parity** verified end-to-end. `_load_patterns` shape, warning copy, and observation logging are now identical across both plugins. User-facing strings centralized in `_strings.py` with snapshot tests so wording stays Sutherland-framed (lead with what works, never with "failed"/"missing").
+- **MCP templates** for Codex / Cursor / Copilot / Windsurf / Gemini now use `${HOME}` / `${userHome}` env-var expansion -- manual-copy of the template files works without install-time substitution.
+- **Test infrastructure** gained 4 new gates: `test-cache.js` (laziness invariant + TTL bust + env bypass), `test-memory-endpoints.js` symlink-traversal test (creates a real escaping symlink and asserts 403), 3 real-subprocess sentinel-cleanup tests in `test-1.1.6.js`, and a Gemini banner-dedup gate in `e2e-smoke.sh`. 66 unit tests + 70+ e2e gates + 9 dashboard-smoke gates -- all green.
 
 ---
 

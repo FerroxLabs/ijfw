@@ -7,11 +7,12 @@
 //
 // Zero external deps. Parse argv manually.
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, readdirSync, rmSync, renameSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, readdirSync, rmSync, realpathSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { writeAtomic } from './lib/atomic-io.js';
 import { runCrossOp } from './cross-orchestrator.js';
 import { readReceipts, purgeReceipts } from './receipts.js';
 import { renderHeroLine } from './hero-line.js';
@@ -132,6 +133,7 @@ function printFindings(mode, merged) {
       const arg = String(item.counterArg || '');
       console.log(`  Step 1.${i + 1} --${sev} ${arg}`);
     });
+    return;
   }
 }
 
@@ -262,15 +264,16 @@ function parseArgsInner(args) {
 
   if (args[0] === 'import') {
     const tool = args[1];
-    let dryRun = false, force = false, includeMetrics = false, customPath = null, allMode = false;
+    let dryRun = false, force = false, includeMetrics = false, customPath = null, allMode = false, yes = false;
     for (let i = 2; i < args.length; i++) {
       if (args[i] === '--dry-run') dryRun = true;
       else if (args[i] === '--force') force = true;
       else if (args[i] === '--all') allMode = true;
+      else if (args[i] === '--yes' || args[i] === '-y') yes = true;
       else if (args[i] === '--include-metrics') includeMetrics = true;
       else if (args[i] === '--path' && args[i + 1]) customPath = args[++i];
     }
-    return { cmd: 'import', tool, dryRun, force, includeMetrics, customPath, allMode };
+    return { cmd: 'import', tool, dryRun, force, includeMetrics, customPath, allMode, yes };
   }
 
   if (args[0] === 'cross') {
@@ -329,13 +332,15 @@ Usage:
 Commands:
   install           Install IJFW into your AI coding agents.
   uninstall         Remove IJFW and revert AI-agent configs. Same as: ijfw off
-  preflight         Run the 11-gate quality pipeline (blocking + advisory).
+  preflight         Run the 12-gate quality pipeline (blocking + advisory).
   dashboard         Control the dashboard server (start, stop, status).
+  demo              30-second live tour of the Trident (fires real auditors).
   cross             Fire external auditors at a target. Try: ijfw cross audit README.md
   import            Pull memory in from another tool. Try: ijfw import claude-mem --all
   status            Show recent cross-audit activity. Try: ijfw status
   doctor            Probe which CLIs and API keys are reachable. Try: ijfw doctor
   update            Pull latest IJFW + reinstall merge-safely. Try: ijfw update
+  update --check    Non-invasive check. Exits 0 always; prints "update-available: <ver>" when an update exists (grep-safe).
   receipt last      Print a redacted, shareable block from the last Trident run.
   --purge-receipts  Clear the cross-runs receipt log. Try: ijfw --purge-receipts
 
@@ -970,6 +975,13 @@ async function cmdImportAll(parsed) {
     return;
   }
 
+  // --all is destructive (writes to multiple project dirs). Require --yes.
+  if (!parsed.yes) {
+    console.log('This will import into all matched projects. Re-run with --yes to confirm.');
+    console.log('  ijfw import ' + parsed.tool + ' --all --yes');
+    return;
+  }
+
   // Phase 2: execute.
   console.log('Importing...\n');
   const result = await runImportAll({
@@ -1040,7 +1052,7 @@ function cmdUpdate(opts = {}) {
   if (opts.verify) return cmdUpdateVerify();
   if (opts.changelog) return cmdUpdateChangelog();
   if (opts.confirm) return cmdUpdateConfirm(opts.confirm);
-  return cmdUpdateInteractive(opts);
+  process.exit(cmdUpdateInteractive(opts));
 }
 
 function ijfwHome() {
@@ -1102,14 +1114,11 @@ function cmpSemver(a, b) {
 
 function readState() { return readJsonSafe(join(ijfwHome(), 'state.json')) || {}; }
 function readSettings() { return readJsonSafe(join(ijfwHome(), 'settings.json')) || {}; }
-function writeStateField(field, value) {
+function writeStateFields(updates) {
   const path = join(ijfwHome(), 'state.json');
-  const state = readState();
-  state[field] = value;
+  const state = Object.assign(readState(), updates);
   try {
-    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-    writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
-    renameSync(tmp, path);
+    writeAtomic(path, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
   } catch (e) {
     console.error(`could not persist state.json: ${e.message}`);
   }
@@ -1128,10 +1137,13 @@ function cmdUpdateCheck() {
     console.log(`IJFW is up to date (v${current}).`);
     process.exit(0);
   }
+  // Exit 0 + machine-readable sentinel so shell scripts can grep rather than
+  // rely on exit codes. Previously exited 3 which broke POSIX if-statements.
+  console.log(`update-available: ${r.version}`);
   console.log(`Update available: v${current} -> v${r.version}`);
   console.log(`  Release notes: https://gitlab.com/therealseandonahoe/ijfw/-/releases/v${r.version}`);
   console.log(`  Run: ijfw update`);
-  process.exit(3);
+  process.exit(0);
 }
 
 function cmdUpdateVerify() {
@@ -1207,9 +1219,7 @@ function cmdUpdateAuto(value) {
   if (!settings.schema_version) settings.schema_version = 1;
   settings.auto_update = value;
   try {
-    const tmp = `${settingsPath}.tmp.${process.pid}.${Date.now()}`;
-    writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
-    renameSync(tmp, settingsPath);
+    writeAtomic(settingsPath, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
     console.log(`auto_update set to "${value}".`);
   } catch (e) {
     console.error(`could not persist settings.json: ${e.message}`);
@@ -1245,27 +1255,43 @@ function cmdUpdateConfirm(token) {
     process.exit(1);
   }
   console.log(`Confirming update to v${pending.target_version}...`);
-  // Clear sentinel + run interactive update
-  try { rmSync(sentinelPath, { force: true }); } catch { /* */ }
-  cmdUpdateInteractive({ yes: true, _confirmedFromToken: pending.target_version });
+  // Hold sentinel through install; remove synchronously on all paths
+  // (happy + error + signal). Node does NOT run pending `finally` blocks
+  // on SIGINT/SIGTERM by default, so register explicit handlers that
+  // scrub the sentinel before exit.
+  const scrubAndExit = (sig) => {
+    try { rmSync(sentinelPath, { force: true }); } catch { /* */ }
+    // Mimic the shell's default exit code for the signal: 128 + signum.
+    const signum = sig === 'SIGINT' ? 2 : sig === 'SIGTERM' ? 15 : 1;
+    process.exit(128 + signum);
+  };
+  process.on('SIGINT', () => scrubAndExit('SIGINT'));
+  process.on('SIGTERM', () => scrubAndExit('SIGTERM'));
+  let exitCode = 1;
+  try {
+    exitCode = cmdUpdateInteractive({ yes: true, _confirmedFromToken: pending.target_version });
+  } finally {
+    try { rmSync(sentinelPath, { force: true }); } catch { /* */ }
+  }
+  process.exit(exitCode);
 }
 
 function cmdUpdateInteractive(opts = {}) {
   if (process.env.IJFW_FROM_MCP === '1' && opts.yes) {
     console.error('Refusing: `ijfw update --yes` from an MCP-spawned context. Run from your terminal.');
-    process.exit(1);
+    return 1;
   }
   const state = readState();
   const current = state.installed_version || '0.0.0';
   const r = npmViewVersion('@ijfw/install');
   if (!r.ok) {
     console.error(`Update check failed: ${r.message}`);
-    process.exit(1);
+    return 1;
   }
   const cmp = cmpSemver(current, r.version);
   if (cmp >= 0) {
     console.log(`IJFW is up to date (v${current}). Nothing to do.`);
-    process.exit(0);
+    return 0;
   }
   console.log(`IJFW update v${current} -> v${r.version}`);
   console.log('');
@@ -1281,7 +1307,7 @@ function cmdUpdateInteractive(opts = {}) {
     console.log('  Provenance: WARNING -- could not verify signatures');
     if (!opts.yes) {
       console.log('  Continuing requires --yes (acknowledge unverified provenance).');
-      process.exit(1);
+      return 1;
     }
   }
   // Method dispatch
@@ -1294,21 +1320,39 @@ function cmdUpdateInteractive(opts = {}) {
       stdio: 'inherit',
       shell: process.platform === 'win32',
     });
+    if (installRes.error) {
+      console.error(`npm install -g could not be spawned (${installRes.error.code}). Run \`npm install -g @ijfw/install@${r.version}\` manually.`);
+      return 1;
+    }
+    if (installRes.signal) {
+      console.error(`npm install -g killed by ${installRes.signal}. Run \`npm install -g @ijfw/install@${r.version}\` manually.`);
+      return 1;
+    }
+    if (installRes.status !== 0) {
+      console.error(`npm install -g did not complete (exit ${installRes.status}). Run \`npm install -g @ijfw/install@${r.version}\` manually.`);
+      return 1;
+    }
     // npm install -g only refreshes the CLI shim. The mcp-server payload under
     // ~/.ijfw/mcp-server/ comes from the git tree and is only refreshed when
     // ijfw-install runs. Without this, `ijfw update` reports "updated" while
     // the actual MCP tools keep running stale code until the next manual
     // ijfw-install. Auto-invoke ijfw-install so the upgrade self-completes.
-    if (installRes && installRes.status === 0) {
-      console.log('  Refreshing ~/.ijfw/ via ijfw-install...');
-      const refresh = spawnSync('ijfw-install', [], {
-        stdio: 'inherit',
-        shell: process.platform === 'win32',
-      });
-      if (!refresh || refresh.status !== 0) {
-        console.error(`Auto-refresh did not complete (exit ${refresh ? refresh.status : 'no-exec'}). Run \`ijfw-install\` manually to finish the upgrade.`);
-        process.exit(1);
-      }
+    console.log('  Refreshing ~/.ijfw/ via ijfw-install...');
+    const refresh = spawnSync('ijfw-install', [], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
+    if (refresh.error) {
+      console.error(`Auto-refresh could not be spawned (${refresh.error.code}). Run \`ijfw-install\` manually to finish the upgrade.`);
+      return 1;
+    }
+    if (refresh.signal) {
+      console.error(`Auto-refresh killed by ${refresh.signal}. Run \`ijfw-install\` manually to finish the upgrade.`);
+      return 1;
+    }
+    if (refresh.status !== 0) {
+      console.error(`Auto-refresh did not complete (exit ${refresh.status}). Run \`ijfw-install\` manually to finish the upgrade.`);
+      return 1;
     }
   } else if (method === 'git-clone') {
     const repoRoot = repoRootFromCli();
@@ -1321,23 +1365,48 @@ function cmdUpdateInteractive(opts = {}) {
       console.error('git pull failed:');
       if (pull.stderr) console.error(pull.stderr.trim().split('\n').map(l => '  ' + l).join('\n'));
       console.error(`  Run \`git -C ${repoRoot} status\` to inspect.`);
-      process.exit(1);
+      return 1;
+    }
+    console.log('  Running: npm install --omit=dev --ignore-scripts');
+    const npmInstall = spawnSync('npm', ['install', '--omit=dev', '--ignore-scripts'], {
+      cwd: repoRoot,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
+    if (npmInstall.error) {
+      console.error(`npm install could not be spawned (${npmInstall.error.code}). Run \`npm install --omit=dev --ignore-scripts\` in ${repoRoot} manually.`);
+      return 1;
+    }
+    if (npmInstall.signal) {
+      console.error(`npm install killed by ${npmInstall.signal}. Run \`npm install --omit=dev --ignore-scripts\` in ${repoRoot} manually.`);
+      return 1;
+    }
+    if (npmInstall.status !== 0) {
+      console.error(`npm install did not complete (exit ${npmInstall.status}). Run \`npm install --omit=dev --ignore-scripts\` in ${repoRoot} manually.`);
+      return 1;
     }
     installRes = spawnSync('bash', [installSh], { stdio: 'inherit' });
   } else {
     console.log('  Manual install detected -- run: npx @ijfw/install');
     installRes = spawnSync('npx', ['-y', `@ijfw/install@${r.version}`], { stdio: 'inherit' });
   }
-  if (!installRes || installRes.status !== 0) {
-    console.error(`Update did not complete (exit ${installRes ? installRes.status : 'no-exec'})`);
-    process.exit(1);
+  if (!installRes) {
+    console.error('Update did not complete (install command could not be spawned)');
+    return 1;
   }
-  // Persist re-entrancy sentinel
-  writeStateField('last_applied_version', r.version);
-  writeStateField('installed_version', r.version);
+  if (installRes.signal) {
+    console.error(`Update did not complete (killed by ${installRes.signal}). State not written.`);
+    return 1;
+  }
+  if (installRes.status !== 0) {
+    console.error(`Update did not complete (exit ${installRes.status}). State not written.`);
+    return 1;
+  }
+  // Persist both fields atomically -- single write avoids concurrent-reader inconsistency
+  writeStateFields({ last_applied_version: r.version, installed_version: r.version });
   console.log('');
   console.log(`IJFW updated to v${r.version}. Run \`ijfw status\` to confirm.`);
-  process.exit(0);
+  return 0;
 }
 
 // `ijfw --version` (pure) and `ijfw --version --verbose` per v3 �section MEDIUM
@@ -1407,10 +1476,7 @@ function readClaudeSettings() {
 
 function writeClaudeSettings(path, data) {
   try {
-    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-    if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
-    renameSync(tmp, path);
+    writeAtomic(path, JSON.stringify(data, null, 2) + '\n');
     return true;
   } catch (e) {
     console.error(`could not write ${path}: ${e.message}`);
@@ -1425,9 +1491,7 @@ function setIjfwStatuslineSetting(field, value) {
   if (!settings.statusline) settings.statusline = {};
   settings.statusline[field] = value;
   try {
-    const tmp = `${settingsPath}.tmp.${process.pid}.${Date.now()}`;
-    writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
-    renameSync(tmp, settingsPath);
+    writeAtomic(settingsPath, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
     return true;
   } catch (e) {
     console.error(`could not persist settings.json: ${e.message}`);
@@ -1549,10 +1613,12 @@ function statuslineRecompute() {
 
 function cmdConfig(sub) {
   if (sub === 'audit') {
-    console.log('ijfw config --audit -- placeholder (resolution hierarchy lands in 1.1.7).');
+    console.log('ijfw config --audit -- this feature is queued for a later release.');
+    console.log('Track progress: https://gitlab.com/therealseandonahoe/ijfw/issues');
     return;
   }
-  console.log('Usage: ijfw config --audit (placeholder; lands in 1.1.7)');
+  console.log('Usage: ijfw config --audit');
+  console.log('  --audit   Show the active configuration resolution hierarchy (queued for a later release).');
 }
 
 function cmdInsight(sub) {
@@ -1568,9 +1634,12 @@ function cmdInsight(sub) {
 // Strips absolute paths + project basenames so the user can paste it in
 // PR comments / Slack without leaking environment detail.
 
+const RECEIPT_SUBS = new Set(['last']);
+
 function cmdReceipt(sub = 'last') {
-  if (sub !== 'last') {
-    console.log('Usage: ijfw receipt last');
+  if (!RECEIPT_SUBS.has(sub)) {
+    console.log(`Unknown receipt sub-command: ${sub}`);
+    console.log(`Usage: ijfw receipt <${[...RECEIPT_SUBS].join('|')}>`);
     process.exit(1);
   }
   const receipts = readReceipts(process.cwd());
@@ -1607,6 +1676,8 @@ function redact(s) {
   return s
     .replace(/\/Users\/[^/\s]+/g, '~')
     .replace(/\/home\/[^/\s]+/g, '~')
+    .replace(/\/var\/folders\/[^/]+\/[^/]+\/T\//g, '/tmp/')
+    .replace(/\/run\/user\/\d+\//g, '/run/user/<uid>/')
     .replace(/[A-Z]:\\Users\\[^\\\s]+/g, '%USERPROFILE%');
 }
 
@@ -1662,10 +1733,15 @@ host.appendChild(range.createContextualFragment(marked.parse(md)));
     return;
   }
 
-  // Terminal: pipe through less -R when available + interactive, else cat.
+  // Terminal: pipe through less -R when available + interactive, else dump to stdout.
+  // If less exits non-zero (e.g. user hits q, or less is broken), fall back to
+  // plain stdout so the content is never silently swallowed.
   const lessAvailable = spawnSync('less', ['--version'], { stdio: 'ignore' }).status === 0;
   if (lessAvailable && process.stdout.isTTY) {
-    spawnSync('less', ['-R'], { input: md, stdio: ['pipe', 'inherit', 'inherit'] });
+    const lessRes = spawnSync('less', ['-R'], { input: md, stdio: ['pipe', 'inherit', 'inherit'] });
+    if (lessRes.status !== 0 && lessRes.status !== null) {
+      process.stdout.write(md);
+    }
   } else {
     process.stdout.write(md);
   }

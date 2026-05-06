@@ -1,7 +1,6 @@
 <!-- PLATFORM_HEADER -->
 <!-- These rules apply when running IJFW on Claude Code. The `ijfw-core` skill loads this file as its always-on rules. -->
 
-
 # IJFW Rules
 # It Just Fucking Works -- AI Efficiency Framework by Sean Donahoe
 

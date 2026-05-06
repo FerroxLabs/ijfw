@@ -25,6 +25,30 @@ fi
 mkdir -p "$IJFW_DIR/memory" "$IJFW_DIR/sessions" "$IJFW_DIR/index" 2>/dev/null
 mkdir -p "$IJFW_GLOBAL/memory" 2>/dev/null
 
+# Gemini CLI 0.41+ renders systemMessage twice (welcome panel + chat info).
+# Dedup by session_id so the second invocation emits empty and exits early.
+SESSION_ID=""
+if command -v node >/dev/null 2>&1 && [ -n "$HOOK_STDIN" ]; then
+  SESSION_ID=$(printf '%s' "$HOOK_STDIN" | node -e '
+    let buf = "";
+    process.stdin.on("data", c => buf += c);
+    process.stdin.on("end", () => {
+      try { const j = JSON.parse(buf); process.stdout.write(j.session_id || ""); } catch {}
+    });
+  ' 2>/dev/null || true)
+fi
+
+if [ -n "$SESSION_ID" ]; then
+  LOCK_DIR="$IJFW_DIR/.banner-shown.${SESSION_ID}.lock"
+  # Atomic mkdir -- only one invocation wins; the other exits early.
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '{"decision":"allow"}\n'
+    exit 0
+  fi
+  # Purge stale lock dirs older than 24h.
+  find "$IJFW_DIR" -maxdepth 1 -name '.banner-shown.*.lock' -mtime +1 -type d -exec rmdir {} + 2>/dev/null || true
+fi
+
 # Project registry.
 REGISTRY_FILE="$IJFW_GLOBAL/registry.md"
 PROJECT_PATH=$(pwd -P 2>/dev/null)
@@ -81,7 +105,8 @@ BANNER="$BANNER
 # Render dashboard async fire-and-forget (D-F3: non-blocking, matches Claude approach).
 _DASH_SCRIPT="$(dirname "$0")/session-start-dashboard.sh"
 if [ -f "$_DASH_SCRIPT" ]; then
-  bash "$_DASH_SCRIPT" >>"$HOME/.ijfw/logs/obs-capture.log" 2>&1 &
+  mkdir -p "$HOME/.ijfw/logs" 2>/dev/null || true
+  bash "$_DASH_SCRIPT" >>"$HOME/.ijfw/logs/dashboard.log" 2>&1 &
   disown $! 2>/dev/null || true
 fi
 

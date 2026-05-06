@@ -22,6 +22,8 @@
 # E4 -- universal disable switch.
 [ "${IJFW_DISABLE:-}" = "1" ] && exit 0
 
+mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+
 # Prompt-improver coexistence:
 # - Project-level tasks (brainstorm/project-scale): IJFW handles EVERYTHING
 #   including clarification. No deferring. No prompt-improver. IJFW's workflow
@@ -97,6 +99,7 @@ try { payload = JSON.parse(process.argv[1] || '{}'); } catch {}
 const prompt = payload.prompt || '';
 
 const contextParts = [];
+let intent = null;
 $ROUTER_CALL
 $FEEDBACK_CALL
 
@@ -111,7 +114,7 @@ if (feedback && feedback.length) {
   } catch {}
 }
 
-// Determine if this is a project-level intent (set by router above)
+// Determine if this is a project-level intent (set by router above; null if router absent)
 const isProjectIntent = intent && (intent.intent === 'brainstorm' || intent.intent === 'project-scale');
 const hasPromptImprover = process.env.HAS_PROMPT_IMPROVER === '1';
 
@@ -148,7 +151,7 @@ if (contextParts.length > 0) {
     }
   }));
 }
-" "$HOOK_STDIN" "$DETECTOR" "$ROUTER_ARG" "$FEEDBACK_ARG" 2>/dev/null)
+" "$HOOK_STDIN" "$DETECTOR" "$ROUTER_ARG" "$FEEDBACK_ARG" 2>>"$HOME/.ijfw/logs/pre-prompt.log")
 
 if [ -n "$RESULT" ]; then
   printf '%s' "$RESULT"

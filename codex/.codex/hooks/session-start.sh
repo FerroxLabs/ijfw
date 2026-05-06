@@ -14,9 +14,11 @@ IJFW_GLOBAL="$HOME/.ijfw"
 # 1.1.6: cross-platform parity -- fire detached background update-check.
 # Reuses the Claude-tree script (same logic across platforms). Wrapped in
 # fire-and-forget so Codex's session-start ceiling stays clean.
+mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
 IJFW_CHECK_UPDATE_SH="$HOME/.ijfw/claude/hooks/scripts/ijfw-check-update.sh"
 if [ -x "$IJFW_CHECK_UPDATE_SH" ]; then
-  ( "$IJFW_CHECK_UPDATE_SH" </dev/null >/dev/null 2>&1 & ) &
+  "$IJFW_CHECK_UPDATE_SH" </dev/null >>"$HOME/.ijfw/logs/update-check.log" 2>&1 &
+  disown $! 2>/dev/null || true
 fi
 
 # Read stdin payload (best-effort).
@@ -86,7 +88,7 @@ BANNER="$BANNER
 # Render dashboard async (does not block or affect stdout envelope).
 _DASH_SCRIPT="$(dirname "$0")/session-start-dashboard.sh"
 if [ -f "$_DASH_SCRIPT" ]; then
-  bash "$_DASH_SCRIPT" >>"$HOME/.ijfw/logs/obs-capture.log" 2>&1 &
+  bash "$_DASH_SCRIPT" >>"$HOME/.ijfw/logs/dashboard.log" 2>&1 &
   disown $! 2>/dev/null || true
 fi
 

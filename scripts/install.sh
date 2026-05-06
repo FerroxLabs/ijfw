@@ -14,7 +14,7 @@
 #   - Never prompts -- merge is always the safe default.
 #   - Shows what was added/kept at the end.
 
-set -u
+set -euo pipefail
 
 REPO_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Canonicalize HOME the same way. On macOS /var/folders is a symlink to
@@ -56,6 +56,32 @@ if [ "$PWD_REAL" = "$REPO_ROOT" ] \
    && [ -d "$REPO_ROOT/.git" ]; then
   if grep -q '"name": *"@ijfw/install"' "$REPO_ROOT/installer/package.json" 2>/dev/null; then
     IS_IJFW_SOURCE=1
+  fi
+fi
+
+DEFAULT_REPO="https://gitlab.com/therealseandonahoe/ijfw.git"
+
+# Origin-URL migration parity with install.js cloneOrPull (W6.4).
+# When the repo's canonical URL has moved, silently re-point origin so future
+# git operations (e.g. `ijfw update`) use the current host. Only runs when
+# REPO_ROOT is a real git checkout (not an rsync/zip unpack).
+if [ -d "$REPO_ROOT/.git" ]; then
+  _current_origin="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+  # Only migrate origins that are known stale canonical URLs -- never clobber
+  # SSH remotes, forks, or user-customized origins.
+  _migrate_origin=0
+  case "$_current_origin" in
+    "https://github.com/seandonahoe/ijfw.git" \
+    | "https://github.com/seandonahoe/ijfw" \
+    | "https://github.com/seandonahoe/ijfw.git/" \
+    | "https://github.com/seandonahoe/ijfw/") _migrate_origin=1 ;;
+  esac
+  if [ "$_migrate_origin" = "1" ]; then
+    if git -C "$REPO_ROOT" remote set-url origin "$DEFAULT_REPO" 2>/dev/null; then
+      printf '  origin migration: %s -> %s\n' "$_current_origin" "$DEFAULT_REPO"
+    else
+      printf '  [!] origin migration failed -- could not repoint %s to %s\n' "$_current_origin" "$DEFAULT_REPO" >&2
+    fi
   fi
 fi
 
@@ -173,7 +199,12 @@ done
 [ ${#TARGETS[@]} -eq 0 ] && TARGETS=(claude codex gemini cursor windsurf copilot hermes wayland opencode qwen cline kimi openclaw aider)
 
 if [ ! -x "$LAUNCHER" ]; then
-  chmod +x "$LAUNCHER" 2>/dev/null
+  _chmod_rc=0
+  chmod +x "$LAUNCHER" 2>/dev/null || _chmod_rc=$?
+  if [ "$_chmod_rc" -ne 0 ]; then
+    printf '  [!] chmod +x %s failed (exit %d) -- launcher may not be executable\n' "$LAUNCHER" "$_chmod_rc" \
+      >> "${IJFW_INSTALL_LOG:-$HOME/.ijfw/logs/install.log}" 2>/dev/null || true
+  fi
 fi
 if [ ! -f "$LAUNCHER" ]; then
   printf "MCP launcher missing at %s. Re-run the installer from the IJFW source tree.\n" "$LAUNCHER" >&2
@@ -199,10 +230,16 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
 esac
 
+# Canonicalize both sides with cd -P so symlinked REPO_ROOT (e.g. on macOS
+# where /var/folders is a symlink to /private/var/folders) doesn't produce a
+# false negative in the self-loop comparison.
+PLUGIN_SRC_REAL="$(cd -P "$PLUGIN_SRC" 2>/dev/null && pwd || printf '%s' "$PLUGIN_SRC")"
+PLUGIN_DST_REAL_CMP="$(cd -P "$PLUGIN_DST" 2>/dev/null && pwd || printf '%s' "$PLUGIN_DST")"
+
 # Skip user-home sibling links entirely when scoped to a custom dir.
 if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
   printf "  [+] Custom-dir install -- skipping ~/.ijfw/ sibling links (canonical-dir feature).\n"
-elif [ "$PLUGIN_SRC" = "$PLUGIN_DST" ]; then
+elif [ "$PLUGIN_SRC_REAL" = "$PLUGIN_DST_REAL_CMP" ]; then
   # Self-loop guard: when REPO_ROOT == $HOME/.ijfw (user installed into the
   # canonical home and the source happens to live there), the plugin is
   # already at PLUGIN_DST. Symlinking would create a self-loop.
@@ -212,10 +249,10 @@ else
   if [ "$IS_WINDOWS" -eq 1 ]; then
     # No reliable symlinks on Windows without admin/dev-mode. Mirror the tree.
     if [ -d "$PLUGIN_DST" ] && [ ! -L "$PLUGIN_DST" ]; then
-      cp -r "$PLUGIN_SRC"/. "$PLUGIN_DST"/ 2>/dev/null
+      cp -r "$PLUGIN_SRC"/. "$PLUGIN_DST"/
     else
-      rm -rf "$PLUGIN_DST" 2>/dev/null
-      cp -r "$PLUGIN_SRC" "$PLUGIN_DST" 2>/dev/null
+      rm -rf "$PLUGIN_DST" 2>/dev/null || true
+      cp -r "$PLUGIN_SRC" "$PLUGIN_DST"
     fi
   else
     # POSIX: symlink, retargeting if wrong, fixing if broken.
@@ -418,7 +455,7 @@ fi
 if [ "$IJFW_CUSTOM_DIR" != "1" ]; then
   CLAUDE_PLUGIN_CACHE="$HOME/.claude/plugins/cache/ijfw"
   if [ -d "$CLAUDE_PLUGIN_CACHE" ]; then
-    rm -rf "$CLAUDE_PLUGIN_CACHE" 2>/dev/null
+    rm -rf "$CLAUDE_PLUGIN_CACHE" 2>/dev/null || true
   fi
 fi
 
@@ -433,25 +470,29 @@ MCP_DST="$HOME_REAL/.ijfw/mcp-server"
 # Same scope guard for the MCP sibling link.
 if [ "$IJFW_CUSTOM_DIR" = "1" ]; then
   : # custom-dir install already skipped in plugin section above
-elif [ "$MCP_SRC" = "$MCP_DST" ]; then
-  # Self-loop guard: source and destination resolve to the same path.
-  printf "  [+] MCP source already at canonical path -- symlink not needed.\n"
-elif [ "$IS_WINDOWS" -eq 1 ]; then
-  if [ -d "$MCP_DST" ] && [ ! -L "$MCP_DST" ]; then
-    cp -r "$MCP_SRC"/. "$MCP_DST"/ 2>/dev/null
-  else
-    rm -rf "$MCP_DST" 2>/dev/null
-    cp -r "$MCP_SRC" "$MCP_DST" 2>/dev/null
-  fi
 else
-  if [ -L "$MCP_DST" ]; then
-    CUR_TARGET="$(readlink "$MCP_DST")"
-    [ "$CUR_TARGET" != "$MCP_SRC" ] && ln -sfn "$MCP_SRC" "$MCP_DST"
-  elif [ -e "$MCP_DST" ]; then
-    mv "$MCP_DST" "$MCP_DST.backup.$TS"
-    ln -sfn "$MCP_SRC" "$MCP_DST"
+  MCP_SRC_REAL="$(cd -P "$MCP_SRC" 2>/dev/null && pwd || printf '%s' "$MCP_SRC")"
+  MCP_DST_REAL="$(cd -P "$MCP_DST" 2>/dev/null && pwd || printf '%s' "$MCP_DST")"
+  if [ -n "$MCP_SRC_REAL" ] && [ "$MCP_SRC_REAL" = "$MCP_DST_REAL" ]; then
+    # Self-loop guard: source and destination resolve to the same path.
+    printf "  [+] MCP source already at canonical path -- symlink not needed.\n"
+  elif [ "$IS_WINDOWS" -eq 1 ]; then
+    if [ -d "$MCP_DST" ] && [ ! -L "$MCP_DST" ]; then
+      cp -r "$MCP_SRC"/. "$MCP_DST"/
+    else
+      rm -rf "$MCP_DST" 2>/dev/null || true
+      cp -r "$MCP_SRC" "$MCP_DST"
+    fi
   else
-    ln -sfn "$MCP_SRC" "$MCP_DST"
+    if [ -L "$MCP_DST" ]; then
+      CUR_TARGET="$(readlink "$MCP_DST")"
+      [ "$CUR_TARGET" != "$MCP_SRC" ] && ln -sfn "$MCP_SRC" "$MCP_DST"
+    elif [ -e "$MCP_DST" ]; then
+      mv "$MCP_DST" "$MCP_DST.backup.$TS"
+      ln -sfn "$MCP_SRC" "$MCP_DST"
+    else
+      ln -sfn "$MCP_SRC" "$MCP_DST"
+    fi
   fi
 fi
 
@@ -504,8 +545,15 @@ is_live() {
     opencode) command -v opencode >/dev/null 2>&1 || [ -d "$HOME/.config/opencode" ] ;;
     qwen)     command -v qwen >/dev/null 2>&1 || [ -d "$HOME/.qwen" ] ;;
     cline)    [ -d "$HOME/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "$HOME/Library/Application Support/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "$HOME/Library/Application Support/VSCodium/User/globalStorage/saoudrizwan.claude-dev" ] \
               || [ -d "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "$HOME/.config/VSCodium/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "$HOME/.var/app/com.visualstudio.code/config/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "$HOME/snap/code/current/.config/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
               || [ -d "${APPDATA:-}/Code/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "${APPDATA:-}/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev" ] \
+              || [ -d "${APPDATA:-}/VSCodium/User/globalStorage/saoudrizwan.claude-dev" ] \
               || [ -d "$HOME/.vscode/extensions" ] ;;
     kimi)     command -v kimi >/dev/null 2>&1 || [ -d "$HOME/.kimi" ] ;;
     openclaw) command -v openclaw >/dev/null 2>&1 || [ -d "$HOME/.openclaw" ] ;;
@@ -541,6 +589,16 @@ backup() {
   fi
 }
 
+_safe_checksum() {
+  local f="$1"
+  if command -v md5sum >/dev/null 2>&1; then md5sum "$f" 2>/dev/null | awk '{print $1}'
+  elif command -v md5 >/dev/null 2>&1; then md5 -q "$f" 2>/dev/null
+  elif command -v sha1sum >/dev/null 2>&1; then sha1sum "$f" 2>/dev/null | awk '{print $1}'
+  else printf ''
+  fi
+  return 0
+}
+
 # install_hook <src> <dst>
 # Always deploys the latest hook. If dst exists and differs from src:
 #   - check if dst also differs from the original installed version (user-modified)
@@ -550,24 +608,24 @@ install_hook() {
   [ -f "$src" ] || return 0
   if [ -f "$dst" ]; then
     local src_sum dst_sum
-    src_sum=$(md5sum "$src" 2>/dev/null || md5 -q "$src" 2>/dev/null || sha1sum "$src" 2>/dev/null | cut -d' ' -f1)
-    dst_sum=$(md5sum "$dst" 2>/dev/null || md5 -q "$dst" 2>/dev/null || sha1sum "$dst" 2>/dev/null | cut -d' ' -f1)
+    src_sum=$(_safe_checksum "$src")
+    dst_sum=$(_safe_checksum "$dst")
     # 1.2.5 (B4.5): if no checksum util is on host (md5sum + md5 + sha1sum all
     # missing -- rare but real on stripped containers), both vars are empty
     # and would compare equal, so updates would be silently skipped. Force a
     # back-up-then-copy in that case so updates always apply.
     if [ -z "$src_sum" ] || [ -z "$dst_sum" ]; then
-      cp "$dst" "$dst.bak.$TS" 2>/dev/null
+      cp "$dst" "$dst.bak.$TS" 2>/dev/null || true
       log "  [--] Updated $(basename "$dst") (no checksum util on host -- precautionary backup)"
     elif [ "$src_sum" = "$dst_sum" ]; then
       return 0  # identical -- nothing to do
     else
-      cp "$dst" "$dst.bak.$TS" 2>/dev/null
+      cp "$dst" "$dst.bak.$TS" 2>/dev/null || true
       log "  [--] Updated $(basename "$dst") (your custom version backed up to $(basename "$dst").bak.$TS)"
     fi
   fi
   cp "$src" "$dst"
-  chmod +x "$dst" 2>/dev/null
+  chmod +x "$dst" 2>/dev/null || true
 }
 
 # --- OpenCode-shaped merge: top-level "mcp" with type:"local" + command:[arr] ---
@@ -630,11 +688,46 @@ openclaw_merge() {
 cline_merge() {
   local server_js="$1"
   local user_dir=""
-  case "$(uname -s 2>/dev/null)" in
-    Darwin)                     user_dir="$HOME/Library/Application Support/Code/User" ;;
-    CYGWIN*|MINGW*|MSYS_NT*)    user_dir="${APPDATA:-$HOME/AppData/Roaming}/Code/User" ;;
-    *)                          user_dir="$HOME/.config/Code/User" ;;
+  local _os; _os="$(uname -s 2>/dev/null)"
+  # Build ordered candidate list; first existing globalStorage dir wins.
+  local _candidates=()
+  case "$_os" in
+    Darwin)
+      _candidates=(
+        "$HOME/Library/Application Support/Code/User"
+        "$HOME/Library/Application Support/Code - Insiders/User"
+        "$HOME/Library/Application Support/VSCodium/User"
+      )
+      ;;
+    CYGWIN*|MINGW*|MSYS_NT*)
+      _candidates=(
+        "${APPDATA:-$HOME/AppData/Roaming}/Code/User"
+        "${APPDATA:-$HOME/AppData/Roaming}/Code - Insiders/User"
+        "${APPDATA:-$HOME/AppData/Roaming}/VSCodium/User"
+      )
+      ;;
+    *)
+      _candidates=(
+        "$HOME/.config/Code/User"
+        "$HOME/.config/VSCodium/User"
+        "$HOME/.var/app/com.visualstudio.code/config/Code/User"
+        "$HOME/snap/code/current/.config/Code/User"
+      )
+      ;;
   esac
+  for _c in "${_candidates[@]}"; do
+    if [ -d "$_c/globalStorage/saoudrizwan.claude-dev" ]; then
+      user_dir="$_c"; break
+    fi
+  done
+  # Fall back to OS default when no existing install detected.
+  if [ -z "$user_dir" ]; then
+    case "$_os" in
+      Darwin)              user_dir="$HOME/Library/Application Support/Code/User" ;;
+      CYGWIN*|MINGW*|MSYS_NT*) user_dir="${APPDATA:-$HOME/AppData/Roaming}/Code/User" ;;
+      *)                   user_dir="$HOME/.config/Code/User" ;;
+    esac
+  fi
   local dst="$user_dir/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
   mkdir -p "$(dirname "$dst")"
   backup "$dst"
@@ -882,7 +975,7 @@ PY
   if ! grep -qE "^\s+- $plugin_name\$" "$tmp"; then
     sed -i.bak "s/^  enabled: \[\]/  enabled:\n    - $plugin_name/" "$tmp" 2>/dev/null || \
     printf '    - %s\n' "$plugin_name" >> "$tmp"
-    rm -f "$tmp.bak" 2>/dev/null
+    rm -f "$tmp.bak" 2>/dev/null || true
   fi
   mv "$tmp" "$dst"
 }
@@ -891,7 +984,7 @@ PY
 # tight Live-now / Standing-by summary at the end. Power users hit --verbose
 # to see everything, or tail the log.
 LOGFILE="${IJFW_INSTALL_LOG:-$HOME/.ijfw/install.log}"
-mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null
+mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
 : > "$LOGFILE" 2>/dev/null || LOGFILE=/dev/null
 
 VERBOSE=0
@@ -903,7 +996,7 @@ done
 
 log() {
   if [ "$VERBOSE" -eq 1 ]; then printf '%s\n' "$1"; fi
-  printf '%s\n' "$1" >> "$LOGFILE" 2>/dev/null
+  printf '%s\n' "$1" >> "$LOGFILE" 2>/dev/null || true
 }
 
 # Redefine ok/note/info to write through log() so the loop stays quiet by
@@ -937,7 +1030,7 @@ for target in "${TARGETS[@]}"; do
       CLAUDE_PLUGIN_PATH="$HOME/.ijfw/claude"
       CLAUDE_SETTINGS="$HOME/.claude/settings.json"
       CLAUDE_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
-      mkdir -p "$HOME/.claude/plugins" 2>/dev/null
+      mkdir -p "$HOME/.claude/plugins" 2>/dev/null || true
       # Backup settings.json before modifying.
       backup "$CLAUDE_SETTINGS"
       node -e '
@@ -1023,7 +1116,12 @@ for target in "${TARGETS[@]}"; do
       ' "$CLAUDE_SETTINGS" "$SERVER_JS_NATIVE"
 
       # Ensure launcher is executable (zip transfers may strip chmod +x).
-      chmod +x "$LAUNCHER" 2>/dev/null
+      _chmod_rc2=0
+      chmod +x "$LAUNCHER" 2>/dev/null || _chmod_rc2=$?
+      if [ "$_chmod_rc2" -ne 0 ]; then
+        printf '  [!] chmod +x %s failed (exit %d) -- launcher may not be executable\n' "$LAUNCHER" "$_chmod_rc2" \
+          >> "${IJFW_INSTALL_LOG:-$HOME/.ijfw/logs/install.log}" 2>/dev/null || true
+      fi
 
       ok "Claude Code ready."
       note ".claudeignore template at $REPO_ROOT/claude/.claudeignore"
@@ -1169,13 +1267,13 @@ for target in "${TARGETS[@]}"; do
       EXT_DST="$HOME/.gemini/extensions/ijfw"
       EXT_SRC="$REPO_ROOT/gemini/extensions/ijfw"
       mkdir -p "$EXT_DST/hooks" "$EXT_DST/skills" "$EXT_DST/commands" \
-               "$EXT_DST/agents" "$EXT_DST/policies" 2>/dev/null
+               "$EXT_DST/agents" "$EXT_DST/policies" 2>/dev/null || true
       # Manifest, context file, hooks.json, policy -- copy if absent.
       for f in gemini-extension.json IJFW.md hooks/hooks.json policies/ijfw.toml; do
         if [ ! -f "$EXT_DST/$f" ]; then
           ddir=$(dirname "$EXT_DST/$f")
-          mkdir -p "$ddir" 2>/dev/null
-          cp "$EXT_SRC/$f" "$EXT_DST/$f" 2>/dev/null
+          mkdir -p "$ddir" 2>/dev/null || true
+          cp "$EXT_SRC/$f" "$EXT_DST/$f" 2>/dev/null || true
         fi
       done
       # Expand {{extensionPath}} in hooks.json to the absolute install dir.
@@ -1277,7 +1375,7 @@ for target in "${TARGETS[@]}"; do
       # W4.1 / E2 -- copy the copilot-instructions.md to .github/ (Copilot's
       # project-instructions convention) if not already present.
       if [ ! -f ".github/copilot-instructions.md" ] && [ -f "$REPO_ROOT/copilot/copilot-instructions.md" ]; then
-        mkdir -p .github 2>/dev/null
+        mkdir -p .github 2>/dev/null || true
         cp "$REPO_ROOT/copilot/copilot-instructions.md" .github/copilot-instructions.md 2>/dev/null \
           && ok "Merged MCP + installed .github/copilot-instructions.md" \
           || ok "Merged MCP into project ./.vscode/mcp.json"
@@ -1298,23 +1396,23 @@ for target in "${TARGETS[@]}"; do
       merge_yaml_mcp "$dst" "$SERVER_JS_NATIVE"
       # Drop HERMES.md context file if absent (don't overwrite user edits).
       if [ ! -f "$HOME/.hermes/HERMES.md" ] && [ -f "$REPO_ROOT/hermes/HERMES.md" ]; then
-        mkdir -p "$HOME/.hermes" 2>/dev/null
-        cp "$REPO_ROOT/hermes/HERMES.md" "$HOME/.hermes/HERMES.md" 2>/dev/null
+        mkdir -p "$HOME/.hermes" 2>/dev/null || true
+        cp "$REPO_ROOT/hermes/HERMES.md" "$HOME/.hermes/HERMES.md" 2>/dev/null || true
       fi
       # Skills: Hermes reads ~/.hermes/skills/<name>/SKILL.md (agentskills.io format).
       # IJFW's shared/skills/ is already in that format -- copy new ones only.
-      mkdir -p "$HOME/.hermes/skills" 2>/dev/null
+      mkdir -p "$HOME/.hermes/skills" 2>/dev/null || true
       for skill_dir in "$REPO_ROOT/shared/skills/"*/; do
         skill_name=$(basename "$skill_dir")
         if [ ! -d "$HOME/.hermes/skills/$skill_name" ]; then
-          cp -r "$skill_dir" "$HOME/.hermes/skills/$skill_name" 2>/dev/null
+          cp -r "$skill_dir" "$HOME/.hermes/skills/$skill_name"
         fi
       done
       # Plugin: copy wayland-parity plugin layer to ~/.hermes/plugins/ijfw/.
       if [ -d "$REPO_ROOT/hermes/plugins/ijfw" ]; then
-        mkdir -p "$HOME/.hermes/plugins/ijfw" 2>/dev/null
+        mkdir -p "$HOME/.hermes/plugins/ijfw" 2>/dev/null || true
         find "$REPO_ROOT/hermes/plugins/ijfw" -mindepth 1 -maxdepth 1 \
-          ! -name '__pycache__' -exec cp -r {} "$HOME/.hermes/plugins/ijfw/" \; 2>/dev/null
+          ! -name '__pycache__' -exec cp -r {} "$HOME/.hermes/plugins/ijfw/" \;
       fi
       # Hermes uses an opt-in allow-list -- add "ijfw" to plugins.enabled[].
       merge_yaml_plugins_enabled "$HOME/.hermes/config.yaml" "ijfw"
@@ -1333,22 +1431,22 @@ for target in "${TARGETS[@]}"; do
       merge_yaml_mcp "$dst" "$SERVER_JS_NATIVE"
       # Drop WAYLAND.md context file if absent.
       if [ ! -f "$HOME/.wayland/WAYLAND.md" ] && [ -f "$REPO_ROOT/wayland/WAYLAND.md" ]; then
-        mkdir -p "$HOME/.wayland" 2>/dev/null
-        cp "$REPO_ROOT/wayland/WAYLAND.md" "$HOME/.wayland/WAYLAND.md" 2>/dev/null
+        mkdir -p "$HOME/.wayland" 2>/dev/null || true
+        cp "$REPO_ROOT/wayland/WAYLAND.md" "$HOME/.wayland/WAYLAND.md" 2>/dev/null || true
       fi
       # Skills: Wayland reads ~/.wayland/skills/<name>/SKILL.md.
-      mkdir -p "$HOME/.wayland/skills" 2>/dev/null
+      mkdir -p "$HOME/.wayland/skills" 2>/dev/null || true
       for skill_dir in "$REPO_ROOT/shared/skills/"*/; do
         skill_name=$(basename "$skill_dir")
         if [ ! -d "$HOME/.wayland/skills/$skill_name" ]; then
-          cp -r "$skill_dir" "$HOME/.wayland/skills/$skill_name" 2>/dev/null
+          cp -r "$skill_dir" "$HOME/.wayland/skills/$skill_name"
         fi
       done
       # Plugin: copy wayland-parity plugin layer to ~/.wayland/plugins/ijfw/.
       if [ -d "$REPO_ROOT/wayland/plugins/ijfw" ]; then
-        mkdir -p "$HOME/.wayland/plugins/ijfw" 2>/dev/null
+        mkdir -p "$HOME/.wayland/plugins/ijfw" 2>/dev/null || true
         find "$REPO_ROOT/wayland/plugins/ijfw" -mindepth 1 -maxdepth 1 \
-          ! -name '__pycache__' -exec cp -r {} "$HOME/.wayland/plugins/ijfw/" \; 2>/dev/null
+          ! -name '__pycache__' -exec cp -r {} "$HOME/.wayland/plugins/ijfw/" \;
       fi
       ok "Installed Wayland bundle: MCP + WAYLAND.md + skills + plugin"
       ;;
@@ -1442,10 +1540,10 @@ for target in "${TARGETS[@]}"; do
       # ~/.aider.conf.yml + ~/CONVENTIONS.md (Aider's documented convention
       # files for project-wide style + system prompt).
       if [ ! -f "$HOME/.aider.conf.yml" ] && [ -f "$REPO_ROOT/aider/aider.conf.yml" ]; then
-        cp "$REPO_ROOT/aider/aider.conf.yml" "$HOME/.aider.conf.yml" 2>/dev/null
+        cp "$REPO_ROOT/aider/aider.conf.yml" "$HOME/.aider.conf.yml" 2>/dev/null || true
       fi
       if [ ! -f "$HOME/CONVENTIONS.md" ] && [ -f "$REPO_ROOT/aider/CONVENTIONS.md" ]; then
-        cp "$REPO_ROOT/aider/CONVENTIONS.md" "$HOME/CONVENTIONS.md" 2>/dev/null
+        cp "$REPO_ROOT/aider/CONVENTIONS.md" "$HOME/CONVENTIONS.md" 2>/dev/null || true
       fi
       ok "Aider: rules-only install (~/.aider.conf.yml + ~/CONVENTIONS.md). No MCP -- Aider lacks a native MCP client."
       ;;
@@ -1467,8 +1565,8 @@ done
 # --- Shared post-install steps (run once, platform-agnostic) ---
 # Deploy patterns.json to ~/.ijfw/shared/lib/ so all plugin adapters can read it.
 if [ -f "$REPO_ROOT/shared/lib/patterns.json" ]; then
-  mkdir -p "$HOME/.ijfw/shared/lib" 2>/dev/null
-  cp "$REPO_ROOT/shared/lib/patterns.json" "$HOME/.ijfw/shared/lib/patterns.json" 2>/dev/null
+  mkdir -p "$HOME/.ijfw/shared/lib" 2>/dev/null || true
+  cp "$REPO_ROOT/shared/lib/patterns.json" "$HOME/.ijfw/shared/lib/patterns.json" 2>/dev/null || true
 fi
 # Regenerate per-platform rules files from shared/rules/IJFW.md.
 # Output files (wayland/WAYLAND.md, hermes/HERMES.md, claude/rules/IJFW-CLAUDE.md)
@@ -1595,6 +1693,17 @@ elif [ "$IS_WINDOWS" -eq 1 ]; then
   CLI_LINKED=0
   CLI_FAILED=0
 else
+  # Sweep stale Windows .cmd launchers that should never exist on POSIX.
+  # These appear when a user migrates a Windows home dir to Linux/macOS.
+  for _cmd_stale in "$HOME/.local/bin/ijfw.cmd" "$HOME/.local/bin/ijfw-dashboard.cmd" \
+                    "$HOME/.local/bin/ijfw-dispatch-plan.cmd" "$HOME/.local/bin/ijfw-memorize.cmd" \
+                    "$HOME/.local/bin/ijfw-memory.cmd"; do
+    if [ -f "$_cmd_stale" ]; then
+      rm -f "$_cmd_stale" 2>/dev/null || true
+      printf '  [+] Removed stale Windows launcher: %s\n' "$_cmd_stale"
+    fi
+  done
+
   CLI_BINS="ijfw ijfw-memory ijfw-dispatch-plan ijfw-dashboard ijfw-memorize"
   CLI_SRC_DIR="$REPO_ROOT/mcp-server/bin"
   CLI_LINK_DIR=""
@@ -1616,7 +1725,7 @@ else
   # Fall back to ~/.local/bin even if not on PATH. We'll tell the user how to add it.
   if [ -z "$CLI_LINK_DIR" ]; then
     CLI_LINK_DIR="$HOME/.local/bin"
-    mkdir -p "$CLI_LINK_DIR" 2>/dev/null
+    mkdir -p "$CLI_LINK_DIR" 2>/dev/null || true
   fi
 
   CLI_LINKED=0

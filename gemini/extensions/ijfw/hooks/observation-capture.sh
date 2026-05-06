@@ -18,14 +18,16 @@ REPO_ROOT="${IJFW_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
 CAPTURE="$REPO_ROOT/scripts/observation/capture.js"
 [ -f "$CAPTURE" ] || exit 0
 
-INPUT=$(cat 2>/dev/null)
+INPUT=$(head -c 1048576 2>/dev/null)  # 1MB cap -- matches user-prompt-submit-capture.sh
 [ -z "$INPUT" ] && exit 0
 
 # Normalize Gemini's "tool_name" field to match capture.js expectation.
 # Gemini uses tool_name; Claude uses tool_name too -- no adapter needed.
 mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
-( export IJFW_PLATFORM=gemini; printf '%s' "$INPUT" | \
-  node "$CAPTURE" 2>>"$HOME/.ijfw/logs/obs-capture.log" ) &
+export IJFW_PLATFORM=gemini
+# NOTE: do NOT add `</dev/null` here. The pipe IS node's stdin;
+# `</dev/null` would override it and node would receive an empty stream.
+printf '%s' "$INPUT" | node "$CAPTURE" >>"$HOME/.ijfw/logs/obs-capture.log" 2>&1 &
 disown $! 2>/dev/null || true
 
 exit 0

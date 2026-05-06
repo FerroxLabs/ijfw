@@ -45,7 +45,7 @@ export function writeCachedCheck(data) {
   });
 }
 
-export function ijfwUpdateCheck(args = {}) {
+export async function ijfwUpdateCheck(args = {}) {
   const sessionId = args.session_id || process.env.IJFW_SESSION_ID || 'default-session';
   const force = args.force === true;
 
@@ -62,14 +62,15 @@ export function ijfwUpdateCheck(args = {}) {
     }
   }
   if (!latest) {
-    const r = npmView(PKG);
+    const r = await npmView(PKG);
     if (!r.ok) {
       return {
         current,
         latest: null,
-        available: false,
+        available: null,
+        reachable: false,
         error: r.error,
-        message: 'update check failed; will retry next session',
+        message: r.message || 'update check failed; will retry next session',
       };
     }
     latest = r.version;
@@ -78,7 +79,7 @@ export function ijfwUpdateCheck(args = {}) {
 
   // Re-entrancy: if we just applied this version, don't nudge again
   if (lastApplied && compareSemver(lastApplied, latest) >= 0) {
-    return { current, latest, available: false, reason: 'up-to-date' };
+    return { current, latest, available: false, reachable: true, reason: 'up-to-date' };
   }
 
   const cmp = compareSemver(current, latest);
@@ -88,6 +89,7 @@ export function ijfwUpdateCheck(args = {}) {
     current,
     latest,
     available,
+    reachable: true,
     changelog_url: `https://github.com/${REPO}/releases/tag/v${latest}`,
   };
 

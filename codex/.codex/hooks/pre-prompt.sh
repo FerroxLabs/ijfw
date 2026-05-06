@@ -15,6 +15,8 @@
 
 [ "${IJFW_DISABLE:-}" = "1" ] && exit 0
 
+mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+
 # Read user config (best-effort).
 PROMPT_CHECK_MODE="signals"
 if [ -f ".ijfw/config.json" ] && command -v node >/dev/null 2>&1; then
@@ -78,7 +80,7 @@ if (r.vague) {
   hint += ' | Start with * to skip.';
   process.stdout.write(JSON.stringify({ continue: true, systemMessage: hint }) + '\n');
 }
-" "$HOOK_STDIN" "$DETECTOR" 2>/dev/null)
+" "$HOOK_STDIN" "$DETECTOR" 2>>"$HOME/.ijfw/logs/codex-pre-prompt.log")
 
 # Dispatch session-request observation ASYNC (does not affect stdout envelope).
 _OBS_CAPTURE="$(dirname "$0")/user-prompt-submit-capture.sh"

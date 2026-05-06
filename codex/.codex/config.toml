@@ -3,8 +3,8 @@
 # The command path is substituted to an absolute path by scripts/install.sh.
 
 [mcp_servers.ijfw-memory]
-command = "IJFW_LAUNCHER_PATH"
-args = []
+command = "node"
+args = ["${HOME}/.ijfw/mcp-server/src/server.js"]
 enabled = true
 startup_timeout_sec = 10
 tool_timeout_sec = 30

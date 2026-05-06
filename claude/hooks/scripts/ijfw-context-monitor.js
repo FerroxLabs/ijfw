@@ -8,7 +8,7 @@
 //
 // Hot-path: sync, single read of stdin JSON + single atomic-ish write. No network.
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, readSync, fstatSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readSync, fstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -60,7 +60,13 @@ function writeAtomicJson(path, data) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
-  renameSync(tmp, path);
+  try {
+    renameSync(tmp, path);
+  } catch (err) {
+    // EXDEV / EACCES / EBUSY (Windows): tmp would otherwise leak. Clean up.
+    try { unlinkSync(tmp); } catch { /* */ }
+    throw err;
+  }
 }
 
 (function main() {

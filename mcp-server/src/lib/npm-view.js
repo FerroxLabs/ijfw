@@ -10,7 +10,7 @@ import { rotateLogIfNeeded, redactUrl } from './atomic-io.js';
 const VERSION_RE = /^\d+\.\d+\.\d+(-[\w.]+)?$/;
 const PKG = '@ijfw/install';
 
-export function npmView(pkg = PKG, opts = {}) {
+export async function npmView(pkg = PKG, opts = {}) {
   const { retries = 2, timeoutMs = 10_000, backoffMs = 2000 } = opts;
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -21,19 +21,28 @@ export function npmView(pkg = PKG, opts = {}) {
       shell: process.platform === 'win32',
     });
     if (res.error) {
-      lastErr = res.error.message || String(res.error);
+      lastErr = `spawn-${res.error.code || 'ERR'}: ${(res.error.message || String(res.error)).slice(0, 120)}`;
       logFailure(pkg, lastErr);
       if (attempt < retries && isTransient(res.error.code)) {
-        sleepSync(backoffMs);
+        await sleep(backoffMs);
         continue;
       }
       return { ok: false, error: 'spawn', message: lastErr };
     }
-    if (res.status !== 0) {
-      lastErr = (res.stderr || '').trim() || `exit ${res.status}`;
+    if (res.signal) {
+      lastErr = `killed by ${res.signal} (likely network timeout)`;
       logFailure(pkg, lastErr);
       if (attempt < retries) {
-        sleepSync(backoffMs);
+        await sleep(backoffMs);
+        continue;
+      }
+      return { ok: false, error: 'signal', message: lastErr };
+    }
+    if (res.status !== 0) {
+      lastErr = (res.stderr || '').trim() || `npm view exited ${res.status} with no stderr`;
+      logFailure(pkg, lastErr);
+      if (attempt < retries) {
+        await sleep(backoffMs);
         continue;
       }
       return { ok: false, error: 'exit', message: lastErr };
@@ -52,10 +61,8 @@ function isTransient(code) {
   return code === 'ENOTFOUND' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNREFUSED';
 }
 
-function sleepSync(ms) {
-  const sab = new SharedArrayBuffer(4);
-  const view = new Int32Array(sab);
-  Atomics.wait(view, 0, 0, ms);
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export function isVersionStringValid(s) {

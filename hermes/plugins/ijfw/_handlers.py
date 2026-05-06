@@ -1,5 +1,5 @@
-# _handlers.py -- hook and command implementations for the IJFW Wayland plugin.
-# build_register_fn(host) is the factory used by both Wayland and the Hermes shim.
+# _handlers.py -- hook and command implementations for the IJFW Hermes plugin.
+# build_register_fn(host) is the factory used by both Hermes and the Wayland shim.
 
 import json
 import os
@@ -30,7 +30,9 @@ def _posix_to_python_re(pattern):
 def _load_patterns():
     """Load patterns.json. Try post-install path first, fall back to repo-local.
     On parse failure or missing-file, write a sentinel and warn so /ijfw doctor
-    can surface the silent-fallback regression (parity with Hermes/Claude)."""
+    can surface the silent-fallback regression. Per-iteration parse failures
+    continue the loop -- a corrupt post-install copy should not block the
+    repo-local fallback from loading."""
     candidates = [
         pathlib.Path(os.path.expanduser("~/.ijfw/shared/lib/patterns.json")),
         pathlib.Path(__file__).parent.parent.parent.parent / "shared" / "lib" / "patterns.json",
@@ -42,9 +44,6 @@ def _load_patterns():
                 with open(path, encoding="utf-8") as fh:
                     return json.load(fh)
             except (OSError, ValueError) as err:
-                # Parse-error: flag the regression but continue trying remaining
-                # candidates -- a corrupt post-install copy should not block the
-                # repo-local fallback from loading. Match Hermes loop semantics.
                 try:
                     sentinel.parent.mkdir(parents=True, exist_ok=True)
                     sentinel.write_text(STRINGS["patterns_sentinel_parse_error"].format(path=path, err=err), encoding="utf-8")
@@ -80,7 +79,7 @@ VAGUE_PATTERNS = _compile_patterns(_PATTERNS.get("vague_prompt_signals", []), re
 # build_register_fn factory
 # ---------------------------------------------------------------------------
 
-def build_register_fn(host="wayland"):
+def build_register_fn(host="hermes"):
     """Return a register(ctx) function parameterised by host name."""
 
     def register(ctx):
@@ -115,7 +114,6 @@ def build_register_fn(host="wayland"):
                 )
             else:
                 banner = STRINGS["session_start_banner_no_memories"].format(host=host)
-            # Banner is informational; return value ignored by Wayland.
             return banner
 
         ctx.register_hook("on_session_start", on_session_start)
@@ -189,7 +187,6 @@ def build_register_fn(host="wayland"):
             session_id = kwargs.get("session_id")
             tool_name = kwargs.get("tool_name", "")
             result = kwargs.get("result", "")
-            # Trim + emit JSONL observation (3-line inline per-platform convention).
             observation = {
                 "tool": tool_name,
                 "session_id": session_id,
@@ -206,10 +203,7 @@ def build_register_fn(host="wayland"):
         def post_llm_call(**kwargs):
             session_id = kwargs.get("session_id")
             response = kwargs.get("response", "")
-            # Look for decision/conclusion signals and store.
             if response and _is_memorable(response):
-                # type "observation" maps to the journal-only memory tier
-                # per ijfw_memory_store schema (mcp-server/src/server.js:640).
                 mcp.memory_store(
                     ctx,
                     content=str(response)[:500],
@@ -262,7 +256,7 @@ def build_register_fn(host="wayland"):
                     launched_key = f"cross_{mode.replace('-', '_')}_launched"
                     return STRINGS[launched_key].format(target=target or "current context")
                 except FileNotFoundError:
-                    return f"[ijfw] `ijfw` not found in PATH -- install IJFW CLI to use cross-{mode}."
+                    return f"[ijfw] `ijfw` not found in PATH — install IJFW CLI to use cross-{mode}."
             return handler
 
         reg_cmd(
@@ -303,8 +297,8 @@ def build_register_fn(host="wayland"):
     return register
 
 
-# Module-level register for Wayland direct load.
-register = build_register_fn("wayland")
+# Module-level register for Hermes direct load.
+register = build_register_fn("hermes")
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +326,7 @@ def _append_observation(obs):
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(obs) + "\n")
     except (OSError, PermissionError) as exc:
-        log_path = pathlib.Path(os.path.expanduser("~/.ijfw/logs/wayland-handlers.log"))
+        log_path = pathlib.Path(os.path.expanduser("~/.ijfw/logs/hermes-handlers.log"))
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(log_path, "a", encoding="utf-8") as lf:

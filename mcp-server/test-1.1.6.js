@@ -3,9 +3,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { writeAtomic, readSafe, withLock, rotateLogIfNeeded, redactUrl, stripAnsi } from './src/lib/atomic-io.js';
 import { generateToken, issueToken, validateToken, consumeToken, writePendingSentinel, readPendingSentinel, clearPendingSentinel, sessionDir } from './src/lib/token.js';
@@ -298,7 +299,7 @@ test('compareSemver orders versions correctly', () => {
 // MCP update-check / update-apply
 // ============================================================
 
-test('ijfwUpdateCheck returns up-to-date when state matches cache', () => {
+test('ijfwUpdateCheck returns up-to-date when state matches cache', async () => {
   const d = isolated();
   // Seed state: installed = applied = latest
   writeAtomic(join(d, 'state.json'), {
@@ -309,12 +310,12 @@ test('ijfwUpdateCheck returns up-to-date when state matches cache', () => {
   });
   // Seed cache so we don't hit npm
   writeCachedCheck({ last_latest_seen: '99.99.99', last_failure: null });
-  const r = ijfwUpdateCheck();
+  const r = await ijfwUpdateCheck();
   assert.equal(r.available, false);
   cleanup(d);
 });
 
-test('ijfwUpdateCheck returns available + token when behind', () => {
+test('ijfwUpdateCheck returns available + token when behind', async () => {
   const d = isolated();
   writeAtomic(join(d, 'state.json'), {
     schema_version: 1,
@@ -322,7 +323,7 @@ test('ijfwUpdateCheck returns available + token when behind', () => {
     installed_version: '0.0.1',
   });
   writeCachedCheck({ last_latest_seen: '99.99.99', last_failure: null });
-  const r = ijfwUpdateCheck({ session_id: 'test-session-mcp-check' });
+  const r = await ijfwUpdateCheck({ session_id: 'test-session-mcp-check' });
   assert.equal(r.available, true);
   assert.equal(r.latest, '99.99.99');
   assert.match(r.confirmation_token, /^[a-f0-9]{32}$/);
@@ -349,7 +350,7 @@ test('ijfwUpdateApply refuses bad token', () => {
   cleanup(d);
 });
 
-test('ijfwUpdateApply happy path -> pending sentinel', () => {
+test('ijfwUpdateApply happy path -> pending sentinel', async () => {
   const d = isolated();
   writeAtomic(join(d, 'state.json'), {
     schema_version: 1,
@@ -358,7 +359,7 @@ test('ijfwUpdateApply happy path -> pending sentinel', () => {
   });
   writeCachedCheck({ last_latest_seen: '99.99.99', last_failure: null });
   const sid = 'test-session-apply-good';
-  const check = ijfwUpdateCheck({ session_id: sid });
+  const check = await ijfwUpdateCheck({ session_id: sid });
   assert.equal(check.available, true);
   const apply = ijfwUpdateApply({
     target_version: '99.99.99',
@@ -372,7 +373,7 @@ test('ijfwUpdateApply happy path -> pending sentinel', () => {
   cleanup(d);
 });
 
-test('ijfwUpdateApply refuses target mismatch even with valid token', () => {
+test('ijfwUpdateApply refuses target mismatch even with valid token', async () => {
   const d = isolated();
   writeAtomic(join(d, 'state.json'), {
     schema_version: 1,
@@ -381,7 +382,7 @@ test('ijfwUpdateApply refuses target mismatch even with valid token', () => {
   });
   writeCachedCheck({ last_latest_seen: '99.99.99', last_failure: null });
   const sid = 'test-session-apply-mismatch';
-  const check = ijfwUpdateCheck({ session_id: sid });
+  const check = await ijfwUpdateCheck({ session_id: sid });
   const apply = ijfwUpdateApply({
     target_version: '88.88.88', // different from token-issued 99.99.99
     confirmation_token: check.confirmation_token,
@@ -396,7 +397,7 @@ test('ijfwUpdateApply refuses target mismatch even with valid token', () => {
 // Re-entrancy guard (the key v3 invariant)
 // ============================================================
 
-test('reentrancy: last_applied_version >= last_latest_seen suppresses nudge', () => {
+test('reentrancy: last_applied_version >= last_latest_seen suppresses nudge', async () => {
   const d = isolated();
   writeAtomic(join(d, 'state.json'), {
     schema_version: 1,
@@ -405,7 +406,7 @@ test('reentrancy: last_applied_version >= last_latest_seen suppresses nudge', ()
     last_applied_version: '1.1.6',
   });
   writeCachedCheck({ last_latest_seen: '1.1.6', last_failure: null });
-  const r = ijfwUpdateCheck();
+  const r = await ijfwUpdateCheck();
   assert.equal(r.available, false, 'should not nudge after just applying');
   assert.equal(r.reason, 'up-to-date');
   cleanup(d);
@@ -418,4 +419,77 @@ test('reentrancy: last_applied_version >= last_latest_seen suppresses nudge', ()
 test('compareSemver handles same-version without infinite loop', () => {
   // Sanity check on the helper used in re-entrancy + clock-skew logic
   assert.equal(compareSemver('1.1.6', '1.1.6'), 0);
+});
+
+// ============================================================
+// Wave 9 W9-M4: sentinel cleanup via real subprocess invocation
+// Each test spawns `node cross-orchestrator-cli.js update --confirm <token>` with
+// a fake npm on PATH that fails in the target shape. After the subprocess exits,
+// the sentinel file must be gone -- proving the try/finally in cmdUpdateConfirm
+// fires on all failure paths and would fail if the finally block were removed.
+// ============================================================
+
+const CLI = resolve(new URL('.', import.meta.url).pathname, 'src/cross-orchestrator-cli.js');
+
+function makeFakeNpm(dir, script) {
+  const bin = join(dir, 'npm');
+  writeFileSync(bin, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  return dir;
+}
+
+function spawnConfirm(token, ijfwHome, fakeBinDir) {
+  const env = { ...process.env, IJFW_HOME: ijfwHome, IJFW_FROM_MCP: '0' };
+  if (fakeBinDir !== null) env.PATH = fakeBinDir + ':' + (process.env.PATH || '');
+  return spawnSync(process.execPath, [CLI, 'update', '--confirm', token], {
+    encoding: 'utf8', env, timeout: 15_000,
+  });
+}
+
+test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)', () => {
+  const d = isolated();
+  const sid = 'test-session-spawn-error';
+  const tok = issueToken(sid, '9.9.9');
+  writePendingSentinel(sid, '9.9.9', tok.token);
+  assert.equal(readPendingSentinel(sid).ok, true, 'sentinel must exist before failure');
+
+  // Empty fakeBinDir -- npm is absent, spawnSync returns ENOENT
+  const emptyBin = mkdtempSync(join(tmpdir(), 'ijfw-nobin-'));
+  spawnConfirm(tok.token, d, emptyBin);
+
+  assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after spawn-error path');
+  rmSync(emptyBin, { recursive: true, force: true });
+  cleanup(d);
+});
+
+test('cmdUpdateConfirm cleans sentinel on install non-zero exit', () => {
+  const d = isolated();
+  const sid = 'test-session-nonzero-exit';
+  const tok = issueToken(sid, '9.9.9');
+  writePendingSentinel(sid, '9.9.9', tok.token);
+  assert.equal(readPendingSentinel(sid).ok, true, 'sentinel must exist before failure');
+
+  const fakeBin = mkdtempSync(join(tmpdir(), 'ijfw-fakebin-'));
+  makeFakeNpm(fakeBin, 'exit 7');
+  spawnConfirm(tok.token, d, fakeBin);
+
+  assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after non-zero exit path');
+  rmSync(fakeBin, { recursive: true, force: true });
+  cleanup(d);
+});
+
+test('cmdUpdateConfirm cleans sentinel on install signal-kill', () => {
+  const d = isolated();
+  const sid = 'test-session-signal-kill';
+  const tok = issueToken(sid, '9.9.9');
+  writePendingSentinel(sid, '9.9.9', tok.token);
+  assert.equal(readPendingSentinel(sid).ok, true, 'sentinel must exist before failure');
+
+  const fakeBin = mkdtempSync(join(tmpdir(), 'ijfw-fakebin-'));
+  // Self-signal SIGTERM; spawnSync sees signal != null -> finally fires
+  makeFakeNpm(fakeBin, 'kill -TERM $$');
+  spawnConfirm(tok.token, d, fakeBin);
+
+  assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after signal-kill path');
+  rmSync(fakeBin, { recursive: true, force: true });
+  cleanup(d);
 });

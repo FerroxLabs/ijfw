@@ -12,12 +12,18 @@ FLAGS_FILE="$IJFW_DIR/.startup-flags"
 
 # If RTK or context-mode is active, they handle stripping -- we skip.
 if [ -f "$FLAGS_FILE" ]; then
-  if grep -q "IJFW_RTK_ACTIVE=1" "$FLAGS_FILE" 2>/dev/null; then exit 0; fi
-  if grep -q "IJFW_CONTEXT_MODE_ACTIVE=1" "$FLAGS_FILE" 2>/dev/null; then exit 0; fi
+  if grep -q "IJFW_RTK_ACTIVE=1" "$FLAGS_FILE" 2>/dev/null; then
+    printf '%s [post-tool-use] suppressed: RTK active\n' "$(date -u +%FT%TZ)" >>"$HOME/.ijfw/logs/post-tool-use.log" 2>/dev/null
+    exit 0
+  fi
+  if grep -q "IJFW_CONTEXT_MODE_ACTIVE=1" "$FLAGS_FILE" 2>/dev/null; then
+    printf '%s [post-tool-use] suppressed: context-mode active\n' "$(date -u +%FT%TZ)" >>"$HOME/.ijfw/logs/post-tool-use.log" 2>/dev/null
+    exit 0
+  fi
 fi
 
-# Require node -- fail open if unavailable.
-command -v node >/dev/null 2>&1 || exit 0
+# Require node -- fail open if unavailable, but leave a breadcrumb.
+command -v node >/dev/null 2>&1 || { printf '%s [post-tool-use] node not on PATH\n' "$(date -u +%FT%TZ)" >>"$HOME/.ijfw/logs/post-tool-use.log" 2>/dev/null; exit 0; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 HOOK_JS="$SCRIPT_DIR/post-tool-use.js"

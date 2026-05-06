@@ -113,7 +113,7 @@ test('statusline context bar honors style=runway', () => {
 // hot-path budget
 // ============================================================
 
-test('statusline cache-hit completes under 200ms (generous CI ceiling)', () => {
+test('statusline cache-hit completes under hot-path budget (CI ceiling 1500ms)', () => {
   const d = isolated();
   writeJson(join(d, 'state.json'), { schema_version: 1, installed_version: '1.1.5' });
   writeJson(join(d, 'cache', 'update-check.json'), {
@@ -123,9 +123,11 @@ test('statusline cache-hit completes under 200ms (generous CI ceiling)', () => {
   const r = runStatusline({ IJFW_HOME: d }, '{"context_window":{"remaining_percentage":50}}');
   const elapsed = Date.now() - start;
   assert.equal(r.status, 0);
-  // 200ms ceiling absorbs node-startup variance on slow CI runners.
-  // The actual hot-path is ~5ms; node startup dominates the rest.
-  assert.ok(elapsed < 500, `statusline took ${elapsed}ms (CI ceiling 500)`);
+  // Actual hot-path is ~5ms. The remainder is node startup + spawnSync overhead,
+  // which varies 270ms-650ms on a warm Mac M-series and can spike higher under
+  // load on shared CI runners. 1500ms is the smallest ceiling that absorbs the
+  // observed variance without going so loose that real perf regressions hide.
+  assert.ok(elapsed < 1500, `statusline took ${elapsed}ms (CI ceiling 1500)`);
   rmSync(d, { recursive: true, force: true });
 });
 

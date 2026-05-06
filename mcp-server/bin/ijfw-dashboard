@@ -4,11 +4,12 @@
  * Usage: ijfw-dashboard start|stop|status [--port N] [--no-open]
  */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import http from 'node:http';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_JS  = join(__dirname, '..', 'src', 'dashboard-server.js');
@@ -45,6 +46,35 @@ function openBrowser(url) {
   try { spawn(cmd, [url], { detached: true, stdio: 'ignore' }).unref(); } catch {}
 }
 
+// Probe a URL for HTTP 200, retrying on connection-refused until timeoutMs elapses.
+// Port file appears slightly before the HTTP listener is accepting; we retry to ride that race.
+function probeHttp(url, timeoutMs, cb) {
+  const start = Date.now();
+  let done = false;
+  const finish = (ok) => { if (!done) { done = true; cb(ok); } };
+
+  const attempt = () => {
+    if (done) return;
+    const elapsed = Date.now() - start;
+    if (elapsed >= timeoutMs) return finish(false);
+    try {
+      const req = http.get(url, (res) => {
+        finish(res.statusCode === 200);
+        res.resume();
+      });
+      req.setTimeout(Math.min(500, timeoutMs - elapsed), () => req.destroy(new Error('probe-timeout')));
+      req.on('error', () => {
+        // Connection refused / reset = server still binding; retry after 100ms.
+        if (!done) setTimeout(attempt, 100);
+      });
+    } catch {
+      if (!done) setTimeout(attempt, 100);
+    }
+  };
+
+  attempt();
+}
+
 const argv = process.argv.slice(2);
 const sub  = argv[0] || 'status';
 const noOpen = argv.includes('--no-open');
@@ -60,6 +90,9 @@ if (sub === 'start') {
   // Stale PID -- reclaim
   removePidFiles();
 
+  // Remove stale port file before spawn so polling loop can't pick up a leftover from a dead session.
+  try { rmSync(PORT_FILE, { force: true }); } catch {}
+
   // Spawn detached server; it writes its own PID + port files.
   const child = spawn(process.execPath, [SERVER_JS, '--daemon'], {
     detached: true,
@@ -68,22 +101,32 @@ if (sub === 'start') {
   });
   child.unref();
 
-  // Poll for port file (server writes it after binding), max 3s.
+  // Poll for port file (server writes it after binding), max 2500ms / 25 polls.
+  // Cold Node startup or slow disks can take >500ms; 2500ms gives 5x headroom.
   let waited = 0;
   const interval = setInterval(() => {
     waited += 100;
     if (existsSync(PORT_FILE)) {
       clearInterval(interval);
       const port = readPort();
-      const url  = 'http://localhost:' + port;
-      console.log('Dashboard live at ' + url);
-      if (!noOpen) openBrowser(url);
-      process.exit(0);
+      const url  = 'http://127.0.0.1:' + port;
+      // Probe HTTP to confirm the server actually started (W4.1).
+      probeHttp(url, 2000, (ok) => {
+        if (ok) {
+          console.log('[ijfw] Dashboard running at http://127.0.0.1:' + port);
+          if (!noOpen) openBrowser('http://localhost:' + port);
+          process.exit(0);
+        } else {
+          console.error('[ijfw] Dashboard start failed -- check ~/.ijfw/logs/dashboard.log');
+          process.exit(1);
+        }
+      });
+      return;
     }
-    if (waited >= 3000) {
+    if (waited >= 2500) {
       clearInterval(interval);
-      console.log('Dashboard starting... (check status with: ijfw dashboard status)');
-      process.exit(0);
+      console.error('[ijfw] Dashboard start failed -- check ~/.ijfw/logs/dashboard.log');
+      process.exit(1);
     }
   }, 100);
 

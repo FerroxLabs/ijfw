@@ -13,6 +13,7 @@
 // ESM (repo package.json has "type":"module").
 
 import * as fs from 'node:fs';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
 // --- 1) Read stdin payload (cap 1MB to prevent memory exhaustion) ---
@@ -31,10 +32,9 @@ try {
   // diagnosable from ~/.ijfw/logs/. Previously the bare catch swallowed
   // every read failure and turned the hook into a no-op forever.
   try {
-    const path = require('node:path');
-    const dir = path.join(process.env.HOME || '', '.ijfw', 'logs');
+    const dir = join(process.env.HOME || '', '.ijfw', 'logs');
     fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(path.join(dir, 'post-tool-use.log'),
+    fs.appendFileSync(join(dir, 'post-tool-use.log'),
       `${new Date().toISOString()} stdin-read ${(e.message || String(e)).slice(0, 200)}\n`);
   } catch { /* logging is best-effort */ }
   process.exit(0);
@@ -61,10 +61,9 @@ try {
   // 1.2.9: payload-shape change or malformed JSON should leave a diagnostic
   // trail rather than silently turning the hook into a no-op forever.
   try {
-    const path = require('node:path');
-    const dir = path.join(process.env.HOME || '', '.ijfw', 'logs');
+    const dir = join(process.env.HOME || '', '.ijfw', 'logs');
     fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(path.join(dir, 'post-tool-use.log'),
+    fs.appendFileSync(join(dir, 'post-tool-use.log'),
       `${new Date().toISOString()} parse-fail ${(e.message || String(e)).slice(0, 200)}\n`);
   } catch { /* logging is best-effort */ }
   process.exit(0);

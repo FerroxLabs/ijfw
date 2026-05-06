@@ -2,7 +2,7 @@
 // Runs in a fully isolated tmp dir with a separate HOME so user state is never touched.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -96,10 +96,7 @@ export async function run(ctx) {
     // Use the first existing bin
     let binPath = null;
     for (const c of binCandidates) {
-      try {
-        const r = spawnSync('ls', [c], { encoding: 'utf8' });
-        if (r.status === 0) { binPath = c; break; }
-      } catch { /* next */ }
+      if (existsSync(c)) { binPath = c; break; }
     }
 
     if (!binPath) {

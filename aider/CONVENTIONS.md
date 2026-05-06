@@ -1,5 +1,9 @@
 # IJFW Conventions for Aider
 
+<!-- Aider MCP support last verified: 2026-05-06 against https://aider.chat/docs/.
+     If Aider adds a native MCP client, regenerate this file and the rules-only
+     section in scripts/install.sh:aider). -->
+
 Aider doesn't have native MCP, so IJFW's memory + cross-audit tools aren't
 available inside Aider sessions. These conventions carry the IJFW spirit
 (disciplined workflow, terse output, no scope creep) into the Aider chat.

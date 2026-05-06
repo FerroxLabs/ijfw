@@ -18,7 +18,11 @@ CAPTURE="$REPO_ROOT/scripts/observation/capture.js"
 
 # Payload is passed via arg 1 or stdin
 if [ -n "${1:-}" ]; then
-  printf '%s' "$1" | node "$CAPTURE" 2>>"$HOME/.ijfw/logs/obs-capture.log" &
+  mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+  # NOTE: do NOT add `</dev/null` here. The pipe IS node's stdin;
+  # `</dev/null` would override it and node would receive an empty stream.
+  printf '%s' "$1" | node "$CAPTURE" >>"$HOME/.ijfw/logs/obs-capture.log" 2>&1 &
+  disown $! 2>/dev/null || true
 else
   # no-op: stdin already consumed by parent; captured payload must come via arg
   exit 0

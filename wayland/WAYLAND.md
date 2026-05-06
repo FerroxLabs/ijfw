@@ -1,7 +1,6 @@
 <!-- PLATFORM_HEADER -->
 <!-- These rules apply when running IJFW on the Wayland CLI agent. -->
 
-
 # IJFW Rules
 # It Just Fucking Works -- AI Efficiency Framework by Sean Donahoe
 

@@ -1,10 +1,23 @@
 // @ijfw/install -- reverse install. Preserves ~/.ijfw/memory/ unless --purge.
 
-import { existsSync, rmSync, cpSync, mkdtempSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, rmSync, cpSync, mkdtempSync, readFileSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { unmergeMarketplace, claudeSettingsPath } from './marketplace.js';
+
+// Atomic write: write to a temp sibling, then rename into place.
+// Prevents mid-write truncation from leaving a half-written config.
+function writeAtomic(target, content) {
+  const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
+  writeFileSync(tmp, content);
+  try {
+    renameSync(tmp, target);
+  } catch (err) {
+    try { unlinkSync(tmp); } catch {}
+    throw new Error(`atomic write failed for ${target}: ${err.message}`);
+  }
+}
 
 function parseArgs(argv) {
   const out = { dir: null, purge: false, noMarketplace: false };
@@ -50,7 +63,7 @@ function removeTomlSection(p) {
     if (skip && line.startsWith('[') && !line.startsWith('[mcp_servers.ijfw-memory]')) skip = false;
     if (!skip) out.push(line);
   }
-  writeFileSync(p, out.join('\n'));
+  writeAtomic(p, out.join('\n') + '\n');
   return true;
 }
 
@@ -64,7 +77,7 @@ function removeJsonMcpEntry(p) {
   if (doc.mcpServers && doc.mcpServers['ijfw-memory']) {
     backupFile(p);
     delete doc.mcpServers['ijfw-memory'];
-    writeFileSync(p, JSON.stringify(doc, null, 2) + '\n');
+    writeAtomic(p, JSON.stringify(doc, null, 2) + '\n');
     changed = true;
   }
   return changed;
@@ -87,7 +100,7 @@ function removeCodexHooks(p) {
     const after = doc.filter(h => !(h && h._ijfw));
     if (after.length === before) return false;
     backupFile(p);
-    writeFileSync(p, JSON.stringify(after, null, 2) + '\n');
+    writeAtomic(p, JSON.stringify(after, null, 2) + '\n');
     return true;
   }
 
@@ -108,7 +121,7 @@ function removeCodexHooks(p) {
     }
     if (!changed) return false;
     backupFile(p);
-    writeFileSync(p, JSON.stringify(doc, null, 2) + '\n');
+    writeAtomic(p, JSON.stringify(doc, null, 2) + '\n');
     return true;
   }
 
@@ -118,7 +131,7 @@ function removeCodexHooks(p) {
     doc.hooks = doc.hooks.filter(h => !(h && h._ijfw));
     if (doc.hooks.length === before) return false;
     backupFile(p);
-    writeFileSync(p, JSON.stringify(doc, null, 2) + '\n');
+    writeAtomic(p, JSON.stringify(doc, null, 2) + '\n');
     return true;
   }
 
@@ -162,7 +175,7 @@ import os; os.replace(p + ".tmp", p)
   );
   if (stripped === raw) return false;
   backupFile(p);
-  writeFileSync(p, stripped);
+  writeAtomic(p, stripped);
   return true;
 }
 

@@ -30,10 +30,17 @@ function Test-Command($cmd) {
 
 function Get-Target {
   if ($Dir) {
-    $resolved = Resolve-Path -LiteralPath $Dir -ErrorAction SilentlyContinue
-    if ($resolved) { return $resolved.Path } else { return $Dir }
+    # Expand %APPDATA%-style env vars and leading ~ before resolving.
+    $path = [System.Environment]::ExpandEnvironmentVariables($Dir)
+    if ($path -like '~*') { $path = $path -replace '^~', $env:USERPROFILE }
+    $resolved = Resolve-Path -LiteralPath $path -ErrorAction SilentlyContinue
+    if ($resolved) { return $resolved.Path } else { return $path }
   }
-  if ($env:IJFW_HOME) { return $env:IJFW_HOME }
+  if ($env:IJFW_HOME) {
+    $path = [System.Environment]::ExpandEnvironmentVariables($env:IJFW_HOME)
+    if ($path -like '~*') { $path = $path -replace '^~', $env:USERPROFILE }
+    return $path
+  }
   return Join-Path $env:USERPROFILE ".ijfw"
 }
 
@@ -271,7 +278,29 @@ function Provision-Plugin {
     return
   }
   New-Item -ItemType Directory -Force -Path $Dst | Out-Null
-  Copy-Item -Recurse -Force -Path (Join-Path $srcPath "*") -Destination $Dst
+  foreach ($srcItem in (Get-ChildItem -LiteralPath $srcPath -Recurse -File)) {
+    $rel = $srcItem.FullName.Substring($srcPath.Length).TrimStart('\','/')
+    $dstItem = Join-Path $Dst $rel
+    $dstDir = Split-Path -Parent $dstItem
+    if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Force -Path $dstDir | Out-Null }
+    $srcMtime = $null
+    $dstMtime = $null
+    try {
+      if (Test-Path $srcItem.FullName) { $srcMtime = (Get-Item $srcItem.FullName -ErrorAction Stop).LastWriteTime }
+      if (Test-Path $dstItem)          { $dstMtime = (Get-Item $dstItem          -ErrorAction Stop).LastWriteTime }
+    } catch {
+      # File watcher race / lock / OneDrive offline -- treat as new install
+      $dstMtime = $null
+    }
+    if ($null -ne $dstMtime -and $null -ne $srcMtime -and $dstMtime -gt $srcMtime) {
+      # User has modified the destination; back it up before overwriting.
+      $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
+      Copy-Item $dstItem "$dstItem.user-bak.$ts" -Force -ErrorAction SilentlyContinue
+    }
+    Copy-Item $srcItem.FullName $dstItem -Force
+    # Preserve source mtime so next install doesn't mistake our copy for a user edit.
+    try { (Get-Item $dstItem -ErrorAction Stop).LastWriteTime = $srcItem.LastWriteTime } catch {}
+  }
 }
 
 function Merge-PluginsEnabled {
@@ -297,6 +326,9 @@ function Merge-PluginsEnabled {
 
   # Strategy: try python3 first (has real YAML support); fall back to sentinel-anchored
   # regex that appends to a plugins.enabled: block or creates one.
+
+  # Sentinel: only run the regex fallback when Python was unavailable or failed.
+  $pythonAllSucceeded = $false
 
   $python = Get-Command python3 -ErrorAction SilentlyContinue
   if ($python) {
@@ -348,14 +380,15 @@ sys.exit(0)
     [System.IO.File]::WriteAllText($tmp, $pyScript)
     try {
       & python3 $tmp $ConfigPath $pluginName
-      $ok = ($LASTEXITCODE -eq 0)
+      $pythonAllSucceeded = ($LASTEXITCODE -eq 0)
     } finally {
       Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
-    if ($ok) { return $true }
+    if ($pythonAllSucceeded) { return $true }
   }
 
   # Fallback: pure PowerShell sentinel-anchored regex approach.
+  # Only runs when Python was unavailable or exited non-zero.
   # If the file has a plugins.enabled: [...] line, splice in the name.
   # Otherwise append a plugins.enabled block.
   $enabledRe = [regex]'(?m)^([ \t]+enabled\s*:\s*\[)([^\]]*)\]'
@@ -398,7 +431,10 @@ function Merge-Marketplace {
     $raw = Get-Content -Raw -LiteralPath $settingsPath
     $cleaned = ConvertFrom-Jsonc $raw
     try {
-      $parsed = ConvertFrom-Json $cleaned -ErrorAction Stop
+      # -Depth is PS 6+; PS 5.1 ignores it safely via splatting.
+      $cfjArgs = @{ InputObject = $cleaned; ErrorAction = 'Stop' }
+      if ($PSVersionTable.PSVersion.Major -ge 6) { $cfjArgs['Depth'] = 32 }
+      $parsed = ConvertFrom-Json @cfjArgs
       $settings = ConvertTo-Hashtable $parsed
       if ($null -eq $settings) { $settings = @{} }
     } catch {

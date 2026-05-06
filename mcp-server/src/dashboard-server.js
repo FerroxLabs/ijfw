@@ -7,13 +7,14 @@
  */
 
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, watch, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, watch, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildCostReport, buildBreakdown, buildDailySeries, buildBlockUsage, getSavingsMethodology } from './cost/aggregator.js';
+import { ttlCache } from './lib/cache.js';
 import { getPricesTable } from './cost/pricing.js';
 import { computeValueDelivered } from './cost/savings.js';
 import { listMemoryFiles, listKnownProjects } from './memory/reader.js';
@@ -21,8 +22,11 @@ import { searchMemory } from './memory/search.js';
 import { buildRecallCounts, mergeRecallCounts, topRecalled } from './memory/recall-counter.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// Repo root two levels up from src/
-const REPO_ROOT = join(__dirname, '..', '..');
+// REPO_ROOT: IJFW_PROJECT_ROOT override > user's interactive shell cwd (PWD) > process.cwd() fallback.
+// Under npm install the package lands in ~/.ijfw/; PWD keeps memory walks in the user's actual project.
+const REPO_ROOT = process.env.IJFW_PROJECT_ROOT
+  || process.env.PWD
+  || process.cwd();
 
 // Read version dynamically from mcp-server/package.json so bumps don't drift.
 const PKG_VERSION = (() => {
@@ -31,9 +35,113 @@ const PKG_VERSION = (() => {
 })();
 const HTML_PATH = join(__dirname, 'dashboard-client.html');
 
-const DEFAULT_PORT  = 37891;
-const PORT_WALK_MAX = 10; // walk up to 37891+PORT_WALK_MAX (37900)
+const COST_CACHE_TTL = 30_000; // 30s
+
+// Returns mtime of ~/.ijfw/metrics/sessions.jsonl (cross-platform session ledger), or 0 if absent.
+function ijfwLedgerMtime() {
+  try {
+    return statSync(join(homedir(), '.ijfw', 'metrics', 'sessions.jsonl')).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+// Build invalidator key: "<latest mtime in ms>:<jsonl file count>:<ledger mtime>" across ~/.claude/projects/
+// Distinguishes empty ('0:0:empty') from walk error ('0:0:err:<code>') to avoid cache collisions.
+// Ledger mtime included so Codex/Gemini session writes bust this cache immediately (W9-H2).
+function claudeProjectsMtimeKey() {
+  const projectsDir = join(homedir(), '.claude', 'projects');
+  if (!existsSync(projectsDir)) return `0:0:empty:${ijfwLedgerMtime()}`;
+  try {
+    let latestMtime = 0;
+    let fileCount = 0;
+    for (const entry of readdirSync(projectsDir)) {
+      const projPath = join(projectsDir, entry);
+      let pStat;
+      try { pStat = statSync(projPath); } catch { continue; }
+      if (!pStat.isDirectory()) continue;
+      for (const file of readdirSync(projPath)) {
+        if (!file.endsWith('.jsonl')) continue;
+        fileCount++;
+        try {
+          const m = statSync(join(projPath, file)).mtimeMs;
+          if (m > latestMtime) latestMtime = m;
+        } catch {}
+      }
+    }
+    if (fileCount === 0) return `0:0:empty:${ijfwLedgerMtime()}`;
+    return `${latestMtime}:${fileCount}:${ijfwLedgerMtime()}`;
+  } catch (err) {
+    return `0:0:err:${err.code || 'UNKNOWN'}:${ijfwLedgerMtime()}`;
+  }
+}
+
+// Build invalidator key for memory dirs: "<latestMtime>:<fileCount>"
+// Walks all sources that listMemoryFiles() reads:
+//   ~/.ijfw/memory/, ~/.ijfw/sessions/, ~/.ijfw/observations.jsonl, ~/.ijfw/HANDOFF.md,
+//   ~/.claude/projects/<slug>/memory/, and <REPO_ROOT>/.ijfw/memory/
+function memoryDirsMtimeKey() {
+  let latestMtime = 0;
+  let fileCount = 0;
+
+  function statFile(fp) {
+    try {
+      const s = statSync(fp);
+      fileCount++;
+      if (s.mtimeMs > latestMtime) latestMtime = s.mtimeMs;
+    } catch {}
+  }
+
+  function walkDir(dir) {
+    if (!existsSync(dir)) return;
+    try {
+      for (const entry of readdirSync(dir)) {
+        statFile(join(dir, entry));
+      }
+    } catch {}
+  }
+
+  walkDir(join(homedir(), '.ijfw', 'memory'));
+  walkDir(join(homedir(), '.ijfw', 'sessions'));
+  statFile(join(homedir(), '.ijfw', 'observations.jsonl'));
+  statFile(join(homedir(), '.ijfw', 'HANDOFF.md'));
+
+  const projectsDir = join(homedir(), '.claude', 'projects');
+  if (existsSync(projectsDir)) {
+    try {
+      for (const slug of readdirSync(projectsDir)) {
+        walkDir(join(projectsDir, slug, 'memory'));
+      }
+    } catch {}
+  }
+
+  walkDir(join(REPO_ROOT, '.ijfw', 'memory'));
+
+  // Include cross-platform session ledger so non-Claude session writes bust this cache (W9-H2).
+  const ledgerMtime = ijfwLedgerMtime();
+  if (ledgerMtime > 0) {
+    fileCount++;
+    if (ledgerMtime > latestMtime) latestMtime = ledgerMtime;
+  }
+
+  return `${latestMtime}:${fileCount}`;
+}
+
+const DEFAULT_PORT     = 37891;
+const PORT_WALK_MAX    = 10;  // walk up to 37891+PORT_WALK_MAX (37900)
 const BACKFILL_DEFAULT = 200;
+const BACKFILL_CAP     = 50;  // max observations sent on fresh connect (W4.6)
+
+// ---------- integer param validator ----------
+// Rejects numeric-prefix garbage like "10xyz" that parseInt accepts (W9-M2).
+// Returns null on invalid input; caller should respond with 400.
+function safeIntegerParam(value, max = Number.MAX_SAFE_INTEGER) {
+  if (typeof value !== 'string') return null;
+  if (!/^(0|[1-9]\d*)$/.test(value)) return null;
+  const n = Number.parseInt(value, 10);
+  if (n > max) return null;
+  return n;
+}
 
 // ---------- localhost guard ----------
 function requireLocalhost(req, res) {
@@ -182,11 +290,35 @@ function makeWatcher(ledgerPath, broadcaster) {
 }
 
 // ---------- backfill SSE ----------
-async function backfillSSE(res, ledgerPath, lastEventId, backfillCount) {
+// offset: explicit index-based resume (takes precedence over lastEventId when set).
+async function backfillSSE(res, ledgerPath, lastEventId, backfillCount, offset = null) {
   if (!existsSync(ledgerPath)) return 0;
   const obs = readObservations(ledgerPath);
-  const start = lastEventId ? obs.findIndex(o => o.id === lastEventId) + 1 : Math.max(0, obs.length - backfillCount);
-  const toSend = obs.slice(start);
+
+  let start;
+  if (offset !== null) {
+    // Explicit offset-based resume: slice from that index, cap at BACKFILL_CAP.
+    start = Math.min(offset, obs.length);
+  } else if (lastEventId) {
+    // Resume from after the last seen event by id.
+    start = obs.findIndex(o => o.id === lastEventId) + 1;
+  } else {
+    // Fresh connect: cap at BACKFILL_CAP regardless of caller-requested backfillCount (W4.6).
+    const cap = Math.min(backfillCount, BACKFILL_CAP);
+    start = Math.max(0, obs.length - cap);
+    // Emit sentinel so the client knows history was truncated.
+    if (obs.length > cap) {
+      try {
+        const nextOffset = start + cap;
+        const sentinel = JSON.stringify({ showing: cap, total: obs.length, next: nextOffset });
+        res.write(`event: history-truncated\ndata: ${sentinel}\n\n`);
+      } catch {
+        return -1;
+      }
+    }
+  }
+
+  const toSend = obs.slice(start, start + BACKFILL_CAP);
   for (const o of toSend) {
     try {
       res.write(`id: ${o.id}\ndata: ${JSON.stringify(o)}\n\n`);
@@ -280,54 +412,82 @@ export async function startServer(options = {}) {
     }],
 
     ['/api/memory/file', (req, res, url) => {
+      const rawPath = url.searchParams.get('path') || '';
+      if (!rawPath) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'outside allowed memory dir' }));
+        return;
+      }
+      const reqPath = resolve(rawPath);
+
+      // Security: use path.relative() for prefix check -- works on Windows (backslash) and POSIX.
+      // If realpathSync throws (path doesn't exist), return 404 rather than 500.
+      function canonOrNull(p) {
+        try { return realpathSync(p); } catch { return null; }
+      }
+      function isUnder(allowedRoot, canonChild) {
+        const canonRoot = canonOrNull(allowedRoot);
+        if (!canonRoot || !canonChild) return false;
+        const rel = relative(canonRoot, canonChild);
+        return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+      }
+
+      const canonPath = canonOrNull(reqPath);
+      if (!canonPath) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'file not found' }));
+        return;
+      }
+
+      const allowed = (
+        isUnder(join(homedir(), '.ijfw'), canonPath) ||
+        isUnder(join(homedir(), '.claude', 'projects'), canonPath) ||
+        isUnder(join(REPO_ROOT, '.ijfw'), canonPath)
+      );
+      if (!allowed) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'outside allowed memory dir' }));
+        return;
+      }
       try {
-        const reqPath = resolve(url.searchParams.get('path') || '');
-        // Security: serve files under ~/.ijfw, ~/.claude/projects, or repo/.ijfw
-        const HOME_IJFW = resolve(homedir() + '/.ijfw');
-        const HOME_CLAUDE = resolve(homedir() + '/.claude/projects');
-        const REPO_IJFW = resolve(join(REPO_ROOT, '.ijfw'));
-        const allowed = (
-          reqPath.startsWith(HOME_IJFW + '/') ||
-          reqPath.startsWith(HOME_CLAUDE + '/') ||
-          reqPath.startsWith(REPO_IJFW + '/')
-        );
-        if (!reqPath || !allowed) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Access denied' }));
-          return;
-        }
-        const body = existsSync(reqPath) ? readFileSync(reqPath, 'utf8') : null;
+        const body = readFileSync(canonPath, 'utf8');
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ body: body ? body.slice(0, 10000) : null }));
+        res.end(JSON.stringify({ body: body.slice(0, 10000) }));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ body: null, error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/memory/file' }));
       }
     }],
 
     // ---------- cost endpoints ----------
     ['/api/cost/today', (req, res) => {
       try {
-        const obs = readObservations(ledgerPath);
-        const report = buildCostReport(1, obs);
+        // cache key: fixed 1-day window; invalidates when JSONL count or latest mtime changes
+        const result = ttlCache('cost:today', COST_CACHE_TTL, claudeProjectsMtimeKey, () => {
+          const obs = readObservations(ledgerPath);
+          return buildCostReport(1, obs);
+        });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(report));
+        res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ cost: 0, savings: { total: 0 }, error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/cost/today' }));
       }
     }],
 
     ['/api/cost/period', (req, res, url) => {
       try {
         const days = parseInt(url.searchParams.get('days') || '7', 10);
-        const obs = readObservations(ledgerPath);
-        const report = buildCostReport(days, obs);
+        // cache key: per-days-param window; invalidates when JSONL count or latest mtime changes
+        const result = ttlCache(`cost:period:${days}`, COST_CACHE_TTL, claudeProjectsMtimeKey, () => {
+          const obs = readObservations(ledgerPath);
+          return buildCostReport(days, obs);
+        });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(report));
+        res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ cost: 0, savings: { total: 0 }, error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/cost/period' }));
       }
     }],
 
@@ -336,36 +496,41 @@ export async function startServer(options = {}) {
         const dim    = url.searchParams.get('dim') || 'platform';
         const period = url.searchParams.get('period') || '7d';
         const days   = parseInt(period.replace(/\D/g, '') || '7', 10);
-        const obs    = readObservations(ledgerPath);
-        const result = buildBreakdown(dim, days, obs);
+        // cache key: per-dim+period breakdown; invalidates when JSONL count or latest mtime changes
+        const result = ttlCache(`cost:by:${dim}:${days}`, COST_CACHE_TTL, claudeProjectsMtimeKey, () => {
+          const obs = readObservations(ledgerPath);
+          return buildBreakdown(dim, days, obs);
+        });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/cost/by' }));
       }
     }],
 
     ['/api/cost/block', (req, res) => {
       try {
-        const result = buildBlockUsage();
+        // cache key: 5-hour rolling window; invalidates when JSONL count or latest mtime changes
+        const result = ttlCache('cost:block', COST_CACHE_TTL, claudeProjectsMtimeKey, () => buildBlockUsage());
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/cost/block' }));
       }
     }],
 
     ['/api/cost/history', (req, res, url) => {
       try {
-        const days   = parseInt(url.searchParams.get('days') || '30', 10);
-        const series = buildDailySeries(days);
+        const days = parseInt(url.searchParams.get('days') || '30', 10);
+        // cache key: per-days daily series; invalidates when JSONL count or latest mtime changes
+        const result = ttlCache(`cost:history:${days}`, COST_CACHE_TTL, claudeProjectsMtimeKey, () => buildDailySeries(days));
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(series));
+        res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/cost/history' }));
       }
     }],
 
@@ -375,8 +540,8 @@ export async function startServer(options = {}) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(table));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/prices' }));
       }
     }],
 
@@ -386,8 +551,8 @@ export async function startServer(options = {}) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(methodology));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/savings/methodology' }));
       }
     }],
 
@@ -395,14 +560,17 @@ export async function startServer(options = {}) {
     ['/api/memory', (req, res, url) => {
       try {
         const tierFilter = url.searchParams.get('tier') || null;
-        const { files, total, root, tiers } = listMemoryFiles(REPO_ROOT, tierFilter);
-        const { counts, weekCounts, totalThisWeek } = buildRecallCounts(ledgerPath);
-        const enriched = mergeRecallCounts(files, counts, weekCounts);
+        const result = ttlCache(`memory:list:${tierFilter}`, COST_CACHE_TTL, memoryDirsMtimeKey, () => {
+          const { files, total, root, tiers } = listMemoryFiles(REPO_ROOT, tierFilter);
+          const { counts, weekCounts, totalThisWeek } = buildRecallCounts(ledgerPath);
+          const enriched = mergeRecallCounts(files, counts, weekCounts);
+          return { files: enriched, total, root, tiers, totalRecallsThisWeek: totalThisWeek };
+        });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ files: enriched, total, root, tiers, totalRecallsThisWeek: totalThisWeek }));
+        res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ files: [], total: 0, root: null, tiers: {}, error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/memory' }));
       }
     }],
 
@@ -424,8 +592,8 @@ export async function startServer(options = {}) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ results: withCounts, count: withCounts.length }));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ results: [], count: 0, error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/memory/search' }));
       }
     }],
 
@@ -435,22 +603,25 @@ export async function startServer(options = {}) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ projects, total: projects.length }));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ projects: [], total: 0, error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/projects' }));
       }
     }],
 
     ['/api/memory/recall-stats', (req, res) => {
       try {
-        const { files } = listMemoryFiles(REPO_ROOT);
-        const { counts, weekCounts, totalThisWeek } = buildRecallCounts(ledgerPath);
-        const enriched = mergeRecallCounts(files, counts, weekCounts);
-        const top = topRecalled(enriched, 5);
+        const result = ttlCache('memory:recall-stats', COST_CACHE_TTL, memoryDirsMtimeKey, () => {
+          const { files } = listMemoryFiles(REPO_ROOT);
+          const { counts, weekCounts, totalThisWeek } = buildRecallCounts(ledgerPath);
+          const enriched = mergeRecallCounts(files, counts, weekCounts);
+          const top = topRecalled(enriched, 5);
+          return { top_recalled: top, total_recalls_this_week: totalThisWeek };
+        });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ top_recalled: top, total_recalls_this_week: totalThisWeek }));
+        res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ top_recalled: [], total_recalls_this_week: 0, error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/memory/recall-stats' }));
       }
     }],
 
@@ -482,7 +653,15 @@ export async function startServer(options = {}) {
           const stored = JSON.parse(readFileSync(configPath, 'utf8'));
           // Merge stored over defaults so new fields appear on first read.
           config = Object.assign({}, CONFIG_DEFAULTS, stored);
-        } catch {}
+        } catch (err) {
+          // Corrupt config: rename aside so the user has a recoverable copy AND
+          // next read regenerates defaults instead of getting stuck (parity with
+          // scripts/dashboard/server.js loadConfig W11-2 fix).
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+          try { renameSync(configPath, `${configPath}.corrupt.${stamp}`); }
+          catch { /* rename failure is non-fatal; defaults still serve */ }
+          process.stderr.write(`[ijfw-mcp] /api/cost/config: ${err.message} -- using defaults; corrupt file preserved as ${configPath}.corrupt.${stamp}\n`);
+        }
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(config));
@@ -495,7 +674,14 @@ export async function startServer(options = {}) {
         const configPath = join(homedir(), '.ijfw', 'config.json');
         let config = {};
         if (existsSync(configPath)) {
-          try { config = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
+          try { config = JSON.parse(readFileSync(configPath, 'utf8')); }
+          catch (err) {
+            // Corrupt config: rename aside, log, fall through to {} defaults.
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            try { renameSync(configPath, `${configPath}.corrupt.${stamp}`); }
+            catch { /* rename failure non-fatal */ }
+            process.stderr.write(`[ijfw-mcp] /api/value-delivered: ${err.message} -- using defaults; corrupt file preserved as ${configPath}.corrupt.${stamp}\n`);
+          }
         }
         const tierCfg = (config.subscriptions || {})[platform] || null;
         const obs    = readObservations(ledgerPath);
@@ -506,8 +692,8 @@ export async function startServer(options = {}) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ payg_equivalent: 0, framing: 'unconfigured', error: err.message }));
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/value-delivered' }));
       }
     }],
 
@@ -566,6 +752,50 @@ export async function startServer(options = {}) {
     }],
 
     ['/stream', async (req, res, url) => {
+      // Per W11: pass explicit `max` to safeIntegerParam so absurd values are
+      // rejected with 400 rather than silently clamped downstream. Defense-in-depth
+      // even though Math.min/slice in backfillSSE would also clamp.
+      const OBSERVATION_INDEX_MAX = 1_000_000; // observations.jsonl line index ceiling
+
+      // Validate lastEventId (from SSE header or query param) -- reject prefix-garbage (W9-M2).
+      const rawLastId = req.headers['last-event-id'] || url.searchParams.get('lastEventId') || '';
+      let lastId = 0;
+      if (rawLastId) {
+        const parsed = safeIntegerParam(rawLastId, OBSERVATION_INDEX_MAX);
+        if (parsed === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid lastEventId' }));
+          return;
+        }
+        lastId = parsed;
+      }
+
+      // Validate ?offset (for explicit resume-from-index) -- reject prefix-garbage (W9-M2).
+      const rawOffset = url.searchParams.get('offset');
+      let offset = null;
+      if (rawOffset !== null) {
+        offset = safeIntegerParam(rawOffset, OBSERVATION_INDEX_MAX);
+        if (offset === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid offset' }));
+          return;
+        }
+      }
+
+      // Validate ?backfill -- reject prefix-garbage (W9-M2). Cap at BACKFILL_CAP
+      // (server-side limit) so callers requesting more get a clear 400.
+      const rawBackfill = url.searchParams.get('backfill');
+      let backfill = BACKFILL_DEFAULT;
+      if (rawBackfill !== null) {
+        const parsed = safeIntegerParam(rawBackfill, BACKFILL_CAP);
+        if (parsed === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `invalid backfill (max ${BACKFILL_CAP})` }));
+          return;
+        }
+        backfill = parsed;
+      }
+
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -575,9 +805,7 @@ export async function startServer(options = {}) {
       // Heartbeat comment to keep connection alive
       res.write(': connected\n\n');
 
-      const lastId = parseInt(req.headers['last-event-id'] || url.searchParams.get('lastEventId') || '0', 10);
-      const backfill = parseInt(url.searchParams.get('backfill') || String(BACKFILL_DEFAULT), 10);
-      await backfillSSE(res, ledgerPath, lastId || 0, backfill);
+      await backfillSSE(res, ledgerPath, lastId, backfill, offset);
 
       broadcaster.add(res);
       req.on('close', () => broadcaster.remove(res));
@@ -643,8 +871,18 @@ if (process.argv.includes('--daemon')) {
   startServer().then(({ port }) => {
     const ijfwDir = dirname(pidFile);
     mkdirSync(ijfwDir, { recursive: true });
-    writeFileSync(pidFile,  String(process.pid), 'utf8');
-    writeFileSync(portFile, String(port),        'utf8');
+    // PID file: plain write (single writer; pid is meaningless mid-write)
+    writeFileSync(pidFile, String(process.pid), 'utf8');
+    // Port file: atomic write via tmp+rename so readers never see a partial value (W4.2).
+    // Cleanup tmp on rename failure so it doesn't leak (W9-M1).
+    const portTmp = `${portFile}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(portTmp, String(port), 'utf8');
+    try {
+      renameSync(portTmp, portFile);
+    } catch (err) {
+      try { unlinkSync(portTmp); } catch {}
+      throw new Error(`atomic write failed for ${portFile}: ${err.message}`);
+    }
   }).catch(err => {
     process.stderr.write('[ijfw-dashboard] ' + err.message + '\n');
     process.exit(1);

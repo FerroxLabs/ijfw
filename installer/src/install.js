@@ -95,8 +95,11 @@ function preflight() {
 }
 
 function hasBin(bin) {
-  const res = spawnSync(bin, ['--version'], { stdio: 'ignore' });
-  return res.status === 0 || res.status === null ? (res.error ? false : true) : false;
+  const res = spawnSync(bin, ['--version'], { stdio: 'ignore', timeout: 3000 });
+  if (res.error && res.error.code === 'ENOENT') return false; // truly missing
+  if (res.status === 0) return true; // ran cleanly
+  // Signal-killed or non-zero exit: treat as present-but-flaky, not missing.
+  return res.error == null;
 }
 
 // Resolve a usable bash. Returns an absolute path (Windows) or "bash" (POSIX
@@ -147,7 +150,7 @@ function resolveTarget(opt) {
 
 function runCheck(cmd, args, opts) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', ...opts });
-  return { status: r.status, stdout: r.stdout || '' };
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', spawnError: r.error?.code, signal: r.signal };
 }
 
 function cloneOrPull(dir, branch) {
@@ -162,14 +165,29 @@ function cloneOrPull(dir, branch) {
   // Upgrade path.
   const hasGit = existsSync(join(dir, '.git'));
   if (hasGit) {
-    const { status: remoteStatus, stdout } = runCheck('git', ['-C', dir, 'remote', 'get-url', 'origin']);
+    const { status: remoteStatus, stdout, stderr: remoteStderr, spawnError: remoteSpawnError, signal: remoteSignal } = runCheck('git', ['-C', dir, 'remote', 'get-url', 'origin']);
+    if (remoteSpawnError) console.warn(`  git spawn error (${remoteSpawnError}) -- check git is on PATH`);
+    else if (remoteSignal) console.warn(`  git exited on signal ${remoteSignal}`);
+    else if (remoteStatus !== 0 && remoteStderr) console.warn(`  git remote get-url: ${remoteStderr.slice(0, 120).trim()}`);
     if (remoteStatus === 0) {
       // Re-point origin if a host migration moved the canonical home.
       // Without this, users from a prior canonical host see fetch 404s and abort.
+      // Only migrate known stale canonical HTTPS URLs -- never clobber SSH remotes,
+      // forks, or user-customized origins.
+      const STALE_ORIGINS = [
+        'https://github.com/seandonahoe/ijfw.git',
+        'https://github.com/seandonahoe/ijfw',
+        'https://github.com/seandonahoe/ijfw/',
+        'https://github.com/seandonahoe/ijfw.git/',
+      ];
       const currentOrigin = (stdout || '').trim();
-      if (currentOrigin && currentOrigin !== DEFAULT_REPO) {
-        console.log(`  origin migration: ${currentOrigin} -> ${DEFAULT_REPO}`);
-        spawnSync('git', ['-C', dir, 'remote', 'set-url', 'origin', DEFAULT_REPO], { stdio: 'inherit' });
+      if (STALE_ORIGINS.includes(currentOrigin)) {
+        const setUrl = spawnSync('git', ['-C', dir, 'remote', 'set-url', 'origin', DEFAULT_REPO], { stdio: 'inherit' });
+        if (setUrl.status !== 0) {
+          console.warn(`  [!] origin migration failed -- could not repoint ${currentOrigin} to ${DEFAULT_REPO}`);
+        } else {
+          console.log(`  origin migration: ${currentOrigin} -> ${DEFAULT_REPO}`);
+        }
       }
       // fetch + hard checkout avoids ff-only failures from local divergence.
       const fetch = spawnSync('git', ['-C', dir, 'fetch', '--depth', '1', 'origin', branch], { stdio: 'inherit' });

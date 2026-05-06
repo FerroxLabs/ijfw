@@ -14,6 +14,8 @@
 
 [ "${IJFW_DISABLE:-}" = "1" ] && exit 0
 
+mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+
 INPUT=$(head -c 1048576)
 [ -z "$INPUT" ] && exit 0
 
@@ -50,7 +52,10 @@ if [ -n "$FIRST_ERR" ] || [ -n "$FIRST_FAIL" ]; then
 fi
 
 # Trim noise from tool_response.
-CLEANED=$(printf '%s' "$RESPONSE_TEXT" | sed -E '
+# AWK_RC: pipeline is printf[0]|sed[1]|awk[2]|sed[3]; PIPESTATUS inside $() is
+# not accessible outside, so redirect pipeline output to a temp file instead.
+_CLEAN_TMP=$(mktemp 2>/dev/null || printf '/tmp/ijfw-clean.%s' "$$")
+printf '%s' "$RESPONSE_TEXT" | sed -E '
   s/'"$(printf '\033')"'\[[0-9;]*[a-zA-Z]//g
   s/[[:space:]]+$//
 ' | awk '
@@ -65,7 +70,11 @@ CLEANED=$(printf '%s' "$RESPONSE_TEXT" | sed -E '
   /^Requirement already satisfied/d
   /^Downloading /d
   /^Installing collected/d
-')
+' > "$_CLEAN_TMP"
+AWK_RC="${PIPESTATUS[2]:-0}"
+[ "$AWK_RC" != "0" ] && printf '%s [codex-post-tool-use] awk failed: rc=%s\n' "$(date -u +%FT%TZ)" "$AWK_RC" >>"$HOME/.ijfw/logs/codex-post-tool-use.log" 2>/dev/null
+CLEANED=$(cat "$_CLEAN_TMP" 2>/dev/null)
+rm -f "$_CLEAN_TMP" 2>/dev/null
 
 LINE_COUNT=$(printf '%s\n' "$CLEANED" | wc -l | tr -d ' ')
 if [ "${LINE_COUNT:-0}" -gt 500 ]; then
@@ -90,6 +99,8 @@ node -e '
   const out = process.argv[1] || "";
   if (!out.trim()) process.exit(0);
   process.stdout.write(JSON.stringify({ "continue": true, "systemMessage": out }) + "\n");
-' "$CLEANED" 2>/dev/null
+' "$CLEANED" 2>>"$HOME/.ijfw/logs/codex-post-tool-use.log"
+NODE_RC=$?
+[ "$NODE_RC" != "0" ] && printf '%s [codex-post-tool-use] node emit failed: rc=%s\n' "$(date -u +%FT%TZ)" "$NODE_RC" >>"$HOME/.ijfw/logs/codex-post-tool-use.log" 2>/dev/null
 
 exit 0

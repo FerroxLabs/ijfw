@@ -30,7 +30,7 @@ COMMANDS
   install     Install IJFW into your AI coding agents
   uninstall   Remove IJFW from your AI coding agents
   help        Open the full IJFW guide (terminal, or --browser for rendered)
-  preflight   Run 11-gate quality pipeline before publishing
+  preflight   Run 12-gate quality pipeline before publishing
   dashboard   Start / stop / check the local observability dashboard
   design      Manage the visual design companion
   doctor      Diagnose IJFW installation health
@@ -42,7 +42,9 @@ COMMANDS
 
 function doctorCheck(cmd, args) {
   const r = spawnSync(cmd, args, { encoding: 'utf8' });
-  return r.status === 0 ? r.stdout.split('\n')[0].trim() : 'not found';
+  if (r.status === 0) return r.stdout.split('\n')[0].trim();
+  if (r.status === 127 || (r.error && r.error.code === 'ENOENT')) return 'not found';
+  return `exit ${r.status} (may be transient)`;
 }
 
 // Locate cross-orchestrator-cli.js from one of:
@@ -64,7 +66,7 @@ function findCli() {
 function delegateToCli(argTail) {
   const cli = findCli();
   if (!cli) return false;
-  const r = spawnSync('node', [cli, ...argTail], { stdio: 'inherit' });
+  const r = spawnSync(process.execPath, [cli, ...argTail], { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
@@ -148,7 +150,7 @@ async function main() {
           const serverJs = findInTree('mcp-server', 'src', 'dashboard-server.js');
           if (dashSub === 'start' && serverJs) {
             const { spawn } = await import('node:child_process');
-            const child = spawn(process.execPath, [serverJs, '--daemon'], {
+            const child = spawn(process.execPath, [serverJs, 'start', '--daemon'], {
               detached: true,
               stdio: 'ignore',
             });
@@ -261,7 +263,10 @@ async function main() {
 
       const hasLess = spawnSync('less', ['-V'], { stdio: 'ignore' }).status === 0;
       if (hasLess) {
-        spawnSync('less', ['-R', guidePath], { stdio: 'inherit' });
+        const lessRes = spawnSync('less', ['-R', guidePath], { stdio: 'inherit' });
+        if (lessRes.status !== 0 && lessRes.status !== null) {
+          process.stdout.write(readFileSync(guidePath, 'utf8'));
+        }
       } else {
         process.stdout.write(readFileSync(guidePath, 'utf8'));
       }

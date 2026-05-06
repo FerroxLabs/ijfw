@@ -141,13 +141,15 @@ else
   fail "ijfw --version --verbose missing fields"
 fi
 
-# --- ijfw update --check (network-dependent; tolerate no-network) ---
+# --- ijfw update --check (exit 0 + stdout sentinel per W5.1) ---
 UPDATE_RC=0
-IJFW_HOME="$VNV_HOME/.ijfw" HOME="$VNV_HOME" node "$CLI" update --check >/dev/null 2>&1 || UPDATE_RC=$?
-case "$UPDATE_RC" in
-  0|3|1) pass "ijfw update --check returned a known status (rc=$UPDATE_RC)" ;;
-  *) fail "ijfw update --check unexpected rc=$UPDATE_RC" ;;
-esac
+UPDATE_OUT=""
+UPDATE_OUT=$(IJFW_HOME="$VNV_HOME/.ijfw" HOME="$VNV_HOME" node "$CLI" update --check 2>/dev/null) || UPDATE_RC=$?
+if [ "$UPDATE_RC" -eq 0 ] && printf '%s' "$UPDATE_OUT" | grep -q "update-available:"; then
+  pass "ijfw update --check: exit 0 + update-available sentinel"
+else
+  fail "ijfw update --check: rc=$UPDATE_RC out=$UPDATE_OUT (expected exit 0 + 'update-available:' sentinel)"
+fi
 
 # --- ijfw statusline --status ---
 ST_OUT="$(IJFW_HOME="$VNV_HOME/.ijfw" HOME="$VNV_HOME" node "$CLI" statusline --status 2>&1)"

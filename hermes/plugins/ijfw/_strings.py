@@ -1,7 +1,6 @@
 # _strings.py -- registry of every user-facing string emitted by the IJFW plugin.
 # ALL user-facing output MUST come from this dict.
 # Sutherland rule: lead with value, never with "Error/Failed/Cannot".
-# Snapshot test: tests/test_strings_snapshot.py diffs this against strings-fixture.json.
 
 STRINGS = {
     "session_start_banner": (
@@ -35,13 +34,13 @@ STRINGS = {
         "Cross-critique running on {target}. Independent perspective incoming."
     ),
     "skill_load_prompt_workflow": (
-        "Load IJFW workflow skill from ~/.wayland/skills/ijfw-workflow/SKILL.md and begin."
+        "Load IJFW workflow skill from ~/.hermes/skills/ijfw-workflow/SKILL.md and begin."
     ),
     "skill_load_prompt_handoff": (
-        "Load IJFW handoff skill from ~/.wayland/skills/ijfw-handoff/SKILL.md and begin."
+        "Load IJFW handoff skill from ~/.hermes/skills/ijfw-handoff/SKILL.md and begin."
     ),
     "skill_load_prompt_compress": (
-        "Load IJFW compress skill from ~/.wayland/skills/ijfw-compress/SKILL.md and begin."
+        "Load IJFW compress skill from ~/.hermes/skills/ijfw-compress/SKILL.md and begin."
     ),
     "mcp_unavailable": (
         "IJFW memory tools unavailable this session -- proceeding without memory hydration."

@@ -578,7 +578,7 @@ node -e "
     const { ijfwUpdateCheck, writeCachedCheck } = await import('$ISO_HOME/.ijfw/mcp-server/src/update-check.js');
     writeAtomic('$ISO_HOME/.ijfw/state.json', { schema_version: 1, install_method: 'manual', installed_version: '99.99.99', last_applied_version: '99.99.99' });
     writeCachedCheck({ last_latest_seen: '99.99.99', last_failure: null });
-    const r = ijfwUpdateCheck();
+    const r = await ijfwUpdateCheck();
     if (r.available !== false) { console.error('expected available:false, got', JSON.stringify(r)); process.exit(1); }
     process.exit(0);
   }).catch(e => { console.error(e.message); process.exit(2); });
@@ -771,6 +771,34 @@ else
 fi
 
 rm -rf "$SC_HOME"
+
+# ============================================================
+# 1.2.10 -- Gemini banner dedup (W8-F: atomic mkdir per session_id)
+# ============================================================
+hdr "1.2.10 -- gemini banner dedup"
+
+SID_DEDUP="test-dedup-$$"
+DEDUP_TMP="$(mktemp -d -t ijfw-dedup-XXXXXX)"
+mkdir -p "$DEDUP_TMP/.ijfw"
+GEMINI_SS_HOOK="$REPO_ROOT/gemini/extensions/ijfw/hooks/session-start.sh"
+if [ -f "$GEMINI_SS_HOOK" ]; then
+  # Both invocations must cd into DEDUP_TMP — IJFW_DIR=".ijfw" is cwd-relative,
+  # so the lock dir resolution depends on the active cwd, not on cwd from stdin.
+  OUT1=$(printf '{"session_id":"%s","cwd":"%s"}' "$SID_DEDUP" "$DEDUP_TMP" | \
+    (cd "$DEDUP_TMP" && bash "$GEMINI_SS_HOOK" 2>/dev/null) || true)
+  OUT2=$(printf '{"session_id":"%s","cwd":"%s"}' "$SID_DEDUP" "$DEDUP_TMP" | \
+    (cd "$DEDUP_TMP" && bash "$GEMINI_SS_HOOK" 2>/dev/null) || true)
+  HAS_BANNER1=$(printf '%s' "$OUT1" | grep -c '"systemMessage"' || true)
+  HAS_BANNER2=$(printf '%s' "$OUT2" | grep -c '"systemMessage"' || true)
+  if [ "$HAS_BANNER1" -ge 1 ] && [ "$HAS_BANNER2" -eq 0 ]; then
+    pass "1.2.10: gemini banner dedup fires on repeat session_id"
+  else
+    fail "1.2.10: gemini banner dedup did NOT fire (out1_banners=$HAS_BANNER1, out2_banners=$HAS_BANNER2)"
+  fi
+else
+  fail "1.2.10: gemini session-start.sh missing"
+fi
+rm -rf "$DEDUP_TMP"
 
 # ============================================================
 # SUMMARY

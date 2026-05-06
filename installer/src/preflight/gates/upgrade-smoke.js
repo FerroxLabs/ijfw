@@ -91,8 +91,7 @@ export async function run(ctx) {
 
     let installerBin = null;
     for (const c of binCandidates) {
-      const check = spawnSync('ls', [c], { encoding: 'utf8' });
-      if (check.status === 0) { installerBin = c; break; }
+      if (existsSync(c)) { installerBin = c; break; }
     }
 
     if (!installerBin) {

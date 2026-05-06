@@ -40,7 +40,9 @@ mkdir -p "$IJFW_GLOBAL/memory" 2>/dev/null
 # Wrapped in a 2s ceiling per v3 �section 3.
 IJFW_HOOK_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 if [ -x "$IJFW_HOOK_DIR/ijfw-check-update.sh" ]; then
-  ( "$IJFW_HOOK_DIR/ijfw-check-update.sh" </dev/null >/dev/null 2>&1 & ) &
+  mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+  "$IJFW_HOOK_DIR/ijfw-check-update.sh" </dev/null >>"$HOME/.ijfw/logs/update-check.log" 2>&1 &
+  disown $! 2>/dev/null || true
 fi
 
 # --- Project registry (Phase 3: enables cross-project memory search) ---
@@ -134,6 +136,8 @@ fi
 # mkdir is atomic on POSIX → safe lock without flock dependency.
 # .migrated is written FIRST so a crash mid-import doesn't double-import next run.
 if [ ! -f "$MIGRATED_FLAG" ] && mkdir "$MIGRATION_LOCK" 2>/dev/null; then
+  # Ensure lock is released on kill or early exit -- prevents stale lock on crash.
+  trap 'rm -rf "$MIGRATION_LOCK" 2>/dev/null || true' EXIT INT TERM
   # Write the flag first -- if we crash, next run sees we already attempted.
   # Failed imports leave individual signals but don't replay.
   echo "schema=1" > "$MIGRATED_FLAG"
@@ -248,8 +252,9 @@ if [ ! -f "$MIGRATED_FLAG" ] && mkdir "$MIGRATION_LOCK" 2>/dev/null; then
     echo "Memory palace ready for enrichment" >> "$MIGRATION_MSGS_FILE"
   fi
 
-  # Release lock.
+  # Release lock and clear the trap so subsequent script traps aren't shadowed.
   rmdir "$MIGRATION_LOCK" 2>/dev/null
+  trap - EXIT INT TERM
 fi
 
 # --- Project context generation flag ---
@@ -400,9 +405,11 @@ if [ -f "$INDEX_FILE" ]; then
   [ "$INDEX_COUNT" -gt 0 ] && printf '[ijfw] Codebase indexed (%s files)\n' "$INDEX_COUNT"
 fi
 
-# Fire-and-forget background rebuild. If the indexer isn't found we just skip.
+# Detached background rebuild -- crashes surface in ~/.ijfw/logs/indexer.log.
 if [ -n "$INDEXER_SCRIPT" ]; then
-  (bash "$INDEXER_SCRIPT" . >/dev/null 2>&1 &) 2>/dev/null
+  mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+  bash "$INDEXER_SCRIPT" . </dev/null >>"$HOME/.ijfw/logs/indexer.log" 2>&1 &
+  disown $! 2>/dev/null || true
 fi
 
 # Transcript parser -- incremental, background, silent.
@@ -429,7 +436,10 @@ if [ "${IJFW_SKIP_PARSE:-}" != "1" ]; then
       fi
     fi
     if [ "$SPAWN_OK" = "1" ]; then
-      (node "$TRANSCRIPT_PARSER" --incremental >/dev/null 2>&1 &) 2>/dev/null
+      # Detached transcript parser -- crashes surface in ~/.ijfw/logs/transcript-parser.log.
+      mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+      node "$TRANSCRIPT_PARSER" --incremental </dev/null >>"$HOME/.ijfw/logs/transcript-parser.log" 2>&1 &
+      disown $! 2>/dev/null || true
     fi
   fi
 fi
@@ -509,6 +519,16 @@ if [ "${SESSION_COUNT:-0}" -eq 0 ] && [ "${DECISION_COUNT:-0}" -eq 0 ]; then
   printf '[ijfw] First session -- IJFW will start learning your project as you work.\n'
 fi
 
+# Find node before any dashboard work (resolution must precede first use of $_NODE).
+_NODE=""
+if command -v node >/dev/null 2>&1; then
+  _NODE="$(command -v node)"
+else
+  for _nc in /opt/homebrew/bin/node /usr/local/bin/node "$HOME/.nvm/versions/node"/*/bin/node "$HOME/.volta/bin/node" /usr/bin/node; do
+    for _nr in $_nc; do [ -x "$_nr" ] && { _NODE="$_nr"; break 2; }; done
+  done
+fi
+
 # Dashboard auto-start. Launches as a background daemon if not already running.
 # Zero overhead: separate OS process, no context cost, no token usage.
 DASH_PORT_FILE="$HOME/.ijfw/dashboard.port"
@@ -537,17 +557,20 @@ if [ "$DASH_RUNNING" -eq 1 ] && [ -f "$DASH_PORT_FILE" ]; then
   DASH_PORT=$(cat "$DASH_PORT_FILE" 2>/dev/null)
   [ -n "$DASH_PORT" ] && printf '[ijfw] Dashboard: http://localhost:%s\n' "$DASH_PORT"
 elif [ -n "$DASH_SERVER" ] && [ -n "$_NODE" ]; then
-  # Launch as background daemon. IJFW_DAEMON=1 tells server.js to unref.
-  IJFW_DAEMON=1 "$_NODE" "$DASH_SERVER" </dev/null >/dev/null 2>&1 &
-  # Brief wait for port file to appear.
-  for _i in 1 2 3; do
-    [ -f "$DASH_PORT_FILE" ] && break
-    sleep 0.1 2>/dev/null || true
-  done
+  # Detached daemon -- crashes surface in ~/.ijfw/logs/dashboard.log.
+  mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
+  IJFW_DAEMON=1 "$_NODE" "$DASH_SERVER" </dev/null >>"$HOME/.ijfw/logs/dashboard.log" 2>&1 &
+  disown $! 2>/dev/null || true
+  # Single 500ms wait -- enough for server.js to write the port file.
+  sleep 0.5 2>/dev/null || true
   if [ -f "$DASH_PORT_FILE" ]; then
     DASH_PORT=$(cat "$DASH_PORT_FILE" 2>/dev/null)
     [ -n "$DASH_PORT" ] && printf '[ijfw] Dashboard: http://localhost:%s\n' "$DASH_PORT"
+  else
+    printf '[ijfw] dashboard auto-start: port file not written within 500ms (check ~/.ijfw/logs/dashboard.log)\n' >&2 || true
   fi
+elif [ -n "$DASH_SERVER" ] && [ -z "$_NODE" ]; then
+  printf '[ijfw] dashboard auto-start: node not in PATH; auto-start skipped (check ~/.ijfw/logs/dashboard.log)\n' >>"$HOME/.ijfw/logs/dashboard.log" 2>/dev/null || true
 fi
 
 # Observation summary (how many observations exist for context economics).
@@ -555,16 +578,6 @@ OBS_FILE="$HOME/.ijfw/observations.jsonl"
 if [ -f "$OBS_FILE" ]; then
   OBS_COUNT=$(wc -l < "$OBS_FILE" 2>/dev/null | tr -d ' ')
   [ "${OBS_COUNT:-0}" -gt 0 ] && printf '[ijfw] Observations: %s tracked across sessions.\n' "$OBS_COUNT"
-fi
-
-# Find node (same resolution as the MCP launcher -- handles stripped PATH).
-_NODE=""
-if command -v node >/dev/null 2>&1; then
-  _NODE="$(command -v node)"
-else
-  for _nc in /opt/homebrew/bin/node /usr/local/bin/node "$HOME/.nvm/versions/node"/*/bin/node "$HOME/.volta/bin/node" /usr/bin/node; do
-    for _nr in $_nc; do [ -x "$_nr" ] && { _NODE="$_nr"; break 2; }; done
-  done
 fi
 
 # Dashboard render (async-tolerant: node renders inline into the banner buffer).
