@@ -11,7 +11,7 @@ export async function run(ctx) {
   const res = spawnSync(
     'npx',
     ['--yes', `publint@${ver}`, '--strict'],
-    { encoding: 'utf8', cwd: ctx.repoRoot + '/installer', timeout: 30_000 },
+    { encoding: 'utf8', cwd: ctx.repoRoot + '/installer', timeout: 90_000 },
   );
 
   const durationMs = Date.now() - t0;

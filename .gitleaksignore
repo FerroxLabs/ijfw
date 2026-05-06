@@ -4,3 +4,4 @@
 /Users/seandonahoe/dev/ijfw/.ijfw/cross-audit/codex.err:slack-webhook-url:864
 /Users/seandonahoe/dev/ijfw/.ijfw/cross-audit/archive/2026-04-14T2030-r2-codex-gemini/codex.stderr:slack-webhook-url:1000
 /Users/seandonahoe/dev/ijfw/.ijfw/cross-audit/archive/2026-04-14T2030-r2-codex-gemini/codex.stderr:slack-webhook-url:2503
+3ef884ee206b1fd92651b6fdfae2fd2206778448:mcp-server/test-redactor.js:slack-webhook-url:145
