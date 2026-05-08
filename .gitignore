@@ -1,5 +1,9 @@
 # IJFW runtime state — per-install, not source.
 .ijfw/
+# Compute lever per-project FTS5 db (v1.3.0 alpha). Belt-and-braces: parent
+# .ijfw/ already covers it, but explicit entry survives if someone narrows
+# the parent rule later.
+.ijfw/index/
 
 # Derived: installer/docs/ is synced from /docs at build time
 installer/docs/
@@ -49,3 +53,8 @@ __pycache__/
 
 # npm pack artifacts
 installer/*.tgz
+
+# AGENTS.md merger backups (Phase 2 / A1) -- relocated to ~/.ijfw/state/agents-md/
+# in v1.3.0 alpha, but belt-and-braces in case anyone runs an older merger.
+AGENTS.md.bak.*
+*.bak.*

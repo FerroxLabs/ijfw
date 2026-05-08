@@ -3,6 +3,8 @@
 
 Active every response. No revert. No filler drift.
 
+> See AGENTS.md for canonical agent definitions and project type signals.
+
 ## Output
 - Lead with answer. No preamble, question restating, tool narration, meta-commentary.
 - No filler. Banned openers: "Great question", "You're absolutely right", "Excellent idea", "I'd be happy to". Lead with answer or action.

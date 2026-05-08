@@ -162,7 +162,7 @@ tr:hover td{background:var(--surface)}
 ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.2)}
 .platform-badges{display:flex;gap:4px;flex-wrap:wrap}
 .section-divider{font-size:12px;font-weight:700;color:var(--fg-dim);margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
-/* Second Opinion / Cross-AI review cards */
+/* Second Opinion / Cross-Model review cards */
 .trident-card{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;cursor:pointer}
 .trident-header{padding:12px 16px;display:flex;align-items:center;gap:12px;font-size:13px}
 .trident-body{display:none;padding:0 16px 16px;font-size:12px;color:var(--fg-dim)}
@@ -262,7 +262,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <div class="sb-group-label"><span>Analytics</span></div>
     <button class="sb-item" data-section="activity"><span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="17" y="3" width="4" height="4" rx="1"/><rect x="3" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="17" y="10" width="4" height="4" rx="1"/><rect x="3" y="17" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/></svg></span><span class="sb-label">Activity</span></button>
     <div class="sb-group-label"><span>Audits</span></div>
-    <button class="sb-item" data-section="trident"><span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg></span><span class="sb-label">Cross-AI Reviews</span></button>
+    <button class="sb-item" data-section="trident"><span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg></span><span class="sb-label">Cross-Model Reviews</span></button>
     <div class="sb-group-label"><span>Settings</span></div>
     <button class="sb-item" data-section="settings"><span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span><span class="sb-label">Settings</span></button>
   </nav>
@@ -295,7 +295,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         <div class="hcard">
           <div class="hlabel">Issues Caught</div>
           <div class="hval" id="heroIssuesCaught">--</div>
-          <div class="hsub" id="heroIssuesSub">via -- Cross-AI reviews</div>
+          <div class="hsub" id="heroIssuesSub">via -- Cross-Model reviews</div>
         </div>
         <div class="hcard">
           <div class="hlabel">Context Reuse</div>
@@ -316,6 +316,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         </div>
       </div>
 
+      <div class="card" id="computeSavingsCard">
+        <div class="ctitle">Compute savings <span style="font-size:11px;font-weight:400;color:var(--fg-dim);margin-left:8px">Sandboxed runs indexed locally for re-search</span></div>
+        <div class="savings-ledger-tile" id="computeSavingsTile">
+          <div style="color:var(--fg-dim);font-size:13px">Loading...</div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="ctitle" id="todayProjectTitle">Today by Project</div>
         <div id="todayProjectBars"><div style="color:var(--fg-dim);font-size:13px">Loading...</div></div>
@@ -330,7 +337,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <!-- INVESTMENT (formerly Spend) -->
     <div class="section" data-section="spend">
       <div class="card">
-        <div class="ctitle">Your AI Investment <span style="font-size:11px;font-weight:400;color:var(--fg-dim);margin-left:8px">Measured from actual usage. IJFW optimizes model selection to balance quality and efficiency.</span></div>
+        <div class="ctitle">Your Model Investment <span style="font-size:11px;font-weight:400;color:var(--fg-dim);margin-left:8px">Measured from actual usage. IJFW optimizes model selection to balance quality and efficiency.</span></div>
         <table><thead><tr><th>Project</th><th class="nr">Sessions</th><th class="nr">30-Day Cost</th><th class="nr">%</th><th class="nr" style="width:160px">Share</th></tr></thead><tbody id="spendByProject"><tr><td colspan="5" style="color:var(--fg-dim)">Loading...</td></tr></tbody></table>
         <div class="disc">Costs measured from actual token usage. Subscriptions tracked separately in Settings.</div>
       </div>
@@ -423,11 +430,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       </div>
     </div>
 
-    <!-- CROSS-AI REVIEWS -->
+    <!-- CROSS-MODEL REVIEWS -->
     <div class="section" data-section="trident">
       <div class="card">
-        <div class="ctitle">Cross-AI Code Reviews <span id="tridentCount" style="font-size:11px;color:var(--fg-dim);margin-left:auto"></span></div>
-        <div style="font-size:12px;color:var(--fg-dim);margin-bottom:12px">Multi-model audits &mdash; each review is independently assessed by multiple AI platforms to catch issues one model alone would miss.</div>
+        <div class="ctitle">Cross-Model Code Reviews <span id="tridentCount" style="font-size:11px;color:var(--fg-dim);margin-left:auto"></span></div>
+        <div style="font-size:12px;color:var(--fg-dim);margin-bottom:12px">Multi-model audits &mdash; each review is independently assessed across multiple lineages to catch issues one model alone would miss.</div>
         <div id="tridentCards"><div style="color:var(--fg-dim);font-size:13px">Loading...</div></div>
       </div>
     </div>
@@ -480,7 +487,7 @@ var breadcrumbs = {
   memory:'Memory > Memory',
   sessions:'Memory > Sessions', handoffs:'Memory > Handoffs',
   activity:'Analytics > Activity',
-  allprojects:'Projects > All', trident:'Audits > Cross-AI Reviews',
+  allprojects:'Projects > All', trident:'Audits > Cross-Model Reviews',
   settings:'Settings > Settings'
 };
 
@@ -571,6 +578,7 @@ function platformBadges(hasClaude,hasCodex,hasGemini){
 function render(data){
   renderDashboard(data);
   renderSavingsLedger(data);
+  renderComputeSavings(data);
   renderSpend(data);
   renderModels(data);
   renderTrend(data);
@@ -602,7 +610,7 @@ function renderDashboard(data){
   var crossRuns=data.crossRuns||[];
   var totalFindings=crossRuns.reduce(function(s,r){return s+((r.findings&&r.findings.items)?r.findings.items.length:0);},0);
   setText('heroIssuesCaught',totalFindings.toLocaleString());
-  setText('heroIssuesSub','via '+crossRuns.length+' Cross-AI review'+(crossRuns.length!==1?'s':''));
+  setText('heroIssuesSub','via '+crossRuns.length+' Cross-Model review'+(crossRuns.length!==1?'s':''));
 
   // Hero 3: Context Reuse
   var t=data.today||{};
@@ -1218,7 +1226,7 @@ function renderAllProjects(data){
   }).join(''));
 }
 
-// SECOND OPINION / CROSS-AI REVIEWS
+// SECOND OPINION / CROSS-MODEL REVIEWS
 function renderFinding(f){
   // Normalize Schema A (audit: issue/whyItMatters/fix/location/dimension)
   // and Schema B (critique: counterArg/conditions/mitigation)
@@ -1484,7 +1492,7 @@ function renderSubscriptions(data){
   var subs=cfg.subscriptions||[
     {name:'Claude Max 20x',cost:200,period:'mo'},
     {name:'Codex Pro',cost:20,period:'mo'},
-    {name:'Gemini AI Ultra',cost:249.99,period:'mo'}
+    {name:'Gemini AI Ultra',cost:249.99,period:'mo'} // copy-lint:allow
   ];
   var grid=document.getElementById('subsGrid');
   if(!grid) return;
@@ -1608,6 +1616,55 @@ function renderSavingsLedger(data) {
     '<div class="ledger-methodology-detail" id="' + methodId + '" hidden>' +
       esc(s.methodologyNote || '') +
     '</div>';
+}
+
+// COMPUTE SAVINGS (W1C) -- per-project FTS5 index counts grouped by source_kind.
+// Data shape (server emits when present; row degrades gracefully when missing):
+//   data.computeSavings = {
+//     totalRuns: <int>,
+//     byKind: { compute_output: <int>, memory_dump: <int>, ... },
+//     project: <string>,
+//   }
+// Positive framing -- lead with what works now; empty state says
+// "0 (start using compute:)" so the row is always a learning surface.
+// All dynamic strings funnel through esc() (defined above) before insertion.
+function renderComputeSavings(data) {
+  var el = document.getElementById('computeSavingsTile');
+  if (!el) return;
+  var c = data && data.computeSavings;
+  if (!c || !c.totalRuns) {
+    var emptyHtml = '';
+    emptyHtml += '<div class="ledger-headline">';
+    emptyHtml += '<span class="ledger-spent">0</span>';
+    emptyHtml += '<span class="ledger-sep">/</span>';
+    emptyHtml += '<span class="ledger-without">indexed sandbox runs</span>';
+    emptyHtml += '</div>';
+    emptyHtml += '<div class="ledger-breakdown">';
+    emptyHtml += '<span>Tip: run <code>ijfw_run compute:python</code> or <code>compute:js</code> to index outputs into local FTS5 (searchable next session).</span>';
+    emptyHtml += '</div>';
+    el.innerHTML = emptyHtml;
+    return;
+  }
+  var byKind = c.byKind || {};
+  var kinds = Object.keys(byKind);
+  kinds.sort(function(a, b) { return (byKind[b] || 0) - (byKind[a] || 0); });
+  var chipParts = [];
+  for (var i = 0; i < Math.min(kinds.length, 4); i++) {
+    var k = kinds[i];
+    chipParts.push('<span>' + esc(k) + ': ' + Number(byKind[k] || 0) + '</span>');
+  }
+  var chips = chipParts.join('');
+  var projectLabel = c.project ? ' &mdash; ' + esc(c.project) : '';
+  var html = '';
+  html += '<div class="ledger-headline">';
+  html += '<span class="ledger-spent">' + Number(c.totalRuns).toLocaleString() + '</span>';
+  html += '<span class="ledger-sep">/</span>';
+  html += '<span class="ledger-without">indexed sandbox runs' + projectLabel + '</span>';
+  html += '</div>';
+  html += '<div class="ledger-breakdown">';
+  html += (chips || '<span>Indexed locally for instant re-search</span>');
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 function toggleLedgerMethod(btn, id) {

@@ -1,6 +1,6 @@
 ---
 name: ijfw-core
-description: "AI efficiency layer -- smart output, routing, context discipline. Always active. Off: 'ijfw off' or 'normal mode'."
+description: "Agent efficiency layer -- smart output, routing, context discipline. Always active. Off: 'ijfw off' or 'normal mode'."
 ---
 
 Active every response. No revert after many turns. No filler drift.

@@ -1,6 +1,6 @@
 ---
 name: ijfw-cross-audit
-description: "Generate a cross-platform AI audit (Trident) on a diff, brief, or artifact. Trigger: 'cross audit', 'Trident', 'second opinion', 'check with other AIs', 'cross-check this', 'get another perspective', /cross-audit"
+description: "Generate a cross-platform multi-model audit (Trident) on a diff, brief, or artifact. Trigger: 'cross audit', 'Trident', 'second opinion', 'check with other models', 'cross-check this', 'get another perspective', /cross-audit"
 ---
 
 ## Execution

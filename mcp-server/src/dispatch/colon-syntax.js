@@ -1,0 +1,500 @@
+// IJFW v1.3.0 Alpha -- W1B colon-syntax dispatcher.
+//
+// V3-B1: zero new MCP tools. Sub-commands ride existing tool surfaces via
+// "<namespace>:<command> [args]" prefix. Two consumers:
+//
+//   1. ijfw_run dispatch:
+//      - compute:python "..."   -> runCompute(language='python', script=args)
+//      - compute:js "..."       -> runCompute(language='js',     script=args)
+//      - index:<source> ...     -> safeWrite(raw) on per-project FTS5 db
+//      - detect:project_type    -> Phase 3 wired (sync detect + cache; --bg spawns runner)
+//
+//   2. ijfw_memory_search dispatch:
+//      - compute:<query>        -> search(raw_fts, query, k=10)
+//      - anything else          -> null (caller falls through to legacy logic)
+//
+// Discipline:
+//   - All user-facing strings positive-framed; no "AI" / "artificial intelligence" // copy-lint:allow
+//     in user copy (covered by scripts/copy-lint.sh).
+//   - Env reads kept inside dispatchRun so the parser stays pure.
+//   - Tool count remains 10 -- this file is invoked from within existing tool
+//     handlers in src/server.js; tools/list does not change.
+
+import {
+  openDb,
+  safeWrite,
+  search,
+  closeDb,
+  IntegrityError,
+  SchemaVersionError,
+  ComputeDbError,
+} from '../compute/index.js';
+import { runCompute } from '../compute/runner.js';
+import { expandQuery } from '../compute/synonyms.js';
+import { detect, writeProjectType, loadProjectType } from '../project-type-detector.js';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Recognised namespaces -- gates dispatchRun against typos.
+const RUN_NAMESPACES = new Set(['compute', 'index', 'detect']);
+const SEARCH_NAMESPACES = new Set(['compute']);
+
+// --- Parser ----------------------------------------------------------------
+
+/**
+ * parseColonCommand(input) -> { namespace, command, args } | null
+ *
+ * Recognises "<word>:<rest>" where <word> is [a-z_][a-z0-9_]* (ASCII, lower).
+ * Returns null for any other shape so callers can fall through to legacy
+ * handlers without speculating about intent.
+ *
+ * Splitting rules:
+ *   - First ':' separates namespace from the remainder.
+ *   - In the remainder, the first whitespace run separates command from args.
+ *   - If the args body starts and ends with a single matching pair of quotes
+ *     ("..." or '...'), strip them so callers receive the raw script body.
+ *   - Trailing whitespace on args is stripped; internal whitespace preserved.
+ */
+export function parseColonCommand(input) {
+  if (typeof input !== 'string') return null;
+  const s = input.trim();
+  if (s.length === 0) return null;
+
+  const colon = s.indexOf(':');
+  if (colon <= 0) return null;
+
+  const namespace = s.slice(0, colon);
+  if (!/^[a-z_][a-z0-9_]*$/.test(namespace)) return null;
+
+  const remainder = s.slice(colon + 1);
+  // Empty remainder -> command present but blank; treat as malformed.
+  if (remainder.length === 0) return null;
+
+  // Split command from args at first whitespace run.
+  const wsMatch = remainder.match(/\s+/);
+  let command;
+  let args;
+  if (!wsMatch) {
+    command = remainder;
+    args = '';
+  } else {
+    const idx = wsMatch.index;
+    command = remainder.slice(0, idx);
+    args = remainder.slice(idx + wsMatch[0].length);
+  }
+
+  args = stripMatchingQuotes(args.replace(/\s+$/, ''));
+
+  return { namespace, command, args };
+}
+
+function stripMatchingQuotes(s) {
+  if (s.length < 2) return s;
+  const first = s.charCodeAt(0);
+  const last = s.charCodeAt(s.length - 1);
+  // 0x22 = ", 0x27 = '
+  if ((first === 0x22 || first === 0x27) && first === last) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+// --- ijfw_run dispatch -----------------------------------------------------
+
+/**
+ * dispatchRun(parsed, ctx) -> Promise<{ ok, ... }>
+ *
+ * ctx may carry { projectRoot, sessionId } -- both have safe defaults.
+ * Returns a plain JSON-serialisable object so the server.js handler can wrap
+ * it for MCP transport.
+ *
+ * Returns null if the namespace is not one this dispatcher owns; callers
+ * should treat null as "fall through to legacy ijfw_run".
+ */
+export async function dispatchRun(parsed, ctx = {}) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (!RUN_NAMESPACES.has(parsed.namespace)) return null;
+
+  const projectRoot = String(ctx.projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd());
+  const sessionId = String(ctx.sessionId || process.env.IJFW_SESSION_ID || 'unknown');
+  // C9.6: provenance pointer (file path / observation kind / skill name).
+  // Optional -- callers that don't supply it leave raw.source NULL.
+  const provenance = ctx.source != null ? String(ctx.source) : null;
+
+  if (parsed.namespace === 'compute') {
+    return dispatchCompute(parsed, { projectRoot, sessionId, provenance });
+  }
+  if (parsed.namespace === 'index') {
+    return dispatchIndex(parsed, { projectRoot, sessionId, provenance });
+  }
+  if (parsed.namespace === 'detect') {
+    return dispatchDetect(parsed, { projectRoot, sessionId });
+  }
+
+  return {
+    ok: false,
+    error: 'Unknown ijfw_run sub-command. Supported: compute:python, compute:js, index:<source>, detect:project_type',
+  };
+}
+
+async function dispatchCompute(parsed, { projectRoot, sessionId /*, provenance unused for compute runs */ }) {
+  const cmd = parsed.command;
+  if (cmd !== 'js' && cmd !== 'python') {
+    return {
+      ok: false,
+      error: `Unknown compute language "${cmd}". Supported: compute:js, compute:python.`,
+    };
+  }
+  const script = parsed.args;
+  if (!script) {
+    return { ok: false, error: `compute:${cmd} requires a script body.` };
+  }
+
+  const vmOnly = parseBoolEnv(process.env.IJFW_COMPUTE_VM_ONLY);
+  const allowNet = parseBoolEnv(process.env.IJFW_COMPUTE_NET);
+  const timeoutMs = parseIntEnv(process.env.IJFW_COMPUTE_TIMEOUT_MS);
+
+  try {
+    const result = await runCompute({
+      language: cmd,
+      script,
+      projectRoot,
+      timeoutMs,
+      allowNet,
+      vmOnly,
+      sessionId,
+    });
+    // L1: audit-log compute runs that opted into the host network. Forensic
+    // questions ("which run hit the network and when") become a single FTS5
+    // query instead of a per-session log scrape.
+    if (allowNet) {
+      try { await logNetAllowed({ projectRoot, sessionId, cmd, script, result }); }
+      catch { /* audit log is best-effort; never block the run on it */ }
+    }
+    return {
+      ok: result.exitCode === 0 && !result.timedOut,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      timedOut: result.timedOut,
+      truncated: result.truncated,
+      sandbox: result.sandbox,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `compute:${cmd} did not complete: ${err && err.message ? err.message : String(err)}`,
+      code: err && err.code ? err.code : null,
+    };
+  }
+}
+
+// L1 helper: write an audit_finding row when allowNet=true. Body is a
+// compact JSON envelope -- script preview (first 240 chars) + result
+// summary (exit, duration, truncation, sandbox kind).
+async function logNetAllowed({ projectRoot, sessionId, cmd, script, result }) {
+  let db;
+  try {
+    db = await openDb(projectRoot);
+    const preview = String(script || '').slice(0, 240);
+    const body = JSON.stringify({
+      lang: cmd,
+      preview,
+      exit: result.exitCode,
+      duration_ms: result.durationMs,
+      timed_out: !!result.timedOut,
+      truncated: !!result.truncated,
+      sandbox_kind: result.sandbox && result.sandbox.kind,
+      sandbox_degraded: !!(result.sandbox && result.sandbox.degraded),
+    });
+    safeWrite(db, 'raw', {
+      source_kind: 'audit_finding',
+      session_id: sessionId,
+      project_root: projectRoot,
+      event_type: 'compute_net_allowed',
+      body,
+      ts: Date.now(),
+    });
+  } finally {
+    closeDb(db);
+  }
+}
+
+async function dispatchIndex(parsed, { projectRoot, sessionId, provenance }) {
+  const source = parsed.command;
+  if (!source) {
+    return { ok: false, error: 'index:<source> requires a source label after the colon.' };
+  }
+  // index:<kind> [--source=<provenance>] body...
+  // The --source= flag attaches a provenance pointer to the row (C9.6).
+  // When omitted, raw.source stays NULL. Inline-flag form keeps backward
+  // compatibility with `index:<kind> body` callers.
+  const { provenanceFlag, body } = extractProvenanceFlag(parsed.args);
+  if (!body) {
+    return { ok: false, error: `index:${source} requires content to index.` };
+  }
+  const provenancePointer = provenanceFlag != null ? provenanceFlag
+                          : provenance != null ? provenance
+                          : null;
+
+  let db;
+  try {
+    db = await openDb(projectRoot);
+    const row = {
+      source_kind: mapSourceKind(source),
+      session_id: sessionId,
+      project_root: projectRoot,
+      event_type: 'output',
+      body,
+      ts: Date.now(),
+    };
+    if (provenancePointer != null) row.source = provenancePointer;
+    const inserted = safeWrite(db, 'raw', row);
+    return {
+      ok: true,
+      source,
+      provenance: provenancePointer,
+      session_id: sessionId,
+      id: inserted && inserted.id != null ? inserted.id : null,
+      bytes: Buffer.byteLength(body, 'utf8'),
+    };
+  } catch (err) {
+    const code = err instanceof IntegrityError ? 'INTEGRITY'
+              : err instanceof SchemaVersionError ? 'SCHEMA_VERSION'
+              : err instanceof ComputeDbError ? 'COMPUTE_DB'
+              : null;
+    return {
+      ok: false,
+      error: `index:${source} did not complete: ${err && err.message ? err.message : String(err)}`,
+      code,
+    };
+  } finally {
+    closeDb(db);
+  }
+}
+
+async function dispatchDetect(parsed, { projectRoot, sessionId }) {
+  const cmd = parsed.command;
+  if (cmd !== 'project_type') {
+    return {
+      ok: false,
+      error: `Unknown detect sub-command "${cmd}". Supported: detect:project_type.`,
+    };
+  }
+
+  // Parse args -- recognised flags: --bg (fire-and-forget background scan),
+  // --no-c9 (force file-extension fallback), --max-files=N (test override).
+  const args = String(parsed.args || '').trim();
+  const tokens = args.length ? args.split(/\s+/) : [];
+  const flags = { bg: false, c9Available: true, maxFiles: null };
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === '--bg' || t === '--background') flags.bg = true;
+    else if (t === '--no-c9') flags.c9Available = false;
+    else if (t === '--max-files') flags.maxFiles = Number(tokens[++i]);
+    else if (t.startsWith('--max-files=')) flags.maxFiles = Number(t.slice('--max-files='.length));
+  }
+
+  // V3-F3: --bg path spawns a detached child runner so the dispatcher
+  // returns immediately. Result lands in <project>/.ijfw/project.type async.
+  if (flags.bg) {
+    try {
+      const __filename = fileURLToPath(import.meta.url);
+      const runner = join(dirname(__filename), '..', 'cold-scan-runner.mjs');
+      const childArgs = [runner, '--project-root', projectRoot];
+      if (!flags.c9Available) childArgs.push('--no-c9');
+      if (flags.maxFiles) childArgs.push('--max-files', String(flags.maxFiles));
+      const child = spawn(process.execPath, childArgs, {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, IJFW_SESSION_ID: sessionId || '' },
+      });
+      child.unref();
+      return { ok: true, mode: 'bg', spawned: true, pid: child.pid, projectRoot };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `detect:project_type --bg did not spawn: ${err && err.message ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  // Foreground sync path -- returns the full result + writes the cached
+  // .ijfw/project.type so subsequent reads short-circuit. P3-M1: cache
+  // even when scan_incomplete=true so /ijfw doctor + post-mortem grep can
+  // see the partial signal -- loadProjectType() returns null on cached
+  // scan_incomplete=true so consumers don't silently trust a partial walk.
+  try {
+    const result = detect(projectRoot, {
+      c9Available: flags.c9Available,
+      maxFiles: flags.maxFiles || undefined,
+      sessionId,
+    });
+    try { writeProjectType(projectRoot, result); } catch { /* best-effort cache */ }
+    return { ok: true, mode: 'sync', result };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `detect:project_type did not complete: ${err && err.message ? err.message : String(err)}`,
+    };
+  }
+}
+
+// --- ijfw_memory_search dispatch ------------------------------------------
+
+/**
+ * dispatchSearch(parsed, ctx) -> { ok, hits } | null
+ *
+ * - compute:<query>     -> opens FTS5 db, returns top-k rows from raw_fts.
+ * - any other namespace -> returns null so the caller falls through to the
+ *                          existing memory-search handler.
+ */
+export async function dispatchSearch(parsed, ctx = {}) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (!SEARCH_NAMESPACES.has(parsed.namespace)) return null;
+
+  if (parsed.namespace === 'compute') {
+    const projectRoot = String(ctx.projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd());
+    // FTS5 query is the command + args glued back together so phrase queries
+    // like `compute:foo bar` work without forcing the caller to quote.
+    const queryParts = [parsed.command, parsed.args].filter(Boolean);
+    const rawQuery = queryParts.join(' ').trim();
+    if (!rawQuery) {
+      return { ok: false, error: 'compute:<query> requires a query body.' };
+    }
+
+    // C9.6: optional `--session=<id>` flag scopes search to a single
+    // session. Stripped from the query before FTS5 sees it.
+    const sessionFilter = extractSessionFilter(rawQuery);
+    const queryAfterFilter = sessionFilter.remaining;
+
+    // C9.5: synonym expansion, default-on. Honours per-call ctx.synonym
+    // override (treated as IJFW_SYNONYM_EXPAND env value), then process
+    // env. `synonym_matches` is reported back to the caller so users can
+    // see what fired and disable expansion if precision matters more.
+    const envOverride = ctx.synonym !== undefined ? String(ctx.synonym) : undefined;
+    const expansion = expandQuery(queryAfterFilter, { env: envOverride });
+    const finalQuery = expansion.expanded;
+
+    const k = parseIntEnv(ctx.limit, 10);
+    let db;
+    try {
+      db = await openDb(projectRoot);
+      const ftsHits = search(db, 'raw', finalQuery, k);
+      // C9.6: surface source + session_id on every hit. Apply session
+      // filter post-FTS (cheaper than rebuilding the SQL for one column).
+      let hits = ftsHits.map(h => ({
+        ...h,
+        source: h.source != null ? h.source : null,
+        session_id: h.session_id != null ? h.session_id : null,
+      }));
+      if (sessionFilter.sessionId) {
+        hits = hits.filter(h => h.session_id === sessionFilter.sessionId);
+      }
+      return {
+        ok: true,
+        hits,
+        synonym_matches: expansion.synonym_matches,
+        synonym_applied: expansion.applied,
+        query: finalQuery,
+        session_filter: sessionFilter.sessionId || null,
+      };
+    } catch (err) {
+      const code = err instanceof SchemaVersionError ? 'SCHEMA_VERSION'
+                : err instanceof ComputeDbError ? 'COMPUTE_DB'
+                : null;
+      return {
+        ok: false,
+        error: `compute:${rawQuery} did not complete: ${err && err.message ? err.message : String(err)}`,
+        code,
+      };
+    } finally {
+      closeDb(db);
+    }
+  }
+
+  return null;
+}
+
+// --- helpers ---------------------------------------------------------------
+
+function parseBoolEnv(v) {
+  if (v === undefined || v === null || v === '') return false;
+  const s = String(v).toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+function parseIntEnv(v, fallback) {
+  if (v === undefined || v === null || v === '') return fallback;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// Map a colloquial source label into the schema's source_kind enum.
+// Unknown labels collapse to 'tool_result' -- the catch-all for caller-side
+// indexing per schema.sql.
+function mapSourceKind(source) {
+  switch (source) {
+    case 'compute_output':
+    case 'compute':
+      return 'compute_output';
+    case 'memory_dump':
+    case 'memory':
+      return 'memory_dump';
+    case 'audit_finding':
+    case 'audit':
+      return 'audit_finding';
+    case 'tool_result':
+    case 'source':
+    default:
+      return 'tool_result';
+  }
+}
+
+// Pull a leading `--source=<value>` flag from an args body for index:*.
+// The flag must be the first whitespace-delimited token; everything after
+// the first whitespace run becomes the indexed body. Both quoted and bare
+// values are supported. Returns { provenanceFlag, body }.
+function extractProvenanceFlag(args) {
+  if (typeof args !== 'string') return { provenanceFlag: null, body: '' };
+  const s = args.replace(/^\s+/, '');
+  if (!s.startsWith('--source=')) {
+    return { provenanceFlag: null, body: args };
+  }
+  // Find the end of the flag value -- first whitespace not inside quotes.
+  let i = '--source='.length;
+  let value = '';
+  if (s[i] === '"' || s[i] === "'") {
+    const q = s[i];
+    i++;
+    while (i < s.length && s[i] !== q) { value += s[i]; i++; }
+    if (i < s.length) i++; // skip closing quote
+  } else {
+    while (i < s.length && !/\s/.test(s[i])) { value += s[i]; i++; }
+  }
+  // Skip whitespace, the rest is body.
+  while (i < s.length && /\s/.test(s[i])) i++;
+  return { provenanceFlag: value || null, body: s.slice(i) };
+}
+
+// Pull a leading or trailing `--session=<id>` filter from a query string.
+// Strips the flag before passing the query to FTS5 -- otherwise FTS5
+// would try to match `--session=...` literally. Returns { sessionId, remaining }.
+function extractSessionFilter(query) {
+  if (typeof query !== 'string') return { sessionId: null, remaining: '' };
+  // Match `--session=<value>` where value is unquoted up to whitespace,
+  // or quoted up to the matching quote. Anchored to word boundaries so
+  // we don't strip a literal `--session=...` inside a quoted phrase.
+  const re = /(?:^|\s)--session=("([^"]*)"|'([^']*)'|(\S+))(?=\s|$)/;
+  const m = query.match(re);
+  if (!m) return { sessionId: null, remaining: query };
+  const sessionId = m[2] != null ? m[2] : m[3] != null ? m[3] : m[4];
+  const before = query.slice(0, m.index);
+  const after = query.slice(m.index + m[0].length);
+  const remaining = (before + ' ' + after).replace(/\s+/g, ' ').trim();
+  return { sessionId, remaining };
+}
+
+export const __test = { stripMatchingQuotes, mapSourceKind, extractProvenanceFlag, extractSessionFilter };

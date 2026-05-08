@@ -47,6 +47,16 @@
             "timeout": 5000
           }
         ]
+      },
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/compute-nudge.sh",
+            "timeout": 50
+          }
+        ]
       }
     ],
     "PostToolUse": [

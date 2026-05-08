@@ -48,6 +48,12 @@
             "type": "command",
             "command": "bash {{extensionPath}}/hooks/before-tool.sh",
             "description": "Scan about-to-run commands for destructive patterns. Inject confirmation reminders before execution."
+          },
+          {
+            "name": "ijfw-before-tool-compute-nudge",
+            "type": "command",
+            "command": "bash {{extensionPath}}/hooks/before-tool-compute-nudge.sh",
+            "description": "Once per session, suggest ijfw_run compute:python when the agent is about to read a likely-large data file or run a data-processing shell command. Advisory; never blocks."
           }
         ]
       }

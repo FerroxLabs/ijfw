@@ -42,6 +42,9 @@ import { ijfwUpdateCheck, TOOL_DEF as UPDATE_CHECK_TOOL } from './update-check.j
 import { ijfwUpdateApply, TOOL_DEF as UPDATE_APPLY_TOOL } from './update-apply.js';
 // ijfw_run: sandbox large command output to disk, return terse summary to context.
 import { runCommand, detectDomain, summarize, writeToSandbox, readFromSandbox, purgeSandboxOld, stripAnsi } from './sandbox.js';
+// W1B (1.3.0-alpha) -- colon-syntax dispatcher. Extends ijfw_run + ijfw_memory_search
+// with compute:/index:/detect: sub-commands without registering new MCP tools.
+import { parseColonCommand, dispatchRun, dispatchSearch } from './dispatch/colon-syntax.js';
 const SANDBOX_DIR = join(process.env.HOME || homedir(), '.ijfw', 'session-sandbox');
 
 // --- Constants ---
@@ -1228,9 +1231,30 @@ function handleMessage(msg) {
           case 'ijfw_memory_store':
             result = handleStore(args || {});
             break;
-          case 'ijfw_memory_search':
-            result = handleSearch(args || {});
+          case 'ijfw_memory_search': {
+            // W1B (1.3.0-alpha): colon-syntax dispatch. compute:<query> hits
+            // the per-project FTS5 db; anything else falls through to the
+            // legacy keyword search.
+            const searchArgs = args || {};
+            const parsedQuery = typeof searchArgs.query === 'string'
+              ? parseColonCommand(searchArgs.query)
+              : null;
+            if (parsedQuery && parsedQuery.namespace === 'compute') {
+              const dispatched = await dispatchSearch(parsedQuery, {
+                projectRoot: searchArgs.projectRoot,
+                limit: searchArgs.limit,
+              });
+              if (dispatched !== null) {
+                result = {
+                  text: JSON.stringify(dispatched, null, 2),
+                  isError: dispatched.ok === false,
+                };
+                break;
+              }
+            }
+            result = handleSearch(searchArgs);
             break;
+          }
           case 'ijfw_memory_status':
             result = handleStatus();
             break;
@@ -1257,6 +1281,27 @@ function handleMessage(msg) {
             if (!command || typeof command !== 'string') {
               result = { text: 'command is required and must be a string.', isError: true };
               break;
+            }
+            // W1B (1.3.0-alpha): colon-syntax dispatch. compute:python /
+            // compute:js / index:<source> / detect:project_type ride this
+            // tool surface so we don't grow tool count past 10.
+            // L2: trust dispatcher's null contract -- the redundant
+            // namespace tuple here would drift if dispatch adds new ones.
+            // dispatchRun() returns null for unrecognized namespaces and a
+            // result object for owned ones.
+            const parsedRun = parseColonCommand(command);
+            if (parsedRun) {
+              const dispatched = await dispatchRun(parsedRun, {
+                projectRoot: cwd,
+                sessionId: process.env.IJFW_SESSION_ID,
+              });
+              if (dispatched !== null) {
+                result = {
+                  text: JSON.stringify(dispatched, null, 2),
+                  isError: dispatched.ok === false,
+                };
+                break;
+              }
             }
             const runResult = await runCommand(command, { cwd });
             const { stdout, exitCode, durationMs, lines, bytes, timedOut } = runResult;

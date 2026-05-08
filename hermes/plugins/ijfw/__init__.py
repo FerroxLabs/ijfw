@@ -1,6 +1,9 @@
 # IJFW Hermes Plugin -- sys.path shim
-# Delegates entirely to the Wayland plugin source (one Python file for both platforms).
-# Resolves Wayland plugin from installed path or repo-local sibling.
+# Resolves the bundled Hermes plugin source. Phase 4 made Hermes self-contained
+# (its own _context_engine.py + _manifest.py); the historical Wayland fallback
+# was retired to keep Hermes profile-invariant clean -- Hermes never reads from
+# ~/.wayland/ at runtime. Repo-local Wayland sibling stays as a development-time
+# escape hatch only (gated behind IJFW_HERMES_ALLOW_DEV_SIBLING=1).
 
 import sys
 import os
@@ -8,19 +11,36 @@ import importlib.util
 
 _SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 
-_CANDIDATES = [
-    # Bundled Hermes modules win. Wayland paths are fallbacks for hosts without
-    # a bundled install (rare; avoids stale Wayland code loading under Hermes).
-    _SELF_DIR,
-    os.path.expanduser("~/.wayland/plugins/ijfw"),
-    os.path.normpath(os.path.join(_SELF_DIR, "..", "..", "..", "wayland", "plugins", "ijfw")),
-]
+_CANDIDATES = [_SELF_DIR]
+if os.environ.get("IJFW_HERMES_ALLOW_DEV_SIBLING") == "1":
+    # Dev-only escape hatch -- monorepo workflow where the Hermes bundled
+    # plugin is intentionally absent and the developer wants to load from the
+    # repo-local Wayland sibling. Never fires in shipped installs.
+    _CANDIDATES.append(
+        os.path.normpath(os.path.join(_SELF_DIR, "..", "..", "..", "wayland", "plugins", "ijfw"))
+    )
 WAYLAND_PLUGIN = next((p for p in _CANDIDATES if os.path.isdir(p)), None)
 if WAYLAND_PLUGIN is None:
-    raise RuntimeError(
+    # Late-resolve the message via the bundled _strings.py to keep all
+    # user-facing copy in the strings registry (snapshot-tested).
+    _SHIM_ERR_MSG = (
         "IJFW Hermes shim cannot find plugin source. "
         "Expected at ~/.wayland/plugins/ijfw, repo-local sibling, or bundled in this dir."
     )
+    try:
+        # Best-effort: the bundled _strings.py sits next to this file.
+        import importlib.util as _ilu
+        _strspec = _ilu.spec_from_file_location(
+            "ijfw_hermes_shim_strings",
+            os.path.join(_SELF_DIR, "_strings.py"),
+        )
+        if _strspec is not None and _strspec.loader is not None:
+            _strmod = _ilu.module_from_spec(_strspec)
+            _strspec.loader.exec_module(_strmod)
+            _SHIM_ERR_MSG = _strmod.STRINGS.get("shim_plugin_source_missing", _SHIM_ERR_MSG)
+    except Exception:
+        pass
+    raise RuntimeError(_SHIM_ERR_MSG)
 
 if WAYLAND_PLUGIN not in sys.path:
     sys.path.insert(0, WAYLAND_PLUGIN)

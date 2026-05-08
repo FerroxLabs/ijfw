@@ -38,7 +38,7 @@ Author: Sean Donahoe
 <ijfw-memory>
 Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context.
 
-Last handoff: # Handoff: 2026-05-05 (post-1.2.9 deep-audit publish)
+Last handoff: # Handoff: 2026-05-06 (post-1.2.10 publish)
 ## TLDR (60 seconds)
 </ijfw-memory>
 

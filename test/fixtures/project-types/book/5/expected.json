@@ -1,0 +1,7 @@
+{
+  "primary_type": "book",
+  "secondary_types": [],
+  "confidence_floor": 0.55,
+  "scan_incomplete": false,
+  "fallback_reason": null
+}

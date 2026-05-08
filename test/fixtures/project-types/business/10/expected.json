@@ -1,0 +1,7 @@
+{
+  "primary_type": "business",
+  "secondary_types": [],
+  "confidence_floor": 0.45,
+  "scan_incomplete": false,
+  "fallback_reason": null
+}

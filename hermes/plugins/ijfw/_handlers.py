@@ -9,6 +9,185 @@ import pathlib
 
 from _strings import STRINGS
 import _mcp as mcp
+from _context_engine import IJFWContextEngine, _HAS_HERMES_CE
+from _manifest import verify_manifest, render_verification_summary
+
+
+# ---------------------------------------------------------------------------
+# Hermes profile resolver (mirrors V3-B3 Wayland invariant)
+# ---------------------------------------------------------------------------
+# Hermes inherits the same profile-aware path discipline -- never hardcode
+# ~/.hermes/. Resolve through the live ctx when available.
+
+def _resolve_profile_home(ctx):
+    for attr in ("profile_home", "profileHome", "get_profile_home"):
+        fn = getattr(ctx, attr, None)
+        if callable(fn):
+            try:
+                return pathlib.Path(fn())
+            except (TypeError, ValueError, OSError):
+                pass
+    get_profile = getattr(ctx, "get_active_profile", None) or getattr(ctx, "getActiveProfile", None)
+    profile_home = getattr(ctx, "profile_home_for", None) or getattr(ctx, "profileHomeFor", None)
+    if callable(get_profile) and callable(profile_home):
+        try:
+            return pathlib.Path(profile_home(get_profile()))
+        except (TypeError, ValueError, OSError):
+            pass
+    env_override = os.environ.get("IJFW_HERMES_PROFILE_HOME")
+    if env_override:
+        return pathlib.Path(env_override)
+    return None
+
+
+def _agents_md_scripts_dir(ctx):
+    """Locate the ijfw-agents-md scripts dir under the resolved Hermes profile.
+
+    Mirrors the Wayland resolver -- same V3-B3 search order. Returns the
+    dir path containing lock.sh + build-blocks.sh + hoist-frontmatter.sh.
+    """
+    candidates = []
+    profile_root = _resolve_profile_home(ctx)
+    if profile_root is not None:
+        candidates.append(profile_root / "plugins" / "ijfw" / "skills" / "ijfw-agents-md" / "scripts")
+    candidates.append(pathlib.Path(os.path.expanduser("~/.ijfw/claude/skills/ijfw-agents-md/scripts")))
+    repo_local = pathlib.Path(__file__).parent.parent.parent.parent / "claude" / "skills" / "ijfw-agents-md" / "scripts"
+    candidates.append(repo_local)
+    for c in candidates:
+        if (c / "lock.sh").is_file() and (c / "build-blocks.sh").is_file():
+            return c
+    return None
+
+
+def _build_agents_md_blocks(project_root):
+    """Construct (memory_block, agents_block) via the shared build_blocks.py.
+
+    P2-M1: single point of maintenance shared with Wayland + sh hooks.
+    """
+    import sys
+    scripts_dir = pathlib.Path(__file__).parent.parent.parent.parent / "claude" / "skills" / "ijfw-agents-md" / "scripts"
+    candidates = [
+        scripts_dir,
+        pathlib.Path(os.path.expanduser("~/.ijfw/claude/skills/ijfw-agents-md/scripts")),
+    ]
+    for cand in candidates:
+        if (cand / "build_blocks.py").is_file():
+            sys_path_added = False
+            try:
+                if str(cand) not in sys.path:
+                    sys.path.insert(0, str(cand))
+                    sys_path_added = True
+                from build_blocks import build_blocks as _bb
+                return _bb(project_root)
+            except (ImportError, OSError):
+                pass
+            finally:
+                if sys_path_added:
+                    try:
+                        sys.path.remove(str(cand))
+                    except ValueError:
+                        pass
+    # Minimal inline fallback.
+    pr = pathlib.Path(project_root)
+    memory_block = STRINGS["agents_md_memory_fallback"]
+    agents_block = STRINGS["agents_md_agents_fallback"]
+    return memory_block, agents_block
+
+
+def _trigger_cold_scan(ctx, project_root):
+    """P3-B1: A3 cold-scan trigger via the shared cold_scan_trigger.py helper.
+
+    Mirrors cold-scan-trigger.sh wiring in the shell hooks. Imports the
+    shared module from the resolved scripts dir so Hermes never duplicates
+    the trigger logic inline (matches the build_blocks.py shared-lib pattern).
+    Fire-and-forget; never blocks the on_session_start hook.
+    """
+    import sys
+    scripts_dir = _agents_md_scripts_dir(ctx)
+    if scripts_dir is None:
+        return
+    if not (scripts_dir / "cold_scan_trigger.py").is_file():
+        return
+    sys_path_added = False
+    try:
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+            sys_path_added = True
+        from cold_scan_trigger import trigger_cold_scan as _tcs
+        _tcs(project_root)
+    except (ImportError, OSError):
+        pass
+    finally:
+        if sys_path_added:
+            try:
+                sys.path.remove(str(scripts_dir))
+            except ValueError:
+                pass
+
+
+def _merge_agents_md(ctx, project_root):
+    """Background-safe AGENTS.md merge for the Hermes session-start path.
+
+    P2-M2: single multi-pair lock invocation (one backup, one rename).
+    P2-B2: hoist-frontmatter runs after the merge.
+    P2-M4: log file open via `with` block; Popen dups the fd, parent closes.
+    """
+    scripts_dir = _agents_md_scripts_dir(ctx)
+    if scripts_dir is None:
+        return
+    lock_sh = scripts_dir / "lock.sh"
+    hoist_sh = scripts_dir / "hoist-frontmatter.sh"
+    target = pathlib.Path(project_root) / "AGENTS.md"
+    memory_block, agents_block = _build_agents_md_blocks(project_root)
+    log_path = pathlib.Path(os.path.expanduser("~/.ijfw/logs/agents-md.log"))
+
+    import tempfile
+    try:
+        tmp_dir = pathlib.Path(tempfile.mkdtemp(prefix="ijfw-agents-md-build-"))
+    except (OSError, ValueError):
+        return
+    try:
+        mem_file = tmp_dir / "memory.txt"
+        ag_file = tmp_dir / "agents.txt"
+        try:
+            mem_file.write_text(memory_block, encoding="utf-8")
+            ag_file.write_text(agents_block, encoding="utf-8")
+        except OSError:
+            return
+
+        hoist_cmd = (
+            f' && bash {str(hoist_sh).replace(chr(34), chr(92)+chr(34))} '
+            f'{str(target).replace(chr(34), chr(92)+chr(34))}'
+        ) if hoist_sh.is_file() else ''
+        chained = (
+            f'bash "{lock_sh}" "{target}" '
+            f'"MEMORY:{mem_file}" "AGENTS:{ag_file}"'
+            f'{hoist_cmd}; rm -rf "{tmp_dir}" 2>/dev/null || true'
+        )
+
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as log_fh:
+                subprocess.Popen(
+                    ["bash", "-c", chained],
+                    stdout=log_fh,
+                    stderr=log_fh,
+                    stdin=subprocess.DEVNULL,
+                    close_fds=True,
+                )
+        except OSError:
+            try:
+                subprocess.Popen(
+                    ["bash", "-c", chained],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    close_fds=True,
+                )
+            except (OSError, ValueError):
+                return
+    finally:
+        pass
 
 # ---------------------------------------------------------------------------
 # patterns.json loader
@@ -76,6 +255,32 @@ VAGUE_PATTERNS = _compile_patterns(_PATTERNS.get("vague_prompt_signals", []), re
 
 
 # ---------------------------------------------------------------------------
+# C6: peek helper for context-engine slot detection (V3-F9 alpha bridge)
+# ---------------------------------------------------------------------------
+# Hermes' PluginContext doesn't expose a public "is the slot held?" reader
+# yet (V3-F9 queues an upstream PR for beta). We best-effort sniff the
+# private _manager._context_engine attribute that Hermes uses internally
+# so the plugin can give the user a clear "slot taken" message instead of
+# a silent no-op when it loses the race.
+#
+# Failure mode: any introspection error returns None so callers fall
+# through to the "host API not detected" message. This is a soft probe
+# only; never raises.
+
+def _peek_context_engine_held(ctx, expect=None):
+    try:
+        manager = getattr(ctx, "_manager", None)
+        if manager is None:
+            return None
+        held = getattr(manager, "_context_engine", None)
+        if expect is not None:
+            return held is expect
+        return held is not None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # build_register_fn factory
 # ---------------------------------------------------------------------------
 
@@ -88,7 +293,52 @@ def build_register_fn(host="hermes"):
             "prelude_loaded": False,
             "prelude_text": "",
             "memories_loaded": 0,
+            "context_engine": None,
+            "context_engine_status": None,
         }
+
+        # ----------------------------------------------------------------
+        # C6 (Phase 4): IJFWContextEngine + signing chain
+        # ----------------------------------------------------------------
+        # Order is load-bearing:
+        #   1. Verify manifest checksums first -- a tampered plugin must NOT
+        #      be allowed to claim the singleton context engine slot.
+        #   2. Confirm Hermes' ContextEngine ABC is reachable (Wayland hosts
+        #      may resolve the same shim path; both behave identically).
+        #   3. Attempt singleton claim. If another plugin already holds the
+        #      slot, Hermes logs a warning and returns silently -- we mirror
+        #      that with a positive-framed safe-default and keep all hooks/
+        #      commands wired so the rest of IJFW works.
+        try:
+            integrity = verify_manifest()
+        except Exception:
+            integrity = {"verified": False, "manifest_present": False, "mismatched": [], "missing": []}
+
+        if not _HAS_HERMES_CE:
+            state["context_engine_status"] = STRINGS["context_engine_unavailable"]
+        elif not integrity.get("manifest_present"):
+            state["context_engine_status"] = STRINGS["context_engine_integrity_skipped"]
+        elif not integrity.get("verified"):
+            summary = render_verification_summary(integrity)
+            state["context_engine_status"] = STRINGS["context_engine_integrity_failed"].format(summary=summary)
+        else:
+            engine = IJFWContextEngine(ctx=ctx, project_root=os.getcwd())
+            state["context_engine"] = engine
+            register_ce = getattr(ctx, "register_context_engine", None)
+            if not callable(register_ce):
+                state["context_engine_status"] = STRINGS["context_engine_unavailable"]
+            else:
+                slot_taken_before = bool(_peek_context_engine_held(ctx))
+                try:
+                    register_ce(engine)
+                except Exception:
+                    state["context_engine_status"] = STRINGS["context_engine_slot_taken"]
+                else:
+                    slot_taken_after = bool(_peek_context_engine_held(ctx, expect=engine))
+                    if slot_taken_before and not slot_taken_after:
+                        state["context_engine_status"] = STRINGS["context_engine_slot_taken"]
+                    else:
+                        state["context_engine_status"] = STRINGS["context_engine_claimed"].format(host=host)
 
         # Helper: register command with optional args_hint for Hermes.
         def reg_cmd(name, handler, description="", args_hint=""):
@@ -114,6 +364,19 @@ def build_register_fn(host="hermes"):
                 )
             else:
                 banner = STRINGS["session_start_banner_no_memories"].format(host=host)
+            # AGENTS.md cross-platform merge (Phase 2 / A1). lock.sh is
+            # resolved via the Hermes profile-home resolver (mirrors V3-B3).
+            try:
+                _merge_agents_md(ctx, os.getcwd())
+            except Exception:
+                pass
+            # P3-B1: A3 cold-scan trigger -- fire-and-forget detached spawn
+            # that lands .ijfw/project.type for the next session. Shared
+            # helper (no inline duplicate per P3-M8).
+            try:
+                _trigger_cold_scan(ctx, os.getcwd())
+            except Exception:
+                pass
             return banner
 
         ctx.register_hook("on_session_start", on_session_start)

@@ -648,6 +648,124 @@ function computeSavingsLedger(transcriptData, costData) {
   };
 }
 
+// --- Compute savings (W1C): per-project FTS5 raw-row counts grouped by
+//     source_kind. Reads <projectRoot>/.ijfw/index/compute.db. Empty state
+//     when the db is absent -- the dashboard renders a positive "0 / start
+//     using compute:" tile rather than an error.
+//
+//     The dashboard prefers better-sqlite3 when reachable from this process
+//     (mcp-server bundles it), and falls back to the existing sqlite3 CLI
+//     helper otherwise. Both paths return the same shape:
+//       { totalRuns: <int>, byKind: { <kind>: <int>, ... }, project: <string> }
+//
+//     Exposed for unit tests (test-dashboard-compute-savings.js).
+let _betterSqlite = undefined; // tri-state: undefined=uninspected, null=missing, fn=ctor
+async function _loadBetterSqlite() {
+  if (_betterSqlite !== undefined) return _betterSqlite;
+  // Try repo-root then mcp-server location (the canonical install).
+  const candidates = [
+    join(__dirname, '..', '..', 'mcp-server', 'node_modules', 'better-sqlite3', 'lib', 'index.js'),
+    join(__dirname, '..', '..', 'node_modules', 'better-sqlite3', 'lib', 'index.js'),
+  ];
+  for (const p of candidates) {
+    if (!existsSync(p)) continue;
+    try {
+      const mod = await import(p);
+      _betterSqlite = mod.default || mod;
+      return _betterSqlite;
+    } catch {
+      // Fall through; CLI fallback handles the case.
+    }
+  }
+  _betterSqlite = null;
+  return null;
+}
+
+export async function getComputeSavings(projectRoot) {
+  const empty = { totalRuns: 0, byKind: {}, project: projectRoot };
+  if (!projectRoot) return empty;
+  const dbPath = join(projectRoot, '.ijfw', 'index', 'compute.db');
+  if (!existsSync(dbPath)) return empty;
+
+  // Preferred path: better-sqlite3.
+  const Better = await _loadBetterSqlite();
+  if (Better) {
+    let db;
+    try {
+      db = new Better(dbPath, { readonly: true, fileMustExist: true });
+      const rows = db.prepare('SELECT source_kind, COUNT(*) AS n FROM raw GROUP BY source_kind').all();
+      const byKind = {};
+      let totalRuns = 0;
+      for (const r of rows) {
+        const k = r.source_kind || 'unknown';
+        const n = Number(r.n) || 0;
+        byKind[k] = n;
+        totalRuns += n;
+      }
+      return { totalRuns, byKind, project: projectRoot };
+    } catch (err) {
+      process.stderr.write(`[ijfw-dashboard] getComputeSavings(${dbPath}): ${err.message}\n`);
+      return empty;
+    } finally {
+      try { db && db.close(); } catch { /* best-effort */ }
+    }
+  }
+
+  // Fallback: sqlite3 CLI (matches existing dashboard pattern).
+  if (!SQLITE3_AVAILABLE) return empty;
+  const lines = querySqlite(dbPath, 'SELECT source_kind, COUNT(*) FROM raw GROUP BY source_kind');
+  const byKind = {};
+  let totalRuns = 0;
+  for (const line of lines) {
+    const parts = line.split('|');
+    const k = parts[0] || 'unknown';
+    const n = parseInt(parts[1], 10) || 0;
+    byKind[k] = n;
+    totalRuns += n;
+  }
+  return { totalRuns, byKind, project: projectRoot };
+}
+
+// Aggregate compute savings across every known project + the global IJFW
+// directory. Per-project entries with 0 rows are dropped; the headline
+// totalRuns sums all projects so the dashboard sees one combined figure.
+async function buildComputeSavings() {
+  const registry = parseRegistry();
+  const devProjects = scanDevProjects();
+  const seen = new Set();
+  const projectRoots = [];
+  const add = (p) => {
+    if (p && !seen.has(p)) { seen.add(p); projectRoots.push(p); }
+  };
+  for (const r of registry) add(r.path);
+  for (const p of devProjects) add(p);
+  add(IJFW_GLOBAL);
+
+  // Pick the most-populated project as the "primary" for the project label
+  // shown in the tile -- keeps the empty-state tip visible when nothing is
+  // indexed yet, and surfaces the busiest index when there is data.
+  const totals = { totalRuns: 0, byKind: {}, project: null };
+  let bestRuns = -1;
+  for (const root of projectRoots) {
+    let entry;
+    try { entry = await getComputeSavings(root); }
+    catch (err) {
+      process.stderr.write(`[ijfw-dashboard] buildComputeSavings(${root}): ${err.message}\n`);
+      continue;
+    }
+    if (!entry || !entry.totalRuns) continue;
+    totals.totalRuns += entry.totalRuns;
+    for (const [k, n] of Object.entries(entry.byKind || {})) {
+      totals.byKind[k] = (totals.byKind[k] || 0) + n;
+    }
+    if (entry.totalRuns > bestRuns) {
+      bestRuns = entry.totalRuns;
+      totals.project = entry.project;
+    }
+  }
+  return totals;
+}
+
 // --- Transcript summary cache ---
 function readTranscriptSummary() {
   const p = join(IJFW_GLOBAL, 'transcript-summary.json');
@@ -661,7 +779,7 @@ function readTranscriptSummary() {
 
 // --- API data aggregator ---
 
-function buildApiData() {
+async function buildApiData() {
   // --- Observations ---
   const observations = readJsonl(join(IJFW_GLOBAL, 'observations.jsonl'))
     .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
@@ -951,6 +1069,7 @@ function buildApiData() {
       thirtyDaySummary: cb30d?.summary ?? null,
       models: cb30d?.models ?? [],
     }),
+    computeSavings: await buildComputeSavings(),
   };
 }
 
@@ -1020,6 +1139,19 @@ const BRAINSTORM_WAITING_HTML = BRAINSTORM_DARK_WRAPPER('', '', `
 `, true);
 
 // --- CLI commands ---
+// Guarded so importing this module (e.g. from tests) doesn't launch the
+// server or process.exit(). Only the direct `node server.js` invocation
+// triggers the bootstrap below.
+const _entrypoint = (() => {
+  try {
+    const argv1 = process.argv[1] || '';
+    return argv1 === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+
+if (_entrypoint) {
 
 const args = process.argv.slice(2);
 
@@ -1088,19 +1220,19 @@ const server = createServer((req, res) => {
   const url = req.url.split('?')[0];
 
   if (url === '/api/data') {
-    try {
-      const data = buildApiData();
-      res.writeHead(200, {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        
+    buildApiData()
+      .then((data) => {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+        });
+        res.end(JSON.stringify(data));
+      })
+      .catch((err) => {
+        process.stderr.write(`[ijfw-dashboard] /api/data error: ${err.stack}\n`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal dashboard error. Check server logs.' }));
       });
-      res.end(JSON.stringify(data));
-    } catch (err) {
-      process.stderr.write(`[ijfw-dashboard] /api/data error: ${err.stack}\n`);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Internal dashboard error. Check server logs.' }));
-    }
     return;
   }
 
@@ -1321,3 +1453,5 @@ server.listen(port, '127.0.0.1', () => {
 
 process.on('SIGTERM', () => { cleanupSync(); process.exit(0); });
 process.on('SIGINT', () => { cleanupSync(); process.exit(0); });
+
+} // end if (_entrypoint)

@@ -346,7 +346,7 @@ fi
 if [ "$SESSION_COUNT" -gt 0 ] || [ "$DECISION_COUNT" -gt 0 ]; then
   EARLY_TRIDENT=$(grep -c '{' "$IJFW_DIR/receipts/cross-runs.jsonl" 2>/dev/null || printf '0')
   if [ "${EARLY_TRIDENT:-0}" -gt 0 ]; then
-    printf '[ijfw] Memory loaded (%s sessions, %s things remembered, %s cross-AI reviews)\n' "$SESSION_COUNT" "$DECISION_COUNT" "$EARLY_TRIDENT"
+    printf '[ijfw] Memory loaded (%s sessions, %s things remembered, %s cross-model reviews)\n' "$SESSION_COUNT" "$DECISION_COUNT" "$EARLY_TRIDENT"
   else
     printf '[ijfw] Memory loaded (%s sessions, %s things remembered)\n' "$SESSION_COUNT" "$DECISION_COUNT"
   fi
@@ -771,6 +771,69 @@ if true; then
       echo "$MANAGED_BLOCK"
     } >> "$CLAUDE_MD" 2>/dev/null
   fi
+fi
+
+# --- AGENTS.md cross-platform merge (Phase 2 / A1) ---
+# Merge MEMORY pointer + AGENTS list into AGENTS.md (canonical surface per
+# the open AGENTS.md spec). Block-aware merge via lock.sh; stays under the
+# 50ms hook budget by backgrounding the work and disowning.
+#
+# P2-M1: block content built via shared build-blocks.sh.
+# P2-M2: single lock cycle, single backup, single rename via multi-pair form.
+# P2-B2: hoist-frontmatter.sh runs after the merge to splice A3 (project.type)
+#        fields into the YAML frontmatter region (silent skip until A3 lands).
+AGENTS_MD_LOCK=""
+AGENTS_MD_BUILD=""
+AGENTS_MD_HOIST=""
+for _cand in \
+    "${CLAUDE_PLUGIN_ROOT:-}/skills/ijfw-agents-md/scripts" \
+    "$HOME/.ijfw/claude/skills/ijfw-agents-md/scripts" \
+    "$IJFW_HOOK_DIR/../../skills/ijfw-agents-md/scripts"; do
+  if [ -f "$_cand/lock.sh" ] && [ -f "$_cand/build-blocks.sh" ]; then
+    AGENTS_MD_LOCK="$_cand/lock.sh"
+    AGENTS_MD_BUILD="$_cand/build-blocks.sh"
+    AGENTS_MD_HOIST="$_cand/hoist-frontmatter.sh"
+    break
+  fi
+done
+if [ -n "$AGENTS_MD_LOCK" ] && [ -n "$AGENTS_MD_BUILD" ]; then
+  AGENTS_MD_TARGET="$(pwd -P 2>/dev/null)/AGENTS.md"
+  AGENTS_MD_PROJECT_ROOT="$(pwd -P 2>/dev/null)"
+  # Background the merge so the hook stays under budget. Inside the
+  # subshell we materialize block content into temp files (preserves trailing-
+  # newline byte-identity), then call the multi-pair lock once.
+  {
+    _IJFW_BUILD_TMP="$(mktemp -d -t ijfw-agents-md-build.XXXXXX 2>/dev/null || printf '%s' "$IJFW_DIR/.tmp-build-$$")"
+    mkdir -p "$_IJFW_BUILD_TMP" 2>/dev/null || true
+    # build-blocks emits two paths; we feed them straight into multi-pair lock.
+    _IJFW_PATHS="$(bash "$AGENTS_MD_BUILD" "$AGENTS_MD_PROJECT_ROOT" "files:$_IJFW_BUILD_TMP" 2>/dev/null || true)"
+    _IJFW_MEM_FILE="$(printf '%s\n' "$_IJFW_PATHS" | sed -n '1p')"
+    _IJFW_AG_FILE="$(printf '%s\n' "$_IJFW_PATHS" | sed -n '2p')"
+    if [ -n "$_IJFW_MEM_FILE" ] && [ -n "$_IJFW_AG_FILE" ]; then
+      bash "$AGENTS_MD_LOCK" "$AGENTS_MD_TARGET" \
+        "MEMORY:$_IJFW_MEM_FILE" "AGENTS:$_IJFW_AG_FILE" >/dev/null 2>&1 || true
+    fi
+    # P2-B2: frontmatter hoist (silent skip when .ijfw/project.type absent).
+    if [ -n "$AGENTS_MD_HOIST" ] && [ -f "$AGENTS_MD_HOIST" ]; then
+      bash "$AGENTS_MD_HOIST" "$AGENTS_MD_TARGET" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$_IJFW_BUILD_TMP" 2>/dev/null || true
+  } </dev/null >>"$HOME/.ijfw/logs/agents-md.log" 2>&1 &
+  disown $! 2>/dev/null || true
+fi
+
+# P3-B1: A3 cold-scan trigger -- shared helper, fire-and-forget detached
+# spawn that lands .ijfw/project.type for the next session. Co-located in
+# claude/skills/ijfw-agents-md/scripts/ alongside the other shared helpers.
+COLD_SCAN_TRIGGER=""
+for _cand in \
+    "${CLAUDE_PLUGIN_ROOT:-}/skills/ijfw-agents-md/scripts/cold-scan-trigger.sh" \
+    "$HOME/.ijfw/claude/skills/ijfw-agents-md/scripts/cold-scan-trigger.sh" \
+    "$IJFW_HOOK_DIR/../../skills/ijfw-agents-md/scripts/cold-scan-trigger.sh"; do
+  if [ -f "$_cand" ]; then COLD_SCAN_TRIGGER="$_cand"; break; fi
+done
+if [ -n "$COLD_SCAN_TRIGGER" ]; then
+  bash "$COLD_SCAN_TRIGGER" "$(pwd -P 2>/dev/null)" >/dev/null 2>&1 || true
 fi
 
 # Output strategy:

@@ -7,6 +7,7 @@ import { resolve, join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { mergeMarketplace, claudeSettingsPath } from './marketplace.js';
+import { triggerColdScan } from './post-install/cold-scan.js';
 
 const DEFAULT_REPO = 'https://gitlab.com/therealseandonahoe/ijfw.git';
 const DEFAULT_BRANCH = 'main';
@@ -282,8 +283,18 @@ async function main() {
     console.log(`  marketplace registered in ${settingsPath}`);
   }
 
+  // V3-F3 cold-scan -- fire-and-forget detached child that populates
+  // <cwd>/.ijfw/project.type so the next session-start hook hits a cached
+  // file under the 50ms budget. Never blocks the installer; any spawn
+  // failure degrades to a silent skip (the next session-start trigger will
+  // retry on its own via cold-scan-trigger.sh).
+  try {
+    const coldScanRoot = process.env.IJFW_PROJECT_DIR || process.cwd();
+    triggerColdScan(coldScanRoot, { ijfwHome: target });
+  } catch { /* best-effort; never block install */ }
+
   console.log('');
-  console.log('IJFW now active across 13 platforms -- one memory layer, all your AIs, zero config.');
+  console.log('IJFW now active across 14 platforms -- one memory layer, all your models, zero config.');
   console.log('  Run `ijfw demo` to see the Trident in action.');
   console.log('  Run `ijfw doctor` to confirm which auditors are reachable.');
   console.log('  Privacy: everything stays local. See NO_TELEMETRY.md.');

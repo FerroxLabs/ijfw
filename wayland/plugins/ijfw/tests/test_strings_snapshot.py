@@ -109,6 +109,10 @@ def test_no_bare_user_facing_strings():
             # Allow filesystem paths (start with ~/ or /).
             if s.startswith("~/") or s.startswith("/"):
                 continue
+            # Allow filename-shaped tokens (no whitespace; ends with a known
+            # extension). These are technical identifiers, not user copy.
+            if " " not in s and s.endswith((".sh", ".py", ".json", ".md", ".js", ".txt")):
+                continue
             # Allow f-string fragment keys and short technical tokens.
             if not any(c in s for c in ".!?,"):
                 continue

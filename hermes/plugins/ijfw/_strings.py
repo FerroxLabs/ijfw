@@ -63,9 +63,39 @@ STRINGS = {
     "patterns_missing": (
         "IJFW pattern defaults active; custom pattern guard is paused until patterns.json is restored."
     ),
+    # Hermes shim install-time error (raised when WAYLAND_PLUGIN unresolved).
+    "shim_plugin_source_missing": (
+        "IJFW Hermes shim cannot find plugin source. "
+        "Expected at ~/.wayland/plugins/ijfw, repo-local sibling, or bundled in this dir."
+    ),
+    # AGENTS.md fallback blocks (P2-M1 inline minimal builder path).
+    "agents_md_memory_fallback": (
+        "Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context."
+    ),
+    "agents_md_agents_fallback": (
+        "No project agents yet. Run `ijfw team` to set them up."
+    ),
+    # C6 (Phase 4): IJFWContextEngine + manifest signing chain surfaces.
+    "context_engine_claimed": (
+        "IJFW memory backbone active -- context engine claimed for {host} session."
+    ),
+    "context_engine_slot_taken": (
+        "Hermes context engine slot already claimed by another plugin. "
+        "IJFW memory keeps running via hooks; the singleton stays with the prior plugin."
+    ),
+    "context_engine_unavailable": (
+        "Hermes context-engine API not detected this session. "
+        "IJFW memory keeps running via hooks; the singleton stays free for the host's default."
+    ),
+    "context_engine_integrity_skipped": (
+        "IJFW context engine ready (dev mode -- integrity manifest not present)."
+    ),
+    "context_engine_integrity_failed": (
+        "IJFW context engine kept on standby until integrity check clears: {summary}"
+    ),
     # Command descriptions (shown in tab-completion + gateway menus).
     "cmd_desc_cross_audit": "Run IJFW cross-audit via Second Opinion (Trident)",
-    "cmd_desc_cross_research": "Run IJFW cross-research across AI lineages",
+    "cmd_desc_cross_research": "Run IJFW cross-research across model lineages",
     "cmd_desc_cross_critique": "Run IJFW cross-critique for independent perspective",
     "cmd_desc_workflow": "Start the IJFW workflow skill",
     "cmd_desc_handoff": "Run IJFW handoff skill",

@@ -110,6 +110,56 @@ if [ -f "$_DASH_SCRIPT" ]; then
   disown $! 2>/dev/null || true
 fi
 
+# --- AGENTS.md cross-platform merge (Phase 2 / A1) ---
+# Block-aware merge via lock.sh, content via shared build-blocks.sh (P2-M1).
+# Single lock cycle for both blocks (P2-M2). Frontmatter hoist (P2-B2)
+# degrades gracefully until A3 lands.
+_AGENTS_LOCK=""
+_AGENTS_BUILD=""
+_AGENTS_HOIST=""
+for _cand in \
+    "$HOME/.ijfw/claude/skills/ijfw-agents-md/scripts" \
+    "$(dirname "$0")/../../../../claude/skills/ijfw-agents-md/scripts"; do
+  if [ -f "$_cand/lock.sh" ] && [ -f "$_cand/build-blocks.sh" ]; then
+    _AGENTS_LOCK="$_cand/lock.sh"
+    _AGENTS_BUILD="$_cand/build-blocks.sh"
+    _AGENTS_HOIST="$_cand/hoist-frontmatter.sh"
+    break
+  fi
+done
+if [ -n "$_AGENTS_LOCK" ] && [ -n "$_AGENTS_BUILD" ]; then
+  _AGENTS_TARGET="$(pwd -P 2>/dev/null)/AGENTS.md"
+  _AGENTS_PROJECT_ROOT="$(pwd -P 2>/dev/null)"
+  {
+    _IJFW_BUILD_TMP="$(mktemp -d -t ijfw-agents-md-build.XXXXXX 2>/dev/null || printf '%s' "$IJFW_DIR/.tmp-build-$$")"
+    mkdir -p "$_IJFW_BUILD_TMP" 2>/dev/null || true
+    _IJFW_PATHS="$(bash "$_AGENTS_BUILD" "$_AGENTS_PROJECT_ROOT" "files:$_IJFW_BUILD_TMP" 2>/dev/null || true)"
+    _IJFW_MEM_FILE="$(printf '%s\n' "$_IJFW_PATHS" | sed -n '1p')"
+    _IJFW_AG_FILE="$(printf '%s\n' "$_IJFW_PATHS" | sed -n '2p')"
+    if [ -n "$_IJFW_MEM_FILE" ] && [ -n "$_IJFW_AG_FILE" ]; then
+      bash "$_AGENTS_LOCK" "$_AGENTS_TARGET" \
+        "MEMORY:$_IJFW_MEM_FILE" "AGENTS:$_IJFW_AG_FILE" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$_AGENTS_HOIST" ] && [ -f "$_AGENTS_HOIST" ]; then
+      bash "$_AGENTS_HOIST" "$_AGENTS_TARGET" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$_IJFW_BUILD_TMP" 2>/dev/null || true
+  } </dev/null >>"$HOME/.ijfw/logs/agents-md.log" 2>&1 &
+  disown $! 2>/dev/null || true
+fi
+
+# P3-B1: A3 cold-scan trigger -- shared helper, fire-and-forget detached
+# spawn that lands .ijfw/project.type for the next session.
+_COLD_SCAN_TRIGGER=""
+for _cand in \
+    "$HOME/.ijfw/claude/skills/ijfw-agents-md/scripts/cold-scan-trigger.sh" \
+    "$(dirname "$0")/../../../../claude/skills/ijfw-agents-md/scripts/cold-scan-trigger.sh"; do
+  if [ -f "$_cand" ]; then _COLD_SCAN_TRIGGER="$_cand"; break; fi
+done
+if [ -n "$_COLD_SCAN_TRIGGER" ]; then
+  bash "$_COLD_SCAN_TRIGGER" "$(pwd -P 2>/dev/null)" >/dev/null 2>&1 || true
+fi
+
 # Build memory context for Gemini's additionalContext field.
 MEM_CONTEXT=""
 KB_FILE="$IJFW_DIR/memory/knowledge.md"

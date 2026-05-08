@@ -1,0 +1,10 @@
+{
+  "primary_type": "mixed",
+  "secondary_types": [
+    "software",
+    "book"
+  ],
+  "confidence_floor": 0.5,
+  "scan_incomplete": false,
+  "fallback_reason": null
+}

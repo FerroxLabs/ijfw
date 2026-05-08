@@ -1,0 +1,7 @@
+{
+  "primary_type": "content",
+  "secondary_types": [],
+  "confidence_floor": 0.5,
+  "scan_incomplete": false,
+  "fallback_reason": null
+}

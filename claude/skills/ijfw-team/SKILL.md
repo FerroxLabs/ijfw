@@ -163,3 +163,27 @@ Agents in `.ijfw/agents/` work with any platform that reads agent markdown:
 
 If `.forge/` directory exists, IJFW also reads agents from there.
 `.ijfw/` and `.forge/` are treated as compatible project directories.
+
+## AGENTS.md Mirror (Phase 2 / A1)
+
+After saving agents to `.ijfw/agents/`, also mirror the team into the
+project's `AGENTS.md` (open spec at https://agents.md/). Use the IJFW
+block-aware merger so user-authored content stays untouched:
+
+```bash
+LOCK="$HOME/.ijfw/claude/skills/ijfw-agents-md/scripts/lock.sh"
+[ -f "$LOCK" ] || LOCK="$(pwd)/claude/skills/ijfw-agents-md/scripts/lock.sh"
+# Build the agents block from .ijfw/agents/*.md (one bullet per role).
+BLOCK=""
+for f in .ijfw/agents/*.md; do
+  name=$(basename "$f" .md)
+  desc=$(grep -m1 '^description:' "$f" | sed 's/^description:[[:space:]]*//')
+  BLOCK="${BLOCK}- **${name}** -- ${desc}\n"
+done
+bash "$LOCK" "$(pwd)/AGENTS.md" AGENTS "$(printf '%b' "$BLOCK")"
+```
+
+Two writes total: one to `.ijfw/agents/` (existing portable surface) and
+one to `AGENTS.md` (canonical cross-platform surface). Session-start hooks
+also keep AGENTS.md fresh on every new session, so this step is "as soon
+as the team is approved", not a hard dependency.
