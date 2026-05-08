@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "lib/router/index.js handle path now defers to lib/application.js for fallback rendering",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "fixed router cache bust in lib/router/index.js after lib/application.js mount changed",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "docs/Design Notes/v2-overview.md"
+    },
+    {
+      "kind": "file",
+      "name": "docs/api.md"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:docs/Design Notes/v2-overview.md",
+      "dst": "file:docs/api.md",
+      "kind": "co_occurs"
+    }
+  ]
+}

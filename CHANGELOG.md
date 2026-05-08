@@ -2,6 +2,83 @@
 
 ## [Unreleased]
 
+## [1.3.0] -- 2026-05-09
+
+**Memory Engine 2.0 lands as Pillar D, joining Universal Foundations + Multi-CLI Orchestration + Frontier Trident as the four-pillar architecture release.** Connected memory (engine #4) gains semantic-tier consolidation, a regex symbol graph with BFS traversal, cascading staleness across compute and memory stores, and inline-at-SessionEnd dream consolidation. Tool surface stays at 10 MCP tools; zero new production dependencies; one combined commit per the bundled-release rule.
+
+### Pillar D: Memory Engine 2.0 (NEW)
+
+- **D0 -- FTS5 lands in the memory layer.** `mcp-server/src/memory/{schema.sql, fts5.js, migration-runner.js, migrations/001-fts5-init.js}`. Linear-regex fallback when FTS5 returns empty; markdown hot tier preserved; FTS5 is the warm tier with the same Porter stemmer + 102-group synonym map the compute lever uses.
+- **D1 -- 4-tier semantic consolidation.** `tier_semantic` enum column added orthogonal to existing `tier_access` (hot/warm/cold). Working / Episodic / Semantic / Procedural promotion functions in `memory/tier-promotion.js`. Working -> Episodic at SessionEnd; Episodic -> Semantic via Jaccard > 0.7 or explicit `promote: semantic` tag; Working -> Procedural via TaskUpdate completed events with duration >= 5 minutes plus matching git-commit window.
+- **D2 -- Symbol graph v0.** `kg_nodes` + `kg_edges` tables alongside FTS5. Regex entity extraction across five kinds (file, function, identifier, error_code, decision) with `redactor.classify()` integration so secret-shaped values land with `redacted=1` and never form retrieval edges. BFS traversal exposed via colon-syntax `ijfw_run graph:traverse` and `ijfw_memory_search graph:related` -- no new MCP tool registrations. `.graph-write.lock` noclobber CAS coexists with `scan-state.lock` and `dream-state` markers. Edge weight formula per spec: `clamp_01(log1p(co_occur) * 0.4 + recency_decay * 0.4 + redactor_clean * 0.2)`. **Concept entities (architectural patterns, decisions as semantic objects) land in 1.4.0 with LLM-driven extraction.** Dual-grader strategy locks honest test contracts: 25 hand-curated spec fixtures at >= 80% precision/recall + auto-aligned consistency fixtures at >= 99% catch the regression surface.
+- **D3 -- Session-bounded consolidation.** Inline detached spawn at SessionEnd via `dream-trigger.sh` (POSIX) + `dream_trigger.py` (Wayland/Hermes). Replaces the legacy `SESSION_NUM % 5 == 0` startup-flag deferral. 4-hour cooldown via `.ijfw/.dream-state.json`. 250ms cold-start budget (typical ~86ms); detachment ensures the SessionEnd hook itself never blocks. `IJFW_DREAM_LEGACY=1` env reverts to the old behaviour as a rollback path. Five surfaces wired: claude/codex/gemini shell hooks plus wayland/hermes Python handlers.
+- **D4 -- Cascading staleness across stores.** `propagateStale` (compute, raw + compiled) and `propagateStaleMemory` (memory_entries) both fire from `staleness-wiring.js` after Episodic -> Semantic supersession. BFS from the superseded node propagates `stale_candidate=1` with weight >= 0.5 + depth <= 2 calibration; 50-fixture grader passes at 100% aggregate. Retrieval guard `include_stale: false` (default) excludes flagged rows on both stores.
+
+### Pillar C expansions (Frontier Trident + Compute)
+
+- **C9.4 -- FTS5 Porter stemming.** Tokenizer flips from `unicode61` to `porter unicode61` on raw_fts + compiled_fts. Migration recreate-with-data path preserves all existing rows.
+- **C9.5 -- Coding-domain synonym expansion.** 102 symmetric groups, 237 lookup entries: `db <-> database`, `auth <-> authentication`, `perf <-> performance`, etc. Result envelope reports `synonym_matches` so callers can disable per-query. `IJFW_SYNONYM_EXPAND=0` env override. `ts` dropped per the one-canonical-key invariant (it overloaded to typescript and timestamp at the same time, broadening retrieval beyond user intent).
+- **C9.6 -- Citation provenance.** `raw.source` + `session_id` columns plus partial index. `--source=` and `--session=` filter flags surface through colon-syntax dispatch. Closes the "where did we learn this?" gap.
+- **C9.7 -- Trident degraded single-lens mode.** Lens-health probe (`codex --version` / `gemini --version` / Claude in-process). Verdict floor: 3/3 live -> PASS-eligible; 2/3 live -> CONDITIONAL ceiling; 1/3 live -> WARN ceiling, NEVER auto-PASS. Release-blocker gates (publish, tag, deploy) reject single-lens verdicts unless the caller supplies `--accept-degraded` explicitly. Dashboard tile at `/api/trident/lens-health` shows green/yellow/red with a 24-hour-dead alert threshold.
+
+### Pillar A: Universal Foundations finishes the alpha bundle
+
+- **A1 -- AGENTS.md cross-platform export.** Block-aware merger, PID lockfile, atomic rename, four marker blocks (MEMORY/ROUTING/AGENTS/BLACKBOARD). The canonical agent-instructions surface across every supported platform, per the open AGENTS.md spec.
+- **A3 -- Project-type detection v1.** Five-input signal pipeline (explicit user -> AGENTS.md frontmatter -> brief.md -> file-tree + branch hash -> file extensions). Cold-scan trigger fires across six invocation paths: installer post-install plus five session-start hooks. Cross-session checkpoint + resume via `.ijfw/scan-state.json`. 60-fixture grader (5 domains x 12 fixtures including 2 real-repo per domain) at per-domain 90%.
+
+### Cross-platform smoke matrix (Pillar B foundation)
+
+- **14-platform schema-shape verification:** Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Cline, Kimi Code, OpenClaw, Aider. Per-platform JSON/TOML/YAML key paths verified; idempotent under re-run; 16/16 tests pass.
+- **Linux ARM64 + x86_64 verified clean** via Docker smoke this release cycle (793/793 tests on both architectures, fresh `npm install` in Linux container, all graders + plugin pytest + copy-lint clean).
+- **GitLab CI matrix workflow** ships at `.gitlab-ci.yml`: Linux + macOS + Windows runners fire on every push with caching, artifacts on failure, and Windows `allow_failure: true` until live verification proves it.
+
+### C6 -- Wayland + Hermes plugin
+
+`IJFWContextEngine` claims the singleton context engine slot at `register_context_engine()` with safe-default graceful degrade if another plugin claimed first. Manifest signing chain (sha256 over six files per plugin) is tamper-test verified live: mutate -> reject -> restore -> accept. Hermes parity mirror keeps one codebase, two distributions. Wayland 22 / Hermes 26 pytest pass.
+
+### Audit gates closed
+
+Seven Trident audit gates closed across Phase 1 -> Phase 5 plus PRD-v2 scope expansion plus the GA gate itself. Five fix-waves applied (no deferments). The GA gate ran at full 3-of-3 Trident on commit `a3e2fba` (now `015b222` post-CI-yaml amend); Codex auth held for the dispatched run; Gemini lens unblocked via `.gemini/settings.json` + scoped `.geminiignore` (the workspace-config workaround that closes the prior `.planning/` ignore-pattern block); Claude swarm verified the dual-grader strategy breaks fixture circularity, the cross-store cascading staleness reaches memory_entries (not just compute), and the Procedural tier wires through the dream cycle.
+
+### LongMemEval-S baseline
+
+Memory BM25 layer measured at Recall@5 = 96.0%, Recall@10 = 98.0%, MRR = 90.6% on the 500-question LongMemEval-S benchmark (ICLR 2025). Pillar D's value gate is **relational retrieval** (BFS graph queries, cascading staleness propagation) -- BM25 already sits within 0.6 points of agentmemory's 98.6% headline, so the value lever is the relational layer Pillar D adds, not flat-recall improvement.
+
+### Schema migrations (ADD-ONLY, BEGIN IMMEDIATE)
+
+- Memory db: v0 -> v1 (FTS5 init) -> v2 (tier_semantic) -> v3 (stale_candidate)
+- Compute db: v0 -> v2 (Phase 1 baseline) -> v3 (Porter + source + tier_semantic) -> v4 (kg_nodes + kg_edges) -> v5 (stale_candidate)
+
+All eight migrations preserve data; concurrent-write race in the runner closed with `BEGIN IMMEDIATE` per Phase 5 invariant; PRAGMA quick_check on every write; rollback-safe via per-migration transaction envelope.
+
+### Verification
+
+- mcp-server: 793/793 tests pass
+- wayland pytest: 22/22; hermes pytest: 26/26
+- tool-cap: exactly 10 (canonical names, no new MCP registrations)
+- D2 spec grader: per-kind 100% / 100% (>= 80% gate)
+- D2 consistency grader: per-kind 100% / 100% (>= 99% gate)
+- D4 cascading staleness grader: 50/50 (>= 90% gate)
+- A3 project-types grader: 60/60 across 5 domains
+- 14-platform smoke: 16/16
+- Manifest tamper-test: Wayland + Hermes both verify clean
+- Sandbox bans: Atomics / SAB / WebAssembly seeded undefined at vm.createContext
+- Profile invariant: zero hardcoded path operations
+- Copy-lint: clean (160 pre-existing negative-framing warnings, no regression)
+
+### Strategic decisions locked
+
+- 4-pillar v1.3.0 architecture (was 3) after agentmemory v0.9.4 side-by-side comparison surfaced a recall surface to reinforce. Lifted: stemmed BM25 + synonym expansion + citation provenance + 4-tier semantic consolidation + symbol graph + cascading staleness + continuous dream. Left out (1.4.0+): iii-engine runtime dependency, LLM-driven concept entity extraction, 51 MCP tools / 107 REST endpoints, multi-agent coordination as memory tools.
+- Sequencing 7-9 weeks alpha -> GA per the original honest re-budget; compressed overnight via parallel-agent build with explicit fix-wave loops between phases.
+- D2 reframed as "symbol graph v0" with regex entity extraction; concept entities deferred to 1.4.0 with explicit leave-list rationale.
+- D3 INLINE at SessionEnd via detached spawn (matches Phase 3 cold-scan-trigger pattern); 250ms cold-start budget (was 50ms claim, honestly amended to match measured behaviour); detachment is the invariant.
+- Dual-grader strategy for D2 locks the spec-conformance gate (hand-curated, >= 80%) separate from the implementation-consistency gate (auto-aligned, >= 99%) so test-tuning circularity cannot recur.
+- Trident degraded mode (C9.7) promoted from "scheduled" to "demonstrably critical infra" after four lens failures across three sessions during the build cycle.
+
+### Honest framing
+
+The seven engines stay seven; engine #4 (Connected memory) absorbs the Memory Engine 2.0 upgrade rather than splitting into a separate engine. Pillars A/B/C/D are an internal architectural concept that organises the work but does not replace the engine framing for users. The execute engine that landed in 1.2.x is part of engine #2 (Disciplined workflow) per the README body.
+
 ## [1.2.10] -- 2026-05-06
 
 **Wayland and Hermes graduate to first-class plugins.** Six lifecycle hooks, six slash commands, deterministic memory hydration, native `register(ctx)` integration -- the same depth IJFW ships on Claude Code, now running on the Hermes lineage. One Python codebase serves both hosts via `sys.path` injection, so adding a feature to Wayland adds it to Hermes for free.

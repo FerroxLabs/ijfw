@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "bumped MAX_RETRY_COUNT to 5 in src/config/retry.ts; MAX_RETRY_COUNT also referenced in tests",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "MAX_RETRY_COUNT now configurable via env; src/config/retry.ts reads default of 5",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "tightened .eslintrc.json rules; .prettierrc adjusted to match",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": ".github/workflows/ci.yml now runs lint with .eslintrc.json config",
+      "kind": "observation"
+    }
+  ]
+}

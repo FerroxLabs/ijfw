@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": ".eslintrc.json"
+    },
+    {
+      "kind": "file",
+      "name": ".prettierrc"
+    },
+    {
+      "kind": "file",
+      "name": ".github/workflows/ci.yml"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:.eslintrc.json",
+      "dst": "file:.prettierrc",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:.github/workflows/ci.yml",
+      "dst": "file:.eslintrc.json",
+      "kind": "co_occurs"
+    }
+  ]
+}

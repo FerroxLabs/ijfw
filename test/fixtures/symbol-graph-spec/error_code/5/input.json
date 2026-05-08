@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "PG_CONNECTION_REFUSED on the primary; the failover surfaced PG_DEADLOCK_DETECTED almost immediately",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "PG_CONNECTION_REFUSED retried; PG_DEADLOCK_DETECTED cleared after the migration ran",
+      "kind": "observation"
+    }
+  ]
+}

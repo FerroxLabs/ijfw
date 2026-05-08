@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "ERR_INVALID_ARG_TYPE"
+    },
+    {
+      "kind": "file",
+      "name": "src/cli.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:ERR_INVALID_ARG_TYPE",
+      "dst": "file:src/cli.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

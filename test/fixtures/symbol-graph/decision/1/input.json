@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "recorded d-auth-rotation-2026-04 in decisions/d-auth-rotation-2026-04.md; rotates JWT secret monthly",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "src/auth/rotate.ts implements d-auth-rotation-2026-04; cron wired up",
+      "kind": "observation"
+    }
+  ]
+}

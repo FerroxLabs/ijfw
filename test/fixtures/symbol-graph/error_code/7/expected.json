@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "EXIT_42"
+    },
+    {
+      "kind": "file",
+      "name": "scripts/migrate.sh"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:EXIT_42",
+      "dst": "file:scripts/migrate.sh",
+      "kind": "co_occurs"
+    }
+  ]
+}

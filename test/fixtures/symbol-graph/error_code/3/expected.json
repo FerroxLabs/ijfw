@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "HTTP_404"
+    },
+    {
+      "kind": "error_code",
+      "name": "HTTP_401"
+    },
+    {
+      "kind": "file",
+      "name": "src/api/tenant.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:HTTP_404",
+      "dst": "file:src/api/tenant.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:HTTP_401",
+      "dst": "file:src/api/tenant.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

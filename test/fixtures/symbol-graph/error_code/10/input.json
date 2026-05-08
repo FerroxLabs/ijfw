@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "IJFW_E_GRAPH_LOCK_V2 raised by mcp-server/lib/graph-lock.js when collision detected; supersedes IJFW_E_GRAPH_LOCK_V1",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "IJFW_E_GRAPH_LOCK_V2 carries collision count; mcp-server/lib/graph-lock.js retries on V2 only",
+      "kind": "observation"
+    }
+  ]
+}

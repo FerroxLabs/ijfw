@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "OrderStatus.PENDING and OrderStatus.SHIPPED added to src/orders/types.ts",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "OrderStatus.SHIPPED now triggers fulfilment hook; OrderStatus.PENDING stays default",
+      "kind": "observation"
+    }
+  ]
+}

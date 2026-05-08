@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "added RequestContext type in src/types/context.ts; RequestContext carries tenant + traceId",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "RequestContext now generic over tenant; src/types/context.ts ships next",
+      "kind": "observation"
+    }
+  ]
+}

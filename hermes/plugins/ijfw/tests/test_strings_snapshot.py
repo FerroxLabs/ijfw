@@ -16,7 +16,7 @@ TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if PLUGIN_DIR not in sys.path:
     sys.path.insert(0, PLUGIN_DIR)
 
-from _strings import STRINGS
+from _strings import STRINGS, format_string
 
 FIXTURE_PATH = os.path.join(TESTS_DIR, "strings-fixture.json")
 
@@ -121,10 +121,125 @@ def test_no_bare_user_facing_strings():
     print(f"  bare-strings check OK ({len(FILES_TO_SCAN)} files scanned)")
 
 
+# ---------------------------------------------------------------------------
+# P5-L1: profile-home templating in format_string()
+# ---------------------------------------------------------------------------
+
+class _FakeCtxWithProfileHome:
+    """Mock ctx that exposes a `profile_home()` callable returning a custom path."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def profile_home(self):
+        return self._value
+
+
+class _FakeCtxWithProfileHomeFor:
+    """Mock ctx using the get_active_profile() + profile_home_for(profile) pattern."""
+
+    def __init__(self, profile_name, value):
+        self._profile = profile_name
+        self._value = value
+
+    def get_active_profile(self):
+        return self._profile
+
+    def profile_home_for(self, profile):
+        assert profile == self._profile, f"unexpected profile: {profile}"
+        return self._value
+
+
+def test_format_string_resolves_profile_home_with_ctx():
+    """format_string MUST replace {profile_home} with the resolved value."""
+    ctx = _FakeCtxWithProfileHome("/opt/hermes-tester")
+    out = format_string("skill_load_prompt_workflow", ctx)
+    assert "/opt/hermes-tester/skills/ijfw-workflow/SKILL.md" in out, (
+        f"profile_home not resolved: {out!r}"
+    )
+    assert "{profile_home}" not in out, (
+        f"unrendered placeholder leaked: {out!r}"
+    )
+    print("  format_string resolves profile_home via ctx.profile_home()")
+
+
+def test_format_string_resolves_profile_home_via_active_profile():
+    """The get_active_profile + profile_home_for pattern must also resolve."""
+    ctx = _FakeCtxWithProfileHomeFor("tester", "/var/hermes/profiles/tester")
+    out = format_string("skill_load_prompt_handoff", ctx)
+    assert "/var/hermes/profiles/tester/skills/ijfw-handoff/SKILL.md" in out, (
+        f"profile_home_for not resolved: {out!r}"
+    )
+    print("  format_string resolves profile_home via profile_home_for(active_profile)")
+
+
+def test_format_string_falls_back_to_legacy_literal():
+    """No ctx + no env override -> falls back to ~/.hermes literal.
+
+    Critical invariant: no surface ever ships an unrendered `{profile_home}`
+    token, even when nothing is wired up. The legacy literal preserves prior
+    behaviour for users who never set a non-default profile.
+    """
+    saved = os.environ.pop("IJFW_HERMES_PROFILE_HOME", None)
+    try:
+        out = format_string("skill_load_prompt_compress", None)
+        assert "{profile_home}" not in out, (
+            f"unrendered placeholder leaked: {out!r}"
+        )
+        assert "~/.hermes/skills/ijfw-compress/SKILL.md" in out, (
+            f"legacy fallback path mismatch: {out!r}"
+        )
+        print("  format_string falls back to ~/.hermes literal when ctx is None")
+    finally:
+        if saved is not None:
+            os.environ["IJFW_HERMES_PROFILE_HOME"] = saved
+
+
+def test_format_string_env_override():
+    """IJFW_HERMES_PROFILE_HOME env var overrides the legacy fallback."""
+    saved = os.environ.get("IJFW_HERMES_PROFILE_HOME")
+    os.environ["IJFW_HERMES_PROFILE_HOME"] = "/tmp/hermes-env-override"
+    try:
+        out = format_string("skill_load_prompt_workflow", None)
+        assert "/tmp/hermes-env-override/skills/ijfw-workflow/SKILL.md" in out, (
+            f"env override not honoured: {out!r}"
+        )
+        print("  format_string honours IJFW_HERMES_PROFILE_HOME env override")
+    finally:
+        if saved is None:
+            os.environ.pop("IJFW_HERMES_PROFILE_HOME", None)
+        else:
+            os.environ["IJFW_HERMES_PROFILE_HOME"] = saved
+
+
+def test_no_hardcoded_hermes_paths_in_skill_strings():
+    """The three skill_load_prompt_* templates MUST template {profile_home}.
+
+    Regression guard for P5-L1: if anyone re-introduces a hardcoded
+    `~/.hermes/skills/...` literal in _strings.py the assert below catches
+    it. Pair this with the snapshot test that validates the placeholder
+    survived in strings-fixture.json.
+    """
+    for key in ("skill_load_prompt_workflow", "skill_load_prompt_handoff", "skill_load_prompt_compress"):
+        template = STRINGS[key]
+        assert "{profile_home}" in template, (
+            f"{key} dropped the {{profile_home}} placeholder: {template!r}"
+        )
+        assert "~/.hermes/skills" not in template, (
+            f"{key} re-introduced a hardcoded ~/.hermes literal: {template!r}"
+        )
+    print("  skill_load_prompt_* templates retain {profile_home} (no hardcoded paths)")
+
+
 if __name__ == "__main__":
     tests = [
         test_snapshot_matches_fixture,
         test_no_bare_user_facing_strings,
+        test_format_string_resolves_profile_home_with_ctx,
+        test_format_string_resolves_profile_home_via_active_profile,
+        test_format_string_falls_back_to_legacy_literal,
+        test_format_string_env_override,
+        test_no_hardcoded_hermes_paths_in_skill_strings,
     ]
     failed = []
     for t in tests:

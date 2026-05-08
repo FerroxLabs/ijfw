@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "EBUSY_GRAPH_WRITE"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/graph.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:EBUSY_GRAPH_WRITE",
+      "dst": "file:mcp-server/lib/graph.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

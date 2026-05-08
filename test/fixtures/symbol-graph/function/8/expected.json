@@ -1,0 +1,52 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "sanitize"
+    },
+    {
+      "kind": "function",
+      "name": "escapeHTML"
+    },
+    {
+      "kind": "file",
+      "name": "lib/sanitize.go"
+    },
+    {
+      "kind": "file",
+      "name": "lib/escape.go"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:lib/sanitize.go",
+      "dst": "function:sanitize",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:escapeHTML",
+      "dst": "function:sanitize",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:lib/escape.go",
+      "dst": "function:sanitize",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:lib/sanitize.go",
+      "dst": "function:escapeHTML",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:lib/escape.go",
+      "dst": "file:lib/sanitize.go",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:lib/escape.go",
+      "dst": "function:escapeHTML",
+      "kind": "co_occurs"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "EXIT_SUCCESS came back from the parent shell; EXIT_FAILURE only fires on signal trap",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "EXIT_SUCCESS confirmed by the wrapper; EXIT_FAILURE remains unreachable on the happy path",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "function", "name": "Connection.prototype.open" },
+    { "kind": "function", "name": "Connection.prototype.close" }
+  ],
+  "edges": [
+    { "src": "function:Connection.prototype.open", "dst": "function:Connection.prototype.close", "kind": "co_occurs" }
+  ]
+}

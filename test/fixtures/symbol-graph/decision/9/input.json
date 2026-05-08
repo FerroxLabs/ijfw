@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "d-prefer-fts5-over-vectors-for-warm-tier captured today; defers vector search to cold tier",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "mcp-server/lib/search.js follows d-prefer-fts5-over-vectors-for-warm-tier; vectors gated behind opt-in flag",
+      "kind": "observation"
+    }
+  ]
+}

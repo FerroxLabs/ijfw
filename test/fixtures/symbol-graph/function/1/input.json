@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "wrote getUserById in src/users/repo.ts; getUserById hits the cache first",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "getUserById now memoised; src/users/repo.ts test passes",
+      "kind": "observation"
+    }
+  ]
+}

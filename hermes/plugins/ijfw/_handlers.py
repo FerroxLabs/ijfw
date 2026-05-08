@@ -7,7 +7,7 @@ import re
 import subprocess
 import pathlib
 
-from _strings import STRINGS
+from _strings import STRINGS, format_string
 import _mcp as mcp
 from _context_engine import IJFWContextEngine, _HAS_HERMES_CE
 from _manifest import verify_manifest, render_verification_summary
@@ -115,6 +115,57 @@ def _trigger_cold_scan(ctx, project_root):
             sys_path_added = True
         from cold_scan_trigger import trigger_cold_scan as _tcs
         _tcs(project_root)
+    except (ImportError, OSError):
+        pass
+    finally:
+        if sys_path_added:
+            try:
+                sys.path.remove(str(scripts_dir))
+            except ValueError:
+                pass
+
+
+def _summarize_scripts_dir(ctx):
+    """Locate the ijfw-summarize scripts dir (D3 dream-trigger home).
+
+    Mirrors `_agents_md_scripts_dir` discovery rules: profile-resolved
+    install layout first, then ~/.ijfw cross-host install, then repo
+    layout. Returns the directory containing dream_trigger.py, or None.
+    """
+    candidates = []
+    profile_root = _resolve_profile_home(ctx)
+    if profile_root is not None:
+        candidates.append(profile_root / "plugins" / "ijfw" / "skills" / "ijfw-summarize" / "scripts")
+    candidates.append(pathlib.Path(os.path.expanduser("~/.ijfw/claude/skills/ijfw-summarize/scripts")))
+    repo_local = pathlib.Path(__file__).parent.parent.parent.parent / "claude" / "skills" / "ijfw-summarize" / "scripts"
+    candidates.append(repo_local)
+    for c in candidates:
+        if (c / "dream_trigger.py").is_file():
+            return c
+    return None
+
+
+def _trigger_dream(ctx, project_root, host, session_id):
+    """D3: dream-cycle trigger via the shared dream_trigger.py helper.
+
+    Mirrors dream-trigger.sh wiring in the shell hooks. Replaces the
+    legacy `SESSION_NUM % 5 == 0` startup-flag deferral with an inline
+    detached spawn at SessionEnd. Fire-and-forget; never blocks the
+    on_session_end hook. Honours IJFW_DREAM_LEGACY=1 rollback path.
+    """
+    import sys
+    scripts_dir = _summarize_scripts_dir(ctx)
+    if scripts_dir is None:
+        return
+    if not (scripts_dir / "dream_trigger.py").is_file():
+        return
+    sys_path_added = False
+    try:
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+            sys_path_added = True
+        from dream_trigger import trigger_dream as _td
+        _td(project_root, host=host, session_id=session_id)
     except (ImportError, OSError):
         pass
     finally:
@@ -500,6 +551,15 @@ def build_register_fn(host="hermes"):
                 type="observation",
                 session_id=session_id,
             )
+            # D3: dream-cycle trigger -- fire-and-forget detached spawn
+            # that runs cooldown-gated consolidation. Replaces the
+            # legacy SESSION_NUM % 5 startup-flag deferral. Shared
+            # helper -- no inline duplicate.
+            try:
+                _trigger_dream(ctx, os.getcwd(), host, session_id)
+            except Exception:
+                # Hooks must never crash Hermes.
+                pass
             return None
 
         ctx.register_hook("on_session_end", on_session_end)
@@ -543,15 +603,18 @@ def build_register_fn(host="hermes"):
 
         # ----------------------------------------------------------------
         # Commands: workflow / handoff / compress (skill-load instructions)
+        # P5-L1: format_string(key, ctx) resolves `{profile_home}` against
+        # the live Hermes profile so non-default profiles see the right
+        # skills path instead of the hardcoded `~/.hermes/...` literal.
         # ----------------------------------------------------------------
         def cmd_workflow(raw_args):
-            return STRINGS["skill_load_prompt_workflow"]
+            return format_string("skill_load_prompt_workflow", ctx)
 
         def cmd_handoff(raw_args):
-            return STRINGS["skill_load_prompt_handoff"]
+            return format_string("skill_load_prompt_handoff", ctx)
 
         def cmd_compress(raw_args):
-            return STRINGS["skill_load_prompt_compress"]
+            return format_string("skill_load_prompt_compress", ctx)
 
         reg_cmd("workflow", cmd_workflow, STRINGS["cmd_desc_workflow"])
         reg_cmd("handoff", cmd_handoff, STRINGS["cmd_desc_handoff"])

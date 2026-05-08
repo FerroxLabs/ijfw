@@ -1,0 +1,71 @@
+{
+  "kg_nodes": [
+    {
+      "kind": "function",
+      "name": "star_8_hub",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_8_Alpha",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_8_Beta",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_8_Gamma",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_8_Delta",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_8_Epsilon",
+      "redacted": 0
+    }
+  ],
+  "kg_edges": [
+    {
+      "src": "star_8_hub",
+      "dst": "star_8_Alpha",
+      "kind": "co_occurs",
+      "weight": 0.4,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "star_8_hub",
+      "dst": "star_8_Beta",
+      "kind": "co_occurs",
+      "weight": 0.6000000000000001,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "star_8_hub",
+      "dst": "star_8_Gamma",
+      "kind": "co_occurs",
+      "weight": 0.65,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "star_8_hub",
+      "dst": "star_8_Delta",
+      "kind": "co_occurs",
+      "weight": 0.7000000000000001,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "star_8_hub",
+      "dst": "star_8_Epsilon",
+      "kind": "co_occurs",
+      "weight": 0.4,
+      "co_occurrence_count": 3
+    }
+  ]
+}

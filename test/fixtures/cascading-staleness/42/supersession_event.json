@@ -1,0 +1,6 @@
+{
+  "superseded": "rd_2_root",
+  "superseded_kind": "function",
+  "replacement": null,
+  "note": "Redacted boundary terminates BFS at depth 1"
+}

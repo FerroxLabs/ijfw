@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "tagged the change as #decision:retry-budget along with #decision:queue-depth-cap",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "#decision:retry-budget covered the upstream knob; #decision:queue-depth-cap covered downstream",
+      "kind": "observation"
+    }
+  ]
+}

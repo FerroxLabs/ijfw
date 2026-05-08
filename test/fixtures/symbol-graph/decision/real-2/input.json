@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "d-alpha-schema-reservations locks reserved field names ahead of GA; documented in ADR-alpha-schema-reservations.md",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "mcp-server/lib/schema.js validates against d-alpha-schema-reservations; ADR-alpha-schema-reservations.md lists reserved keys",
+      "kind": "observation"
+    }
+  ]
+}

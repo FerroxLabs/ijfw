@@ -221,9 +221,21 @@ if [ ! -f "$JOURNAL" ]; then
 fi
 printf -- '- [%s] session-end: #%s\n' "$ISO_TIMESTAMP" "$SESSION_NUM" >> "$JOURNAL" 2>/dev/null
 
-# Dream cycle trigger -- APPEND, never clobber.
-if [ "$SESSION_NUM" -gt 0 ] && [ $(( SESSION_NUM % 5 )) -eq 0 ]; then
-  echo "IJFW_NEEDS_CONSOLIDATE=1" >> "$IJFW_DIR/.startup-flags" 2>/dev/null
+# Dream cycle trigger (D3 -- inline detached spawn at SessionEnd).
+# Replaces the legacy `SESSION_NUM % 5 == 0` startup-flag deferral with
+# a fire-and-forget spawn that returns within ~50ms (hook latency
+# budget). Cooldown enforced by runner.mjs via .ijfw/.dream-state.json
+# (4h). Set IJFW_DREAM_LEGACY=1 to revert to the old startup-flag path.
+DREAM_TRIGGER=""
+for cand in \
+    "$HOME/.ijfw/claude/skills/ijfw-summarize/scripts/dream-trigger.sh" \
+    "${IJFW_HOME:-}/claude/skills/ijfw-summarize/scripts/dream-trigger.sh" \
+    "$(pwd)/claude/skills/ijfw-summarize/scripts/dream-trigger.sh" \
+    "$(dirname "$0")/../../skills/ijfw-summarize/scripts/dream-trigger.sh"; do
+  [ -n "$cand" ] && [ -f "$cand" ] && { DREAM_TRIGGER="$cand"; break; }
+done
+if [ -n "$DREAM_TRIGGER" ]; then
+  bash "$DREAM_TRIGGER" "$(pwd)" "claude" "${IJFW_SESSION_ID:-}" 2>/dev/null || true
 fi
 
 # W4.6 / R6 -- session-dir pruning. Keep newest 30 markers; archive older

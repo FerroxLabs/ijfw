@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "defined Encoder trait in src/codec.rs; Encoder is implemented by JsonEncoder struct",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "JsonEncoder now derives Default; Encoder trait gains stream variant",
+      "kind": "observation"
+    }
+  ]
+}

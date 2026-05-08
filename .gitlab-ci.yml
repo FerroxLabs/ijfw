@@ -1,0 +1,301 @@
+# IJFW v1.3.0+ -- GitLab CI cross-platform test matrix.
+#
+# Purpose:
+#   Sean pushes a branch -> Linux, macOS, Windows runners exercise the same
+#   command set he runs locally on his Mac. No more copy-paste onto the
+#   Windows box. Green/red signal per platform in 2-5 min.
+#
+# Cost discipline:
+#   - Linux: free shared runner (Debian-based; native modules build cleanly).
+#   - macOS: free monthly minutes on Apple-silicon shared runner. Drops to
+#     intel-shared if budget tightens (toggle the tag).
+#   - Windows: free monthly minutes on shared Windows runner; allow_failure
+#     is ON until the Windows path is proven on the registry.
+#
+# Trigger: every push, every merge_request. Doc-only commits with
+# "[skip ci]" in the message bypass the matrix (handled by GitLab natively).
+#
+# Manual override: a manual_full_matrix job is exposed in the web UI for
+# replay-on-demand without a fresh push.
+
+# ---------------------------------------------------------------------------
+# Global defaults
+# ---------------------------------------------------------------------------
+
+variables:
+  # Per-job IJFW state dir keeps the test runs hermetic and avoids
+  # polluting the runner's HOME between matrix legs.
+  IJFW_HOME: "$CI_PROJECT_DIR/.ijfw-test"
+  # Locale stability for grep/sort/regex behaviour across mac BSD + GNU.
+  LC_ALL: "C"
+  LANG: "C"
+  # Default-on inline D3 consolidation behaviour (D-PILLAR-SPEC §11).
+  IJFW_DREAM_LEGACY: "0"
+  # Mark every CI run as test mode so any production-only side effects
+  # are gated off.
+  NODE_ENV: "test"
+  # No interactive prompts on Windows package managers.
+  CI: "true"
+  # Speed up npm installs.
+  NPM_CONFIG_FUND: "false"
+  NPM_CONFIG_AUDIT: "false"
+  NPM_CONFIG_PROGRESS: "false"
+
+stages:
+  - test
+  - manual
+
+default:
+  # If a job runs longer than 30 min, something is structurally wrong --
+  # the smoke matrix should land in 2-5 min per platform.
+  timeout: 30 minutes
+  # Capture any logs the test commands wrote, even on success, so Sean
+  # can scan a passing run if a flake is suspected.
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - "ci-logs/"
+      - ".ijfw-test/logs/"
+    reports: {}
+
+# ---------------------------------------------------------------------------
+# Workflow rules
+# ---------------------------------------------------------------------------
+#
+# Run on every push to a branch AND on every merge request (so the MR pipeline
+# replays once even if the branch was pushed before opening the MR). Tagged
+# pushes also trigger -- release tags want a final green badge.
+#
+# Doc-only commits skip CI by including "[skip ci]" in the commit message;
+# GitLab honours that natively, so no rule change needed.
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Reusable test command sequence
+# ---------------------------------------------------------------------------
+#
+# The same logical sequence runs on all three OSes. Each OS job has its own
+# install prelude (apt / brew / choco) and then dispatches into this block.
+# The script keys are duplicated rather than YAML-anchored because GitLab's
+# job inheritance is clearer when you can read the full job definition.
+
+# ---------------------------------------------------------------------------
+# Linux job
+# ---------------------------------------------------------------------------
+
+linux:test:
+  stage: test
+  image: node:22-bookworm
+  tags:
+    - saas-linux-medium-amd64
+  cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_SLUG"
+    paths:
+      - mcp-server/node_modules/
+      - .npm/
+  before_script:
+    - mkdir -p ci-logs "$IJFW_HOME"
+    - apt-get update -qq
+    - apt-get install -y --no-install-recommends python3 python3-pip sqlite3 build-essential bash 2>&1 | tail -20
+    - python3 -m pip install --break-system-packages --quiet pytest
+    - node --version
+    - python3 --version
+    - sqlite3 --version
+    - bash --version | head -1
+  script:
+    # 1. mcp-server install + smoke test
+    - cd mcp-server
+    - npm ci --no-audit --no-fund 2>&1 | tee ../ci-logs/linux-npm-ci.log | tail -30
+    - npm test 2>&1 | tee ../ci-logs/linux-npm-test.log
+    - node --test test-*.js 2>&1 | tee ../ci-logs/linux-node-test.log | tail -100
+    # 2. Graders (D2 spec, D2 consistency, D4 cascading-staleness, A3 project-types)
+    - node test/grade-symbol-graph-spec.js 2>&1 | tee ../ci-logs/linux-grader-d2-spec.log
+    - node test/grade-symbol-graph-consistency.js 2>&1 | tee ../ci-logs/linux-grader-d2-consistency.log
+    - node test/grade-cascading-staleness.js 2>&1 | tee ../ci-logs/linux-grader-d4.log
+    - node test/grade-project-types.js 2>&1 | tee ../ci-logs/linux-grader-a3.log
+    - cd ..
+    # 3. Wayland + Hermes pytest suites
+    - python3 -m pytest wayland/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/linux-pytest-wayland.log
+    - python3 -m pytest hermes/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/linux-pytest-hermes.log
+    # 4. Copy-lint gate
+    - bash scripts/copy-lint.sh 2>&1 | tee ci-logs/linux-copy-lint.log
+  allow_failure: false
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - "ci-logs/"
+      - ".ijfw-test/"
+
+# ---------------------------------------------------------------------------
+# macOS job
+# ---------------------------------------------------------------------------
+#
+# Runs on the Apple-silicon shared runner (saas-macos-medium-m1). If monthly
+# macOS minutes get tight, swap the tag to saas-macos-medium for the older
+# intel runner -- same image catalogue, slightly cheaper. Both inherit
+# Homebrew + recent Xcode.
+
+macos:test:
+  stage: test
+  image: macos-14-xcode-15
+  tags:
+    - saas-macos-medium-m1
+  cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_SLUG"
+    paths:
+      - mcp-server/node_modules/
+      - .npm/
+  before_script:
+    - mkdir -p ci-logs "$IJFW_HOME"
+    # macOS shared runners ship Homebrew preinstalled. Quietly install
+    # node 22 + python 3 if they are missing or pinned to an older version.
+    - brew update --quiet || true
+    - brew install --quiet node@22 python@3.12 sqlite || true
+    - brew link --overwrite --force node@22 || true
+    - python3 -m pip install --break-system-packages --quiet pytest
+    - node --version
+    - python3 --version
+    - sqlite3 --version
+    - bash --version | head -1
+  script:
+    - cd mcp-server
+    - npm ci --no-audit --no-fund 2>&1 | tee ../ci-logs/macos-npm-ci.log | tail -30
+    - npm test 2>&1 | tee ../ci-logs/macos-npm-test.log
+    - node --test test-*.js 2>&1 | tee ../ci-logs/macos-node-test.log | tail -100
+    - node test/grade-symbol-graph-spec.js 2>&1 | tee ../ci-logs/macos-grader-d2-spec.log
+    - node test/grade-symbol-graph-consistency.js 2>&1 | tee ../ci-logs/macos-grader-d2-consistency.log
+    - node test/grade-cascading-staleness.js 2>&1 | tee ../ci-logs/macos-grader-d4.log
+    - node test/grade-project-types.js 2>&1 | tee ../ci-logs/macos-grader-a3.log
+    - cd ..
+    - python3 -m pytest wayland/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/macos-pytest-wayland.log
+    - python3 -m pytest hermes/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/macos-pytest-hermes.log
+    - bash scripts/copy-lint.sh 2>&1 | tee ci-logs/macos-copy-lint.log
+  allow_failure: false
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - "ci-logs/"
+      - ".ijfw-test/"
+
+# ---------------------------------------------------------------------------
+# Windows job
+# ---------------------------------------------------------------------------
+#
+# Runs on saas-windows-medium (Windows Server 2022). PowerShell is the
+# native shell here. Chocolatey ships preinstalled on the GitLab Windows
+# runner image so we use it for node / python / sqlite. The mcp-server
+# native module (better-sqlite3) prebuilds a windows-x64 binary at the
+# pinned version, so no MSVC toolchain is required for the happy path.
+#
+# allow_failure: true
+#   Reason: the Windows path has not yet been live-verified end-to-end
+#   on the GitLab registry. We want the Windows leg to be visible (red
+#   bubble in the pipeline UI) without blocking ship until the path is
+#   proven. Once Windows runs green twice in a row on a PR, flip this
+#   to false in a follow-up.
+#
+# Locale: PowerShell ignores LC_ALL; we set $env:LC_ALL anyway so any
+# child bash/grep processes (git-bash from copy-lint.sh, scripts/) see
+# the C locale. PowerShell-side locale stability is handled by setting
+# the console output encoding to UTF-8.
+
+windows:test:
+  stage: test
+  tags:
+    - saas-windows-medium-amd64
+  cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_SLUG"
+    paths:
+      - mcp-server/node_modules/
+      - .npm/
+  before_script:
+    - New-Item -ItemType Directory -Force -Path ci-logs, $env:IJFW_HOME | Out-Null
+    - $OutputEncoding = [System.Text.Encoding]::UTF8
+    - "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8"
+    # Chocolatey is preinstalled on the GitLab Windows runner image. Be
+    # explicit about it anyway so a future image change shows up loudly.
+    - choco --version
+    - choco install -y --no-progress nodejs --version=22.11.0
+    - choco install -y --no-progress python --version=3.12.7
+    - choco install -y --no-progress sqlite
+    # Refresh PATH so the freshly-installed node + python are visible.
+    - $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+    - python -m pip install --quiet pytest
+    - node --version
+    - python --version
+    - sqlite3 -version
+  script:
+    # mcp-server install + smoke
+    - Set-Location mcp-server
+    - npm ci --no-audit --no-fund 2>&1 | Tee-Object -FilePath ../ci-logs/windows-npm-ci.log | Select-Object -Last 30
+    - npm test 2>&1 | Tee-Object -FilePath ../ci-logs/windows-npm-test.log
+    - node --test (Get-ChildItem -Filter 'test-*.js' | Select-Object -ExpandProperty Name) 2>&1 | Tee-Object -FilePath ../ci-logs/windows-node-test.log | Select-Object -Last 100
+    # Graders (D2 spec, D2 consistency, D4 cascading-staleness, A3 project-types)
+    - node test/grade-symbol-graph-spec.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-d2-spec.log
+    - node test/grade-symbol-graph-consistency.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-d2-consistency.log
+    - node test/grade-cascading-staleness.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-d4.log
+    - node test/grade-project-types.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-a3.log
+    - Set-Location ..
+    # Pytest suites (python ships pytest after the choco install above).
+    - python -m pytest wayland/plugins/ijfw/tests/ -v 2>&1 | Tee-Object -FilePath ci-logs/windows-pytest-wayland.log
+    - python -m pytest hermes/plugins/ijfw/tests/ -v 2>&1 | Tee-Object -FilePath ci-logs/windows-pytest-hermes.log
+    # copy-lint.sh is a bash script. Git for Windows ships bash.exe at a
+    # known path; resolve via where.exe so we never depend on bash being
+    # on PATH (regression-guard from the IJFW Windows-bash-resolution rule).
+    - $bashExe = (Get-Command bash -ErrorAction SilentlyContinue).Source
+    - if (-not $bashExe) { $gitExe = (Get-Command git).Source; $bashExe = Join-Path (Split-Path (Split-Path $gitExe)) 'bin\bash.exe' }
+    - if (-not (Test-Path $bashExe)) { Write-Host 'bash.exe not resolvable; copy-lint skipped on this runner image'; $env:IJFW_COPY_LINT_SKIPPED = '1' } else { & $bashExe scripts/copy-lint.sh 2>&1 | Tee-Object -FilePath ci-logs/windows-copy-lint.log }
+  # ALLOW_FAILURE CARVE-OUT
+  # ----------------------
+  # The Windows leg is informational until the registry path is proven.
+  # Linux + macOS are ship-blocking (allow_failure: false). Once Windows
+  # is green twice in a row on real PRs, flip this flag and remove this
+  # block of comments.
+  allow_failure: true
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - "ci-logs/"
+      - ".ijfw-test/"
+
+# ---------------------------------------------------------------------------
+# Manual full-matrix job
+# ---------------------------------------------------------------------------
+#
+# Lets Sean re-trigger the matrix from the GitLab UI without a fresh push.
+# Useful when a flake is suspected, when a runner was upgraded, or when
+# replaying a green run before publishing.
+#
+# Click "Run pipeline" in the web UI, set CI_MANUAL_REPLAY=1, and this job
+# fires the same three legs via parent-child pipelines under the hood by
+# depending on them.
+
+manual_full_matrix:
+  stage: manual
+  image: alpine:3.19
+  tags:
+    - saas-linux-small-amd64
+  needs:
+    - job: linux:test
+      optional: true
+    - job: macos:test
+      optional: true
+    - job: windows:test
+      optional: true
+  script:
+    - echo "Manual replay marker. Pipeline ran linux + macos + windows above."
+    - echo "Replay at $(date -u +%Y-%m-%dT%H:%M:%SZ) on $CI_COMMIT_SHORT_SHA"
+  when: manual
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - when: manual

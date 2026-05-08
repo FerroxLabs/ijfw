@@ -1,0 +1,15 @@
+{
+  "name": "hybrid-7",
+  "description": "Hybrid root + chain + spurs; superseded=root",
+  "expected_stale_candidates": [
+    "hybrid_7_n1",
+    "hybrid_7_spur1",
+    "hybrid_7_n2",
+    "hybrid_7_spur2"
+  ],
+  "expected_unaffected": [
+    "hybrid_7_far"
+  ],
+  "propagation_threshold": 0.5,
+  "depth_cap": 2
+}

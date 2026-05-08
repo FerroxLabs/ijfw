@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "mapMaybe<T, U> in src/util/maybe.ts handles undefined; mapMaybe is the new lifting primitive",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "mapMaybe doc-comment updated in src/util/maybe.ts",
+      "kind": "observation"
+    }
+  ]
+}

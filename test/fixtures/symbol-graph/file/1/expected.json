@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "src/auth/login.js"
+    },
+    {
+      "kind": "file",
+      "name": "src/lib/jwt.js"
+    },
+    {
+      "kind": "function",
+      "name": "validateToken"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:src/auth/login.js",
+      "dst": "function:validateToken",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/auth/login.js",
+      "dst": "file:src/lib/jwt.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/lib/jwt.js",
+      "dst": "function:validateToken",
+      "kind": "co_occurs"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "componentDidMount in src/Dashboard.jsx now subscribes to socket; componentDidMount cleanup in componentWillUnmount",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "componentWillUnmount unsubscribes; src/Dashboard.jsx no longer leaks listeners",
+      "kind": "observation"
+    }
+  ]
+}

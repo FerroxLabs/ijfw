@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "returned exit code EXIT_42 from scripts/migrate.sh on partial migration; documented in scripts/migrate.sh header",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "EXIT_42 now triggers rollback; scripts/migrate.sh idempotent on rerun",
+      "kind": "observation"
+    }
+  ]
+}

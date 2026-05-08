@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "OrderStatus.PENDING"
+    },
+    {
+      "kind": "identifier",
+      "name": "OrderStatus.SHIPPED"
+    },
+    {
+      "kind": "file",
+      "name": "src/orders/types.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:OrderStatus.PENDING",
+      "dst": "file:src/orders/types.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:OrderStatus.SHIPPED",
+      "dst": "file:src/orders/types.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

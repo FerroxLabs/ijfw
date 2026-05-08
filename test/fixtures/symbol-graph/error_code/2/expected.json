@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "EBUSY"
+    },
+    {
+      "kind": "error_code",
+      "name": "EEXIST"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/graph.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:EBUSY",
+      "dst": "file:mcp-server/lib/graph.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:EEXIST",
+      "dst": "file:mcp-server/lib/graph.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:EBUSY",
+      "dst": "error_code:EEXIST",
+      "kind": "co_occurs"
+    }
+  ]
+}

@@ -14,6 +14,14 @@
 //   8. trigger NOT re-fired when project.type already exists
 //   9. trigger NOT re-fired when scan-state.json exists with live PID
 //
+// P5-N2 hermeticity: cold-scan-trigger.sh + cold_scan_trigger.py write
+// log output to `$HOME/.ijfw/logs/cold-scan.log`. The previous test
+// depended on a writable real $HOME, which could fail in a restricted
+// sandbox (CI, ephemeral builders). Each test now creates a per-test tmp
+// HOME (sandboxHome()) and passes it via spawn env so the scripts write
+// into the sandbox instead of the user's real ~/.ijfw/logs. In-process
+// tests (the installer path) save+restore process.env.HOME.
+//
 // Run: node --test mcp-server/test-cold-scan-trigger.js
 
 import { test } from 'node:test';
@@ -39,6 +47,46 @@ function tmpProj(label) {
   return d;
 }
 
+// P5-N2: per-test sandbox HOME. Returns a tmp dir suitable for HOME +
+// IJFW_HOME so log writes from cold-scan-trigger.sh / cold_scan_trigger.py
+// land inside the sandbox (path: <sandboxHome>/.ijfw/logs/cold-scan.log)
+// instead of the user's real ~/.ijfw/logs. Caller is responsible for
+// rmSync() when done -- the per-test cleanup pattern handles it below.
+function sandboxHome(label) {
+  const d = mkdtempSync(join(tmpdir(), `ijfw-coldscan-home-${label}-`));
+  // Pre-create the canonical IJFW dirs so any code path that does an
+  // existsSync() check before mkdir doesn't false-skip.
+  mkdirSync(join(d, '.ijfw', 'logs'), { recursive: true });
+  return d;
+}
+
+// Build a child-process env that:
+//   - inherits PATH, NODE_*, etc. from the test runner
+//   - overrides HOME -> sandbox dir (redirects $HOME/.ijfw/logs writes)
+//   - sets IJFW_HOME -> repo root so the trigger resolves
+//     mcp-server/src/cold-scan-runner.mjs without depending on the
+//     user's real ~/.ijfw layout
+function sandboxEnv(home) {
+  return { ...process.env, HOME: home, IJFW_HOME: REPO_ROOT };
+}
+
+// Run a callback with process.env.HOME overridden in-process. Used by
+// the installer path test (which calls triggerColdScan directly rather
+// than via spawn). Save+restore guarantees we never leak the override
+// even on assertion failure.
+function withSandboxHome(home, cb) {
+  const saved = process.env.HOME;
+  const savedIjfw = process.env.IJFW_HOME;
+  process.env.HOME = home;
+  process.env.IJFW_HOME = REPO_ROOT;
+  try {
+    return cb();
+  } finally {
+    if (saved === undefined) delete process.env.HOME; else process.env.HOME = saved;
+    if (savedIjfw === undefined) delete process.env.IJFW_HOME; else process.env.IJFW_HOME = savedIjfw;
+  }
+}
+
 function waitForFile(path, ms = 2000) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
@@ -55,26 +103,34 @@ function waitForFile(path, ms = 2000) {
 
 test('installer triggerColdScan fires runner; project.type lands <1s', async () => {
   const root = tmpProj('inst');
+  const home = sandboxHome('inst');
   const { triggerColdScan } = await import(join(REPO_ROOT, 'installer', 'src', 'post-install', 'cold-scan.js'));
-  const out = triggerColdScan(root);
+  // P5-N2: redirect HOME so any log writes land in the sandbox even
+  // though the installer path uses stdio:'ignore' (defensive -- future
+  // log-collection changes won't escape the sandbox).
+  const out = withSandboxHome(home, () => triggerColdScan(root));
   assert.equal(out.spawned, true, `installer spawn must succeed: ${out.reason || ''}`);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true, 'project.type must land within ~1s');
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });
 
 // --- 2. claude shell hook path ------------------------------------------
 
 test('claude session-start hook fires cold-scan trigger', () => {
   const root = tmpProj('claude');
+  const home = sandboxHome('claude');
   // Drive the shared trigger directly. The hook resolves the trigger
   // script via a candidate-path search and bash-execs it; that exec is
-  // what we are validating here.
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8' });
+  // what we are validating here. P5-N2: HOME override redirects the
+  // script's `mkdir -p "$HOME/.ijfw/logs"` into the sandbox dir.
+  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0, `trigger must exit 0; stderr=${res.stderr}`);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true, 'project.type must land via shared trigger');
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });
 
 // --- 3. codex shell hook path -------------------------------------------
@@ -85,11 +141,13 @@ test('codex session-start hook resolves + spawns cold-scan trigger', () => {
   assert.match(src, /cold-scan-trigger\.sh/, 'codex hook must reference shared trigger');
   // Drive the trigger directly to confirm runtime success.
   const root = tmpProj('codex');
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8' });
+  const home = sandboxHome('codex');
+  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });
 
 // --- 4. gemini shell hook path ------------------------------------------
@@ -99,11 +157,13 @@ test('gemini session-start hook resolves + spawns cold-scan trigger', () => {
   const src = readFileSync(gemHook, 'utf8');
   assert.match(src, /cold-scan-trigger\.sh/, 'gemini hook must reference shared trigger');
   const root = tmpProj('gemini');
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8' });
+  const home = sandboxHome('gemini');
+  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });
 
 // --- 5. wayland Python handler path -------------------------------------
@@ -115,18 +175,20 @@ test('wayland _handlers.py wires cold_scan_trigger', () => {
   assert.match(src, /_trigger_cold_scan/, 'wayland on_session_start must invoke the trigger');
   // Drive the Python trigger directly.
   const root = tmpProj('wayland');
+  const home = sandboxHome('wayland');
   const py = spawnSync('python3', ['-c', `
 import sys, pathlib
 sys.path.insert(0, ${JSON.stringify(dirname(TRIGGER_PY))})
 from cold_scan_trigger import trigger_cold_scan
 out = trigger_cold_scan(${JSON.stringify(root)})
 print(out.get('spawned'))
-`], { encoding: 'utf8' });
+`], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(py.status, 0, `python trigger must exit 0; stderr=${py.stderr}`);
   assert.match(py.stdout, /True/, 'wayland python trigger must return spawned=True');
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });
 
 // --- 6. hermes Python handler path --------------------------------------
@@ -138,30 +200,33 @@ test('hermes _handlers.py wires cold_scan_trigger', () => {
   assert.match(src, /_trigger_cold_scan/, 'hermes on_session_start must invoke the trigger');
   // Drive the Python trigger directly.
   const root = tmpProj('hermes');
+  const home = sandboxHome('hermes');
   const py = spawnSync('python3', ['-c', `
 import sys, pathlib
 sys.path.insert(0, ${JSON.stringify(dirname(TRIGGER_PY))})
 from cold_scan_trigger import trigger_cold_scan
 out = trigger_cold_scan(${JSON.stringify(root)})
 print(out.get('spawned'))
-`], { encoding: 'utf8' });
+`], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(py.status, 0, `python trigger must exit 0; stderr=${py.stderr}`);
   assert.match(py.stdout, /True/, 'hermes python trigger must return spawned=True');
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });
 
 // --- 7-8. idempotent re-fire when project.type already exists ----------
 
 test('trigger does NOT re-fire when project.type already exists', () => {
   const root = tmpProj('idem');
+  const home = sandboxHome('idem');
   // Plant a finished project.type so the trigger should skip.
   mkdirSync(join(root, '.ijfw'), { recursive: true });
   const finalPath = join(root, '.ijfw', 'project.type');
   writeFileSync(finalPath, '{"primary_type":"software","scan_incomplete":false}\n');
   const before = statSync(finalPath).mtimeMs;
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8' });
+  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   // Brief settle.
   const settleEnd = Date.now() + 250;
@@ -169,18 +234,20 @@ test('trigger does NOT re-fire when project.type already exists', () => {
   const after = statSync(finalPath).mtimeMs;
   assert.equal(after, before, 'project.type mtime must not change -- trigger must skip');
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });
 
 // --- 9. idempotent re-fire when scan-state.json present ----------------
 
 test('trigger does NOT re-fire when scan-state.json present', () => {
   const root = tmpProj('inflight');
+  const home = sandboxHome('inflight');
   // Plant a scan-state.json (signaling another scan in progress).
   mkdirSync(join(root, '.ijfw'), { recursive: true });
   const finalPath = join(root, '.ijfw', 'project.type');
   writeFileSync(join(root, '.ijfw', 'scan-state.json'),
     JSON.stringify({ scan_id: 'x', started_at: new Date().toISOString(), incomplete: true, attempts: 1, files_scanned: 10, total_estimate: 10, last_path_walked: '/x' }, null, 2) + '\n');
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8' });
+  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   // Brief settle.
   const settleEnd = Date.now() + 400;
@@ -189,4 +256,5 @@ test('trigger does NOT re-fire when scan-state.json present', () => {
   // signal forces the trigger to skip.
   assert.equal(existsSync(finalPath), false, 'trigger must skip while scan-state present');
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 });

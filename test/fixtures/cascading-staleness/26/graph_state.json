@@ -1,0 +1,71 @@
+{
+  "kg_nodes": [
+    {
+      "kind": "file",
+      "name": "hybrid_6_root",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "hybrid_6_n1",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "hybrid_6_n2",
+      "redacted": 0
+    },
+    {
+      "kind": "identifier",
+      "name": "hybrid_6_spur1",
+      "redacted": 0
+    },
+    {
+      "kind": "identifier",
+      "name": "hybrid_6_spur2",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "hybrid_6_far",
+      "redacted": 0
+    }
+  ],
+  "kg_edges": [
+    {
+      "src": "hybrid_6_root",
+      "dst": "hybrid_6_n1",
+      "kind": "co_occurs",
+      "weight": 0.6599999999999999,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "hybrid_6_n1",
+      "dst": "hybrid_6_n2",
+      "kind": "co_occurs",
+      "weight": 0.45,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "hybrid_6_root",
+      "dst": "hybrid_6_spur1",
+      "kind": "co_occurs",
+      "weight": 0.7,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "hybrid_6_n1",
+      "dst": "hybrid_6_spur2",
+      "kind": "co_occurs",
+      "weight": 0.55,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "hybrid_6_n2",
+      "dst": "hybrid_6_far",
+      "kind": "co_occurs",
+      "weight": 0.7,
+      "co_occurrence_count": 3
+    }
+  ]
+}

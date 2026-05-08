@@ -1,0 +1,47 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-eviction-importance-2026-05"
+    },
+    {
+      "kind": "decision",
+      "name": "d-eviction-lru-2026-02"
+    },
+    {
+      "kind": "file",
+      "name": "decisions/d-eviction-importance-2026-05.md"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/evict.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-eviction-importance-2026-05",
+      "dst": "decision:d-eviction-lru-2026-02",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-eviction-importance-2026-05",
+      "dst": "file:decisions/d-eviction-importance-2026-05.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-eviction-lru-2026-02",
+      "dst": "file:decisions/d-eviction-importance-2026-05.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-eviction-importance-2026-05",
+      "dst": "file:mcp-server/lib/evict.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-eviction-lru-2026-02",
+      "dst": "file:mcp-server/lib/evict.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

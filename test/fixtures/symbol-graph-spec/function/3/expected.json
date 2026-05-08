@@ -1,0 +1,12 @@
+{
+  "entities": [
+    { "kind": "function", "name": "render_page" },
+    { "kind": "function", "name": "fetch_data" },
+    { "kind": "function", "name": "save_record" }
+  ],
+  "edges": [
+    { "src": "function:render_page", "dst": "function:fetch_data", "kind": "co_occurs" },
+    { "src": "function:fetch_data", "dst": "function:save_record", "kind": "co_occurs" },
+    { "src": "function:save_record", "dst": "function:render_page", "kind": "co_occurs" }
+  ]
+}

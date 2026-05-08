@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "src/bridge.rs"
+    },
+    {
+      "kind": "file",
+      "name": "src/bridge.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:src/bridge.rs",
+      "dst": "file:src/bridge.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

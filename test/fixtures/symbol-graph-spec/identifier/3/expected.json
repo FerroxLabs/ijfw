@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "identifier", "name": "IClock" },
+    { "kind": "identifier", "name": "SystemClock" }
+  ],
+  "edges": [
+    { "src": "identifier:IClock", "dst": "identifier:SystemClock", "kind": "co_occurs" }
+  ]
+}

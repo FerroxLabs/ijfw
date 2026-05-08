@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "Encoder"
+    },
+    {
+      "kind": "identifier",
+      "name": "JsonEncoder"
+    },
+    {
+      "kind": "file",
+      "name": "src/codec.rs"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:Encoder",
+      "dst": "file:src/codec.rs",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:JsonEncoder",
+      "dst": "file:src/codec.rs",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:Encoder",
+      "dst": "identifier:JsonEncoder",
+      "kind": "co_occurs"
+    }
+  ]
+}

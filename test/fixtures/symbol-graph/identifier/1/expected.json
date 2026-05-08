@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "MAX_RETRY_COUNT"
+    },
+    {
+      "kind": "file",
+      "name": "src/config/retry.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:MAX_RETRY_COUNT",
+      "dst": "file:src/config/retry.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

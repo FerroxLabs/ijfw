@@ -1,0 +1,9 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "packages/core/src/internal/runtime/scheduler/queue.ts"
+    }
+  ],
+  "edges": []
+}

@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "componentDidMount"
+    },
+    {
+      "kind": "function",
+      "name": "componentWillUnmount"
+    },
+    {
+      "kind": "file",
+      "name": "src/Dashboard.jsx"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:componentDidMount",
+      "dst": "file:src/Dashboard.jsx",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:componentWillUnmount",
+      "dst": "file:src/Dashboard.jsx",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:componentDidMount",
+      "dst": "function:componentWillUnmount",
+      "kind": "co_occurs"
+    }
+  ]
+}

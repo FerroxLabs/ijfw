@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Auth.tokenStore now memory-only by default; Auth.tokenStore swapped via Auth.configure",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Auth.configure documented in src/auth/index.ts; Auth.tokenStore export unchanged",
+      "kind": "observation"
+    }
+  ]
+}

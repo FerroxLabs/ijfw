@@ -140,8 +140,14 @@ try {
 
   const uv = db.prepare('PRAGMA user_version').get();
   const uvN = Number(uv.user_version ?? uv.USER_VERSION ?? 0);
-  if (uvN === 2) ok(`PRAGMA user_version is 2 after reopen (was 1)`);
-  else bad('PRAGMA user_version is 2 after reopen', `got ${uvN}`);
+  // 002 lifts to v2; later migrations (D1 003, etc.) only push higher.
+  // The invariant under test is the v1->v2 path -- migration 002 must run.
+  // Assert >= 2 + that schema_meta has a v2 row to prove 002 fired.
+  if (uvN >= 2) ok(`PRAGMA user_version >= 2 after reopen (was 1, got ${uvN})`);
+  else bad('PRAGMA user_version >= 2 after reopen', `got ${uvN}`);
+  const v2Meta = db.prepare('SELECT version FROM schema_meta WHERE version = 2').get();
+  if (v2Meta) ok('schema_meta has v2 row -- migration 002 ran');
+  else bad('schema_meta has v2 row', 'missing');
 
   // Step 4: assertions.
   const v2Count = db.prepare('SELECT COUNT(*) AS c FROM raw').get();

@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "ReadonlyArray"
+    },
+    {
+      "kind": "identifier",
+      "name": "Array"
+    },
+    {
+      "kind": "identifier",
+      "name": "IArguments"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:Array",
+      "dst": "identifier:ReadonlyArray",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:Array",
+      "dst": "identifier:IArguments",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:IArguments",
+      "dst": "identifier:ReadonlyArray",
+      "kind": "co_occurs"
+    }
+  ]
+}

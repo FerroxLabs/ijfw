@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-alpha-schema-reservations"
+    },
+    {
+      "kind": "file",
+      "name": "ADR-alpha-schema-reservations.md"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/schema.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-alpha-schema-reservations",
+      "dst": "file:ADR-alpha-schema-reservations.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-alpha-schema-reservations",
+      "dst": "file:mcp-server/lib/schema.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:ADR-alpha-schema-reservations.md",
+      "dst": "file:mcp-server/lib/schema.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

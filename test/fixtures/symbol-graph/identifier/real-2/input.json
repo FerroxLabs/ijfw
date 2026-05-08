@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "verified useState reducer-form parity; useEffect cleanup stable; useMemo dep-array passthrough",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "useEffect now warns on async functions; useMemo + useState common pairing in tests",
+      "kind": "observation"
+    }
+  ]
+}

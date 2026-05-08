@@ -1,0 +1,13 @@
+{
+  "name": "star-6",
+  "description": "Star topology hub=star_6_hub, 3 spokes (depth=1 only)",
+  "expected_stale_candidates": [
+    "star_6_Alpha",
+    "star_6_Beta"
+  ],
+  "expected_unaffected": [
+    "star_6_Gamma"
+  ],
+  "propagation_threshold": 0.5,
+  "depth_cap": 2
+}

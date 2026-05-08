@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "EBUSY on rmdir; ENOENT on stat after concurrent unlink; EACCES on read of root-owned file",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "wrapped POSIX errno mapping in lib/fs-errors.c; EBUSY + ENOENT now share retry path, EACCES does not",
+      "kind": "observation"
+    }
+  ]
+}

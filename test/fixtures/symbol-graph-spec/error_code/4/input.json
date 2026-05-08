@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "IJFW_E_GRAPH_LOCK fired during dream cycle; IJFW_E_QUOTA_EXCEEDED appeared minutes later",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "IJFW_E_GRAPH_LOCK retried successfully; IJFW_E_QUOTA_EXCEEDED gated by the queue ceiling",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "Settings.getTheme"
+    },
+    {
+      "kind": "function",
+      "name": "Settings.setTheme"
+    },
+    {
+      "kind": "file",
+      "name": "src/settings.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:Settings.getTheme",
+      "dst": "file:src/settings.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:Settings.setTheme",
+      "dst": "file:src/settings.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:Settings.getTheme",
+      "dst": "function:Settings.setTheme",
+      "kind": "co_occurs"
+    }
+  ]
+}

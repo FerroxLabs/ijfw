@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "file", "name": ".eslintrc.json" },
+    { "kind": "file", "name": "package.json" }
+  ],
+  "edges": [
+    { "src": "file:.eslintrc.json", "dst": "file:package.json", "kind": "co_occurs" }
+  ]
+}

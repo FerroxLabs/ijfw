@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "apps/web/src/pages/index.tsx now consumes @repo/ui via packages/ui/src/index.ts",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "packages/ui/src/index.ts barrel updated; apps/web/src/pages/index.tsx imports Button",
+      "kind": "observation"
+    }
+  ]
+}

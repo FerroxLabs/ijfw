@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "useDebouncedValue"
+    },
+    {
+      "kind": "file",
+      "name": "src/hooks/useDebouncedValue.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:useDebouncedValue",
+      "dst": "file:src/hooks/useDebouncedValue.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

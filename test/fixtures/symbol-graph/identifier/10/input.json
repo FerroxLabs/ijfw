@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Logger class plus DEFAULT_LOG_LEVEL constant added in src/log/index.ts; LogLevel enum exposed",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Logger.error now respects DEFAULT_LOG_LEVEL; LogLevel.DEBUG suppressed in prod build",
+      "kind": "observation"
+    }
+  ]
+}

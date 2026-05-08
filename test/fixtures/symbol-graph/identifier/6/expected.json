@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "Auth.tokenStore"
+    },
+    {
+      "kind": "identifier",
+      "name": "Auth.configure"
+    },
+    {
+      "kind": "file",
+      "name": "src/auth/index.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:Auth.tokenStore",
+      "dst": "file:src/auth/index.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:Auth.configure",
+      "dst": "file:src/auth/index.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:Auth.tokenStore",
+      "dst": "identifier:Auth.configure",
+      "kind": "co_occurs"
+    }
+  ]
+}

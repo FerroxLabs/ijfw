@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "added Server struct in cmd/server/main.go; Server holds router + listener",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Server.Shutdown waits for in-flight requests; cmd/server/main.go ready for prod",
+      "kind": "observation"
+    }
+  ]
+}

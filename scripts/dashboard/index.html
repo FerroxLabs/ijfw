@@ -433,6 +433,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <!-- CROSS-MODEL REVIEWS -->
     <div class="section" data-section="trident">
       <div class="card">
+        <div class="ctitle">Trident Lens Health <span id="tridentLensSummary" style="font-size:11px;color:var(--fg-dim);margin-left:auto"></span></div>
+        <div style="font-size:12px;color:var(--fg-dim);margin-bottom:12px">Per-lineage liveness for Codex, Gemini, and Claude. Single-lens runs are flagged and cannot pass release-blocker gates without explicit override.</div>
+        <div id="tridentLensTile"><div style="color:var(--fg-dim);font-size:13px">Loading...</div></div>
+      </div>
+      <div class="card">
         <div class="ctitle">Cross-Model Code Reviews <span id="tridentCount" style="font-size:11px;color:var(--fg-dim);margin-left:auto"></span></div>
         <div style="font-size:12px;color:var(--fg-dim);margin-bottom:12px">Multi-model audits &mdash; each review is independently assessed across multiple lineages to catch issues one model alone would miss.</div>
         <div id="tridentCards"><div style="color:var(--fg-dim);font-size:13px">Loading...</div></div>
@@ -590,6 +595,79 @@ function render(data){
   renderActivity(data);
   renderSettings(data);
   updatePlatformSummary(data);
+  // C9.7: Trident lens-health tile fetches from its own endpoint -- it's
+  // independent of the main /api/data payload because probes are async.
+  fetchAndRenderLensHealth();
+}
+
+// C9.7: Lens-health tile renderer.
+function fetchAndRenderLensHealth(){
+  fetch('/api/trident/lens-health')
+    .then(function(r){ return r.json(); })
+    .then(renderLensHealthTile)
+    .catch(function(err){
+      var c=document.getElementById('tridentLensTile');
+      if(c) c.innerHTML='<div style="color:var(--fg-dim);font-size:13px">Lens health probe pending.</div>';
+    });
+}
+
+function renderLensHealthTile(payload){
+  var container=document.getElementById('tridentLensTile');
+  var summary=document.getElementById('tridentLensSummary');
+  if(!container) return;
+  if(!payload||!payload.summary){
+    container.innerHTML='<div style="color:var(--fg-dim);font-size:13px">No probe data yet.</div>';
+    return;
+  }
+  var s=payload.summary;
+  var tile=payload.tile||{lenses:{}};
+  var mode=s.mode||'unknown';
+  var color=mode==='full'?'var(--success)':mode==='partial'?'var(--warn)':'var(--danger)';
+  var label=s.live_count+'/'+s.total+' live';
+  if(summary) summary.textContent=label+' — mode: '+mode;
+
+  var html='';
+  html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">';
+  html+='<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+color+'"></span>';
+  html+='<span style="font-size:14px;font-weight:600">'+esc(label)+'</span>';
+  html+='<span style="font-size:12px;color:var(--fg-dim)">mode: '+esc(mode)+'</span>';
+  html+='</div>';
+
+  if(tile.alert){
+    html+='<div style="background:rgba(220,53,69,0.12);border:1px solid var(--danger);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:12px;font-size:12px;color:var(--danger)">';
+    html+='Alert: '+esc(tile.alert_reason||'lens dead beyond 24h threshold');
+    html+='</div>';
+  }
+
+  var lenses=['codex','gemini','claude'];
+  html+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">';
+  for(var i=0;i<lenses.length;i++){
+    var l=lenses[i];
+    var le=tile.lenses&&tile.lenses[l];
+    if(!le) continue;
+    var liveColor=le.live?'var(--success)':'var(--danger)';
+    var liveLabel=le.live?'live':'down';
+    var lat=(le.latency_ms!=null)?le.latency_ms+' ms':'—';
+    html+='<div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px">';
+    html+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
+    html+='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+liveColor+'"></span>';
+    html+='<span style="font-weight:600;font-size:13px">'+esc(l)+'</span>';
+    html+='<span style="font-size:11px;color:var(--fg-dim);margin-left:auto">'+esc(liveLabel)+'</span>';
+    html+='</div>';
+    html+='<div style="font-size:11px;color:var(--fg-dim)">latency: '+esc(lat)+'</div>';
+    if(!le.live&&le.error){
+      html+='<div style="font-size:11px;color:var(--fg-dim)">reason: '+esc(le.error)+'</div>';
+    }
+    if(!le.live&&le.dead_for_ms!=null){
+      var hrs=Math.floor(le.dead_for_ms/3600000);
+      var mins=Math.floor((le.dead_for_ms%3600000)/60000);
+      var dur=hrs>0?(hrs+'h '+mins+'m'):(mins+'m');
+      html+='<div style="font-size:11px;color:var(--fg-dim)">down for: '+esc(dur)+'</div>';
+    }
+    html+='</div>';
+  }
+  html+='</div>';
+  container.innerHTML=html;
 }
 
 function setText(id,val){var e=document.getElementById(id);if(e) e.textContent=val;}

@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-tier-promotion-rules"
+    },
+    {
+      "kind": "function",
+      "name": "promote"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/promote.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-tier-promotion-rules",
+      "dst": "function:promote",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-tier-promotion-rules",
+      "dst": "file:mcp-server/lib/promote.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:promote",
+      "dst": "file:mcp-server/lib/promote.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

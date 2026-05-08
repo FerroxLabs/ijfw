@@ -32,13 +32,17 @@ import {
 import { runCompute } from '../compute/runner.js';
 import { expandQuery } from '../compute/synonyms.js';
 import { detect, writeProjectType, loadProjectType } from '../project-type-detector.js';
+import { extractEntities } from '../compute/extract.js';
+import { writeEdges } from '../compute/edges.js';
+import { bfsTraverse, bfsRelated, resolveNode } from '../compute/traverse.js';
+import { acquireGraphWriteLock } from '../compute/graph-lock.js';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 // Recognised namespaces -- gates dispatchRun against typos.
-const RUN_NAMESPACES = new Set(['compute', 'index', 'detect']);
-const SEARCH_NAMESPACES = new Set(['compute']);
+const RUN_NAMESPACES = new Set(['compute', 'index', 'detect', 'graph']);
+const SEARCH_NAMESPACES = new Set(['compute', 'graph']);
 
 // --- Parser ----------------------------------------------------------------
 
@@ -131,10 +135,13 @@ export async function dispatchRun(parsed, ctx = {}) {
   if (parsed.namespace === 'detect') {
     return dispatchDetect(parsed, { projectRoot, sessionId });
   }
+  if (parsed.namespace === 'graph') {
+    return dispatchGraph(parsed, { projectRoot, sessionId });
+  }
 
   return {
     ok: false,
-    error: 'Unknown ijfw_run sub-command. Supported: compute:python, compute:js, index:<source>, detect:project_type',
+    error: 'Unknown ijfw_run sub-command. Supported: compute:python, compute:js, index:<source>, detect:project_type, graph:traverse',
   };
 }
 
@@ -342,6 +349,162 @@ async function dispatchDetect(parsed, { projectRoot, sessionId }) {
   }
 }
 
+// --- ijfw_run graph:* dispatch --------------------------------------------
+
+// dispatchGraph(parsed, ctx) -> { ok, ... }
+//
+// Sub-commands:
+//   graph:traverse   -- BFS from a start node id (or kind+name).
+//                       args: JSON or "<kind>:<name> [depth=N] [edge_kinds=k1,k2]"
+//   graph:index      -- extract entities from `args` body and write to graph.
+//                       (Internal helper used by dream cycle / index pipeline.)
+async function dispatchGraph(parsed, { projectRoot, sessionId }) {
+  const cmd = parsed.command;
+  if (cmd === 'traverse') return dispatchGraphTraverse(parsed, { projectRoot });
+  if (cmd === 'index') return dispatchGraphIndex(parsed, { projectRoot, sessionId });
+  return {
+    ok: false,
+    error: `Unknown graph sub-command "${cmd}". Supported: graph:traverse, graph:index.`,
+  };
+}
+
+// graph:traverse args formats:
+//   1. JSON object: '{"start_node":"file:src/X","depth":2,"edge_kinds":["co_occurs"]}'
+//      Also accepts {"kind":"file","name":"src/X","depth":2,...}
+//   2. Plain "<kind>:<name>" -- defaults depth=2, edge_kinds=['co_occurs']
+async function dispatchGraphTraverse(parsed, { projectRoot }) {
+  const raw = String(parsed.args || '').trim();
+  if (!raw) return { ok: false, error: 'graph:traverse requires args.' };
+
+  let kind = null, name = null;
+  let depth = 2;
+  let edgeKinds = ['co_occurs'];
+  let weightThreshold = 0.5;
+  let startNodeId = null;
+
+  if (raw.startsWith('{')) {
+    let parsedJson;
+    try { parsedJson = JSON.parse(raw); }
+    catch (err) {
+      return { ok: false, error: `graph:traverse JSON parse failed: ${err.message}` };
+    }
+    if (parsedJson.start_node && typeof parsedJson.start_node === 'string') {
+      const colon = parsedJson.start_node.indexOf(':');
+      if (colon > 0) {
+        kind = parsedJson.start_node.slice(0, colon);
+        name = parsedJson.start_node.slice(colon + 1);
+      } else {
+        name = parsedJson.start_node;
+      }
+    }
+    if (parsedJson.kind) kind = String(parsedJson.kind);
+    if (parsedJson.name) name = String(parsedJson.name);
+    if (Number.isFinite(parsedJson.start_node_id)) startNodeId = Number(parsedJson.start_node_id);
+    if (Number.isFinite(parsedJson.depth)) depth = Number(parsedJson.depth);
+    if (Array.isArray(parsedJson.edge_kinds)) edgeKinds = parsedJson.edge_kinds.map(String);
+    if (Number.isFinite(parsedJson.weight_threshold)) weightThreshold = Number(parsedJson.weight_threshold);
+  } else {
+    // Plain "<kind>:<name>" + optional flags.
+    const colon = raw.indexOf(':');
+    if (colon > 0) {
+      kind = raw.slice(0, colon).split(/\s/)[0];
+      const rest = raw.slice(colon + 1);
+      // Pull off depth=N / edge_kinds=k1,k2 flags.
+      const flagRe = /(depth|edge_kinds|weight_threshold)=(\S+)/g;
+      let nameRest = rest;
+      for (const m of rest.matchAll(flagRe)) {
+        if (m[1] === 'depth') depth = Number(m[2]);
+        else if (m[1] === 'edge_kinds') edgeKinds = m[2].split(',').filter(Boolean);
+        else if (m[1] === 'weight_threshold') weightThreshold = Number(m[2]);
+        nameRest = nameRest.replace(m[0], '');
+      }
+      name = nameRest.trim();
+    } else {
+      name = raw;
+    }
+  }
+
+  let db;
+  try {
+    db = await openDb(projectRoot);
+    let resolvedId = startNodeId;
+    if (!resolvedId && kind && name) {
+      const node = resolveNode(db, kind, name);
+      if (!node) {
+        return { ok: false, error: `graph:traverse no node matching ${kind}:${name}.` };
+      }
+      resolvedId = node.id;
+    }
+    if (!resolvedId && name) {
+      // Try across all kinds for "name" alone.
+      const row = db.prepare(`SELECT id FROM kg_nodes WHERE name = ? LIMIT 1`).get(name);
+      if (!row) return { ok: false, error: `graph:traverse no node matching name=${name}.` };
+      resolvedId = Number(row.id);
+    }
+    if (!resolvedId) {
+      return { ok: false, error: 'graph:traverse requires start_node, kind+name, or start_node_id.' };
+    }
+    const result = bfsTraverse(db, resolvedId, depth, edgeKinds, { weightThreshold });
+    return {
+      ok: true,
+      start_node_id: resolvedId,
+      depth,
+      edge_kinds: edgeKinds,
+      weight_threshold: weightThreshold,
+      ...result,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `graph:traverse did not complete: ${err && err.message ? err.message : String(err)}`,
+      code: err && err.code ? err.code : null,
+    };
+  } finally {
+    closeDb(db);
+  }
+}
+
+// graph:index args: body text (free-form). Extracts entities, writes
+// kg_nodes + kg_edges. Acquires .graph-write.lock for the write phase.
+async function dispatchGraphIndex(parsed, { projectRoot, sessionId }) {
+  const body = String(parsed.args || '').trim();
+  if (!body) return { ok: false, error: 'graph:index requires a body to index.' };
+
+  const entities = extractEntities(body, { minMentions: 1 });
+  if (entities.length === 0) {
+    return { ok: true, entities_extracted: 0, edges_added: 0, edges_updated: 0 };
+  }
+
+  let db;
+  let lock;
+  try {
+    db = await openDb(projectRoot);
+    lock = acquireGraphWriteLock(projectRoot);
+    const tx = db.txn(() => {
+      const result = writeEdges(db, sessionId || null, entities);
+      return result;
+    });
+    const result = tx();
+    return {
+      ok: true,
+      entities_extracted: entities.length,
+      nodes_upserted: result.nodes.length,
+      edges_added: result.edgesAdded,
+      edges_updated: result.edgesUpdated,
+      redacted_skipped: result.redactedSkipped,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `graph:index did not complete: ${err && err.message ? err.message : String(err)}`,
+      code: err && err.code ? err.code : null,
+    };
+  } finally {
+    if (lock) lock.released();
+    closeDb(db);
+  }
+}
+
 // --- ijfw_memory_search dispatch ------------------------------------------
 
 /**
@@ -354,6 +517,10 @@ async function dispatchDetect(parsed, { projectRoot, sessionId }) {
 export async function dispatchSearch(parsed, ctx = {}) {
   if (!parsed || typeof parsed !== 'object') return null;
   if (!SEARCH_NAMESPACES.has(parsed.namespace)) return null;
+
+  if (parsed.namespace === 'graph') {
+    return dispatchSearchGraph(parsed, ctx);
+  }
 
   if (parsed.namespace === 'compute') {
     const projectRoot = String(ctx.projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd());
@@ -416,6 +583,71 @@ export async function dispatchSearch(parsed, ctx = {}) {
   }
 
   return null;
+}
+
+// dispatchSearchGraph: graph:related <query>
+//
+// Resolves a query string to a kg_nodes entry (exact name match, then
+// case-insensitive substring), runs BFS, and returns merged FTS5 + graph
+// hits. The FTS5 hits use the same query unchanged so the caller's
+// "search across memory" promise still holds; graph results are tagged
+// with `source: 'graph'` so the caller can render them differently.
+async function dispatchSearchGraph(parsed, ctx) {
+  const cmd = parsed.command;
+  if (cmd !== 'related') {
+    return { ok: false, error: `Unknown graph search sub-command "${cmd}". Supported: graph:related.` };
+  }
+  const projectRoot = String(ctx.projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd());
+  const query = String(parsed.args || '').trim();
+  if (!query) return { ok: false, error: 'graph:related requires a query.' };
+
+  const k = parseIntEnv(ctx.limit, 10);
+  let db;
+  try {
+    db = await openDb(projectRoot);
+
+    // FTS5 hits over raw_fts -- same surface as compute:<query>.
+    let ftsHits = [];
+    try {
+      ftsHits = search(db, 'raw', query, k).map(h => ({
+        ...h,
+        source_type: 'fts5',
+      }));
+    } catch { /* FTS5 may fail on syntax; degrade to graph-only. */ }
+
+    // Graph hits -- BFS related.
+    const graphResult = bfsRelated(db, query);
+    const graphHits = graphResult.nodes.map(n => ({
+      id: n.id,
+      kind: n.kind,
+      name: n.name,
+      first_seen: n.first_seen,
+      last_seen: n.last_seen,
+      redacted: !!n.redacted,
+      source_type: 'graph',
+    }));
+
+    return {
+      ok: true,
+      query,
+      resolved: graphResult.resolved || null,
+      fts_hits: ftsHits,
+      graph_hits: graphHits,
+      graph_edges: graphResult.edges,
+      graph_traversal_path: graphResult.traversal_path,
+    };
+  } catch (err) {
+    const code = err instanceof SchemaVersionError ? 'SCHEMA_VERSION'
+              : err instanceof ComputeDbError ? 'COMPUTE_DB'
+              : null;
+    return {
+      ok: false,
+      error: `graph:related did not complete: ${err && err.message ? err.message : String(err)}`,
+      code,
+    };
+  } finally {
+    closeDb(db);
+  }
 }
 
 // --- helpers ---------------------------------------------------------------

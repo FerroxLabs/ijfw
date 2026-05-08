@@ -1,0 +1,71 @@
+{
+  "kg_nodes": [
+    {
+      "kind": "decision",
+      "name": "wt_2_root",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "wt_2_a",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "wt_2_b",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "wt_2_c",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "wt_2_d",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "wt_2_e",
+      "redacted": 0
+    }
+  ],
+  "kg_edges": [
+    {
+      "src": "wt_2_root",
+      "dst": "wt_2_a",
+      "kind": "co_occurs",
+      "weight": 0.6,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "wt_2_root",
+      "dst": "wt_2_b",
+      "kind": "co_occurs",
+      "weight": 0.4,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "wt_2_a",
+      "dst": "wt_2_c",
+      "kind": "co_occurs",
+      "weight": 0.7,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "wt_2_b",
+      "dst": "wt_2_d",
+      "kind": "co_occurs",
+      "weight": 0.6,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "wt_2_b",
+      "dst": "wt_2_e",
+      "kind": "co_occurs",
+      "weight": 0.4,
+      "co_occurrence_count": 3
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "wired up src/api/users.ts, src/api/users.test.ts, and src/api/users.md docs",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "src/api/users.ts handler now exported, src/api/users.test.ts passing",
+      "kind": "observation"
+    }
+  ]
+}

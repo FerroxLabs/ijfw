@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "ERR_AUTH_FAILED was raised; the retry path threw ERR_NETWORK_REFUSED on the second attempt",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "ERR_AUTH_FAILED again; ERR_NETWORK_REFUSED still flapping under load",
+      "kind": "observation"
+    }
+  ]
+}

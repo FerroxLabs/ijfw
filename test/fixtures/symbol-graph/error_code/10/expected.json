@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "IJFW_E_GRAPH_LOCK_V2"
+    },
+    {
+      "kind": "error_code",
+      "name": "IJFW_E_GRAPH_LOCK_V1"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/graph-lock.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:IJFW_E_GRAPH_LOCK_V2",
+      "dst": "file:mcp-server/lib/graph-lock.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:IJFW_E_GRAPH_LOCK_V1",
+      "dst": "file:mcp-server/lib/graph-lock.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:IJFW_E_GRAPH_LOCK_V2",
+      "dst": "error_code:IJFW_E_GRAPH_LOCK_V1",
+      "kind": "co_occurs"
+    }
+  ]
+}

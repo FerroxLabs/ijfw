@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "added Makefile target for release; Makefile updated with publish step",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Dockerfile now multi-stage, mirrors Makefile build target",
+      "kind": "observation"
+    }
+  ]
+}

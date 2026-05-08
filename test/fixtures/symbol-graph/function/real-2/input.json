@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "processPromiseRejections now batches across microtasks; promiseResolve fast-path covers settled values",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "promiseResolve no longer allocates closure per call; processPromiseRejections tail-calls reporter",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "logged d-auth-rotation-2026-04 alongside d-session-cookie-strict; both shipped together",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "d-auth-rotation-2026-04 follow-up cleanup; d-session-cookie-strict needed a backport too",
+      "kind": "observation"
+    }
+  ]
+}

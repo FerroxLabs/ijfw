@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "OrderStatus.PENDING transitions to OrderStatus.SHIPPED once the carrier confirms",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "OrderStatus.PENDING is the default; OrderStatus.SHIPPED follows after dispatch",
+      "kind": "observation"
+    }
+  ]
+}

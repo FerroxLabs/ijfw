@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "render_page calls fetch_data which then writes via save_record",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "render_page returns html from fetch_data after save_record commits",
+      "kind": "observation"
+    }
+  ]
+}

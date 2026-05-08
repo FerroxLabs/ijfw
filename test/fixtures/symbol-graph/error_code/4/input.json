@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "raised QUOTA_EXCEEDED from src/billing/quota.ts when tenant over plan; QUOTA_EXCEEDED carries upgrade hint",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "QUOTA_EXCEEDED now returns suggested plan; src/billing/quota.ts test asserts payload",
+      "kind": "observation"
+    }
+  ]
+}

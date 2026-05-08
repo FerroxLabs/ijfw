@@ -1,0 +1,12 @@
+{
+  "entities": [
+    { "kind": "identifier", "name": "MAX_RETRIES" },
+    { "kind": "identifier", "name": "REQUEST_BACKOFF_MS" },
+    { "kind": "identifier", "name": "RATE_LIMIT_WINDOW" }
+  ],
+  "edges": [
+    { "src": "identifier:MAX_RETRIES", "dst": "identifier:REQUEST_BACKOFF_MS", "kind": "co_occurs" },
+    { "src": "identifier:REQUEST_BACKOFF_MS", "dst": "identifier:RATE_LIMIT_WINDOW", "kind": "co_occurs" },
+    { "src": "identifier:RATE_LIMIT_WINDOW", "dst": "identifier:MAX_RETRIES", "kind": "co_occurs" }
+  ]
+}

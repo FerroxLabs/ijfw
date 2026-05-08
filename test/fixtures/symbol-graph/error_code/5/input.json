@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "PG_23505 unique violation surfaced from db/users.sql; mapped to USER_EMAIL_TAKEN in src/db/users.ts",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "src/db/users.ts wraps PG_23505 -> USER_EMAIL_TAKEN translation",
+      "kind": "observation"
+    }
+  ]
+}

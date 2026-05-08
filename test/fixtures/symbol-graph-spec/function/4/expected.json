@@ -1,0 +1,12 @@
+{
+  "entities": [
+    { "kind": "function", "name": "Cache.getEntry" },
+    { "kind": "function", "name": "Cache.setEntry" },
+    { "kind": "function", "name": "Cache.shutdown" }
+  ],
+  "edges": [
+    { "src": "function:Cache.getEntry", "dst": "function:Cache.setEntry", "kind": "co_occurs" },
+    { "src": "function:Cache.setEntry", "dst": "function:Cache.shutdown", "kind": "co_occurs" },
+    { "src": "function:Cache.shutdown", "dst": "function:Cache.getEntry", "kind": "co_occurs" }
+  ]
+}

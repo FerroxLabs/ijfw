@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "d-graph-lock-collision chose retry-with-jitter; surfaces EBUSY_GRAPH_WRITE before giving up",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "mcp-server/lib/graph-lock.js implements d-graph-lock-collision; EBUSY_GRAPH_WRITE retried 3x",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-auth-rotation-2026-04"
+    },
+    {
+      "kind": "file",
+      "name": "decisions/d-auth-rotation-2026-04.md"
+    },
+    {
+      "kind": "file",
+      "name": "src/auth/rotate.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-auth-rotation-2026-04",
+      "dst": "file:decisions/d-auth-rotation-2026-04.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-auth-rotation-2026-04",
+      "dst": "file:src/auth/rotate.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

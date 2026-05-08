@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "graph write contention surfaced as EBUSY_GRAPH_WRITE in mcp-server/lib/graph.js; retried 3x with jitter",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "EBUSY_GRAPH_WRITE now exposed in metrics; mcp-server/lib/graph.js logs every retry",
+      "kind": "observation"
+    }
+  ]
+}

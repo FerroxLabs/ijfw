@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "ADR-0007 chose SQLite over Postgres for local memory; documented in docs/adr/ADR-0007.md",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "mcp-server/lib/store.js implements ADR-0007; pragma settings tuned for write throughput",
+      "kind": "observation"
+    }
+  ]
+}

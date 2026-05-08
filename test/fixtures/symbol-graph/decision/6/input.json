@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "d-eviction-importance-2026-05 supersedes d-eviction-lru-2026-02 in decisions/d-eviction-importance-2026-05.md",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "d-eviction-importance-2026-05 wired into mcp-server/lib/evict.js; d-eviction-lru-2026-02 marked superseded",
+      "kind": "observation"
+    }
+  ]
+}

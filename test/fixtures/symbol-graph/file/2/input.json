@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "refactored packages/core/src/internal/runtime/scheduler/queue.ts to use ring buffer",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "packages/core/src/internal/runtime/scheduler/queue.ts test coverage now at 92%",
+      "kind": "observation"
+    }
+  ]
+}

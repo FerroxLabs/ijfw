@@ -1,0 +1,52 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "EBUSY"
+    },
+    {
+      "kind": "error_code",
+      "name": "ENOENT"
+    },
+    {
+      "kind": "error_code",
+      "name": "EACCES"
+    },
+    {
+      "kind": "file",
+      "name": "lib/fs-errors.c"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:EBUSY",
+      "dst": "error_code:ENOENT",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:EACCES",
+      "dst": "error_code:EBUSY",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:EACCES",
+      "dst": "error_code:ENOENT",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:EBUSY",
+      "dst": "file:lib/fs-errors.c",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:ENOENT",
+      "dst": "file:lib/fs-errors.c",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:EACCES",
+      "dst": "file:lib/fs-errors.c",
+      "kind": "co_occurs"
+    }
+  ]
+}

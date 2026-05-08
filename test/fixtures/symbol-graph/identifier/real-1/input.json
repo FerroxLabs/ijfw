@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "reviewed ReadonlyArray vs Array distinction; ReadonlyArray is structural-subtype of Array view",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "IArguments shape used by older runtime; Array methods now also reachable from ReadonlyArray",
+      "kind": "observation"
+    }
+  ]
+}

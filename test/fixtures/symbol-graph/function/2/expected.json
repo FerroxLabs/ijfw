@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "compute_hash"
+    },
+    {
+      "kind": "file",
+      "name": "lib/crypto.py"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:compute_hash",
+      "dst": "file:lib/crypto.py",
+      "kind": "co_occurs"
+    }
+  ]
+}

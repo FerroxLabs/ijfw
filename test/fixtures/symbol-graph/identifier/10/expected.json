@@ -1,0 +1,61 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "Logger"
+    },
+    {
+      "kind": "identifier",
+      "name": "DEFAULT_LOG_LEVEL"
+    },
+    {
+      "kind": "identifier",
+      "name": "LogLevel"
+    },
+    {
+      "kind": "identifier",
+      "name": "LogLevel.DEBUG"
+    },
+    {
+      "kind": "file",
+      "name": "src/log/index.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:DEFAULT_LOG_LEVEL",
+      "dst": "identifier:Logger",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/log/index.ts",
+      "dst": "identifier:Logger",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:LogLevel",
+      "dst": "identifier:Logger",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/log/index.ts",
+      "dst": "identifier:DEFAULT_LOG_LEVEL",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:DEFAULT_LOG_LEVEL",
+      "dst": "identifier:LogLevel",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/log/index.ts",
+      "dst": "identifier:LogLevel",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:DEFAULT_LOG_LEVEL",
+      "dst": "identifier:LogLevel.DEBUG",
+      "kind": "co_occurs"
+    }
+  ]
+}

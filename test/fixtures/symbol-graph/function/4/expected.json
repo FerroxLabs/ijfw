@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "handleSubmit"
+    },
+    {
+      "kind": "file",
+      "name": "src/components/Form.tsx"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:handleSubmit",
+      "dst": "file:src/components/Form.tsx",
+      "kind": "co_occurs"
+    }
+  ]
+}

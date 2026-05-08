@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "FEATURE_NEW_DASHBOARD"
+    },
+    {
+      "kind": "file",
+      "name": "src/flags.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:FEATURE_NEW_DASHBOARD",
+      "dst": "file:src/flags.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

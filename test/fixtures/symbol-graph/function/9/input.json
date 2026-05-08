@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Settings.getTheme and Settings.setTheme in src/settings.ts persist via localStorage",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Settings.setTheme now emits change event; Settings.getTheme reflects immediately",
+      "kind": "observation"
+    }
+  ]
+}

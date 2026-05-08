@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "ADR-0001"
+    },
+    {
+      "kind": "decision",
+      "name": "ADR-0002"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:ADR-0001",
+      "dst": "decision:ADR-0002",
+      "kind": "co_occurs"
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "kernel/sched/core.c"
+    },
+    {
+      "kind": "file",
+      "name": "kernel/fork.c"
+    },
+    {
+      "kind": "file",
+      "name": "include/linux/sched.h"
+    },
+    {
+      "kind": "function",
+      "name": "__schedule"
+    },
+    {
+      "kind": "function",
+      "name": "copy_process"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:kernel/sched/core.c",
+      "dst": "function:__schedule",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:kernel/fork.c",
+      "dst": "file:kernel/sched/core.c",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:kernel/sched/core.c",
+      "dst": "function:copy_process",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:kernel/fork.c",
+      "dst": "function:__schedule",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:__schedule",
+      "dst": "function:copy_process",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:kernel/fork.c",
+      "dst": "function:copy_process",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:include/linux/sched.h",
+      "dst": "file:kernel/fork.c",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:include/linux/sched.h",
+      "dst": "function:copy_process",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:include/linux/sched.h",
+      "dst": "file:kernel/sched/core.c",
+      "kind": "co_occurs"
+    }
+  ]
+}

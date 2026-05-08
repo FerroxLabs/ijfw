@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "error_code", "name": "IJFW_E_GRAPH_LOCK" },
+    { "kind": "error_code", "name": "IJFW_E_QUOTA_EXCEEDED" }
+  ],
+  "edges": [
+    { "src": "error_code:IJFW_E_GRAPH_LOCK", "dst": "error_code:IJFW_E_QUOTA_EXCEEDED", "kind": "co_occurs" }
+  ]
+}

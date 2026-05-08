@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "scripts/deploy.sh now reads from config/prod.yaml and writes summary to logs/deploy.log",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "ran scripts/deploy.sh against config/prod.yaml; output landed at logs/deploy.log",
+      "kind": "observation"
+    }
+  ]
+}

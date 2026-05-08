@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": ".planning/1.3.0/PRD.md locks d-pillar-spec-required-pre-beta: D-PILLAR-SPEC.md gates Beta release",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "d-pillar-spec-required-pre-beta tracked in .planning/1.3.0/HANDOFF.md until D-PILLAR-SPEC ships",
+      "kind": "observation"
+    }
+  ]
+}

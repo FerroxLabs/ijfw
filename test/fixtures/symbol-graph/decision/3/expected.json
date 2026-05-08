@@ -1,0 +1,38 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-pillar-spec-required-pre-beta"
+    },
+    {
+      "kind": "file",
+      "name": ".planning/1.3.0/PRD.md"
+    },
+    {
+      "kind": "file",
+      "name": ".planning/1.3.0/HANDOFF.md"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-pillar-spec-required-pre-beta",
+      "dst": "file:.planning/1.3.0/PRD.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:.planning/1.3.0/PRD.md",
+      "dst": "file:D-PILLAR-SPEC.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-pillar-spec-required-pre-beta",
+      "dst": "file:D-PILLAR-SPEC.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-pillar-spec-required-pre-beta",
+      "dst": "file:.planning/1.3.0/HANDOFF.md",
+      "kind": "co_occurs"
+    }
+  ]
+}

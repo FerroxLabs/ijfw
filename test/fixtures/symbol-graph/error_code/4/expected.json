@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "QUOTA_EXCEEDED"
+    },
+    {
+      "kind": "file",
+      "name": "src/billing/quota.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:QUOTA_EXCEEDED",
+      "dst": "file:src/billing/quota.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

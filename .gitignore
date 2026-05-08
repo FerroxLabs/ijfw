@@ -5,6 +5,13 @@
 # the parent rule later.
 .ijfw/index/
 
+# GitLab CI per-job IJFW_HOME (set in .gitlab-ci.yml). Hermetic per-job
+# state dir; never committed.
+.ijfw-test/
+
+# GitLab CI captured logs per pipeline (artifacts only; not source).
+ci-logs/
+
 # Derived: installer/docs/ is synced from /docs at build time
 installer/docs/
 
@@ -58,3 +65,10 @@ installer/*.tgz
 # in v1.3.0 alpha, but belt-and-braces in case anyone runs an older merger.
 AGENTS.md.bak.*
 *.bak.*
+
+# LongMemEval-S benchmark data (V2-M8 / D-PILLAR-SPEC §9). Harness lives
+# in mcp-server/test/longmemeval-baseline.js (committed). Data is fetched
+# on-demand from huggingface.co/datasets/xiaowu0162/longmemeval-cleaned.
+mcp-server/test/fixtures/longmemeval-s/longmemeval_s_cleaned.json
+mcp-server/test/fixtures/longmemeval-s/longmemeval_m_cleaned.json
+mcp-server/test/fixtures/longmemeval-s/longmemeval_oracle.json

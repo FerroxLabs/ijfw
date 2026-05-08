@@ -5,6 +5,14 @@
 // the original via FTS5 OR. Symmetric: matching the LHS expands to RHS,
 // matching the RHS also expands back to LHS.
 //
+// One-canonical-key invariant (P5-L2 fix-wave): every short token resolves
+// to exactly ONE canonical sense. Overloaded keys (e.g. previous `ts` had
+// both `[ts, typescript]` AND `[ts, timestamp]`) silently merged both
+// expansion sets at search time, broadening retrieval beyond the user's
+// likely intent. We DROP the offender entirely rather than picking a
+// winner: callers spell `typescript` or `timestamp` explicitly when they
+// mean it. The map builder asserts no duplicate keys at startup.
+//
 // Behaviour:
 //   - Default-on. Disable per-process or per-call via IJFW_SYNONYM_EXPAND=0.
 //     Any other value (including unset) leaves expansion active.
@@ -110,7 +118,13 @@ const SYNONYM_GROUPS = [
   ['par', 'parallel'],
 
   // Languages / formats
-  ['ts', 'typescript'],
+  // P5-L2: `ts` was previously mapped to BOTH `typescript` AND `timestamp`
+  // (see Process/runtime block below in earlier revisions). The two senses
+  // silently merged at lookup time -- a user searching `ts` got both
+  // expansions ORed together regardless of intent. Fix: drop `ts` entirely
+  // from both groups. Callers spell out `typescript` or `timestamp` when
+  // they mean either one. Per-group dedup at build time enforces the
+  // one-canonical-key invariant.
   ['js', 'javascript'],
   ['py', 'python'],
   ['rb', 'ruby'],
@@ -137,11 +151,12 @@ const SYNONYM_GROUPS = [
   ['kb', 'knowledge-base'],
 
   // Process / runtime
+  // P5-L2: `ts` -> `timestamp` removed alongside the Languages/formats
+  // mapping above. `ts` had two senses; we keep neither.
   ['proc', 'process'],
   ['thread', 'threading'],
   ['daemon', 'background'],
   ['svc', 'service'],
-  ['ts', 'timestamp'],
 
   // Testing
   ['test', 'tests'],

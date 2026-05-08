@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "the IClock interface is satisfied by SystemClock and the test SystemClock implementation",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "SystemClock honours IClock; the alternate IClock subclass for tests stays minimal",
+      "kind": "observation"
+    }
+  ]
+}

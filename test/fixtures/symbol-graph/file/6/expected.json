@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "src/api/users.ts"
+    },
+    {
+      "kind": "file",
+      "name": "src/api/users.test.ts"
+    },
+    {
+      "kind": "file",
+      "name": "src/api/users.md"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:src/api/users.test.ts",
+      "dst": "file:src/api/users.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/api/users.md",
+      "dst": "file:src/api/users.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/api/users.md",
+      "dst": "file:src/api/users.test.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

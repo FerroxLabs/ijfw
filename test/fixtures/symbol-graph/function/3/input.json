@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "UserService.findByEmail in src/services/user.ts now respects soft-delete; UserService.findByEmail returns null on tombstones",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "UserService.findByEmail benchmark improved; src/services/user.ts tests green",
+      "kind": "observation"
+    }
+  ]
+}

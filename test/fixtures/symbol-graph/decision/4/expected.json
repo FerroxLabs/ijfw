@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "ADR-0007"
+    },
+    {
+      "kind": "file",
+      "name": "docs/adr/ADR-0007.md"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/store.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:ADR-0007",
+      "dst": "file:docs/adr/ADR-0007.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:ADR-0007",
+      "dst": "file:mcp-server/lib/store.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

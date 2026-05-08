@@ -1,0 +1,43 @@
+# IJFW workspace ignore for Gemini CLI (P5-I1).
+#
+# Gemini CLI respects .gitignore by default; .planning/ lives in .gitignore
+# (per-project planning artefacts, not public). Two Gemini-as-auditor
+# sessions in a row failed with "ignored by configured ignore patterns"
+# trying to read .planning/**/*.md, which forced the model to fabricate
+# verdicts. .gemini/settings.json sets respectGitIgnore=false so audit
+# lenses can read the planning docs they were asked to audit.
+#
+# This .geminiignore is the controlled exclusion list that replaces the
+# blanket .gitignore behaviour. Keep it tight: noise out, signal in.
+
+# Build / dep noise -- never relevant to Gemini lens work.
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+
+# VCS internals.
+.git/
+
+# OS / editor cruft.
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Local install bleed -- IJFW's installer dogfood guardrails.
+.cursor/
+.codex/
+.claude/
+.windsurfrules
+.github/copilot-instructions.md
+
+# IJFW per-install runtime state -- never useful to read for audit.
+.ijfw/
+
+# Test fixtures with large binary or generated payloads.
+mcp-server/test/fixtures/longmemeval-s/
+
+# Logs.
+*.log

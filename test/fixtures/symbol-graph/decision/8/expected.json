@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "D42"
+    },
+    {
+      "kind": "file",
+      "name": "decisions/D42.md"
+    },
+    {
+      "kind": "file",
+      "name": "src/hash/index.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:D42",
+      "dst": "file:decisions/D42.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:D42",
+      "dst": "file:src/hash/index.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "audit log: kernel/sched/core.c -- scheduler tick path adjusted; calls __schedule from kernel/sched/core.c into kernel/fork.c copy_process",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "kernel/fork.c copy_process gains new flag plumbed from kernel/sched/core.c; include/linux/sched.h header bumped",
+      "kind": "observation"
+    }
+  ]
+}

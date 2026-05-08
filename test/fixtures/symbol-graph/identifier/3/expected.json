@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "RequestContext"
+    },
+    {
+      "kind": "file",
+      "name": "src/types/context.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:RequestContext",
+      "dst": "file:src/types/context.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

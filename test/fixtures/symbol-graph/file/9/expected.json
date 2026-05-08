@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "apps/web/src/pages/index.tsx"
+    },
+    {
+      "kind": "file",
+      "name": "packages/ui/src/index.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:apps/web/src/pages/index.tsx",
+      "dst": "file:packages/ui/src/index.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

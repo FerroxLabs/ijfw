@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "native bridge: src/bridge.rs talks to src/bridge.ts via JSON over IPC",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "src/bridge.rs adds new opcode, src/bridge.ts decoder updated to match",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "useState"
+    },
+    {
+      "kind": "identifier",
+      "name": "useEffect"
+    },
+    {
+      "kind": "identifier",
+      "name": "useMemo"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:useState",
+      "dst": "identifier:useEffect",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:useEffect",
+      "dst": "identifier:useMemo",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "identifier:useState",
+      "dst": "identifier:useMemo",
+      "kind": "co_occurs"
+    }
+  ]
+}

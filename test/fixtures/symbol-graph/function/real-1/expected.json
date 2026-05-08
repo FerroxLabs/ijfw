@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "Router.prototype.handle"
+    },
+    {
+      "kind": "function",
+      "name": "Router.prototype.use"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:Router.prototype.handle",
+      "dst": "function:Router.prototype.use",
+      "kind": "co_occurs"
+    }
+  ]
+}

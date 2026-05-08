@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Router.prototype.handle dispatch path now short-circuits when stack empty; Router.prototype.use mount path unchanged",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Router.prototype.use now records mount layer position; Router.prototype.handle reads it on dispatch",
+      "kind": "observation"
+    }
+  ]
+}

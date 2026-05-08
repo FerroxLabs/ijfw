@@ -1239,7 +1239,7 @@ function handleMessage(msg) {
             const parsedQuery = typeof searchArgs.query === 'string'
               ? parseColonCommand(searchArgs.query)
               : null;
-            if (parsedQuery && parsedQuery.namespace === 'compute') {
+            if (parsedQuery && (parsedQuery.namespace === 'compute' || parsedQuery.namespace === 'graph')) {
               const dispatched = await dispatchSearch(parsedQuery, {
                 projectRoot: searchArgs.projectRoot,
                 limit: searchArgs.limit,

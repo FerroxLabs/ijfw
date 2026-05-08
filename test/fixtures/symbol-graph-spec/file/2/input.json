@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "added .eslintrc.json next to ./package.json so the linter runs in CI",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "updated ./package.json to include the new lint script that reads .eslintrc.json",
+      "kind": "observation"
+    }
+  ]
+}

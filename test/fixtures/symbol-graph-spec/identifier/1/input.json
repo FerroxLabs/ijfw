@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "MAX_RETRIES capped at REQUEST_BACKOFF_MS plus a small buffer; both feed RATE_LIMIT_WINDOW",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "MAX_RETRIES dropped because REQUEST_BACKOFF_MS now wraps RATE_LIMIT_WINDOW correctly",
+      "kind": "observation"
+    }
+  ]
+}

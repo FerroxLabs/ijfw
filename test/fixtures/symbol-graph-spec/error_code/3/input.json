@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "the gateway returned 503 mid-request; the next retry returned 504 from the backend",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "returned 503 again on the load test; returned 504 only when the queue was saturated",
+      "kind": "observation"
+    }
+  ]
+}

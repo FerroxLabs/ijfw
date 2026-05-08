@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "ERR_INVALID_ARG_TYPE"
+    },
+    {
+      "kind": "error_code",
+      "name": "ERR_INVALID_URL"
+    },
+    {
+      "kind": "error_code",
+      "name": "ERR_HTTP_HEADERS_SENT"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:ERR_INVALID_ARG_TYPE",
+      "dst": "error_code:ERR_INVALID_URL",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:ERR_HTTP_HEADERS_SENT",
+      "dst": "error_code:ERR_INVALID_ARG_TYPE",
+      "kind": "co_occurs"
+    }
+  ]
+}

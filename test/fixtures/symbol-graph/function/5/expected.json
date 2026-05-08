@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "fetchProfile"
+    },
+    {
+      "kind": "file",
+      "name": "src/api/profile.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:fetchProfile",
+      "dst": "file:src/api/profile.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

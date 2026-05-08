@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "Server"
+    },
+    {
+      "kind": "file",
+      "name": "cmd/server/main.go"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:Server",
+      "dst": "file:cmd/server/main.go",
+      "kind": "co_occurs"
+    }
+  ]
+}

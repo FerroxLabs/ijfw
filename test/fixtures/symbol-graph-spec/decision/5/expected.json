@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "decision", "name": "d-graph-write-lock-2026-05" },
+    { "kind": "decision", "name": "d-dream-cycle-cooldown" }
+  ],
+  "edges": [
+    { "src": "decision:d-graph-write-lock-2026-05", "dst": "decision:d-dream-cycle-cooldown", "kind": "co_occurs" }
+  ]
+}

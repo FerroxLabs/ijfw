@@ -1,0 +1,7 @@
+{
+  "entities": [
+    { "kind": "identifier", "name": "OrderStatus.PENDING" },
+    { "kind": "identifier", "name": "OrderStatus.SHIPPED" }
+  ],
+  "edges": []
+}

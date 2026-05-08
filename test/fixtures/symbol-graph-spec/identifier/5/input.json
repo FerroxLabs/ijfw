@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "DEFAULT_PORT settles at 8080; CACHE_TTL is the matching idle window for the listener",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "DEFAULT_PORT and CACHE_TTL both move when the deployment region changes",
+      "kind": "observation"
+    }
+  ]
+}

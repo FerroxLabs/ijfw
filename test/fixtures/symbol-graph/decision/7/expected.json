@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-graph-lock-collision"
+    },
+    {
+      "kind": "error_code",
+      "name": "EBUSY_GRAPH_WRITE"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/graph-lock.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-graph-lock-collision",
+      "dst": "error_code:EBUSY_GRAPH_WRITE",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-graph-lock-collision",
+      "dst": "file:mcp-server/lib/graph-lock.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:EBUSY_GRAPH_WRITE",
+      "dst": "file:mcp-server/lib/graph-lock.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

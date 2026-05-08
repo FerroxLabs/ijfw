@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "file",
+      "name": "lib/router/index.js"
+    },
+    {
+      "kind": "file",
+      "name": "lib/application.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "file:lib/router/index.js",
+      "dst": "file:lib/application.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

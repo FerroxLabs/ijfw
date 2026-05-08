@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "imported docs/Design Notes/v2-overview.md into the planning bundle",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "docs/Design Notes/v2-overview.md cross-references docs/api.md",
+      "kind": "observation"
+    }
+  ]
+}

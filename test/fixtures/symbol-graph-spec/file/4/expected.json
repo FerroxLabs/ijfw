@@ -1,0 +1,12 @@
+{
+  "entities": [
+    { "kind": "file", "name": "src/server/router.ts" },
+    { "kind": "file", "name": "src/server/handlers.ts" },
+    { "kind": "file", "name": "src/lib/log.ts" }
+  ],
+  "edges": [
+    { "src": "file:src/server/router.ts", "dst": "file:src/server/handlers.ts", "kind": "co_occurs" },
+    { "src": "file:src/server/handlers.ts", "dst": "file:src/lib/log.ts", "kind": "co_occurs" },
+    { "src": "file:src/lib/log.ts", "dst": "file:src/server/router.ts", "kind": "co_occurs" }
+  ]
+}

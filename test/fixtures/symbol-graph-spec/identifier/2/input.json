@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "useAuth wraps the bearer flow; useSession holds the cookie state across requests",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "useAuth and useSession both compose with useRouter for the redirect path",
+      "kind": "observation"
+    }
+  ]
+}

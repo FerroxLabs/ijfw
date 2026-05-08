@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "caught ERR_INVALID_ARG_TYPE in src/cli.js arg parser; ERR_INVALID_ARG_TYPE now surfaces user-friendly message",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "wrapped fs read in try/catch for ERR_INVALID_ARG_TYPE; src/cli.js test green",
+      "kind": "observation"
+    }
+  ]
+}

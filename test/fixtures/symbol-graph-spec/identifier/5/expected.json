@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "identifier", "name": "DEFAULT_PORT" },
+    { "kind": "identifier", "name": "CACHE_TTL" }
+  ],
+  "edges": [
+    { "src": "identifier:DEFAULT_PORT", "dst": "identifier:CACHE_TTL", "kind": "co_occurs" }
+  ]
+}

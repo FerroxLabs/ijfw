@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "added compute_hash in lib/crypto.py; compute_hash uses blake2b",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "lib/crypto.py compute_hash benchmark added",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "TypeError"
+    },
+    {
+      "kind": "error_code",
+      "name": "RangeError"
+    },
+    {
+      "kind": "file",
+      "name": "src/parse.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:TypeError",
+      "dst": "file:src/parse.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:RangeError",
+      "dst": "file:src/parse.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

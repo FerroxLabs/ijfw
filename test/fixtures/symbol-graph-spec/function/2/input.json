@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Connection.prototype.open opens the socket; Connection.prototype.close releases it",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Connection.prototype.open then Connection.prototype.close completes one round trip",
+      "kind": "observation"
+    }
+  ]
+}

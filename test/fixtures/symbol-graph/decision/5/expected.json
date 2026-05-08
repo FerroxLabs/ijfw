@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-redactor-ordering"
+    },
+    {
+      "kind": "decision",
+      "name": "d-edge-weight-formula"
+    },
+    {
+      "kind": "file",
+      "name": "D-PILLAR-SPEC.md"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-redactor-ordering",
+      "dst": "file:D-PILLAR-SPEC.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-edge-weight-formula",
+      "dst": "file:D-PILLAR-SPEC.md",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:d-redactor-ordering",
+      "dst": "decision:d-edge-weight-formula",
+      "kind": "co_occurs"
+    }
+  ]
+}

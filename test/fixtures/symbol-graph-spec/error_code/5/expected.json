@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "error_code", "name": "PG_CONNECTION_REFUSED" },
+    { "kind": "error_code", "name": "PG_DEADLOCK_DETECTED" }
+  ],
+  "edges": [
+    { "src": "error_code:PG_CONNECTION_REFUSED", "dst": "error_code:PG_DEADLOCK_DETECTED", "kind": "co_occurs" }
+  ]
+}

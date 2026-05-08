@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Cache.getEntry reads from Cache.setEntry; both pass through Cache.shutdown when stale",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Cache.getEntry then Cache.setEntry then Cache.shutdown is the canonical sequence",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "processPromiseRejections"
+    },
+    {
+      "kind": "function",
+      "name": "promiseResolve"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:processPromiseRejections",
+      "dst": "function:promiseResolve",
+      "kind": "co_occurs"
+    }
+  ]
+}

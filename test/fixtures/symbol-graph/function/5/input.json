@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "async fetchProfile in src/api/profile.ts now retries on 503; fetchProfile uses exponential backoff",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "fetchProfile timing improved; src/api/profile.ts test stable across 1k runs",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "added auth flow to src/auth/login.js, uses validateToken from src/lib/jwt.js",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "fixed bug in src/auth/login.js where validateToken returned wrong type",
+      "kind": "observation"
+    }
+  ]
+}

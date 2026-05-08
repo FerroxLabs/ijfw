@@ -20,6 +20,7 @@ import { loadSwarmConfig } from './swarm-config.js';
 import { buildRequest, parseResponse, mergeResponses, checkBudget } from './cross-dispatcher.js';
 import { writeReceipt, readReceipts } from './receipts.js';
 import { runViaApi } from './api-client.js';
+import { RELEASE_BLOCKER_GATES, DegradedTridentError } from './trident/dispatch.js';
 
 // ---------------------------------------------------------------------------
 // Per-provider timeout defaults (ms). Codex cold-start can take 120s+ (U2).
@@ -384,6 +385,8 @@ export async function runCrossOp({
   perAuditorTimeoutSec,
   minResponses,
   quiet = false,        // suppress uxGate stderr warnings (used by demo)
+  gate = null,          // GA-H2: release-blocker gate name (publish/tag/deploy/release)
+  accept_degraded = false, // GA-H2: explicit override for single-lens release-blocker audits
 } = {}) {
   projectDir = projectDir ?? process.cwd();
   runStamp   = runStamp   ?? new Date().toISOString();
@@ -485,6 +488,36 @@ export async function runCrossOp({
     return { status: itemCount === 0 ? 'empty' : 'ok', source: source ?? 'cli', stderr: stderrSnip, exitCode, elapsedMs, parsed: p };
   });
 
+  // 7b. GA-H2: C9.7 degraded-mode enforcement on the production path.
+  //   - Counts productive lens results (status 'ok' or 'fallback-used')
+  //     plus the in-process Claude-swarm leg (always live in-process).
+  //   - When the release-blocker gate is active and the productive lens
+  //     count drops to <=1, throw DegradedTridentError unless caller passed
+  //     accept_degraded=true. Mirrors src/trident/dispatch.js semantics so
+  //     the same invariant fires in tests AND in production.
+  //   - When non-release-blocker, we let the audit complete; the verdict
+  //     floor coercion below ensures a single-lens result never silently
+  //     surfaces as PASS.
+  const productiveCount = auditorResults.filter(r => r.status === 'ok' || r.status === 'fallback-used').length
+    + 1; // claude-swarm leg always live in-process
+  const totalLenses = picks.length + 1;
+  const isReleaseBlocker = gate && RELEASE_BLOCKER_GATES.has(String(gate).toLowerCase());
+  const isDegraded = productiveCount <= 1;
+  const tridentMode = productiveCount >= 3
+    ? 'full'
+    : productiveCount === 2
+      ? 'partial'
+      : (accept_degraded ? 'single-lens-accepted' : 'single-lens-degraded');
+
+  if (isReleaseBlocker && isDegraded && !accept_degraded) {
+    throw new DegradedTridentError(
+      `Trident is degraded (${productiveCount}/${totalLenses} productive lenses; ` +
+      `auditor statuses: ${auditorResults.map(r => `${picks[auditorResults.indexOf(r)] && picks[auditorResults.indexOf(r)].id}=${r.status}`).join(', ')}). ` +
+      `Release-blocker gate "${gate}" rejects single-lens verdicts. Pass accept_degraded:true to override after human review.`,
+      { lensHealth: { productiveCount, totalLenses, auditorResults }, gate, requested_accept_degraded: accept_degraded }
+    );
+  }
+
   // 8. All-timeout guard
   if (auditorResults.length > 0 && auditorResults.every(r => r.status === 'timeout')) {
     const currentVal = resolvedTimeoutSec ?? env.IJFW_AUDIT_TIMEOUT_SEC ?? 'default';
@@ -537,9 +570,29 @@ export async function runCrossOp({
     model: null,
     specialist_swarm: 'skipped (CLI context)',
     swarm_project_type: swarmConfig.project_type,
+    // GA-H2: C9.7 lens-health metadata embedded in every receipt so post-
+    // hoc audits can reconstruct the degraded-mode posture without re-
+    // probing. trident_mode mirrors src/trident/dispatch.js values.
+    trident_mode: tridentMode,
+    productive_lens_count: productiveCount,
+    total_lens_count: totalLenses,
+    gate: gate || null,
+    accept_degraded: !!accept_degraded,
   };
 
   writeReceipt(projectDir, receipt);
 
-  return { merged, receipt, picks, missing, note, auditorResults };
+  return {
+    merged,
+    receipt,
+    picks,
+    missing,
+    note,
+    auditorResults,
+    trident_mode: tridentMode,
+    productive_lens_count: productiveCount,
+    total_lens_count: totalLenses,
+    gate: gate || null,
+    accept_degraded: !!accept_degraded,
+  };
 }

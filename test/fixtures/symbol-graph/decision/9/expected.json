@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "d-prefer-fts5-over-vectors-for-warm-tier"
+    },
+    {
+      "kind": "file",
+      "name": "mcp-server/lib/search.js"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:d-prefer-fts5-over-vectors-for-warm-tier",
+      "dst": "file:mcp-server/lib/search.js",
+      "kind": "co_occurs"
+    }
+  ]
+}

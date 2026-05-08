@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "TypeError thrown from src/parse.ts when input not string; RangeError on offset < 0",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "TypeError now wrapped with cause; RangeError fast-fails before allocation",
+      "kind": "observation"
+    }
+  ]
+}

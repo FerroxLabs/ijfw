@@ -14,16 +14,40 @@
 //
 // Integrity discipline:
 //   - openDb()    -- enforces schema version; refuses downgrade.
-//   - safeWrite() -- inserts inside a transaction and runs PRAGMA quick_check
+//   - safeWrite() -- runs `redactSecrets()` over `body` and `topic` BEFORE
+//                    inserting (D-PILLAR-SPEC §12 ingest scrub gate), then
+//                    inserts inside a transaction and runs PRAGMA quick_check
 //                    after each insert; throws IntegrityError on anything
-//                    other than 'ok'.
+//                    other than 'ok'. The scrub default is on; setting
+//                    IJFW_INGEST_SCRUB=0 disables it for local debugging
+//                    only -- never a production posture.
 //   - search()    -- FTS5 MATCH; top-k rows from the content table ordered
 //                    by bm25 rank.
 //   - closeDb()   -- clean close; suppresses double-close errors.
+//
+// Security model (D-PILLAR-SPEC §12, real fix-wave C3):
+//   Secrets are scrubbed at the observation-ingest boundary. By the time a
+//   row reaches the FTS index, the entity extractor, or the kg layer, all
+//   `redactSecrets`-recognised tokens have been replaced with
+//   `[REDACTED:<kind>]` placeholders. The scrub is the security gate; the
+//   `kg_nodes.redacted=1` flag downstream is a residual-safety belt for
+//   the rare case where an entity-regex match's value happens to look
+//   secret-shaped (e.g. a function name `validateSk_live_xxx`).
 
 import { existsSync, mkdirSync } from 'fs';
 import { join, resolve, normalize, isAbsolute, dirname } from 'path';
 import { runMigrations, highestKnownVersion, SchemaVersionError } from './migration-runner.js';
+import { autoIndexGraphFromBody } from './graph-auto-index.js';
+import { redactSecrets } from '../redactor.js';
+
+// D-PILLAR-SPEC §12 ingest scrub gate. Default-on; the only escape hatch
+// is the IJFW_INGEST_SCRUB=0 env var, which exists for local debugging
+// (e.g. asserting raw body shape in a fixture) and is NOT a shipping
+// posture. Read on every safeWrite call so test harnesses can flip it
+// without re-importing the module.
+function ingestScrubEnabled() {
+  return process.env.IJFW_INGEST_SCRUB !== '0';
+}
 
 export { SchemaVersionError };
 
@@ -246,6 +270,23 @@ export function safeWrite(db, table, row) {
       throw new ComputeDbError(`safeWrite: invalid column name "${c}".`);
     }
   }
+
+  // D-PILLAR-SPEC §12 ingest scrub gate. Replace `body` and `topic` with
+  // their redacted forms BEFORE the INSERT runs, so the FTS index, the
+  // entity extractor (D2), and any downstream reader only ever see the
+  // scrubbed text. This applies to every `safeWrite` regardless of table
+  // (body/topic are user-supplied content surfaces wherever they appear).
+  // Trident audit metadata (trident_run.summary) and schema_meta rows
+  // don't carry body/topic columns so they're untouched.
+  if (ingestScrubEnabled() && (table === 'raw' || table === 'compiled')) {
+    if (typeof row.body === 'string' && row.body.length > 0) {
+      row = { ...row, body: redactSecrets(row.body) };
+    }
+    if (typeof row.topic === 'string' && row.topic.length > 0) {
+      row = { ...row, topic: redactSecrets(row.topic) };
+    }
+  }
+
   const placeholders = cols.map(() => '?').join(', ');
   const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`;
   const values = cols.map(c => row[c]);
@@ -266,6 +307,27 @@ export function safeWrite(db, table, row) {
     }
   });
   tx();
+
+  // GA-B3: D2 graph auto-population. Fires after the content tx commits
+  // so a graph-extraction failure can never roll back the observation
+  // write. Auto-index runs only on `raw` + `compiled` content tables
+  // (the observation surfaces); audit_finding / trident_run rows skip.
+  // Helper swallows all internal errors -- ingest correctness never
+  // depends on the graph layer succeeding.
+  if (table === 'raw' || table === 'compiled') {
+    try {
+      const body = typeof row.body === 'string' ? row.body : null;
+      if (body) {
+        autoIndexGraphFromBody({
+          db,
+          body,
+          sessionId: row.session_id || null,
+          ts: typeof row.ts === 'number' ? row.ts : Date.now(),
+        });
+      }
+    } catch { /* auto-index is best-effort; never fail safeWrite */ }
+  }
+
   return inserted;
 }
 
@@ -275,7 +337,23 @@ export function safeWrite(db, table, row) {
 // Query syntax: standard FTS5 MATCH expressions (terms, phrases, NEAR,
 // prefix*, AND/OR/NOT). Caller is responsible for sanitising user-supplied
 // queries (FTS5 syntax errors throw -- caught and reported here).
-export function search(db, table, query, k = 10) {
+//
+// Args:
+//   db, table, query, k    -- as before
+//   opts.include_stale     -- D4 retrieval guard. When false (default),
+//                             rows with stale_candidate >= 1 are excluded
+//                             so cascading-staleness flags actually gate
+//                             retrieval. When true, all rows return
+//                             (debug + grader path).
+//                             Back-compat: callers passing a number for
+//                             the 4th arg still get k-as-limit; opts is
+//                             optional 5th arg.
+//
+// Tolerance: pre-D4 dbs may not have the stale_candidate column (e.g.
+// fixture dbs created at a lower user_version). When the column is
+// absent, the WHERE filter is silently dropped so older callers and
+// tests don't break.
+export function search(db, table, query, k = 10, opts = {}) {
   if (!db || typeof db.prepare !== 'function') {
     throw new ComputeDbError('search: db handle is invalid.');
   }
@@ -287,12 +365,22 @@ export function search(db, table, query, k = 10) {
   }
   const limit = Math.min(Math.max(1, parseInt(k, 10) || 10), 1000);
   const ftsTable = `${table}_fts`;
+  const includeStale = opts && opts.include_stale === true;
+
+  // D4: stale-candidate filter. Default behaviour excludes rows with
+  // stale_candidate >= 1 from search results. Override via include_stale
+  // to surface flagged rows for debugging.
+  const hasStaleColumn = tableHasColumn(db, table, 'stale_candidate');
+  const staleClause = (!includeStale && hasStaleColumn)
+    ? ' AND COALESCE(t.stale_candidate, 0) = 0'
+    : '';
+
   // Join FTS5 rowid back to the content table to recover full row data.
   const sql = `
     SELECT t.*, bm25(${ftsTable}) AS rank
       FROM ${ftsTable} f
       JOIN ${table} t ON t.id = f.rowid
-     WHERE ${ftsTable} MATCH ?
+     WHERE ${ftsTable} MATCH ?${staleClause}
      ORDER BY rank ASC
      LIMIT ?`;
   try {
@@ -300,6 +388,27 @@ export function search(db, table, query, k = 10) {
   } catch (err) {
     throw new ComputeDbError(`search failed for ${table}: ${err.message}`);
   }
+}
+
+// Cache table_info lookups so repeated search() calls don't re-scan the
+// schema each invocation. WeakMap keyed on the db handle so a closed/
+// reopened db gets a fresh cache automatically.
+const __tableInfoCache = new WeakMap();
+function tableHasColumn(db, table, column) {
+  let perDb = __tableInfoCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    __tableInfoCache.set(db, perDb);
+  }
+  const key = `${table}.${column}`;
+  if (perDb.has(key)) return perDb.get(key);
+  let present = false;
+  try {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+    present = rows.some(r => String(r.name) === column);
+  } catch { /* missing table -> treat column as absent */ }
+  perDb.set(key, present);
+  return present;
 }
 
 // Clean close. Tolerates double-close (already-closed handles).

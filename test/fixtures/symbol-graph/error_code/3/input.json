@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "edge route returned 404 for missing tenant in src/api/tenant.ts; mapped to JSON envelope",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "on 401 the proxy now refreshes token; src/api/tenant.ts no longer leaks 401 upstream",
+      "kind": "observation"
+    }
+  ]
+}

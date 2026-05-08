@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "kind": "decision",
+      "name": "retire-legacy-cache"
+    },
+    {
+      "kind": "file",
+      "name": "src/cache/legacy.js"
+    },
+    {
+      "kind": "file",
+      "name": "src/cache/lru.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "decision:retire-legacy-cache",
+      "dst": "file:src/cache/legacy.js",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "decision:retire-legacy-cache",
+      "dst": "file:src/cache/lru.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:src/cache/legacy.js",
+      "dst": "file:src/cache/lru.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

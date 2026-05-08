@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "error_code", "name": "ERR_AUTH_FAILED" },
+    { "kind": "error_code", "name": "ERR_NETWORK_REFUSED" }
+  ],
+  "edges": [
+    { "src": "error_code:ERR_AUTH_FAILED", "dst": "error_code:ERR_NETWORK_REFUSED", "kind": "co_occurs" }
+  ]
+}

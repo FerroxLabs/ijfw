@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "getUserById"
+    },
+    {
+      "kind": "file",
+      "name": "src/users/repo.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:getUserById",
+      "dst": "file:src/users/repo.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

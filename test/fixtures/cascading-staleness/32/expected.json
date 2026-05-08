@@ -1,0 +1,15 @@
+{
+  "name": "weighted-2",
+  "description": "Weighted topology near threshold zone",
+  "expected_stale_candidates": [
+    "wt_2_a",
+    "wt_2_c"
+  ],
+  "expected_unaffected": [
+    "wt_2_b",
+    "wt_2_d",
+    "wt_2_e"
+  ],
+  "propagation_threshold": 0.5,
+  "depth_cap": 2
+}

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "flipped FEATURE_NEW_DASHBOARD to true in src/flags.ts; FEATURE_NEW_DASHBOARD gated behind tenant id",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "FEATURE_NEW_DASHBOARD rollout at 25 percent; src/flags.ts will be flipped fully next week",
+      "kind": "observation"
+    }
+  ]
+}

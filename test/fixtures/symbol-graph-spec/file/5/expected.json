@@ -1,0 +1,12 @@
+{
+  "entities": [
+    { "kind": "file", "name": "scripts/deploy.sh" },
+    { "kind": "file", "name": "config/prod.yaml" },
+    { "kind": "file", "name": "logs/deploy.log" }
+  ],
+  "edges": [
+    { "src": "file:scripts/deploy.sh", "dst": "file:config/prod.yaml", "kind": "co_occurs" },
+    { "src": "file:config/prod.yaml", "dst": "file:logs/deploy.log", "kind": "co_occurs" },
+    { "src": "file:logs/deploy.log", "dst": "file:scripts/deploy.sh", "kind": "co_occurs" }
+  ]
+}

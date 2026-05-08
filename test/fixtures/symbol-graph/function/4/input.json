@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "introduced arrow handleSubmit in src/components/Form.tsx; handleSubmit binds via useCallback",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "handleSubmit now logs analytics; src/components/Form.tsx ships in next release",
+      "kind": "observation"
+    }
+  ]
+}

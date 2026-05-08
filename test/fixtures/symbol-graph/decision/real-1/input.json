@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "ADR-0001 record-architecture-decisions established the practice; ADR-0002 implement-as-shell-scripts followed",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "ADR-0002 implement-as-shell-scripts depends on ADR-0001 record-architecture-decisions context",
+      "kind": "observation"
+    }
+  ]
+}

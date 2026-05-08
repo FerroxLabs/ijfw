@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "introduced UserSession class in src/session/UserSession.ts; UserSession persists in IndexedDB",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "UserSession serialisation tested; src/session/UserSession.ts API stable",
+      "kind": "observation"
+    }
+  ]
+}

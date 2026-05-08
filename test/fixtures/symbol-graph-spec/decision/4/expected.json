@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "decision", "name": "D42" },
+    { "kind": "decision", "name": "D55" }
+  ],
+  "edges": [
+    { "src": "decision:D42", "dst": "decision:D55", "kind": "co_occurs" }
+  ]
+}

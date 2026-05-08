@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "d-tier-promotion-rules sets working->episodic threshold at 3 hits; promote() in mcp-server/lib/promote.js owns it",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "promote() now reads d-tier-promotion-rules from config; mcp-server/lib/promote.js test asserts threshold",
+      "kind": "observation"
+    }
+  ]
+}

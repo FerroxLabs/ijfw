@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "ERR_INVALID_ARG_TYPE bubbled from URL parser; ERR_INVALID_URL now wraps it for caller clarity",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "ERR_HTTP_HEADERS_SENT defended against in middleware; ERR_INVALID_ARG_TYPE separated from validation path",
+      "kind": "observation"
+    }
+  ]
+}

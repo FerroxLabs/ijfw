@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "mapMaybe"
+    },
+    {
+      "kind": "file",
+      "name": "src/util/maybe.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:mapMaybe",
+      "dst": "file:src/util/maybe.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

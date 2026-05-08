@@ -1,0 +1,59 @@
+{
+  "kg_nodes": [
+    {
+      "kind": "identifier",
+      "name": "chain_6_A",
+      "redacted": 0
+    },
+    {
+      "kind": "identifier",
+      "name": "chain_6_B",
+      "redacted": 0
+    },
+    {
+      "kind": "identifier",
+      "name": "chain_6_C",
+      "redacted": 0
+    },
+    {
+      "kind": "identifier",
+      "name": "chain_6_D",
+      "redacted": 0
+    },
+    {
+      "kind": "identifier",
+      "name": "chain_6_E",
+      "redacted": 0
+    }
+  ],
+  "kg_edges": [
+    {
+      "src": "chain_6_A",
+      "dst": "chain_6_B",
+      "kind": "co_occurs",
+      "weight": 0.4,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "chain_6_B",
+      "dst": "chain_6_C",
+      "kind": "co_occurs",
+      "weight": 0.7,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "chain_6_C",
+      "dst": "chain_6_D",
+      "kind": "co_occurs",
+      "weight": 0.7,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "chain_6_D",
+      "dst": "chain_6_E",
+      "kind": "co_occurs",
+      "weight": 0.7,
+      "co_occurrence_count": 3
+    }
+  ]
+}

@@ -94,6 +94,23 @@ if command -v node >/dev/null 2>&1 && [ -n "$HOOK_STDIN" ]; then
 fi
 [ -n "$SESSION_ID_END" ] && rmdir "$IJFW_DIR/.banner-shown.${SESSION_ID_END}.lock" 2>/dev/null || true
 
+# Dream cycle trigger (D3 -- inline detached spawn at SessionEnd).
+# Replaces the legacy `SESSION_NUM % 5 == 0` startup-flag deferral with
+# a fire-and-forget spawn that returns within ~50ms. Cooldown enforced
+# by runner.mjs via .ijfw/.dream-state.json (4h). Set
+# IJFW_DREAM_LEGACY=1 to revert to the old startup-flag path.
+DREAM_TRIGGER=""
+for cand in \
+    "$HOME/.ijfw/claude/skills/ijfw-summarize/scripts/dream-trigger.sh" \
+    "${IJFW_HOME:-}/claude/skills/ijfw-summarize/scripts/dream-trigger.sh" \
+    "$(pwd)/claude/skills/ijfw-summarize/scripts/dream-trigger.sh" \
+    "$(dirname "$0")/../../../../claude/skills/ijfw-summarize/scripts/dream-trigger.sh"; do
+  [ -n "$cand" ] && [ -f "$cand" ] && { DREAM_TRIGGER="$cand"; break; }
+done
+if [ -n "$DREAM_TRIGGER" ]; then
+  bash "$DREAM_TRIGGER" "$(pwd)" "gemini" "${IJFW_SESSION_ID:-${SESSION_ID_END:-}}" 2>/dev/null || true
+fi
+
 # Emit receipt.
 RECEIPT="[ijfw] Session $SESSION_NUM complete ($MEMORY_STORES memory entries)."
 command -v node >/dev/null 2>&1 || { printf '{"decision":"allow"}\n'; exit 0; }

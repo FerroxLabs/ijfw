@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "wired the auth flow in src/api/login.js to call src/lib/jwt.js for verification",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "tested src/api/login.js end-to-end; src/lib/jwt.js returns the parsed claim",
+      "kind": "observation"
+    }
+  ]
+}

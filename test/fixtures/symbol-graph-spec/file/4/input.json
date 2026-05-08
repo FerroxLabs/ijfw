@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "src/server/router.ts forwards to src/server/handlers.ts which logs via src/lib/log.ts",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "src/server/router.ts middleware chain hands off to src/server/handlers.ts; src/lib/log.ts captures",
+      "kind": "observation"
+    }
+  ]
+}

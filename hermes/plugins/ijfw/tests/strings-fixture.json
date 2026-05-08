@@ -29,8 +29,8 @@
   "session_start_banner": "IJFW ready ({host} session). {n} memories loaded, {pct}% token savings this project.",
   "session_start_banner_no_memories": "IJFW ready ({host} session). Building memory as you work.",
   "shim_plugin_source_missing": "IJFW Hermes shim cannot find plugin source. Expected at ~/.wayland/plugins/ijfw, repo-local sibling, or bundled in this dir.",
-  "skill_load_prompt_compress": "Load IJFW compress skill from ~/.hermes/skills/ijfw-compress/SKILL.md and begin.",
-  "skill_load_prompt_handoff": "Load IJFW handoff skill from ~/.hermes/skills/ijfw-handoff/SKILL.md and begin.",
-  "skill_load_prompt_workflow": "Load IJFW workflow skill from ~/.hermes/skills/ijfw-workflow/SKILL.md and begin.",
+  "skill_load_prompt_compress": "Load IJFW compress skill from {profile_home}/skills/ijfw-compress/SKILL.md and begin.",
+  "skill_load_prompt_handoff": "Load IJFW handoff skill from {profile_home}/skills/ijfw-handoff/SKILL.md and begin.",
+  "skill_load_prompt_workflow": "Load IJFW workflow skill from {profile_home}/skills/ijfw-workflow/SKILL.md and begin.",
   "vague_prompt_nudge": "Sharper prompt, better result. Consider adding a specific target or outcome: {suggestion}"
 }

@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "sanitize in lib/sanitize.go calls escapeHTML; escapeHTML lives in lib/escape.go",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "sanitize wired into request middleware; escapeHTML test added",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "entities": [
+    { "kind": "file", "name": "Dockerfile" },
+    { "kind": "file", "name": "Makefile" }
+  ],
+  "edges": [
+    { "src": "file:Dockerfile", "dst": "file:Makefile", "kind": "co_occurs" }
+  ]
+}

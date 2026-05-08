@@ -75,3 +75,33 @@ export function redactSecrets(s) {
   }
   return out;
 }
+
+// classify(value) -> { clean: boolean, redacted_kind: string | null }
+//
+// D-PILLAR-SPEC section 3 surface used by D2 entity extraction. Passes the
+// value through the same PATTERNS list redactSecrets uses; if any pattern
+// matches the WHOLE value (anchor-equivalent: pattern consumes the entire
+// trimmed string), the value is classified as a secret and `redacted_kind`
+// carries the matched label. INLINE rules are not applied here -- they
+// only fire on key=value assignments which would never reach the entity
+// extractor as a bare entity name.
+//
+// Important: PATTERNS are anchored implicitly via length minimums (e.g.
+// `sk-(?:proj-)?[A-Za-z0-9_-]{32,}`), but to avoid classifying a long file
+// path that happens to contain a token-shaped substring, classify() rejects
+// only when the pattern matches the FULL trimmed value. File paths and
+// function/identifier names are always shorter than the secret patterns'
+// minimum lengths, so the conservative cut-line is "match must equal the
+// candidate" -- a substring match doesn't trigger classification.
+export function classify(value) {
+  if (typeof value !== 'string') return { clean: true, redacted_kind: null };
+  const v = value.trim();
+  if (!v) return { clean: true, redacted_kind: null };
+  for (const { re, label } of PATTERNS) {
+    // Build a fresh non-global RegExp per check; the source PATTERNS use /g
+    // for redactSecrets but classify needs a single full-value match.
+    const r = new RegExp(`^(?:${re.source})$`, re.flags.replace('g', ''));
+    if (r.test(v)) return { clean: false, redacted_kind: label };
+  }
+  return { clean: true, redacted_kind: null };
+}

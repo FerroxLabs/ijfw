@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "wrote useDebouncedValue hook in src/hooks/useDebouncedValue.ts; useDebouncedValue returns latest after delay",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "useDebouncedValue handles unmount cleanup; src/hooks/useDebouncedValue.ts stable",
+      "kind": "observation"
+    }
+  ]
+}

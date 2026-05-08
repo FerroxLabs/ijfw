@@ -1,0 +1,12 @@
+{
+  "entities": [
+    { "kind": "function", "name": "compute_hash" },
+    { "kind": "function", "name": "verify_signature" },
+    { "kind": "function", "name": "commit_block" }
+  ],
+  "edges": [
+    { "src": "function:compute_hash", "dst": "function:verify_signature", "kind": "co_occurs" },
+    { "src": "function:verify_signature", "dst": "function:commit_block", "kind": "co_occurs" },
+    { "src": "function:commit_block", "dst": "function:compute_hash", "kind": "co_occurs" }
+  ]
+}

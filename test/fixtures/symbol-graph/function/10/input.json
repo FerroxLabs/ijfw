@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Connection.__enter__ in db/conn.py opens cursor; Connection.close releases pool",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Connection.close now idempotent; Connection.__enter__ logs trace id",
+      "kind": "observation"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "Connection.__enter__"
+    },
+    {
+      "kind": "function",
+      "name": "Connection.close"
+    },
+    {
+      "kind": "file",
+      "name": "db/conn.py"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:Connection.__enter__",
+      "dst": "file:db/conn.py",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "function:Connection.close",
+      "dst": "file:db/conn.py",
+      "kind": "co_occurs"
+    }
+  ]
+}

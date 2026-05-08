@@ -1,0 +1,13 @@
+{
+  "name": "redacted-7",
+  "description": "Redacted boundary terminates BFS at depth 1",
+  "expected_stale_candidates": [
+    "rd_7_y",
+    "rd_7_z"
+  ],
+  "expected_unaffected": [
+    "rd_7_q"
+  ],
+  "propagation_threshold": 0.5,
+  "depth_cap": 2
+}

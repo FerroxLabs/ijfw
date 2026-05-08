@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "updated /etc/nginx/conf.d/api.conf to add upstream block",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "reloaded nginx after edit to /etc/nginx/conf.d/api.conf",
+      "kind": "observation"
+    }
+  ]
+}

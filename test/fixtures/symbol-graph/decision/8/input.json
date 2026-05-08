@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "D42 captured in decisions/D42.md: switch to BLAKE3 for content addressing",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "D42 implemented in src/hash/index.ts; legacy SHA1 path retired",
+      "kind": "observation"
+    }
+  ]
+}

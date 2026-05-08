@@ -1,0 +1,47 @@
+{
+  "kg_nodes": [
+    {
+      "kind": "function",
+      "name": "star_9_hub",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_9_Alpha",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_9_Beta",
+      "redacted": 0
+    },
+    {
+      "kind": "function",
+      "name": "star_9_Gamma",
+      "redacted": 0
+    }
+  ],
+  "kg_edges": [
+    {
+      "src": "star_9_hub",
+      "dst": "star_9_Alpha",
+      "kind": "co_occurs",
+      "weight": 0.55,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "star_9_hub",
+      "dst": "star_9_Beta",
+      "kind": "co_occurs",
+      "weight": 0.6000000000000001,
+      "co_occurrence_count": 3
+    },
+    {
+      "src": "star_9_hub",
+      "dst": "star_9_Gamma",
+      "kind": "co_occurs",
+      "weight": 0.65,
+      "co_occurrence_count": 3
+    }
+  ]
+}

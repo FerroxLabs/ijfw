@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "d-redactor-ordering and d-edge-weight-formula both land in D-PILLAR-SPEC.md; d-redactor-ordering precedes secret scrub",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "d-edge-weight-formula calibration noted; d-redactor-ordering test coverage tracked separately",
+      "kind": "observation"
+    }
+  ]
+}

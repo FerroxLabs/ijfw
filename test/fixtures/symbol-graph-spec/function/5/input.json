@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "compute_hash hands its result to verify_signature, then commit_block stores the pair",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "compute_hash followed by verify_signature; commit_block records the outcome",
+      "kind": "observation"
+    }
+  ]
+}

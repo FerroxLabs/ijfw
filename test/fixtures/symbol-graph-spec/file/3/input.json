@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "Dockerfile builds the image, Makefile orchestrates the test target, both shipped",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "Makefile now invokes Dockerfile via a build target, replacing the old shell script",
+      "kind": "observation"
+    }
+  ]
+}

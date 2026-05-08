@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "commit log carried #decision:retire-legacy-cache: stop using src/cache/legacy.js, replaced by src/cache/lru.ts",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "src/cache/legacy.js removed in follow-up; #decision:retire-legacy-cache referenced in PR description",
+      "kind": "observation"
+    }
+  ]
+}

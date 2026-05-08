@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "patched C:\\\\Users\\\\dev\\\\app\\\\src\\\\main.cs after build break",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "C:\\\\Users\\\\dev\\\\app\\\\src\\\\main.cs now compiles cleanly under net8.0",
+      "kind": "observation"
+    }
+  ]
+}

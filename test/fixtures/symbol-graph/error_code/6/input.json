@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "caught ThrottlingException from AWS SDK; ThrottlingException retries via backoff in src/aws/client.ts",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "AccessDeniedException also handled in src/aws/client.ts; surfaced as 403 to caller",
+      "kind": "observation"
+    }
+  ]
+}

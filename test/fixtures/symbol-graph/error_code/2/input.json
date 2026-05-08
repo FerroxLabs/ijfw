@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "EBUSY on lockfile during graph write; retry shim added in mcp-server/lib/graph.js for EBUSY",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "EEXIST also seen on lock; mcp-server/lib/graph.js handles both EBUSY and EEXIST",
+      "kind": "observation"
+    }
+  ]
+}

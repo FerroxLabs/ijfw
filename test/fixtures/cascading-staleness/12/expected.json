@@ -1,0 +1,14 @@
+{
+  "name": "chain-2",
+  "description": "Chain A-E, weights [0.7,0.6,0.4,0.7]; superseded=A",
+  "expected_stale_candidates": [
+    "chain_2_B",
+    "chain_2_C"
+  ],
+  "expected_unaffected": [
+    "chain_2_D",
+    "chain_2_E"
+  ],
+  "propagation_threshold": 0.5,
+  "depth_cap": 2
+}

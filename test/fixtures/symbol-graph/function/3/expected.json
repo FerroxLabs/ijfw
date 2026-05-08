@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "function",
+      "name": "UserService.findByEmail"
+    },
+    {
+      "kind": "file",
+      "name": "src/services/user.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "function:UserService.findByEmail",
+      "dst": "file:src/services/user.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

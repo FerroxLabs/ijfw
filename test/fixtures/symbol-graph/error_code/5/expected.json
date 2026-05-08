@@ -1,0 +1,48 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "PG_23505"
+    },
+    {
+      "kind": "error_code",
+      "name": "USER_EMAIL_TAKEN"
+    },
+    {
+      "kind": "file",
+      "name": "src/db/users.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:PG_23505",
+      "dst": "file:db/users.sql",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:PG_23505",
+      "dst": "error_code:USER_EMAIL_TAKEN",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:PG_23505",
+      "dst": "file:src/db/users.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:USER_EMAIL_TAKEN",
+      "dst": "file:db/users.sql",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "file:db/users.sql",
+      "dst": "file:src/db/users.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:USER_EMAIL_TAKEN",
+      "dst": "file:src/db/users.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

@@ -2,6 +2,13 @@
 # ALL user-facing output MUST come from this dict.
 # Sutherland rule: lead with value, never with "Error/Failed/Cannot".
 # Snapshot test: tests/test_strings_snapshot.py diffs this against strings-fixture.json.
+#
+# P5-L1: skill-load prompts now template `{profile_home}` instead of hard-
+# coding `~/.wayland/skills/...`. format_string(key, ctx, **kwargs) resolves
+# the placeholder via profile_home_for(active_profile) (see _handlers.py
+# _resolve_profile_home). When ctx is unavailable the helper falls back to
+# the legacy `~/.wayland/skills/...` literal so no surface ever ships an
+# unrendered `{profile_home}` token.
 
 STRINGS = {
     "session_start_banner": (
@@ -35,13 +42,13 @@ STRINGS = {
         "Cross-critique running on {target}. Independent perspective incoming."
     ),
     "skill_load_prompt_workflow": (
-        "Load IJFW workflow skill from ~/.wayland/skills/ijfw-workflow/SKILL.md and begin."
+        "Load IJFW workflow skill from {profile_home}/skills/ijfw-workflow/SKILL.md and begin."
     ),
     "skill_load_prompt_handoff": (
-        "Load IJFW handoff skill from ~/.wayland/skills/ijfw-handoff/SKILL.md and begin."
+        "Load IJFW handoff skill from {profile_home}/skills/ijfw-handoff/SKILL.md and begin."
     ),
     "skill_load_prompt_compress": (
-        "Load IJFW compress skill from ~/.wayland/skills/ijfw-compress/SKILL.md and begin."
+        "Load IJFW compress skill from {profile_home}/skills/ijfw-compress/SKILL.md and begin."
     ),
     "mcp_unavailable": (
         "IJFW memory tools unavailable this session -- proceeding without memory hydration."
@@ -97,3 +104,71 @@ STRINGS = {
     "cmd_desc_handoff": "Run IJFW handoff skill",
     "cmd_desc_compress": "Run IJFW compress skill",
 }
+
+
+# P5-L1: profile-home-aware string formatter.
+#
+# Templates that include `{profile_home}` (currently the three skill-load
+# prompts) need the active Wayland profile resolved at format time so a
+# user with a non-default profile (`wayland --profile tester ...`) sees
+# the right skills path. Direct `STRINGS[key].format(...)` callers cannot
+# do that; they call `format_string(key, ctx, **kwargs)` instead.
+#
+# Resolution order (mirrors _handlers._resolve_profile_home):
+#   1. ctx.profile_home / ctx.profileHome / ctx.get_profile_home (callable)
+#   2. ctx.profile_home_for(ctx.get_active_profile())
+#   3. env IJFW_WAYLAND_PROFILE_HOME
+#   4. legacy `~/.wayland` literal (last-resort fallback so no surface
+#      ever ships an unrendered `{profile_home}` token)
+#
+# The function is intentionally tolerant: any introspection error returns
+# the legacy literal. Wayland hooks must never crash the host.
+import os as _os
+
+_LEGACY_PROFILE_HOME = "~/.wayland"
+
+
+def _resolve_profile_home_for_strings(ctx):
+    """Best-effort profile-home resolver for string formatting.
+
+    Mirrors _handlers._resolve_profile_home but lives in _strings.py so
+    `format_string()` stays self-contained (no circular import). Returns a
+    POSIX-style string path; never raises.
+    """
+    if ctx is None:
+        return _os.environ.get("IJFW_WAYLAND_PROFILE_HOME") or _LEGACY_PROFILE_HOME
+    for attr in ("profile_home", "profileHome", "get_profile_home"):
+        fn = getattr(ctx, attr, None)
+        if callable(fn):
+            try:
+                value = fn()
+                if value:
+                    return str(value)
+            except (TypeError, ValueError, OSError):
+                pass
+    get_profile = getattr(ctx, "get_active_profile", None) or getattr(ctx, "getActiveProfile", None)
+    profile_home = getattr(ctx, "profile_home_for", None) or getattr(ctx, "profileHomeFor", None)
+    if callable(get_profile) and callable(profile_home):
+        try:
+            value = profile_home(get_profile())
+            if value:
+                return str(value)
+        except (TypeError, ValueError, OSError):
+            pass
+    env_override = _os.environ.get("IJFW_WAYLAND_PROFILE_HOME")
+    if env_override:
+        return env_override
+    return _LEGACY_PROFILE_HOME
+
+
+def format_string(key, ctx=None, **kwargs):
+    """Render STRINGS[key] with profile_home auto-resolved.
+
+    Use this whenever a string MAY contain `{profile_home}`. For other
+    placeholders pass them as kwargs the same way you would with `.format`.
+    """
+    template = STRINGS[key]
+    if "{profile_home}" in template and "profile_home" not in kwargs:
+        kwargs["profile_home"] = _resolve_profile_home_for_strings(ctx)
+    return template.format(**kwargs)
+

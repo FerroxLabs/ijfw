@@ -1,0 +1,15 @@
+{
+  "name": "star-2",
+  "description": "Star topology hub=star_2_hub, 5 spokes (depth=1 only)",
+  "expected_stale_candidates": [
+    "star_2_Alpha",
+    "star_2_Beta",
+    "star_2_Delta",
+    "star_2_Epsilon"
+  ],
+  "expected_unaffected": [
+    "star_2_Gamma"
+  ],
+  "propagation_threshold": 0.5,
+  "depth_cap": 2
+}

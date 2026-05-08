@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "ADR-0042 captured the queue choice; ADR-0043 followed up with the timeout knob default",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "ADR-0042 still in force; ADR-0043 amended once the staging metrics came back",
+      "kind": "observation"
+    }
+  ]
+}

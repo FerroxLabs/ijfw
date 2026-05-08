@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "validateToken delegates to parseClaims and the bearer header is checked against the issuer",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "validateToken accepts the audience claim only after parseClaims returns clean",
+      "kind": "observation"
+    }
+  ]
+}

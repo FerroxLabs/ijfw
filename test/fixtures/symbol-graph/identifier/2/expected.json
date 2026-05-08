@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "kind": "identifier",
+      "name": "UserSession"
+    },
+    {
+      "kind": "file",
+      "name": "src/session/UserSession.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "identifier:UserSession",
+      "dst": "file:src/session/UserSession.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

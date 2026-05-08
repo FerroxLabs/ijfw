@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "kind": "error_code",
+      "name": "ThrottlingException"
+    },
+    {
+      "kind": "error_code",
+      "name": "AccessDeniedException"
+    },
+    {
+      "kind": "file",
+      "name": "src/aws/client.ts"
+    }
+  ],
+  "edges": [
+    {
+      "src": "error_code:ThrottlingException",
+      "dst": "file:src/aws/client.ts",
+      "kind": "co_occurs"
+    },
+    {
+      "src": "error_code:AccessDeniedException",
+      "dst": "file:src/aws/client.ts",
+      "kind": "co_occurs"
+    }
+  ]
+}

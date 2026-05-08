@@ -20,6 +20,8 @@ import { homedir } from 'os';
 import { join, dirname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
+// C9.7: Trident lens-health probes for the dashboard tile.
+import { probeLenses, healthTileShape } from '../../mcp-server/src/trident/lens-health.js';
 
 // Probe sqlite3 binary once at startup. All callers check this before querying.
 const SQLITE3_AVAILABLE = (() => {
@@ -1232,6 +1234,37 @@ const server = createServer((req, res) => {
         process.stderr.write(`[ijfw-dashboard] /api/data error: ${err.stack}\n`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal dashboard error. Check server logs.' }));
+      });
+    return;
+  }
+
+  // C9.7: Trident lens-health endpoint. Returns the latest probe snapshot
+  // plus a tile-friendly shape (mode, alert flag, per-lens dead-for_ms).
+  // Probes are cached for 60s by lens-health.js -- this endpoint is cheap.
+  if (url === '/api/trident/lens-health') {
+    probeLenses({ codex: true, gemini: true, claude: true })
+      .then((probeResult) => {
+        const tile = healthTileShape(probeResult);
+        const payload = {
+          probed_at: probeResult.summary && probeResult.summary.probed_at,
+          summary: probeResult.summary,
+          tile,
+          raw: {
+            codex: probeResult.codex,
+            gemini: probeResult.gemini,
+            claude: probeResult.claude,
+          },
+        };
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+        });
+        res.end(JSON.stringify(payload));
+      })
+      .catch((err) => {
+        process.stderr.write(`[ijfw-dashboard] /api/trident/lens-health error: ${err && err.stack}\n`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'lens-health probe did not complete' }));
       });
     return;
   }

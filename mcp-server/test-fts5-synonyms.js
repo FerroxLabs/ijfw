@@ -83,6 +83,33 @@ try {
     bad('quoted phrase preserved', JSON.stringify(e6));
   }
 
+  // P5-L2: `ts` must NOT expand. The token previously had two senses
+  // (typescript AND timestamp); both groups were dropped. Bare `ts` now
+  // passes through unchanged with no synonym_matches entry. Callers spell
+  // out `typescript` or `timestamp` when they mean either one.
+  const eTs = expandQuery('ts');
+  if (!eTs.applied && eTs.expanded === 'ts' && Object.keys(eTs.synonym_matches).length === 0) {
+    ok('ts passes through unchanged (P5-L2 disambiguation)');
+  } else {
+    bad('ts must not expand (P5-L2)', JSON.stringify(eTs));
+  }
+  // Reverse direction: typescript and timestamp are still expandable from
+  // OTHER groups they may belong to (none here -- just stand-alone words),
+  // so they pass through too. Both should report no synonym_matches entry
+  // for `ts`.
+  const eTypescript = expandQuery('typescript');
+  if (!('ts' in eTypescript.synonym_matches)) {
+    ok('typescript does not back-expand to ts (P5-L2)');
+  } else {
+    bad('typescript must not back-expand to ts (P5-L2)', JSON.stringify(eTypescript));
+  }
+  const eTimestamp = expandQuery('timestamp');
+  if (!('ts' in eTimestamp.synonym_matches)) {
+    ok('timestamp does not back-expand to ts (P5-L2)');
+  } else {
+    bad('timestamp must not back-expand to ts (P5-L2)', JSON.stringify(eTimestamp));
+  }
+
   // --- dispatchSearch integration ---
   db = await openDb(projectRoot);
   const NOW = Date.now();

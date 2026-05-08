@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "body": "D42 superseded by D55 last sprint; both linked from the migration plan",
+      "kind": "observation"
+    },
+    {
+      "id": 2,
+      "body": "D42 archive note; D55 confirmed live across all four regions",
+      "kind": "observation"
+    }
+  ]
+}
