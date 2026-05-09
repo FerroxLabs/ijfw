@@ -226,7 +226,11 @@ test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', async (
     assert.ok(existsSync(cfg), `config.toml missing at ${cfg}`);
     const text = readText(cfg);
     assert.ok(text.includes('[mcp_servers.ijfw-memory]'), 'mcp block missing');
-    assert.ok(text.includes(`args = ["${SERVER_JS}"]`), 'args path mismatch');
+    // mergeToml escapes backslashes for valid TOML on Windows
+    // (C:\Users -> "C:\\Users"). Mirror that escape here so the assertion
+    // works on every platform.
+    const escapedServerJs = SERVER_JS.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    assert.ok(text.includes(`args = ["${escapedServerJs}"]`), 'args path mismatch');
     // Idempotency: second run keeps a single block.
     await installInSandbox('codex', sb);
     const text2 = readText(cfg);

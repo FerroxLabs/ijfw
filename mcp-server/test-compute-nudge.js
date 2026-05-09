@@ -33,7 +33,11 @@ const GEMINI_HOOK = join(REPO_ROOT, 'gemini/extensions/ijfw/hooks/before-tool-co
 // vary on loaded CI; the hook itself is documented as <=50ms but our
 // process-level assertion uses 1500ms to absorb harness noise. The 50ms
 // budget is enforced separately on the inner-script wall-clock measurement.
-const SPAWN_TIMEOUT_MS = 1500;
+// Windows git-bash cold-start is markedly slower than POSIX bash; bump the
+// budget on Windows so the first invocation in a fresh runner doesn't lose
+// to spawn overhead. The hook itself is still asserted < SPAWN_TIMEOUT_MS
+// against this same ceiling (line 78), so the test's spirit is preserved.
+const SPAWN_TIMEOUT_MS = process.platform === 'win32' ? 5000 : 1500;
 const HOOK_BUDGET_MS = 50;
 
 // Per session-isolated HOME so state files do not collide across tests or
