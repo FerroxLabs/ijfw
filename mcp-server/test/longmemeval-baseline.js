@@ -41,7 +41,7 @@
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -62,8 +62,8 @@ const FIXTURE_PATH = join(__dirname, 'fixtures', 'longmemeval-s', 'longmemeval_s
 // D-pillar spec gets a clear bar to beat (BM25 is the meaningful
 // comparison; regex-linear is the floor showing how literal-substring
 // fails on natural-language questions).
-const { searchMemory } = await import(join(REPO_ROOT, 'mcp-server', 'src', 'memory', 'search.js'));
-const { searchCorpus } = await import(join(REPO_ROOT, 'mcp-server', 'src', 'search-bm25.js'));
+const { searchMemory } = await import(pathToFileURL(join(REPO_ROOT, 'mcp-server', 'src', 'memory', 'search.js')).href);
+const { searchCorpus } = await import(pathToFileURL(join(REPO_ROOT, 'mcp-server', 'src', 'search-bm25.js')).href);
 
 // --- Fixture discovery -----------------------------------------------------
 

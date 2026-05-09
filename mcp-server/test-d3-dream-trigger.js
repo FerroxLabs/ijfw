@@ -25,7 +25,7 @@ import { spawnSync, spawn } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { performance } from 'node:perf_hooks';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -62,7 +62,7 @@ function waitForFile(path, ms = 2500) {
 
 test('cooldown: absent state file -> not on cooldown', async () => {
   const root = tmpProj('cd-absent');
-  const { isOnCooldown } = await import(join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js'));
+  const { isOnCooldown } = await import(pathToFileURL(join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js')).href);
   const stateDir = join(root, '.ijfw');
   mkdirSync(stateDir, { recursive: true });
   assert.equal(isOnCooldown(stateDir), false, 'absent state must not block');

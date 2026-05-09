@@ -30,7 +30,7 @@ import { spawnSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
@@ -104,7 +104,7 @@ function waitForFile(path, ms = 2000) {
 test('installer triggerColdScan fires runner; project.type lands <1s', async () => {
   const root = tmpProj('inst');
   const home = sandboxHome('inst');
-  const { triggerColdScan } = await import(join(REPO_ROOT, 'installer', 'src', 'post-install', 'cold-scan.js'));
+  const { triggerColdScan } = await import(pathToFileURL(join(REPO_ROOT, 'installer', 'src', 'post-install', 'cold-scan.js')).href);
   // P5-N2: redirect HOME so any log writes land in the sandbox even
   // though the installer path uses stdio:'ignore' (defensive -- future
   // log-collection changes won't escape the sandbox).

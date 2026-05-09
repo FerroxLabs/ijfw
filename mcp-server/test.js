@@ -8,7 +8,7 @@
 
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { rmSync, existsSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 
@@ -598,7 +598,10 @@ async function runTest() {
   // Direct unit tests on the pure-JS detector (no MCP roundtrip - fast),
   // plus one MCP roundtrip to verify tool wiring.
   console.log('\nPrompt-check detector:');
-  const { checkPrompt } = await import(join(__dirname, 'src', 'prompt-check.js'));
+  // pathToFileURL: Windows ESM loader rejects bare drive-letter paths
+  // (e.g. C:\\foo) -- only file:// URLs are valid. macOS/Linux pass either
+  // way; wrapping makes this portable.
+  const { checkPrompt } = await import(pathToFileURL(join(__dirname, 'src', 'prompt-check.js')).href);
 
   const expectVague = (text, label) => {
     const r = checkPrompt(text);
