@@ -271,6 +271,7 @@ function makeWatcher(ledgerPath, broadcaster) {
     if (!existsSync(ledgerPath)) return;
     try {
       watcher = watch(ledgerPath, () => tail());
+      watcher.on('error', () => { /* poll fallback below covers Windows EPERM */ });
     } catch {
       watcher = null;
     }
@@ -743,6 +744,10 @@ export async function startServer(options = {}) {
             try { res.write('event: reload\ndata: reload\n\n'); } catch {}
           }, 50);
         });
+        // fs.watch on Windows can emit EPERM asynchronously even when the
+        // initial call succeeds. Swallow the error so it doesn't bubble as
+        // an uncaughtException after request close (Windows-CI regression).
+        watcher.on('error', () => { /* graceful degrade -- poll fallback below */ });
       } catch {}
 
       req.on('close', () => {

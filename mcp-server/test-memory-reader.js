@@ -49,8 +49,10 @@ writeFileSync(join(FAKE_IJFW, 'observations.jsonl'),
 // Tier 5: global HANDOFF.md
 writeFileSync(join(FAKE_IJFW, 'HANDOFF.md'), '# Global Handoff\nGlobal state.\n');
 
-// Set HOME before importing (reader uses homedir() at module load time)
+// Set HOME before importing (reader uses homedir() at module load time).
+// On Windows, homedir() reads USERPROFILE not HOME.
 process.env.HOME = FAKE_HOME;
+process.env.USERPROFILE = FAKE_HOME;
 
 const { listMemoryFiles, readMemoryFile, listKnownProjects, resolveMemoryRoot } = await import('./src/memory/reader.js');
 

@@ -73,6 +73,7 @@ export function watchContentDir(contentDir) {
 
   try {
     const w = watch(contentDir, trigger);
+    w.on('error', () => { /* Windows EPERM: skip; emitter still serves polled state */ });
     emitter.once('_stop', () => { try { w.close(); } catch {} });
   } catch {}
 
