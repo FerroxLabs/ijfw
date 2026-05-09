@@ -21,25 +21,25 @@
 //
 // Run: node --test mcp-server/test-cross-platform-smoke.js
 //
-// Discipline: ESM, zero new prod deps, LC_ALL=C, atomic writes via the
-// install.sh helpers themselves (we drive the real script with a single
-// platform target per case).
+// Discipline: ESM, zero new prod deps, LC_ALL=C. As of v1.3.0 Wave 2, the
+// installer is pure Node (installer/src/install-flow.js) -- no bash, no child
+// process. We drive runInstall() in-process against an isolated sandbox HOME.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { BASH } from './test/win-bash-helper.js';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { runInstall, CANONICAL_ORDER } from '../installer/src/install-flow.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
-const INSTALL_SH = join(REPO_ROOT, 'scripts', 'install.sh');
 const SERVER_JS = join(REPO_ROOT, 'mcp-server', 'src', 'server.js');
 
-// Canonical TARGETS list -- mirrors install.sh:1006. 14 platforms.
+// Canonical TARGETS list -- mirrors installer/src/install-flow.js:CANONICAL_ORDER.
+// 14 platforms.
 const PLATFORMS = [
   // 5 critical platforms (live-verified by sibling test suites; smoke
   // re-asserts install-path landing for matrix completeness).
@@ -103,9 +103,7 @@ const PROJECT_PATHS = {
 // Cline writes into VS Code globalStorage; on macOS that's
 // $HOME/Library/Application Support/Code/User/globalStorage/...
 function clineLandingPath(home) {
-  // Match install.sh:cline_merge platform branches. We force the Linux
-  // default by passing CLINE_FORCE_OS=linux when bashing -- but install.sh
-  // honors `uname -s`, not env. So we accept the OS-conditional path.
+  // Match clineMerge's platform branches in install-helpers.js.
   const plat = process.platform;
   if (plat === 'darwin') {
     return join(home, 'Library', 'Application Support', 'Code', 'User',
@@ -121,9 +119,12 @@ function clineLandingPath(home) {
 }
 
 // -------------------------------------------------------------------------
-// Drive install.sh against an isolated HOME with a single platform target.
-// IJFW_CUSTOM_DIR=0 so home-mutating branches actually run; HOME points
-// at our sandbox so we never touch the user's real config.
+// Drive runInstall() against an isolated HOME with a single platform target.
+// runInstall is in-process Node, so we override HOME/USERPROFILE on
+// process.env (os.homedir() reads them fresh on each call), pass an explicit
+// ijfwHome rooted in the sandbox so seedState/linkPlugin can't leak into the
+// real ~/.ijfw, and chdir into the sandbox project so cursor/copilot/windsurf
+// project-scoped writes land in an isolated tree, not the IJFW source repo.
 // -------------------------------------------------------------------------
 
 function isolatedSandbox(label) {
@@ -137,70 +138,76 @@ function isolatedSandbox(label) {
   return { root, home, proj };
 }
 
-function runInstall(target, sandbox, extraEnv = {}) {
-  // IJFW_HOME points at the repo root so install.sh's REPO_ROOT-derived
-  // SERVER_JS path resolves correctly. install.sh canonicalizes via
-  // BASH_SOURCE/.. so it walks back to the source repo regardless.
-  const env = {
-    PATH: process.env.PATH,
-    LC_ALL: 'C',
-    LANG: 'C',
-    HOME: sandbox.home,
-    IJFW_HOME: REPO_ROOT,            // point at source repo so SERVER_JS resolves
-    IJFW_CUSTOM_DIR: '0',            // run home-mutating branches
-    IJFW_PROTECT_DEV_TREE: '0',      // override dev-tree guard
-    IJFW_NONINTERACTIVE: '1',
-    ...extraEnv,
-  };
-  // Run from the sandbox project dir so any project-scoped writes
-  // (Cursor .cursor/, Copilot .vscode/, Windsurf .windsurfrules) land in
-  // an isolated tree, not the IJFW source repo.
-  const res = spawnSync(BASH, [INSTALL_SH, target], {
-    cwd: sandbox.proj,
-    env,
-    encoding: 'utf8',
-    timeout: 30_000,
-  });
-  return res;
+async function installInSandbox(target, sandbox) {
+  // Snapshot env + cwd, override for this run, restore in finally.
+  const prevHome = process.env.HOME;
+  const prevUserProfile = process.env.USERPROFILE;
+  const prevCwd = process.cwd();
+
+  process.env.HOME = sandbox.home;
+  process.env.USERPROFILE = sandbox.home;
+  try {
+    process.chdir(sandbox.proj);
+  } catch {
+    // best-effort -- chdir may fail on some sandboxed FS; project-scoped
+    // tests will then write to the test runner's CWD, but that's caught by
+    // the per-target assertions.
+  }
+
+  // Silence the installer's stdout chatter during tests.
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = () => true;
+
+  try {
+    return await runInstall({
+      targets: [target],
+      ijfwHome: join(sandbox.home, '.ijfw'),
+      ijfwCustomDir: false,
+      repoRoot: REPO_ROOT,
+      noninteractive: true,
+    });
+  } finally {
+    process.stdout.write = origWrite;
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUserProfile;
+    try { process.chdir(prevCwd); } catch { /* best-effort */ }
+  }
 }
 
-// Cleanup helper -- best-effort.
+// Cleanup helper -- best-effort, with Windows-friendly retry semantics.
 function cleanup(sandbox) {
   try { rmSync(sandbox.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* best-effort */ }
 }
 
-// install.sh is the POSIX source install path; the canonical Windows path
-// is installer/src/install.ps1 (PowerShell). Skip the per-platform install
-// matrix on Windows -- the bash script paths assume POSIX shell semantics
-// (HOME canonicalisation, $(uname), shell-builtin sed/grep). Per-target
-// config-write logic is exercised by the Linux + macOS legs; Windows
-// install correctness is the install.ps1 layer's responsibility.
-const SKIP_WIN_INSTALL = process.platform === 'win32'
-  ? { skip: 'POSIX install.sh path; Windows uses install.ps1' }
-  : {};
-
 // -------------------------------------------------------------------------
-// Per-platform assertions. Each test runs install.sh with one target, asserts
-// the documented config file lands, and validates the MCP entry shape OR
-// (rules-only tier) validates the conventions doc lands.
+// Per-platform assertions. Each test runs runInstall() with one target,
+// asserts the documented config file lands, and validates the MCP entry shape
+// OR (rules-only tier) validates the conventions doc lands.
 // -------------------------------------------------------------------------
 
 test('matrix: 14 platforms canonical (no drift)', () => {
-  // Mirror install.sh's TARGETS default array. If this drifts, the matrix is
-  // out of sync and Phase 5 docs (PHASE-5-SMOKE-MATRIX.md) need updating.
-  const installSh = readText(INSTALL_SH);
-  const m = installSh.match(/TARGETS=\(claude codex gemini cursor windsurf copilot hermes wayland opencode qwen cline kimi openclaw aider\)/);
-  assert.ok(m, 'install.sh:TARGETS array must list canonical 14 in order');
+  // Mirror installer/src/install-flow.js:CANONICAL_ORDER. If this drifts, the
+  // matrix is out of sync and Phase 5 docs (PHASE-5-SMOKE-MATRIX.md) need
+  // updating.
+  assert.equal(CANONICAL_ORDER.length, 14, 'CANONICAL_ORDER must list 14 platforms');
+  const canonicalSet = new Set(CANONICAL_ORDER);
   for (const p of PLATFORMS) {
-    assert.ok(installSh.includes(`    ${p.id})`), `install.sh case missing for ${p.id}`);
+    assert.ok(canonicalSet.has(p.id), `CANONICAL_ORDER missing platform '${p.id}'`);
+  }
+  // Order parity: PLATFORMS list must mirror CANONICAL_ORDER exactly.
+  for (let i = 0; i < CANONICAL_ORDER.length; i++) {
+    assert.equal(
+      PLATFORMS[i].id,
+      CANONICAL_ORDER[i],
+      `PLATFORMS[${i}] (${PLATFORMS[i].id}) drift from CANONICAL_ORDER[${i}] (${CANONICAL_ORDER[i]})`,
+    );
   }
 });
 
-test('claude: ~/.claude/settings.json registers ijfw-memory + plugin', SKIP_WIN_INSTALL, () => {
+test('claude: ~/.claude/settings.json registers ijfw-memory + plugin', async () => {
   const sb = isolatedSandbox('claude');
   try {
-    const r = runInstall('claude', sb);
-    assert.equal(r.status, 0, `claude install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('claude', sb);
     const settings = HOME_PATHS.claude(sb.home)[0];
     assert.ok(existsSync(settings), `settings.json missing at ${settings}`);
     const doc = readJSON(settings);
@@ -211,30 +218,27 @@ test('claude: ~/.claude/settings.json registers ijfw-memory + plugin', SKIP_WIN_
   } finally { cleanup(sb); }
 });
 
-test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', SKIP_WIN_INSTALL, () => {
+test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', async () => {
   const sb = isolatedSandbox('codex');
   try {
-    const r = runInstall('codex', sb);
-    assert.equal(r.status, 0, `codex install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('codex', sb);
     const cfg = HOME_PATHS.codex(sb.home)[0];
     assert.ok(existsSync(cfg), `config.toml missing at ${cfg}`);
     const text = readText(cfg);
     assert.ok(text.includes('[mcp_servers.ijfw-memory]'), 'mcp block missing');
     assert.ok(text.includes(`args = ["${SERVER_JS}"]`), 'args path mismatch');
     // Idempotency: second run keeps a single block.
-    const r2 = runInstall('codex', sb);
-    assert.equal(r2.status, 0);
+    await installInSandbox('codex', sb);
     const text2 = readText(cfg);
     const occurrences = text2.split('[mcp_servers.ijfw-memory]').length - 1;
     assert.equal(occurrences, 1, `expected 1 mcp block, got ${occurrences}`);
   } finally { cleanup(sb); }
 });
 
-test('gemini: ~/.gemini/settings.json + extension bundle land', SKIP_WIN_INSTALL, () => {
+test('gemini: ~/.gemini/settings.json + extension bundle land', async () => {
   const sb = isolatedSandbox('gemini');
   try {
-    const r = runInstall('gemini', sb);
-    assert.equal(r.status, 0, `gemini install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('gemini', sb);
     const settings = HOME_PATHS.gemini(sb.home)[0];
     assert.ok(existsSync(settings), `gemini settings.json missing`);
     const doc = readJSON(settings);
@@ -246,11 +250,10 @@ test('gemini: ~/.gemini/settings.json + extension bundle land', SKIP_WIN_INSTALL
   } finally { cleanup(sb); }
 });
 
-test('wayland: ~/.wayland/config.yaml + plugin tree land', SKIP_WIN_INSTALL, () => {
+test('wayland: ~/.wayland/config.yaml + plugin tree land', async () => {
   const sb = isolatedSandbox('wayland');
   try {
-    const r = runInstall('wayland', sb);
-    assert.equal(r.status, 0, `wayland install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('wayland', sb);
     const cfg = HOME_PATHS.wayland(sb.home)[0];
     assert.ok(existsSync(cfg), `wayland config.yaml missing`);
     const text = readText(cfg);
@@ -260,11 +263,10 @@ test('wayland: ~/.wayland/config.yaml + plugin tree land', SKIP_WIN_INSTALL, () 
   } finally { cleanup(sb); }
 });
 
-test('hermes: ~/.hermes/config.yaml + plugin opt-in enabled', SKIP_WIN_INSTALL, () => {
+test('hermes: ~/.hermes/config.yaml + plugin opt-in enabled', async () => {
   const sb = isolatedSandbox('hermes');
   try {
-    const r = runInstall('hermes', sb);
-    assert.equal(r.status, 0, `hermes install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('hermes', sb);
     const cfg = HOME_PATHS.hermes(sb.home)[0];
     assert.ok(existsSync(cfg), `hermes config.yaml missing`);
     const text = readText(cfg);
@@ -275,11 +277,10 @@ test('hermes: ~/.hermes/config.yaml + plugin opt-in enabled', SKIP_WIN_INSTALL, 
   } finally { cleanup(sb); }
 });
 
-test('cursor: project ./.cursor/mcp.json + rule land', SKIP_WIN_INSTALL, () => {
+test('cursor: project ./.cursor/mcp.json + rule land', async () => {
   const sb = isolatedSandbox('cursor');
   try {
-    const r = runInstall('cursor', sb);
-    assert.equal(r.status, 0, `cursor install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('cursor', sb);
     const cfg = PROJECT_PATHS.cursor(sb.proj)[0];
     assert.ok(existsSync(cfg), `cursor mcp.json missing at ${cfg}`);
     const doc = readJSON(cfg);
@@ -289,11 +290,10 @@ test('cursor: project ./.cursor/mcp.json + rule land', SKIP_WIN_INSTALL, () => {
   } finally { cleanup(sb); }
 });
 
-test('windsurf: ~/.codeium/windsurf/mcp_config.json + project rules land', SKIP_WIN_INSTALL, () => {
+test('windsurf: ~/.codeium/windsurf/mcp_config.json + project rules land', async () => {
   const sb = isolatedSandbox('windsurf');
   try {
-    const r = runInstall('windsurf', sb);
-    assert.equal(r.status, 0, `windsurf install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('windsurf', sb);
     const cfg = HOME_PATHS.windsurf(sb.home)[0];
     assert.ok(existsSync(cfg), `windsurf mcp_config.json missing`);
     const doc = readJSON(cfg);
@@ -303,11 +303,10 @@ test('windsurf: ~/.codeium/windsurf/mcp_config.json + project rules land', SKIP_
   } finally { cleanup(sb); }
 });
 
-test('copilot: project ./.vscode/mcp.json + .github/copilot-instructions.md land', SKIP_WIN_INSTALL, () => {
+test('copilot: project ./.vscode/mcp.json + .github/copilot-instructions.md land', async () => {
   const sb = isolatedSandbox('copilot');
   try {
-    const r = runInstall('copilot', sb);
-    assert.equal(r.status, 0, `copilot install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('copilot', sb);
     const cfg = PROJECT_PATHS.copilot(sb.proj)[0];
     assert.ok(existsSync(cfg), `copilot mcp.json missing at ${cfg}`);
     const doc = readJSON(cfg);
@@ -317,11 +316,10 @@ test('copilot: project ./.vscode/mcp.json + .github/copilot-instructions.md land
   } finally { cleanup(sb); }
 });
 
-test('opencode: ~/.config/opencode/opencode.json uses mcp.local schema', SKIP_WIN_INSTALL, () => {
+test('opencode: ~/.config/opencode/opencode.json uses mcp.local schema', async () => {
   const sb = isolatedSandbox('opencode');
   try {
-    const r = runInstall('opencode', sb);
-    assert.equal(r.status, 0, `opencode install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('opencode', sb);
     const cfg = HOME_PATHS.opencode(sb.home)[0];
     assert.ok(existsSync(cfg), `opencode.json missing`);
     const doc = readJSON(cfg);
@@ -331,11 +329,10 @@ test('opencode: ~/.config/opencode/opencode.json uses mcp.local schema', SKIP_WI
   } finally { cleanup(sb); }
 });
 
-test('qwen: ~/.qwen/settings.json registers ijfw-memory', SKIP_WIN_INSTALL, () => {
+test('qwen: ~/.qwen/settings.json registers ijfw-memory', async () => {
   const sb = isolatedSandbox('qwen');
   try {
-    const r = runInstall('qwen', sb);
-    assert.equal(r.status, 0, `qwen install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('qwen', sb);
     const cfg = HOME_PATHS.qwen(sb.home)[0];
     assert.ok(existsSync(cfg), `qwen settings.json missing`);
     const doc = readJSON(cfg);
@@ -344,11 +341,10 @@ test('qwen: ~/.qwen/settings.json registers ijfw-memory', SKIP_WIN_INSTALL, () =
   } finally { cleanup(sb); }
 });
 
-test('cline: VS Code globalStorage settings.json registers ijfw-memory', SKIP_WIN_INSTALL, () => {
+test('cline: VS Code globalStorage settings.json registers ijfw-memory', async () => {
   const sb = isolatedSandbox('cline');
   try {
-    const r = runInstall('cline', sb);
-    assert.equal(r.status, 0, `cline install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('cline', sb);
     const cfg = clineLandingPath(sb.home);
     assert.ok(existsSync(cfg), `cline settings.json missing at ${cfg}`);
     const doc = readJSON(cfg);
@@ -359,11 +355,10 @@ test('cline: VS Code globalStorage settings.json registers ijfw-memory', SKIP_WI
   } finally { cleanup(sb); }
 });
 
-test('kimi: ~/.kimi/mcp.json registers ijfw-memory', SKIP_WIN_INSTALL, () => {
+test('kimi: ~/.kimi/mcp.json registers ijfw-memory', async () => {
   const sb = isolatedSandbox('kimi');
   try {
-    const r = runInstall('kimi', sb);
-    assert.equal(r.status, 0, `kimi install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('kimi', sb);
     const cfg = HOME_PATHS.kimi(sb.home)[0];
     assert.ok(existsSync(cfg), `kimi mcp.json missing`);
     const doc = readJSON(cfg);
@@ -371,11 +366,10 @@ test('kimi: ~/.kimi/mcp.json registers ijfw-memory', SKIP_WIN_INSTALL, () => {
   } finally { cleanup(sb); }
 });
 
-test('openclaw: ~/.openclaw/openclaw.json uses mcp.servers schema', SKIP_WIN_INSTALL, () => {
+test('openclaw: ~/.openclaw/openclaw.json uses mcp.servers schema', async () => {
   const sb = isolatedSandbox('openclaw');
   try {
-    const r = runInstall('openclaw', sb);
-    assert.equal(r.status, 0, `openclaw install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('openclaw', sb);
     const cfg = HOME_PATHS.openclaw(sb.home)[0];
     assert.ok(existsSync(cfg), `openclaw.json missing`);
     const doc = readJSON(cfg);
@@ -385,14 +379,13 @@ test('openclaw: ~/.openclaw/openclaw.json uses mcp.servers schema', SKIP_WIN_INS
   } finally { cleanup(sb); }
 });
 
-test('aider: rules-only tier lands ~/.aider.conf.yml + ~/CONVENTIONS.md', SKIP_WIN_INSTALL, () => {
+test('aider: rules-only tier lands ~/.aider.conf.yml + ~/CONVENTIONS.md', async () => {
   // Aider has no native MCP client. Tier-3: ship rules + conventions docs
   // through Aider's documented config files. Universal paste-block (universal/
   // ijfw-rules.md) covers all rules-only platforms by reference.
   const sb = isolatedSandbox('aider');
   try {
-    const r = runInstall('aider', sb);
-    assert.equal(r.status, 0, `aider install non-zero: ${r.stderr || r.stdout}`);
+    await installInSandbox('aider', sb);
     const [conf, conv] = HOME_PATHS.aider(sb.home);
     assert.ok(existsSync(conf), `~/.aider.conf.yml missing at ${conf}`);
     assert.ok(existsSync(conv), `~/CONVENTIONS.md missing at ${conv}`);

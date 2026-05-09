@@ -50,8 +50,8 @@ function Invoke-Preflight {
   if (-not $node -or ([int]($node -replace 'v(\d+)\..*','$1') -lt 18)) {
     $issues += "Node 18+ unlocks IJFW (found $node). Grab it from https://nodejs.org and we'll pick up where you left off."
   }
-  if (-not (Test-Command git))  { $issues += "Install Git for Windows (https://git-scm.com) and rerun -- it bundles everything we need." }
-  if (-not (Resolve-GitBash)) { $issues += "IJFW needs Git Bash (ships with Git for Windows). Install Git for Windows and rerun -- takes 60 seconds." }
+  if (-not (Test-Command git))  { $issues += "IJFW needs git (used to clone the source repo). Install: winget install --id Git.Git -e --source winget" }
+  # Bash is no longer required (v1.3.0 -- installer is Node-native).
   return $issues
 }
 
@@ -136,25 +136,18 @@ function Invoke-CloneOrPull($target, $branch) {
 }
 
 function Invoke-InstallScript($target) {
-  $script = Join-Path $target "scripts\install.sh"
-  if (-not (Test-Path $script)) { throw "The installer script is not at $script yet. Run the full install from a fresh clone." }
-  $gitBash = Resolve-GitBash
-  if (-not $gitBash) { throw "IJFW needs Git Bash to complete setup. Install Git for Windows (includes bash.exe) and rerun." }
-  # Propagate IJFW_HOME into the bash sub-call so a custom -Dir target lands
-  # platform configs / sentinels under the user's chosen tree instead of the
-  # default ~/.ijfw. Without this, .\install.ps1 -Dir D:\custom would scribble
-  # MCP entries into the user's real ~/.codex / ~/.gemini / ~/.claude pointing
-  # at the scratch dir.
+  # v1.3.0: hand off to the Node-native installer (installer/src/install.js).
+  # No more bash dependency. Identical code path on every platform.
+  $entry = Join-Path $target "installer\src\install.js"
+  if (-not (Test-Path $entry)) { throw "The installer entry is not at $entry. Run the full install from a fresh clone." }
   $priorIjfwHome = $env:IJFW_HOME
   $env:IJFW_HOME = $target
   Push-Location $target
   try {
     $env:IJFW_NONINTERACTIVE = if ($env:CI -or $Yes) { "1" } else { "" }
-    # Let the PS wrapper own the final closer so Merge-Marketplace output
-    # lands above it. Bash skips its "Full log" line when this is set.
     $env:IJFW_SKIP_CLOSER = "1"
-    & $gitBash "./scripts/install.sh"
-    if ($LASTEXITCODE -ne 0) { throw "scripts/install.sh exited $LASTEXITCODE." }
+    & node $entry
+    if ($LASTEXITCODE -ne 0) { throw "Node installer exited $LASTEXITCODE." }
   } finally {
     Pop-Location
     Remove-Item Env:\IJFW_SKIP_CLOSER -ErrorAction SilentlyContinue

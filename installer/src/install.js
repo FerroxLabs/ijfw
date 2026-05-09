@@ -76,22 +76,9 @@ function preflight() {
       issues.push('IJFW needs git on PATH -- install git (https://git-scm.com), then retry.');
     }
   }
-  // Resolve bash (Git for Windows ships bash.exe but often does not add it to
-  // PATH, so hasBin('bash') returns false on a perfectly-functional install).
-  // findBash() walks git.exe's siblings to find it -- matches install.ps1's
-  // Resolve-GitBash logic so both entry points agree on what "installed" means.
-  if (!findBash()) {
-    if (platform() === 'win32') {
-      issues.push(
-        'IJFW could not locate bash.exe. Git for Windows installs it at\n' +
-        '    C:\\Program Files\\Git\\bin\\bash.exe\n' +
-        '  If you installed Git elsewhere, add its bin\\ to PATH and rerun.\n' +
-        '  Missing Git entirely? winget install --id Git.Git -e --source winget'
-      );
-    } else {
-      issues.push('IJFW needs bash on PATH -- install bash, then retry.');
-    }
-  }
+  // bash is no longer required -- the installer is now Node-native.
+  // findBash() is kept exported for compatibility with any external caller
+  // but the preflight no longer gates on it.
   return issues;
 }
 
@@ -222,26 +209,20 @@ function cloneOrPull(dir, branch) {
   }
 }
 
-function runInstallScript(dir) {
-  const script = join(dir, 'scripts', 'install.sh');
-  if (!existsSync(script)) throw new Error(`IJFW install script not found at ${script} -- re-run the installer to restore it.`);
-  // Tell install.sh whether this is a custom-dir install so it skips the
-  // user-home mutations (sibling links, ~/.local/bin wiring, ~/.claude
-  // cache invalidation, real plugin .mcp.json patching).
+async function runInstallScript(dir) {
+  // Node-native installer (replaces bash scripts/install.sh dependency).
+  // Eliminates the Git-for-Windows requirement on Windows -- install.js
+  // now runs identically on every platform with just Node 18+.
   const canonicalDir = join(homedir(), '.ijfw');
-  const isCustomDir = resolve(dir) !== canonicalDir ? '1' : '0';
-  const env = {
-    ...process.env,
-    IJFW_NONINTERACTIVE: process.env.CI ? '1' : (process.env.IJFW_NONINTERACTIVE ?? ''),
-    IJFW_HOME: dir,
-    IJFW_CUSTOM_DIR: isCustomDir,
-  };
-  const bashExe = findBash();
-  if (!bashExe) {
-    throw new Error('IJFW could not locate bash (preflight should have caught this -- file an issue).');
-  }
-  const r = spawnSync(bashExe, ['scripts/install.sh'], { cwd: dir, stdio: 'inherit', env });
-  if (r.status !== 0) throw new Error(`IJFW platform config step did not complete (exit ${r.status}) -- run ijfw doctor to see what to fix.`);
+  const isCustomDir = resolve(dir) !== canonicalDir;
+  const { runInstall } = await import('./install-flow.js');
+  await runInstall({
+    targets: undefined,            // undefined = canonical 14
+    ijfwHome: dir,
+    ijfwCustomDir: isCustomDir,
+    repoRoot: dir,
+    noninteractive: !!process.env.CI || process.env.IJFW_NONINTERACTIVE === '1',
+  });
 }
 
 async function main() {
@@ -270,7 +251,7 @@ async function main() {
   const action = cloneOrPull(target, ref);
   console.log(`  repo ${action}`);
 
-  runInstallScript(target);
+  await runInstallScript(target);
   console.log('  platform configs applied');
 
   if (!opts.noMarketplace) {
