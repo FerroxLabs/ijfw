@@ -367,7 +367,7 @@ async function runTest() {
 
   function spawnXProj(projectDir) {
     return spawn('node', [SERVER_PATH], {
-      env: { ...process.env, HOME: FAKE_HOME, IJFW_PROJECT_DIR: projectDir },
+      env: { ...process.env, HOME: FAKE_HOME, USERPROFILE: FAKE_HOME, IJFW_PROJECT_DIR: projectDir },
       stdio: ['pipe', 'pipe', 'pipe']
     });
   }
@@ -462,7 +462,7 @@ async function runTest() {
 
   function spawnTeam(projectDir) {
     return spawn('node', [SERVER_PATH], {
-      env: { ...process.env, HOME: TEAM_HOME, IJFW_PROJECT_DIR: projectDir },
+      env: { ...process.env, HOME: TEAM_HOME, USERPROFILE: TEAM_HOME, IJFW_PROJECT_DIR: projectDir },
       stdio: ['pipe', 'pipe', 'pipe']
     });
   }
@@ -541,7 +541,7 @@ async function runTest() {
 
   function spawnMetrics(projectDir) {
     return spawn('node', [SERVER_PATH], {
-      env: { ...process.env, HOME: M_HOME, IJFW_PROJECT_DIR: projectDir },
+      env: { ...process.env, HOME: M_HOME, USERPROFILE: M_HOME, IJFW_PROJECT_DIR: projectDir },
       stdio: ['pipe', 'pipe', 'pipe']
     });
   }
@@ -651,7 +651,7 @@ async function runTest() {
   const PC_HOME = join(tmpdir(), `ijfw-pc-${process.pid}`);
   mkdirSync(PC_HOME, { recursive: true });
   const pcSrv = spawn('node', [SERVER_PATH], {
-    env: { ...process.env, HOME: PC_HOME, IJFW_PROJECT_DIR: PC_HOME },
+    env: { ...process.env, HOME: PC_HOME, USERPROFILE: PC_HOME, IJFW_PROJECT_DIR: PC_HOME },
     stdio: ['pipe', 'pipe', 'pipe']
   });
   try {
@@ -683,7 +683,7 @@ async function runTest() {
 
   function spawnDesign(projectDir, cwd) {
     return spawn('node', [SERVER_PATH], {
-      env: { ...process.env, HOME: D_HOME, IJFW_PROJECT_DIR: projectDir },
+      env: { ...process.env, HOME: D_HOME, USERPROFILE: D_HOME, IJFW_PROJECT_DIR: projectDir },
       cwd: cwd || projectDir,
       stdio: ['pipe', 'pipe', 'pipe']
     });
