@@ -71,7 +71,7 @@ export function acquireGraphWriteLock(projectRoot, opts = {}) {
   const lp = lockPath(projectRoot);
 
   const deadline = Date.now() + waitMs;
-  let lastErr;
+  let _lastErr;
   while (true) {
     reclaimIfStale(lp);
     const payload = String(process.pid) + '\n' + String(Date.now()) + '\n';

@@ -1,0 +1,37 @@
+# IJFW gitleaks config -- allowlist test fixtures from upstream research
+# datasets that contain synthetic key-shaped strings as part of the corpus.
+# Real secrets are still scanned in source code.
+#
+# Schema: https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+
+# Inherit the default rule set.
+[extend]
+useDefault = true
+
+# File-level allowlists. Anything matching these paths is skipped entirely.
+# Keep this list small and well-justified -- each path is a deliberate
+# carve-out, not a blanket suppression.
+[[allowlists]]
+description = "LongMemEval-S benchmark dataset (ICLR 2025). 500-question corpus contains synthetic API-key-shaped strings inside questions; the corpus is upstream research data, not project secrets."
+paths = [
+  '''mcp-server/test/fixtures/longmemeval-s/.*''',
+]
+
+[[allowlists]]
+description = "IJFW redactor test fixtures. Files contain obviously-synthetic key shapes used to verify the redactor scrubs them before storage."
+paths = [
+  '''mcp-server/test-redactor\.js''',
+  '''mcp-server/test-ingest-redaction\.js''',
+]
+
+[[allowlists]]
+description = "Cross-audit stderr captures. Auditors redact at capture time; this is defense-in-depth for the archive directory."
+paths = [
+  '''\.ijfw/cross-audit/.*''',
+]
+
+[[allowlists]]
+description = "Audit briefs occasionally quote a redactor input verbatim to demonstrate scrub behavior."
+paths = [
+  '''\.planning/audit-briefs/.*''',
+]

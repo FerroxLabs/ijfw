@@ -43,10 +43,9 @@ import {
   realpathSync,
   copyFileSync,
 } from 'fs';
-import { join, basename, extname, sep, isAbsolute, resolve as pathResolve, dirname } from 'path';
+import { join, extname, isAbsolute, resolve as pathResolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
-import { spawnSync } from 'child_process';
 import {
   loadScanState,
   writeScanState,

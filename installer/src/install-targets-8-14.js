@@ -25,9 +25,7 @@ import {
   openclawMerge,
   clineMerge,
   printOk,
-  printNote,
   printInfo,
-  printWarn,
 } from './install-helpers.js';
 
 // ---------------------------------------------------------------------------

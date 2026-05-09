@@ -14,13 +14,10 @@ import {
   mkdirSync,
   realpathSync,
   statSync,
-  readdirSync,
-  unlinkSync,
 } from 'node:fs';
-import { dirname, basename, join, normalize, sep, delimiter } from 'node:path';
+import { dirname, basename, join, normalize, delimiter } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -418,7 +415,7 @@ function stripTomlSection(text, sectionName) {
   const headerRe = new RegExp(`^\\[${safe}\\][\\s]*$`);
   for (const line of lines) {
     if (headerRe.test(line)) { skip = true; continue; }
-    if (skip && /^\[/.test(line) && !headerRe.test(line)) skip = false;
+    if (skip && line.startsWith('[') && !headerRe.test(line)) skip = false;
     if (skip) continue;
     out.push(line);
   }

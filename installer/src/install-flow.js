@@ -24,7 +24,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 
 import {
   homeReal,
@@ -226,7 +225,7 @@ function linkPlugin({ repoRoot, ijfwHome, ts }) {
 
 // Step 4 -- State seed: state.json + settings.json + install-method.
 // Bash: install.sh:279-345
-function seedState({ ijfwHome, repoRoot, nodeBin }) {
+function seedState({ ijfwHome, repoRoot, nodeBin: _nodeBin }) {
   const cacheDir = path.join(ijfwHome, 'cache');
   const runDir = path.join(ijfwHome, 'run');
   const logsDir = path.join(ijfwHome, 'logs');

@@ -14,11 +14,14 @@
  * Zero external deps.
  */
 
+// Probe for PowerShell once and cache. Reserved for future use when the
+// AppContainer wrap is reintroduced; kept exported so the function tree stays
+// reviewable.
 import { existsSync } from 'fs';
 
-// Probe for PowerShell once and cache.
 let _psPath = null;
 let _psProbed = false;
+// eslint-disable-next-line no-unused-vars
 function findPowerShell() {
   if (_psProbed) return _psPath;
   _psProbed = true;

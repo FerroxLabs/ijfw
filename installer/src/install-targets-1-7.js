@@ -31,9 +31,8 @@ import {
   copyFileSync,
   cpSync,
   chmodSync,
-  renameSync,
 } from 'node:fs';
-import { join, basename, dirname, isAbsolute } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { platform } from 'node:os';
 
 import {

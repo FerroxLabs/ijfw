@@ -1,7 +1,31 @@
-# Fingerprints for known false-positive findings in cross-audit stderr captures.
-# These files contain synthetic/redacted webhook URLs used as test fixtures in
-# the cross-audit pipeline -- not real secrets.
-/Users/seandonahoe/dev/ijfw/.ijfw/cross-audit/codex.err:slack-webhook-url:864
-/Users/seandonahoe/dev/ijfw/.ijfw/cross-audit/archive/2026-04-14T2030-r2-codex-gemini/codex.stderr:slack-webhook-url:1000
-/Users/seandonahoe/dev/ijfw/.ijfw/cross-audit/archive/2026-04-14T2030-r2-codex-gemini/codex.stderr:slack-webhook-url:2503
+# Gitleaks ignore -- relative paths match the preflight gate's `--no-git` mode.
+#
+# All entries are synthetic / redacted / archived test fixtures, not real
+# secrets. The preflight gate (installer/src/preflight/gates/gitleaks.js)
+# scans the working tree with `--no-git`, so fingerprints are
+# `<path>:<rule-id>:<line>`.
+
+# Cross-audit stderr captures contain redacted webhook URLs from the
+# auditor pipeline. Already redacted at capture time; surfaced here as
+# defense-in-depth on the ignore list.
+.ijfw/cross-audit/codex.err:slack-webhook-url:864
+.ijfw/cross-audit/archive/2026-04-14T2030-r2-codex-gemini/codex.stderr:slack-webhook-url:1000
+.ijfw/cross-audit/archive/2026-04-14T2030-r2-codex-gemini/codex.stderr:slack-webhook-url:2503
+
+# Audit briefs occasionally quote a redactor input verbatim to demonstrate
+# scrub behavior. Synthetic, not a real key.
+.planning/audit-briefs/GA-CA4-claude-swarm-fresh.md:stripe-access-token:76
+
+# Synthetic test fixtures in the ingest-time redaction test
+# (mcp-server/test-ingest-redaction.js). The strings match Stripe/OpenAI key
+# shapes because the test verifies the redactor scrubs them before INSERT;
+# the bodies are obviously fake (TESTABC123... padding).
+mcp-server/test-ingest-redaction.js:stripe-access-token:52
+
+# LongMemEval-S benchmark dataset (ICLR 2025) ships with synthetic
+# generic-API-key shapes inside its question corpus. Treated as upstream
+# test data, not a project secret.
+mcp-server/test/fixtures/longmemeval-s/longmemeval_s_cleaned.json:generic-api-key:101515
+
+# Historic gitleaks finding from a prior commit, kept for back-compat.
 3ef884ee206b1fd92651b6fdfae2fd2206778448:mcp-server/test-redactor.js:slack-webhook-url:145

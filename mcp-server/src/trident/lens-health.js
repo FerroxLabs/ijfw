@@ -51,8 +51,8 @@ function runProbe(bin, args, timeoutMs) {
     const timer = setTimeout(() => {
       if (proc) {
         try { proc.kill('SIGKILL'); } catch { /* ignore */ }
-        try { proc.stdout && proc.stdout.destroy(); } catch { /* ignore */ }
-        try { proc.stderr && proc.stderr.destroy(); } catch { /* ignore */ }
+        try { if (proc.stdout) proc.stdout.destroy(); } catch { /* ignore */ }
+        try { if (proc.stderr) proc.stderr.destroy(); } catch { /* ignore */ }
       }
       settle({ live: false, latency_ms: Date.now() - t0, error: 'timeout' });
     }, timeoutMs);

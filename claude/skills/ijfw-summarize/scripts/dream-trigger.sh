@@ -108,7 +108,8 @@ trap 'rmdir "$TRIGGER_LOCK" 2>/dev/null || true' EXIT INT TERM
 mkdir -p "$IJFW_DIR/logs" 2>/dev/null
 ARGS="--project-root $PROJECT_ROOT --host $HOST --reason session_end"
 [ -n "$SESSION_ID" ] && ARGS="$ARGS --session-id $SESSION_ID"
-# shellcheck disable=SC2086 -- intentional word splitting on ARGS
+# Intentional word splitting on ARGS to expand the flag list.
+# shellcheck disable=SC2086
 "$NODE_BIN" "$RUNNER" $ARGS \
   </dev/null >>"$IJFW_DIR/logs/dream-trigger.log" 2>&1 &
 disown $! 2>/dev/null || true

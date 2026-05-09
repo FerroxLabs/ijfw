@@ -31,7 +31,7 @@ import {
 } from '../compute/index.js';
 import { runCompute } from '../compute/runner.js';
 import { expandQuery } from '../compute/synonyms.js';
-import { detect, writeProjectType, loadProjectType } from '../project-type-detector.js';
+import { detect, writeProjectType } from '../project-type-detector.js';
 import { extractEntities } from '../compute/extract.js';
 import { writeEdges } from '../compute/edges.js';
 import { bfsTraverse, bfsRelated, resolveNode } from '../compute/traverse.js';

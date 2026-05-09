@@ -82,7 +82,7 @@ ${lits}
 )`;
 }
 
-function buildProfile({ projectRoot, cwd, tempDir, allowedPaths, allowNet, home }) {
+function buildProfile({ projectRoot: _projectRoot, cwd, tempDir, allowedPaths, allowNet, home }) {
   const writes = new Set([cwd, tempDir, ...(allowedPaths || [])]);
   const writeClauses = Array.from(writes)
     .filter(Boolean)
