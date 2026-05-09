@@ -166,8 +166,18 @@ function runInstall(target, sandbox, extraEnv = {}) {
 
 // Cleanup helper -- best-effort.
 function cleanup(sandbox) {
-  try { rmSync(sandbox.root, { recursive: true, force: true }); } catch { /* best-effort */ }
+  try { rmSync(sandbox.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* best-effort */ }
 }
+
+// install.sh is the POSIX source install path; the canonical Windows path
+// is installer/src/install.ps1 (PowerShell). Skip the per-platform install
+// matrix on Windows -- the bash script paths assume POSIX shell semantics
+// (HOME canonicalisation, $(uname), shell-builtin sed/grep). Per-target
+// config-write logic is exercised by the Linux + macOS legs; Windows
+// install correctness is the install.ps1 layer's responsibility.
+const SKIP_WIN_INSTALL = process.platform === 'win32'
+  ? { skip: 'POSIX install.sh path; Windows uses install.ps1' }
+  : {};
 
 // -------------------------------------------------------------------------
 // Per-platform assertions. Each test runs install.sh with one target, asserts
@@ -186,7 +196,7 @@ test('matrix: 14 platforms canonical (no drift)', () => {
   }
 });
 
-test('claude: ~/.claude/settings.json registers ijfw-memory + plugin', () => {
+test('claude: ~/.claude/settings.json registers ijfw-memory + plugin', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('claude');
   try {
     const r = runInstall('claude', sb);
@@ -201,7 +211,7 @@ test('claude: ~/.claude/settings.json registers ijfw-memory + plugin', () => {
   } finally { cleanup(sb); }
 });
 
-test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', () => {
+test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('codex');
   try {
     const r = runInstall('codex', sb);
@@ -220,7 +230,7 @@ test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', () => {
   } finally { cleanup(sb); }
 });
 
-test('gemini: ~/.gemini/settings.json + extension bundle land', () => {
+test('gemini: ~/.gemini/settings.json + extension bundle land', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('gemini');
   try {
     const r = runInstall('gemini', sb);
@@ -236,7 +246,7 @@ test('gemini: ~/.gemini/settings.json + extension bundle land', () => {
   } finally { cleanup(sb); }
 });
 
-test('wayland: ~/.wayland/config.yaml + plugin tree land', () => {
+test('wayland: ~/.wayland/config.yaml + plugin tree land', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('wayland');
   try {
     const r = runInstall('wayland', sb);
@@ -250,7 +260,7 @@ test('wayland: ~/.wayland/config.yaml + plugin tree land', () => {
   } finally { cleanup(sb); }
 });
 
-test('hermes: ~/.hermes/config.yaml + plugin opt-in enabled', () => {
+test('hermes: ~/.hermes/config.yaml + plugin opt-in enabled', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('hermes');
   try {
     const r = runInstall('hermes', sb);
@@ -265,7 +275,7 @@ test('hermes: ~/.hermes/config.yaml + plugin opt-in enabled', () => {
   } finally { cleanup(sb); }
 });
 
-test('cursor: project ./.cursor/mcp.json + rule land', () => {
+test('cursor: project ./.cursor/mcp.json + rule land', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('cursor');
   try {
     const r = runInstall('cursor', sb);
@@ -279,7 +289,7 @@ test('cursor: project ./.cursor/mcp.json + rule land', () => {
   } finally { cleanup(sb); }
 });
 
-test('windsurf: ~/.codeium/windsurf/mcp_config.json + project rules land', () => {
+test('windsurf: ~/.codeium/windsurf/mcp_config.json + project rules land', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('windsurf');
   try {
     const r = runInstall('windsurf', sb);
@@ -293,7 +303,7 @@ test('windsurf: ~/.codeium/windsurf/mcp_config.json + project rules land', () =>
   } finally { cleanup(sb); }
 });
 
-test('copilot: project ./.vscode/mcp.json + .github/copilot-instructions.md land', () => {
+test('copilot: project ./.vscode/mcp.json + .github/copilot-instructions.md land', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('copilot');
   try {
     const r = runInstall('copilot', sb);
@@ -307,7 +317,7 @@ test('copilot: project ./.vscode/mcp.json + .github/copilot-instructions.md land
   } finally { cleanup(sb); }
 });
 
-test('opencode: ~/.config/opencode/opencode.json uses mcp.local schema', () => {
+test('opencode: ~/.config/opencode/opencode.json uses mcp.local schema', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('opencode');
   try {
     const r = runInstall('opencode', sb);
@@ -321,7 +331,7 @@ test('opencode: ~/.config/opencode/opencode.json uses mcp.local schema', () => {
   } finally { cleanup(sb); }
 });
 
-test('qwen: ~/.qwen/settings.json registers ijfw-memory', () => {
+test('qwen: ~/.qwen/settings.json registers ijfw-memory', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('qwen');
   try {
     const r = runInstall('qwen', sb);
@@ -334,7 +344,7 @@ test('qwen: ~/.qwen/settings.json registers ijfw-memory', () => {
   } finally { cleanup(sb); }
 });
 
-test('cline: VS Code globalStorage settings.json registers ijfw-memory', () => {
+test('cline: VS Code globalStorage settings.json registers ijfw-memory', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('cline');
   try {
     const r = runInstall('cline', sb);
@@ -349,7 +359,7 @@ test('cline: VS Code globalStorage settings.json registers ijfw-memory', () => {
   } finally { cleanup(sb); }
 });
 
-test('kimi: ~/.kimi/mcp.json registers ijfw-memory', () => {
+test('kimi: ~/.kimi/mcp.json registers ijfw-memory', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('kimi');
   try {
     const r = runInstall('kimi', sb);
@@ -361,7 +371,7 @@ test('kimi: ~/.kimi/mcp.json registers ijfw-memory', () => {
   } finally { cleanup(sb); }
 });
 
-test('openclaw: ~/.openclaw/openclaw.json uses mcp.servers schema', () => {
+test('openclaw: ~/.openclaw/openclaw.json uses mcp.servers schema', SKIP_WIN_INSTALL, () => {
   const sb = isolatedSandbox('openclaw');
   try {
     const r = runInstall('openclaw', sb);
@@ -375,7 +385,7 @@ test('openclaw: ~/.openclaw/openclaw.json uses mcp.servers schema', () => {
   } finally { cleanup(sb); }
 });
 
-test('aider: rules-only tier lands ~/.aider.conf.yml + ~/CONVENTIONS.md', () => {
+test('aider: rules-only tier lands ~/.aider.conf.yml + ~/CONVENTIONS.md', SKIP_WIN_INSTALL, () => {
   // Aider has no native MCP client. Tier-3: ship rules + conventions docs
   // through Aider's documented config files. Universal paste-block (universal/
   // ijfw-rules.md) covers all rules-only platforms by reference.

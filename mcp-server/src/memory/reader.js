@@ -86,8 +86,10 @@ function buildEntry(full, rel, tier) {
 
 /** Map a project dir path to its Claude project slug. */
 function pathToSlug(projectPath) {
-  // Claude uses the absolute path with / replaced by -
-  return projectPath.replace(/\//g, '-');
+  // Claude uses the absolute path with / replaced by -. On Windows the path
+  // is C:\\Users\\... -- strip the drive letter and replace both separator
+  // styles so the slug is a flat dir name that round-trips with mkdirSync.
+  return projectPath.replace(/^[A-Z]:/i, '').replace(/[\\/]/g, '-');
 }
 
 /** Find the Claude project slug for a repo root by matching path-based slug. */

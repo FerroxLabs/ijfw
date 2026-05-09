@@ -113,8 +113,8 @@ test('installer triggerColdScan fires runner; project.type lands <1s', async () 
   assert.equal(out.spawned, true, `installer spawn must succeed: ${out.reason || ''}`);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true, 'project.type must land within ~1s');
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- 2. claude shell hook path ------------------------------------------
@@ -130,8 +130,8 @@ test('claude session-start hook fires cold-scan trigger', () => {
   assert.equal(res.status, 0, `trigger must exit 0; stderr=${res.stderr}`);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true, 'project.type must land via shared trigger');
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- 3. codex shell hook path -------------------------------------------
@@ -147,8 +147,8 @@ test('codex session-start hook resolves + spawns cold-scan trigger', () => {
   assert.equal(res.status, 0);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- 4. gemini shell hook path ------------------------------------------
@@ -163,8 +163,8 @@ test('gemini session-start hook resolves + spawns cold-scan trigger', () => {
   assert.equal(res.status, 0);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- 5. wayland Python handler path -------------------------------------
@@ -177,7 +177,7 @@ test('wayland _handlers.py wires cold_scan_trigger', () => {
   // Drive the Python trigger directly.
   const root = tmpProj('wayland');
   const home = sandboxHome('wayland');
-  const py = spawnSync('python3', ['-c', `
+  const py = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', `
 import sys, pathlib
 sys.path.insert(0, ${JSON.stringify(dirname(TRIGGER_PY))})
 from cold_scan_trigger import trigger_cold_scan
@@ -188,8 +188,8 @@ print(out.get('spawned'))
   assert.match(py.stdout, /True/, 'wayland python trigger must return spawned=True');
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- 6. hermes Python handler path --------------------------------------
@@ -202,7 +202,7 @@ test('hermes _handlers.py wires cold_scan_trigger', () => {
   // Drive the Python trigger directly.
   const root = tmpProj('hermes');
   const home = sandboxHome('hermes');
-  const py = spawnSync('python3', ['-c', `
+  const py = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', `
 import sys, pathlib
 sys.path.insert(0, ${JSON.stringify(dirname(TRIGGER_PY))})
 from cold_scan_trigger import trigger_cold_scan
@@ -213,8 +213,8 @@ print(out.get('spawned'))
   assert.match(py.stdout, /True/, 'hermes python trigger must return spawned=True');
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- 7-8. idempotent re-fire when project.type already exists ----------
@@ -234,8 +234,8 @@ test('trigger does NOT re-fire when project.type already exists', () => {
   while (Date.now() < settleEnd) { /* spin */ }
   const after = statSync(finalPath).mtimeMs;
   assert.equal(after, before, 'project.type mtime must not change -- trigger must skip');
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- 9. idempotent re-fire when scan-state.json present ----------------
@@ -256,6 +256,6 @@ test('trigger does NOT re-fire when scan-state.json present', () => {
   // No project.type should have appeared because the scan-state in-flight
   // signal forces the trigger to skip.
   assert.equal(existsSync(finalPath), false, 'trigger must skip while scan-state present');
-  rmSync(root, { recursive: true, force: true });
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
