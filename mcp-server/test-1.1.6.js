@@ -478,9 +478,10 @@ test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)'
 
   // Empty fakeBinDir -- npm is absent, spawnSync returns ENOENT
   const emptyBin = mkdtempSync(join(tmpdir(), 'ijfw-nobin-'));
-  spawnConfirm(tok.token, d, emptyBin);
+  const r = spawnConfirm(tok.token, d, emptyBin);
 
-  assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after spawn-error path');
+  assert.equal(readPendingSentinel(sid).ok, false,
+    `sentinel must be gone after spawn-error path. status=${r.status} signal=${r.signal} stdout=${(r.stdout || '').slice(0, 400)} stderr=${(r.stderr || '').slice(0, 400)}`);
   rmSync(emptyBin, { recursive: true, force: true });
   cleanup(d);
 });
@@ -494,9 +495,10 @@ test('cmdUpdateConfirm cleans sentinel on install non-zero exit', () => {
 
   const fakeBin = mkdtempSync(join(tmpdir(), 'ijfw-fakebin-'));
   makeFakeNpm(fakeBin, 'exit-7');
-  spawnConfirm(tok.token, d, fakeBin);
+  const r = spawnConfirm(tok.token, d, fakeBin);
 
-  assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after non-zero exit path');
+  assert.equal(readPendingSentinel(sid).ok, false,
+    `sentinel must be gone after non-zero exit path. status=${r.status} signal=${r.signal} stdout=${(r.stdout || '').slice(0, 400)} stderr=${(r.stderr || '').slice(0, 400)}`);
   rmSync(fakeBin, { recursive: true, force: true });
   cleanup(d);
 });
@@ -513,9 +515,10 @@ test('cmdUpdateConfirm cleans sentinel on install signal-kill', () => {
   // Windows: exit 143 (the conventional "killed by SIGTERM" exit code; the
   // cleanup path is identical for any non-zero exit).
   makeFakeNpm(fakeBin, 'signal-kill');
-  spawnConfirm(tok.token, d, fakeBin);
+  const r = spawnConfirm(tok.token, d, fakeBin);
 
-  assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after signal-kill path');
+  assert.equal(readPendingSentinel(sid).ok, false,
+    `sentinel must be gone after signal-kill path. status=${r.status} signal=${r.signal} stdout=${(r.stdout || '').slice(0, 400)} stderr=${(r.stderr || '').slice(0, 400)}`);
   rmSync(fakeBin, { recursive: true, force: true });
   cleanup(d);
 });
