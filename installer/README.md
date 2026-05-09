@@ -39,8 +39,10 @@ Memory is preserved across re-runs by default.
 
 ## Preflight
 
-Requires `node >=18`, `git`, `bash`. On native Windows use the PowerShell
-installer (PS 5.1+), which shells Git Bash under the hood -- no WSL required:
+Requires `node >=18` and `git` (used for the initial repo clone). The
+installer is Node-native end to end -- no bash, no WSL, no Git for Windows
+shell. On native Windows use the PowerShell installer (PS 5.1+), which
+delegates to Node directly:
 
 ```powershell
 iwr https://gitlab.com/therealseandonahoe/ijfw/-/raw/main/installer/src/install.ps1 -OutFile install.ps1

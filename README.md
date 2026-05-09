@@ -49,7 +49,7 @@ iwr https://gitlab.com/therealseandonahoe/ijfw/-/raw/main/installer/src/install.
 .\install.ps1
 ```
 
-**Preflight (all platforms):** Node 18 or newer, Git, and a bash shell (Git for Windows ships one). Windows users do not need WSL. If execution policy blocks the script, run PowerShell as `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
+**Preflight (all platforms):** Node 18 or newer, plus Git for the initial repo clone. The installer is Node-native end to end -- no bash, no WSL, no Git for Windows shell required. If execution policy blocks the PowerShell script, run as `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 
 What you see:
 

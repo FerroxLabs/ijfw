@@ -6,6 +6,28 @@
 
 **Memory Engine 2.0 lands as Pillar D, joining Universal Foundations + Multi-CLI Orchestration + Frontier Trident as the four-pillar architecture release.** Connected memory (engine #4) gains semantic-tier consolidation, a regex symbol graph with BFS traversal, cascading staleness across compute and memory stores, and inline-at-SessionEnd dream consolidation. Tool surface stays at 10 MCP tools; zero new production dependencies; one combined commit per the bundled-release rule.
 
+**Windows installs no longer require Git for Windows.** The installer is now Node-native end to end -- `npx @ijfw/install` runs identically on macOS, Linux, and Windows with just Node 18+. The 14-platform install matrix runs on every OS in CI with zero skips, zero failures.
+
+### Windows portability + Node-native installer (NEW)
+
+- **Bash to Node port.** `scripts/install.sh` (1938 lines) replaced by `installer/src/install-helpers.js`, `install-targets-1-7.js`, `install-targets-8-14.js`, and `install-flow.js` (~2477 lines of pure Node, zero external deps). 14 platform-specific config writers, the 12-step orchestrator (preflight, plugin link, state seed, statusline detection, .mcp.json absolute-path patch, MCP sibling link, target loop, summary), and 21 cross-platform utilities (mergeJson, mergeToml, mergeYamlMcp, opencodeMerge, openclawMerge, clineMerge, atomic writes, hook installer, platform detection). `scripts/install.sh` slimmed to a 28-line Node delegator so muscle-memory `bash scripts/install.sh` keeps working from a fresh POSIX clone. `installer/src/install.ps1` no longer requires Git Bash -- delegates straight to `node installer/src/install.js`.
+- **Cross-platform smoke matrix runs on every OS.** `mcp-server/test-cross-platform-smoke.js` drives `runInstall()` in-process against an isolated sandbox HOME, asserts the per-platform config landing site (JSON shape, TOML keys, YAML structure), verifies idempotency under re-run. 16/16 tests pass on macOS, Linux, and Windows -- the previous skip gate (`SKIP_WIN_INSTALL`) is gone.
+- **First zero-skip Windows test matrix in project history.** Full mcp-server suite: 800/800 pass / 0 fail / 0 skipped on Windows. The earlier 18 documented Windows skips are all closed: cross-platform `path.delimiter` for PATH joins, cross-platform fake-npm shim helper (`.cmd` on Windows / `.sh` on POSIX), exit-code-based signal-kill simulation, `--experimental-sqlite` flag for Node 22 in CI, `fileURLToPath()` correct pattern for the test's own CLI path, POSIX permission asserts platform-conditional, `bin/ijfw-memory` bash launcher replaced with `process.execPath` direct spawn in test harnesses.
+
+### Real Windows production bugs caught and fixed
+
+The Windows portability sweep surfaced cross-platform issues that were latent in the codebase:
+
+- **`mcp-server/src/compute/sandbox-windows.js`** -- the PowerShell `Start-Process` wrapper was capturing zero stdout/stderr because `Start-Process` detaches stdio by default. The wrapper itself wasn't actually creating an AppContainer (just `-NoNewWindow -Wait`), so it was pure complexity without security gain. Dropped the wrapper; the env-scrub + path-prefix guards upstream still apply, the `degraded: true` flag still surfaces the honest best-effort warning. Fixes env-scrub adversarial test, allowNet test, process-group kill test, 100MB output cap test, timeout-clamp test on Windows.
+- **`mcp-server/src/memory/search.js`** -- `resolveIndexRoot` hardcoded `indexOf('/.ijfw/')` (forward slash only). Returned -1 on Windows paths with backslashes, falling through to cwd and missing the seeded test indexes. Now matches both POSIX and Windows separators via regex.
+- **`mcp-server/src/memory/reader.js`** -- `pathToSlug` only replaced forward slashes, leaving Windows `C:\` drive prefix in the slug. The slug then got `join()`-concatenated into a mangled `.../.claude/projects/C:/...` path. Now strips the drive letter and replaces both separator styles.
+- **`mcp-server/src/dashboard-server.js` + `src/design-companion.js`** -- `fs.watch` on Windows can emit EPERM asynchronously even when the initial call succeeds. Existing `try/catch` only caught synchronous errors. Added `'error'` event handlers to all three watcher sites so the async EPERM doesn't bubble as an uncaughtException after request close.
+- **`mcp-server/test-1.1.6.js`** -- `new URL('.', import.meta.url).pathname` returns `/C:/...` on Windows; `resolve()` then doubled the drive letter into `C:\C:\...` which fails to import. Replaced with `dirname(fileURLToPath(import.meta.url))` -- the Node-cross-platform-correct pattern.
+
+### Cross-platform CI matrix
+
+`.gitlab-ci.yml` runs Linux + macOS + Windows on every push with caching, artifacts on failure, and a manual full-matrix replay job. All three legs use Node 22.x with `--experimental-sqlite` for the node:sqlite-backed importer test. Linux: ship-blocking. macOS: paid-tier (`allow_failure: true` until enabled). Windows: now the same level of strictness as Linux post-port -- 800/800 verified.
+
 ### Pillar D: Memory Engine 2.0 (NEW)
 
 - **D0 -- FTS5 lands in the memory layer.** `mcp-server/src/memory/{schema.sql, fts5.js, migration-runner.js, migrations/001-fts5-init.js}`. Linear-regex fallback when FTS5 returns empty; markdown hot tier preserved; FTS5 is the warm tier with the same Porter stemmer + 102-group synonym map the compute lever uses.
