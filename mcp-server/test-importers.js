@@ -132,8 +132,11 @@ test('claude-mem round-trip writes a decision into knowledge.md', async (t) => {
   let DatabaseSync;
   try {
     ({ DatabaseSync } = await import('node:sqlite'));
-  } catch {
-    t.skip('node:sqlite needs Node 22.5+');
+  } catch (err) {
+    // node:sqlite is in Node 22.5+ but flagged on 22.x (--experimental-sqlite)
+    // and unflagged on 23+. CI passes the flag; local invocations without it
+    // skip cleanly with a diagnostic instead of a silent miss.
+    t.skip(`node:sqlite import failed (${err.code || err.message}). Run with --experimental-sqlite on Node 22.x, or use Node 23+.`);
     return;
   }
   const d = tmp();
