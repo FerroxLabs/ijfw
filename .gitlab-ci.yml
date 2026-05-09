@@ -230,6 +230,11 @@ windows:test:
     - choco install -y --no-progress nodejs --version=22.11.0
     - choco install -y --no-progress python3
     - choco install -y --no-progress sqlite
+    # Git for Windows ships bash.exe at C:\Program Files\Git\bin\bash.exe.
+    # The runner image has MinGit (git-only, no bash) for cloning, so tests
+    # that shell out to bash hooks/install.sh need a real Git install. The
+    # win-bash-helper resolves the path; we just need it on disk.
+    - choco install -y --no-progress git
     # Refresh PATH so the freshly-installed node + python are visible.
     - $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
     - python -m pip install --quiet pytest
