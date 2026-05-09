@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, delimiter as PATH_DELIM } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { writeAtomic, readSafe, withLock, rotateLogIfNeeded, redactUrl, stripAnsi } from './src/lib/atomic-io.js';
@@ -434,27 +434,42 @@ test('compareSemver handles same-version without infinite loop', () => {
 
 const CLI = resolve(new URL('.', import.meta.url).pathname, 'src/cross-orchestrator-cli.js');
 
-function makeFakeNpm(dir, script) {
-  const bin = join(dir, 'npm');
-  writeFileSync(bin, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+// Cross-platform fake-npm shim. On POSIX writes a `npm` shell script;
+// on Windows writes `npm.cmd` (the Batch shim Node's spawnSync(shell:true)
+// resolves via PATHEXT when the CLI invokes npm). The CLI's npm spawnSync
+// passes shell:true on Windows so cmd.exe resolves the .cmd shim.
+//
+// `mode` selects the failure semantic:
+//   'exit-7'      -- npm exits non-zero (install failed)
+//   'signal-kill' -- POSIX self-signals SIGTERM; Windows uses exit code 143
+//                    (the conventional 128+15 "killed by SIGTERM" exit). The
+//                    cleanup path in cmdUpdateConfirm doesn't differentiate
+//                    between non-zero exits and signal kills -- finally fires
+//                    either way -- so the assertion's spirit is preserved.
+function makeFakeNpm(dir, mode) {
+  if (process.platform === 'win32') {
+    const code = mode === 'signal-kill' ? 143 : 7;
+    writeFileSync(join(dir, 'npm.cmd'), `@echo off\r\nexit /B ${code}\r\n`);
+  } else {
+    const body = mode === 'signal-kill' ? 'kill -TERM $$' : 'exit 7';
+    writeFileSync(join(dir, 'npm'), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  }
   return dir;
 }
 
 function spawnConfirm(token, ijfwHome, fakeBinDir) {
   const env = { ...process.env, IJFW_HOME: ijfwHome, IJFW_FROM_MCP: '0' };
-  if (fakeBinDir !== null) env.PATH = fakeBinDir + ':' + (process.env.PATH || '');
+  if (fakeBinDir !== null) env.PATH = fakeBinDir + PATH_DELIM + (process.env.PATH || '');
   return spawnSync(process.execPath, [CLI, 'update', '--confirm', token], {
     encoding: 'utf8', env, timeout: 15_000,
   });
 }
 
 // The next 3 tests verify cleanup-on-failure of the install sentinel using
-// fake npm shims and a constructed PATH. The shim is a POSIX shell script,
-// PATH uses ':' as separator, and the signal-kill case relies on `kill -N
-// $$` -- all POSIX-only. The cleanup logic (JS try/finally in
-// cmdUpdateConfirm) is platform-portable, so Linux + macOS coverage is
-// authoritative; Windows skips these specific harness tests.
-test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)', { skip: process.platform === 'win32' }, () => {
+// fake npm shims and a constructed PATH. The fake-npm helper + path
+// delimiter are now cross-platform (above), so Windows runs the same
+// assertions Linux + macOS do.
+test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)', () => {
   const d = isolated();
   const sid = 'test-session-spawn-error';
   const tok = issueToken(sid, '9.9.9');
@@ -470,7 +485,7 @@ test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)'
   cleanup(d);
 });
 
-test('cmdUpdateConfirm cleans sentinel on install non-zero exit', { skip: process.platform === 'win32' }, () => {
+test('cmdUpdateConfirm cleans sentinel on install non-zero exit', () => {
   const d = isolated();
   const sid = 'test-session-nonzero-exit';
   const tok = issueToken(sid, '9.9.9');
@@ -478,7 +493,7 @@ test('cmdUpdateConfirm cleans sentinel on install non-zero exit', { skip: proces
   assert.equal(readPendingSentinel(sid).ok, true, 'sentinel must exist before failure');
 
   const fakeBin = mkdtempSync(join(tmpdir(), 'ijfw-fakebin-'));
-  makeFakeNpm(fakeBin, 'exit 7');
+  makeFakeNpm(fakeBin, 'exit-7');
   spawnConfirm(tok.token, d, fakeBin);
 
   assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after non-zero exit path');
@@ -486,7 +501,7 @@ test('cmdUpdateConfirm cleans sentinel on install non-zero exit', { skip: proces
   cleanup(d);
 });
 
-test('cmdUpdateConfirm cleans sentinel on install signal-kill', { skip: process.platform === 'win32' }, () => {
+test('cmdUpdateConfirm cleans sentinel on install signal-kill', () => {
   const d = isolated();
   const sid = 'test-session-signal-kill';
   const tok = issueToken(sid, '9.9.9');
@@ -494,8 +509,10 @@ test('cmdUpdateConfirm cleans sentinel on install signal-kill', { skip: process.
   assert.equal(readPendingSentinel(sid).ok, true, 'sentinel must exist before failure');
 
   const fakeBin = mkdtempSync(join(tmpdir(), 'ijfw-fakebin-'));
-  // Self-signal SIGTERM; spawnSync sees signal != null -> finally fires
-  makeFakeNpm(fakeBin, 'kill -TERM $$');
+  // POSIX: self-signal SIGTERM (spawnSync sees signal != null -> finally fires).
+  // Windows: exit 143 (the conventional "killed by SIGTERM" exit code; the
+  // cleanup path is identical for any non-zero exit).
+  makeFakeNpm(fakeBin, 'signal-kill');
   spawnConfirm(tok.token, d, fakeBin);
 
   assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after signal-kill path');
