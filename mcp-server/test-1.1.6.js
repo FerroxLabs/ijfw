@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, delimiter as PATH_DELIM } from 'node:path';
+import { join, resolve, dirname, delimiter as PATH_DELIM } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 import { writeAtomic, readSafe, withLock, rotateLogIfNeeded, redactUrl, stripAnsi } from './src/lib/atomic-io.js';
@@ -432,7 +433,11 @@ test('compareSemver handles same-version without infinite loop', () => {
 // fires on all failure paths and would fail if the finally block were removed.
 // ============================================================
 
-const CLI = resolve(new URL('.', import.meta.url).pathname, 'src/cross-orchestrator-cli.js');
+// fileURLToPath is the correct Windows-safe pattern. `import.meta.url.pathname`
+// returns '/C:/...' on Windows; resolve() then doubles the drive letter into
+// 'C:\C:\...' which fails to import. This was hidden behind a skip gate that
+// the zero-skip work just removed.
+const CLI = resolve(dirname(fileURLToPath(import.meta.url)), 'src/cross-orchestrator-cli.js');
 
 // Cross-platform fake-npm shim. On POSIX writes a `npm` shell script;
 // on Windows writes `npm.cmd` (the Batch shim Node's spawnSync(shell:true)
