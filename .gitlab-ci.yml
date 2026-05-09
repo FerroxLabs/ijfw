@@ -177,7 +177,11 @@ macos:test:
     - python3 -m pytest wayland/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/macos-pytest-wayland.log
     - python3 -m pytest hermes/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/macos-pytest-hermes.log
     - bash scripts/copy-lint.sh 2>&1 | tee ci-logs/macos-copy-lint.log
-  allow_failure: false
+  # macOS shared runner is paid-tier (50 free min/month, requires explicit
+  # enablement). Until paid minutes are enabled on this project, allow this
+  # job to "not start" without failing the pipeline. Sean ships from a real
+  # Mac dev box every release; macOS CI is a redundancy, not a primary gate.
+  allow_failure: true
   artifacts:
     when: always
     expire_in: 7 days
@@ -224,7 +228,7 @@ windows:test:
     # explicit about it anyway so a future image change shows up loudly.
     - choco --version
     - choco install -y --no-progress nodejs --version=22.11.0
-    - choco install -y --no-progress python --version=3.12.7
+    - choco install -y --no-progress python3
     - choco install -y --no-progress sqlite
     # Refresh PATH so the freshly-installed node + python are visible.
     - $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
