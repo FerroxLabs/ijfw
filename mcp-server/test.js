@@ -772,9 +772,22 @@ async function runTest() {
     failed++;
   }
 
-  if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // Final cleanup. Windows holds cwd handles on killed-but-unreaped child
+  // processes (spawnDesign sets cwd=projectDir), so rmSync of D_HARNESS can
+  // hit EBUSY even after maxRetries. The test assertions have already passed
+  // by this point -- swallow OS-level cleanup races so the summary still
+  // prints and CI sees the real verdict.
+  try {
+    if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (err) {
+    console.log(`  [info] D_HARNESS cleanup deferred to OS: ${err.code || err.message}`);
+  }
 
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  try {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (err) {
+    console.log(`  [info] TEST_DIR cleanup deferred to OS: ${err.code || err.message}`);
+  }
 
   // Summary
   console.log(`\n---------------------------------------`);
