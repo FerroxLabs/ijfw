@@ -18,7 +18,7 @@ const TEMPLATES_DIR_LIVE = join(__dirname, 'templates', 'design');
 
 // Clean test state
 const TEST_DIR = join(__dirname, '.test-ijfw');
-if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
 let passed = 0;
 let failed = 0;
@@ -350,7 +350,7 @@ async function runTest() {
   const FAKE_HOME = join(HARNESS, 'home');
   const PROJ_A = join(HARNESS, 'project-alpha');
   const PROJ_B = join(HARNESS, 'project-beta');
-  if (existsSync(HARNESS)) rmSync(HARNESS, { recursive: true });
+  if (existsSync(HARNESS)) rmSync(HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   mkdirSync(join(FAKE_HOME, '.ijfw'), { recursive: true });
   mkdirSync(join(PROJ_A, '.ijfw', 'memory'), { recursive: true });
   mkdirSync(join(PROJ_B, '.ijfw', 'memory'), { recursive: true });
@@ -437,7 +437,7 @@ async function runTest() {
     failed++;
   }
 
-  if (existsSync(HARNESS)) rmSync(HARNESS, { recursive: true });
+  if (existsSync(HARNESS)) rmSync(HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
   // --- Phase 3 #8: Team memory tier ---
   // Isolated harness with a project that has a .ijfw/team/ directory seeded.
@@ -447,7 +447,7 @@ async function runTest() {
   const TEAM_HARNESS = join(tmpdir(), `ijfw-team-${process.pid}`);
   const TEAM_HOME = join(TEAM_HARNESS, 'home');
   const TEAM_PROJ = join(TEAM_HARNESS, 'team-proj');
-  if (existsSync(TEAM_HARNESS)) rmSync(TEAM_HARNESS, { recursive: true });
+  if (existsSync(TEAM_HARNESS)) rmSync(TEAM_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   mkdirSync(join(TEAM_HOME, '.ijfw'), { recursive: true });
   mkdirSync(join(TEAM_PROJ, '.ijfw', 'team'), { recursive: true });
   mkdirSync(join(TEAM_PROJ, '.ijfw', 'memory'), { recursive: true });
@@ -515,7 +515,7 @@ async function runTest() {
     failed++;
   }
 
-  if (existsSync(TEAM_HARNESS)) rmSync(TEAM_HARNESS, { recursive: true });
+  if (existsSync(TEAM_HARNESS)) rmSync(TEAM_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
   // --- Phase 3 #6: Metrics dashboard ---
   // Seeds .ijfw/metrics/sessions.jsonl with mixed v1/v2 lines, calls the
@@ -524,7 +524,7 @@ async function runTest() {
   const M_HARNESS = join(tmpdir(), `ijfw-metrics-${process.pid}`);
   const M_HOME = join(M_HARNESS, 'home');
   const M_PROJ = join(M_HARNESS, 'metrics-proj');
-  if (existsSync(M_HARNESS)) rmSync(M_HARNESS, { recursive: true });
+  if (existsSync(M_HARNESS)) rmSync(M_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   mkdirSync(join(M_HOME, '.ijfw'), { recursive: true });
   mkdirSync(join(M_PROJ, '.ijfw', 'metrics'), { recursive: true });
   // Use a recent date so the default 7d window catches it.
@@ -592,7 +592,7 @@ async function runTest() {
     failed++;
   }
 
-  if (existsSync(M_HARNESS)) rmSync(M_HARNESS, { recursive: true });
+  if (existsSync(M_HARNESS)) rmSync(M_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
   // --- Phase 3 #2: Prompt-check detector ---
   // Direct unit tests on the pure-JS detector (no MCP roundtrip - fast),
@@ -664,7 +664,7 @@ async function runTest() {
     failed++;
   }
   pcSrv.kill();
-  if (existsSync(PC_HOME)) rmSync(PC_HOME, { recursive: true });
+  if (existsSync(PC_HOME)) rmSync(PC_HOME, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
   // --- 1.2.0 Phase 5: DESIGN picker via ijfw_memory_recall ---
   // MCP-only extension for OpenCode / Qwen / Kimi / OpenClaw / Aider.
@@ -675,7 +675,7 @@ async function runTest() {
   const D_HOME = join(D_HARNESS, 'home');
   const D_PROJ = join(D_HARNESS, 'design-proj');
   const D_WITH_DESIGN = join(D_HARNESS, 'has-design');
-  if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true });
+  if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   mkdirSync(join(D_HOME, '.ijfw'), { recursive: true });
   mkdirSync(join(D_PROJ, '.ijfw', 'memory'), { recursive: true });
   mkdirSync(join(D_WITH_DESIGN, '.ijfw', 'memory'), { recursive: true });
@@ -772,9 +772,9 @@ async function runTest() {
     failed++;
   }
 
-  if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true });
+  if (existsSync(D_HARNESS)) rmSync(D_HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
   // Summary
   console.log(`\n---------------------------------------`);
