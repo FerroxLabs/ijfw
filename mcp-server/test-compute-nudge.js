@@ -15,6 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -49,7 +50,7 @@ function runHook(hookPath, payload, { home, extraEnv } = {}) {
     ...(extraEnv || {}),
   };
   const start = Date.now();
-  const r = spawnSync('bash', [hookPath], {
+  const r = spawnSync(BASH, [hookPath], {
     input: typeof payload === 'string' ? payload : JSON.stringify(payload),
     encoding: 'utf8',
     timeout: SPAWN_TIMEOUT_MS,

@@ -18,7 +18,7 @@ import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,7 +31,7 @@ async function main() {
   const projectRoot = mkdtempSync(join(tmpdir(), 'ijfw-fts5-concurrent-'));
   // Worker script: each child runs this against the same projectRoot.
   const worker = `
-    import { openDb, safeWrite, closeDb } from '${join(__dirname, 'src', 'compute', 'index.js')}';
+    import { openDb, safeWrite, closeDb } from '${pathToFileURL(join(__dirname, 'src', 'compute', 'index.js')).href}';
     const projectRoot = process.argv[2];
     const writerId = process.argv[3];
     const n = ${ROWS_PER_WRITER};

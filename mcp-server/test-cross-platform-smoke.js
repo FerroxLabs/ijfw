@@ -28,6 +28,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -154,7 +155,7 @@ function runInstall(target, sandbox, extraEnv = {}) {
   // Run from the sandbox project dir so any project-scoped writes
   // (Cursor .cursor/, Copilot .vscode/, Windsurf .windsurfrules) land in
   // an isolated tree, not the IJFW source repo.
-  const res = spawnSync('bash', [INSTALL_SH, target], {
+  const res = spawnSync(BASH, [INSTALL_SH, target], {
     cwd: sandbox.proj,
     env,
     encoding: 'utf8',

@@ -20,7 +20,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BIN = join(__dirname, 'bin', 'ijfw-memory');
+// bin/ijfw-memory is a bash launcher (not portable to Windows). The test
+// targets the MCP server itself, so spawn server.js directly via the active
+// node binary -- works on every platform.
+const SERVER = join(__dirname, 'src', 'server.js');
 
 const EXPECTED_TOOLS = [
   'ijfw_memory_recall',
@@ -71,9 +74,9 @@ function waitForResponse(child, id, timeoutMs = 8000) {
 
 async function main() {
   console.log('=== tool-cap live introspection ===');
-  console.log(`spawn: ${BIN}`);
+  console.log(`spawn: ${process.execPath} ${SERVER}`);
 
-  const child = spawn(BIN, [], {
+  const child = spawn(process.execPath, [SERVER], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, IJFW_DISABLE_STARTUP_REPORT: '1' },
   });

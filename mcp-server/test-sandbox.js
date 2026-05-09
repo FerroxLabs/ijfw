@@ -212,8 +212,9 @@ test('runCommand: timeout enforced', async () => {
 });
 
 test('runCommand: large output returns lines/bytes metadata', async () => {
-  // Generate >40 lines of output to exceed INLINE_LINES
-  const r = await runCommand('seq 1 100');
+  // Generate >40 lines of output to exceed INLINE_LINES. Use node instead
+  // of `seq` so the test works on Windows (where seq isn't a cmd.exe builtin).
+  const r = await runCommand(`node -e "for(let i=1;i<=100;i++)console.log(i)"`);
   assert.ok(r.lines > 40);
   assert.ok(r.bytes > 0);
 });
@@ -245,8 +246,10 @@ test('writeToSandbox: txt file has mode 0o600', () => {
   });
   const sandboxDir = join(FAKE_HOME, '.ijfw', 'session-sandbox');
   const st = statSync(join(sandboxDir, `${label}.txt`));
-  // mode & 0o777 strips file type bits
-  assert.equal((st.mode & 0o777), 0o600);
+  // mode & 0o777 strips file type bits. Windows ignores POSIX mode bits.
+  if (process.platform !== 'win32') {
+    assert.equal((st.mode & 0o777), 0o600);
+  }
 });
 
 test('writeToSandbox: .json metadata has expected fields', () => {

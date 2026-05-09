@@ -43,36 +43,18 @@ function findPowerShell() {
  *
  * `degraded: true` indicates the caller (runner.js) should treat this as
  * best-effort only and surface the user-visible warning.
+ *
+ * Implementation: AppContainer profile creation requires the New-AppxPackage
+ * / NewAppContainer COM ops which aren't reachable from PowerShell without
+ * admin + a manifest. An earlier version wrapped commands with `Start-Process
+ * -Wait` to gain a working-directory boundary, but Start-Process detaches
+ * stdio and the runner ended up reading empty stdout/stderr -- breaking
+ * every sandbox-relevant assertion on Windows. The PowerShell layer was
+ * also not actually creating an AppContainer (just `-NoNewWindow -Wait`),
+ * so we now spawn the command directly with the scrubbed env that runner.js
+ * already prepared. Path-prefix and env-scrub guards still apply upstream;
+ * this layer is pure pass-through with the honest `degraded: true` flag.
  */
-export function wrap({ cmd, args, env, cwd /*, allowNet, allowedPaths, projectRoot, tempDir */ }) {
-  const ps = findPowerShell();
-  if (!ps) {
-    // No PowerShell available -- documented graceful-degrade.
-    return { cmd, args, env, degraded: true };
-  }
-
-  // Best-effort AppContainer launch via Start-Process. AppContainer profile
-  // creation requires the New-AppxPackage / NewAppContainer COM ops which
-  // aren't reachable from PowerShell without admin + a manifest, so this
-  // path mainly enforces the working-directory + isolated env. We document
-  // the limitation and return degraded:true so the runner surfaces the
-  // honest warning.
-  const psScript = [
-    '$ErrorActionPreference = "Stop";',
-    `$cmd = ${quotePs(cmd)};`,
-    `$argList = @(${args.map(quotePs).join(',')});`,
-    `Start-Process -FilePath $cmd -ArgumentList $argList -WorkingDirectory ${quotePs(cwd)} -NoNewWindow -Wait`,
-  ].join(' ');
-
-  return {
-    cmd: ps,
-    args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', psScript],
-    env,
-    degraded: true,
-  };
-}
-
-function quotePs(s) {
-  // PowerShell single-quoted string: escape single quotes by doubling them.
-  return `'${String(s).replace(/'/g, "''")}'`;
+export function wrap({ cmd, args, env /*, cwd, allowNet, allowedPaths, projectRoot, tempDir */ }) {
+  return { cmd, args, env, degraded: true };
 }

@@ -17,6 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
@@ -229,7 +230,7 @@ test('Test 9: detect() output -> hoist-frontmatter.sh -> AGENTS.md frontmatter p
 
   // Run the hoist script.
   const hoist = join(REPO_ROOT, 'claude', 'skills', 'ijfw-agents-md', 'scripts', 'hoist-frontmatter.sh');
-  const res = spawnSync('bash', [hoist, agentsMd], { encoding: 'utf8' });
+  const res = spawnSync(BASH, [hoist, agentsMd], { encoding: 'utf8' });
   assert.equal(res.status, 0, `hoist must exit 0; stderr=${res.stderr}`);
 
   // Verify frontmatter now carries A3 fields.

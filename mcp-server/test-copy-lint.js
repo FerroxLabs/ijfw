@@ -20,6 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { BASH } from './test/win-bash-helper.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +34,7 @@ const TEMP_SKILL_DIR = path.join(REPO_ROOT, 'claude', 'skills', '__copy_lint_tes
 const TEMP_SKILL_FILE = path.join(TEMP_SKILL_DIR, 'SKILL.md');
 
 function runLint() {
-  const r = spawnSync('bash', [SCRIPT], {
+  const r = spawnSync(BASH, [SCRIPT], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });

@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -77,7 +78,7 @@ test('codex: hook scripts pass bash syntax check', () => {
     const abs = join(hooksDir, s);
     if (existsSync(abs)) {
       assert.doesNotThrow(
-        () => execFileSync('bash', ['-n', abs], { stdio: 'pipe' }),
+        () => execFileSync(BASH, ['-n', abs], { stdio: 'pipe' }),
         `bash -n failed: ${s}`
       );
     }

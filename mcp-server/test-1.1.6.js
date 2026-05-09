@@ -35,7 +35,10 @@ test('writeAtomic creates file + sets 0600 perms', () => {
   writeAtomic(p, { x: 1 });
   assert.ok(existsSync(p));
   const st = statSync(p);
-  assert.equal(st.mode & 0o777, 0o600, 'mode bits should be 0600');
+  // Windows ignores POSIX mode bits; chmod on Windows is a no-op for non-readonly.
+  if (process.platform !== 'win32') {
+    assert.equal(st.mode & 0o777, 0o600, 'mode bits should be 0600');
+  }
   assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { x: 1 });
   cleanup(d);
 });
@@ -445,7 +448,13 @@ function spawnConfirm(token, ijfwHome, fakeBinDir) {
   });
 }
 
-test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)', () => {
+// The next 3 tests verify cleanup-on-failure of the install sentinel using
+// fake npm shims and a constructed PATH. The shim is a POSIX shell script,
+// PATH uses ':' as separator, and the signal-kill case relies on `kill -N
+// $$` -- all POSIX-only. The cleanup logic (JS try/finally in
+// cmdUpdateConfirm) is platform-portable, so Linux + macOS coverage is
+// authoritative; Windows skips these specific harness tests.
+test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)', { skip: process.platform === 'win32' }, () => {
   const d = isolated();
   const sid = 'test-session-spawn-error';
   const tok = issueToken(sid, '9.9.9');
@@ -461,7 +470,7 @@ test('cmdUpdateConfirm cleans sentinel on install spawn-error (npm not on PATH)'
   cleanup(d);
 });
 
-test('cmdUpdateConfirm cleans sentinel on install non-zero exit', () => {
+test('cmdUpdateConfirm cleans sentinel on install non-zero exit', { skip: process.platform === 'win32' }, () => {
   const d = isolated();
   const sid = 'test-session-nonzero-exit';
   const tok = issueToken(sid, '9.9.9');
@@ -477,7 +486,7 @@ test('cmdUpdateConfirm cleans sentinel on install non-zero exit', () => {
   cleanup(d);
 });
 
-test('cmdUpdateConfirm cleans sentinel on install signal-kill', () => {
+test('cmdUpdateConfirm cleans sentinel on install signal-kill', { skip: process.platform === 'win32' }, () => {
   const d = isolated();
   const sid = 'test-session-signal-kill';
   const tok = issueToken(sid, '9.9.9');

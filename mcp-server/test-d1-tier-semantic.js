@@ -29,7 +29,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -446,7 +446,7 @@ test('D1 -- concurrent v1->v2 migration is BEGIN IMMEDIATE safe', async () => {
   const fts5Path = join(__dirname, 'src', 'memory', 'fts5.js');
   const workerPath = join(root, 'worker.mjs');
   const worker = `
-import { openDb, indexEntry, closeDb } from '${fts5Path.replace(/\\/g, '\\\\')}';
+import { openDb, indexEntry, closeDb } from '${pathToFileURL(fts5Path).href}';
 const projectRoot = process.argv[2];
 const id = process.argv[3];
 let db;

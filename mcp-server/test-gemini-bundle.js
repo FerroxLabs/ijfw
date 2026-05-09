@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,7 +57,7 @@ test('gemini: all hook scripts pass bash syntax check', () => {
   for (const s of scripts) {
     const abs = join(hooksDir, s);
     assert.doesNotThrow(
-      () => execFileSync('bash', ['-n', abs], { stdio: 'pipe' }),
+      () => execFileSync(BASH, ['-n', abs], { stdio: 'pipe' }),
       `bash -n failed: ${s}`
     );
   }

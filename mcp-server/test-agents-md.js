@@ -27,6 +27,7 @@
  */
 
 import { spawn, spawnSync } from 'child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, readdirSync, statSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import { join, dirname } from 'path';
@@ -50,7 +51,7 @@ function ok(name) { pass++; console.log(`  ok  ${name}`); }
 function bad(name, msg) { fail++; console.log(`  FAIL ${name}: ${msg}`); }
 
 function run(script, args, opts = {}) {
-  const res = spawnSync('bash', [script, ...args], {
+  const res = spawnSync(BASH, [script, ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     ...opts,
@@ -249,7 +250,7 @@ async function test5_concurrent() {
     const block = ALL_BLOCKS[i % ALL_BLOCKS.length];
     const content = `concurrent-writer-${i}-${block}`;
     writers.push(new Promise((resolve) => {
-      const child = spawn('bash', [LOCK_SH, target, block, content], {
+      const child = spawn(BASH, [LOCK_SH, target, block, content], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stderr = '';
@@ -322,7 +323,7 @@ function test7_multiBlock() {
   // Compute the backup dir the merger will use (project-hash on TARGET dir).
   // canonicalize the dir to match merger's `cd -P`.
   const canonicalDir = (() => {
-    const r = spawnSync('bash', ['-c', `cd -P "${dir}" && pwd`], { encoding: 'utf8' });
+    const r = spawnSync(BASH, ['-c', `cd -P "${dir}" && pwd`], { encoding: 'utf8' });
     return (r.stdout || dir).trim();
   })();
   const projectHash = createHash('sha256').update(canonicalDir).digest('hex').slice(0, 12);

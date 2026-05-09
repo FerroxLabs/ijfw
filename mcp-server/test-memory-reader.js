@@ -15,8 +15,10 @@ const REPO_ROOT    = join(FAKE_HOME, 'repo');
 const FAKE_IJFW    = join(FAKE_HOME, '.ijfw');
 const FAKE_SESS    = join(REPO_ROOT, '.ijfw', 'sessions');
 const FAKE_PROJMEM = join(REPO_ROOT, '.ijfw', 'memory');
-// Claude slug = REPO_ROOT with every / replaced by -
-const REPO_SLUG       = REPO_ROOT.replace(/\//g, '-');
+// Claude slug = REPO_ROOT with every separator replaced by -. On Windows
+// the path uses backslashes AND a drive letter; flatten both and strip the
+// "C:" prefix so the slug is a simple flat directory name.
+const REPO_SLUG       = REPO_ROOT.replace(/^[A-Z]:/i, '').replace(/[\/\\]/g, '-');
 const FAKE_CLAUDE_MEM = join(FAKE_HOME, '.claude', 'projects', REPO_SLUG, 'memory');
 
 // Tier 2: project .ijfw/memory

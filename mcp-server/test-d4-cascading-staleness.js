@@ -503,10 +503,12 @@ test('D4 -- propagateStale is idempotent across repeated calls', async () => {
 // --- Tool-cap (live MCP introspection) ---------------------------------
 
 test('D4 -- MCP tool count remains 10 (no D4 tools registered)', async () => {
-  const BIN = join(__dirname, 'bin', 'ijfw-memory');
-  if (!existsSync(BIN)) return; // skip when bin not built
+  // bin/ijfw-memory is a bash launcher; spawn server.js directly via
+  // process.execPath so the test runs on every platform.
+  const SERVER = join(__dirname, 'src', 'server.js');
+  if (!existsSync(SERVER)) return;
 
-  const child = spawn(BIN, [], {
+  const child = spawn(process.execPath, [SERVER], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, IJFW_DISABLE_STARTUP_REPORT: '1' },
   });

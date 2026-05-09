@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { openDb, safeWrite, closeDb, dbPathFor } from './src/compute/index.js';
 
@@ -35,7 +35,7 @@ const TEST_HOME = mkdtempSync(join(tmpdir(), 'ijfw-dash-cs-home-'));
 process.env.HOME = TEST_HOME;
 process.env.USERPROFILE = TEST_HOME;
 
-const { getComputeSavings } = await import(SERVER_PATH);
+const { getComputeSavings } = await import(pathToFileURL(SERVER_PATH).href);
 
 test('getComputeSavings: empty state when compute.db absent', async () => {
   const projectRoot = mkdtempSync(join(tmpdir(), 'ijfw-cs-empty-'));

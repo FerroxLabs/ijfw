@@ -27,6 +27,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
@@ -125,7 +126,7 @@ test('claude session-start hook fires cold-scan trigger', () => {
   // script via a candidate-path search and bash-execs it; that exec is
   // what we are validating here. P5-N2: HOME override redirects the
   // script's `mkdir -p "$HOME/.ijfw/logs"` into the sandbox dir.
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
+  const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0, `trigger must exit 0; stderr=${res.stderr}`);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true, 'project.type must land via shared trigger');
@@ -142,7 +143,7 @@ test('codex session-start hook resolves + spawns cold-scan trigger', () => {
   // Drive the trigger directly to confirm runtime success.
   const root = tmpProj('codex');
   const home = sandboxHome('codex');
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
+  const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
@@ -158,7 +159,7 @@ test('gemini session-start hook resolves + spawns cold-scan trigger', () => {
   assert.match(src, /cold-scan-trigger\.sh/, 'gemini hook must reference shared trigger');
   const root = tmpProj('gemini');
   const home = sandboxHome('gemini');
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
+  const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
   assert.equal(ok, true);
@@ -226,7 +227,7 @@ test('trigger does NOT re-fire when project.type already exists', () => {
   const finalPath = join(root, '.ijfw', 'project.type');
   writeFileSync(finalPath, '{"primary_type":"software","scan_incomplete":false}\n');
   const before = statSync(finalPath).mtimeMs;
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
+  const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   // Brief settle.
   const settleEnd = Date.now() + 250;
@@ -247,7 +248,7 @@ test('trigger does NOT re-fire when scan-state.json present', () => {
   const finalPath = join(root, '.ijfw', 'project.type');
   writeFileSync(join(root, '.ijfw', 'scan-state.json'),
     JSON.stringify({ scan_id: 'x', started_at: new Date().toISOString(), incomplete: true, attempts: 1, files_scanned: 10, total_estimate: 10, last_path_walked: '/x' }, null, 2) + '\n');
-  const res = spawnSync('bash', [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
+  const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
   // Brief settle.
   const settleEnd = Date.now() + 400;

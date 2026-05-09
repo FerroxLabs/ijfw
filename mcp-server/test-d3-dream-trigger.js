@@ -22,6 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'child_process';
+import { BASH } from './test/win-bash-helper.js';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
@@ -73,7 +74,7 @@ test('cooldown: fresh markCompleted -> on cooldown for 4h window', async () => {
   const root = tmpProj('cd-fresh');
   const stateDir = join(root, '.ijfw');
   const { isOnCooldown, markCompleted } = await import(
-    join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js')
+    pathToFileURL(join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js')).href
   );
   assert.equal(markCompleted(stateDir), true);
   assert.equal(isOnCooldown(stateDir), true, 'fresh mark must be on cooldown');
@@ -99,7 +100,7 @@ test('cooldown: aged state (>4h via override) -> not on cooldown', async () => {
     'utf8',
   );
   const { isOnCooldown } = await import(
-    join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js')
+    pathToFileURL(join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js')).href
   );
   // Default 4h window -- 5h-old state should NOT be on cooldown.
   assert.equal(isOnCooldown(stateDir), false, '5h-old state must not block');
@@ -112,7 +113,7 @@ test('cooldown: corrupt state -> not on cooldown (fail open)', async () => {
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(join(stateDir, '.dream-state.json'), '{not-json', 'utf8');
   const { isOnCooldown } = await import(
-    join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js')
+    pathToFileURL(join(REPO_ROOT, 'mcp-server', 'src', 'dream', 'cooldown.js')).href
   );
   assert.equal(isOnCooldown(stateDir), false, 'corrupt state must fail open');
   rmSync(root, { recursive: true, force: true });
@@ -127,7 +128,7 @@ test('shell trigger returns within 250ms cold-start hook-latency budget', () => 
   // measure the full child process turnaround (fork + exec bash +
   // node spawn + disown). The runner work is async + detached.
   const start = performance.now();
-  const res = spawnSync('bash', [TRIGGER_SH, root, 'test-latency'], {
+  const res = spawnSync(BASH, [TRIGGER_SH, root, 'test-latency'], {
     encoding: 'utf8',
     env: sandboxEnv(home),
   });
@@ -199,7 +200,7 @@ test('hermes _handlers.py wires _trigger_dream', () => {
 test('shell trigger spawns runner; .dream-state.json lands within 3s', () => {
   const root = tmpProj('e2e-sh');
   const home = sandboxHome('e2e-sh');
-  const res = spawnSync('bash', [TRIGGER_SH, root, 'test-e2e-sh'], {
+  const res = spawnSync(BASH, [TRIGGER_SH, root, 'test-e2e-sh'], {
     encoding: 'utf8',
     env: sandboxEnv(home),
   });
@@ -243,7 +244,7 @@ test('shell trigger skips re-fire when within cooldown window', () => {
     JSON.stringify({ version: 1, last_run_at: new Date().toISOString() }),
     'utf8',
   );
-  const res = spawnSync('bash', [TRIGGER_SH, root, 'cd-skip'], {
+  const res = spawnSync(BASH, [TRIGGER_SH, root, 'cd-skip'], {
     encoding: 'utf8',
     env: sandboxEnv(home),
   });
@@ -294,7 +295,7 @@ test('shell trigger with IJFW_DREAM_LEGACY=1 writes startup-flag (no detached sp
   // Plant a session counter at 5 so the legacy rule fires.
   mkdirSync(join(root, '.ijfw'), { recursive: true });
   writeFileSync(join(root, '.ijfw', '.session-counter'), '5\n', 'utf8');
-  const res = spawnSync('bash', [TRIGGER_SH, root, 'legacy'], {
+  const res = spawnSync(BASH, [TRIGGER_SH, root, 'legacy'], {
     encoding: 'utf8',
     env: sandboxEnv(home, { IJFW_DREAM_LEGACY: '1' }),
   });
@@ -343,7 +344,7 @@ test('dream-state.json persists across runner invocations (atomic write)', async
   const root = tmpProj('persist');
   const home = sandboxHome('persist');
   // First fire -- writes state.
-  let res = spawnSync('bash', [TRIGGER_SH, root, 'persist-1'], {
+  let res = spawnSync(BASH, [TRIGGER_SH, root, 'persist-1'], {
     encoding: 'utf8',
     env: sandboxEnv(home),
   });
@@ -353,7 +354,7 @@ test('dream-state.json persists across runner invocations (atomic write)', async
   const state1 = JSON.parse(stateRaw1);
   assert.ok(state1 && state1.last_run_at, 'state must have last_run_at');
   // Second fire within cooldown -- runner skips, state unchanged.
-  res = spawnSync('bash', [TRIGGER_SH, root, 'persist-2'], {
+  res = spawnSync(BASH, [TRIGGER_SH, root, 'persist-2'], {
     encoding: 'utf8',
     env: sandboxEnv(home),
   });

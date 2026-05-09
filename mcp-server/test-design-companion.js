@@ -93,7 +93,7 @@ test('ijfw design push copies file to content dir', async () => {
   writeFileSync(srcFile, '<html><body>pushed</body></html>', 'utf8');
 
   const ijfwBin = resolve(__dirname, '..', 'installer', 'src', 'ijfw.js');
-  const r = spawnSync('node', [ijfwBin, 'design', 'push', srcFile], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [ijfwBin, 'design', 'push', srcFile], { encoding: 'utf8' });
   assert.equal(r.status, 0, 'push should exit 0');
 
   const dest = join(TEST_HOME, '.ijfw', 'design-companion', 'content', 'mydesign.html');
@@ -110,7 +110,7 @@ test('ijfw design clear empties content dir', async () => {
   writeFileSync(join(destDir, 'b.html'), '<html/>', 'utf8');
 
   const ijfwBin = resolve(__dirname, '..', 'installer', 'src', 'ijfw.js');
-  const r = spawnSync('node', [ijfwBin, 'design', 'clear'], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [ijfwBin, 'design', 'clear'], { encoding: 'utf8' });
   assert.equal(r.status, 0, 'clear should exit 0');
 
   const { readdirSync } = await import('node:fs');

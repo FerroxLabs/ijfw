@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -109,7 +109,7 @@ test('memory FTS5 -- 4 concurrent writers serialise via BEGIN IMMEDIATE', async 
   // ROWS_PER_WRITER entries. With BEGIN IMMEDIATE + busy_timeout=5000 the
   // writers must serialise without surfacing SQLITE_BUSY.
   const worker = `
-import { openDb, indexEntry, closeDb } from '${fts5Path.replace(/\\/g, '\\\\')}';
+import { openDb, indexEntry, closeDb } from '${pathToFileURL(fts5Path).href}';
 const projectRoot = process.argv[2];
 const writerId = process.argv[3];
 const n = ${ROWS_PER_WRITER};

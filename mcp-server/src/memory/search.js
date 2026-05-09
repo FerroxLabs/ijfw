@@ -148,8 +148,9 @@ function resolveIndexRoot(files) {
   if (files && files.length > 0) {
     for (const f of files) {
       if (typeof f.path !== 'string') continue;
-      const idx = f.path.indexOf('/.ijfw/');
-      if (idx !== -1) return f.path.slice(0, idx);
+      // Match both POSIX and Windows path separators around .ijfw segment.
+      const m = f.path.match(/[\\/]\.ijfw[\\/]/);
+      if (m) return f.path.slice(0, m.index);
     }
   }
   return resolveProjectRoot(process.cwd());

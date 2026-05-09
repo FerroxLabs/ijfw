@@ -440,10 +440,13 @@ test('D2 -- graph:index dispatch extracts entities and writes edges', async () =
 test('D2 -- MCP tool count remains 10 (no graph:* tools registered)', async () => {
   // Spawn the MCP server, ask for tools/list, count entries. Mirrors
   // the test-tool-cap.js harness's newline-delimited JSON-RPC framing.
-  const BIN = join(__dirname, 'bin', 'ijfw-memory');
-  if (!existsSync(BIN)) return; // skip when bin not built
+  // Spawn server.js directly via the running node -- bin/ijfw-memory is a
+  // bash launcher that cannot be invoked on Windows. process.execPath is
+  // the absolute path to the active node binary on every platform.
+  const SERVER = join(__dirname, 'src', 'server.js');
+  if (!existsSync(SERVER)) return;
 
-  const child = spawn(BIN, [], {
+  const child = spawn(process.execPath, [SERVER], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, IJFW_DISABLE_STARTUP_REPORT: '1' },
   });
