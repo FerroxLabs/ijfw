@@ -579,7 +579,7 @@ def build_register_fn(host="hermes"):
                     launched_key = f"cross_{mode.replace('-', '_')}_launched"
                     return STRINGS[launched_key].format(target=target or "current context")
                 except FileNotFoundError:
-                    return f"[ijfw] `ijfw` not found in PATH — install IJFW CLI to use cross-{mode}."
+                    return f"[ijfw] `ijfw` not found in PATH -- install IJFW CLI to use cross-{mode}."
             return handler
 
         reg_cmd(

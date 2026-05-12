@@ -9,29 +9,37 @@ export async function run(ctx) {
   const ver = ctx.versions['audit-ci'] || 'latest';
   const configPath = join(ctx.repoRoot, '.audit-ci.jsonc');
 
-  // Run audit-ci from installer dir (where package-lock.json is)
-  const res = spawnSync(
-    'npx',
-    ['--yes', `audit-ci@${ver}`, '--config', configPath],
-    {
-      encoding: 'utf8',
-      cwd: join(ctx.repoRoot, 'installer'),
-      timeout: 60_000,
-    },
-  );
+  const packageDirs = ['installer', 'mcp-server'];
+  const runs = packageDirs.map((dir) => {
+    const res = spawnSync(
+      'npx',
+      ['--yes', `audit-ci@${ver}`, '--config', configPath],
+      {
+        encoding: 'utf8',
+        cwd: join(ctx.repoRoot, dir),
+        timeout: 60_000,
+      },
+    );
+    return { dir, status: res.status, output: (res.stdout || '') + (res.stderr || '') };
+  });
 
   const durationMs = Date.now() - t0;
-  const output = (res.stdout || '') + (res.stderr || '');
-  const lines = output.split('\n').filter(Boolean);
+  const failed = runs.filter((r) => r.status !== 0);
 
-  if (res.status === 0) {
+  if (failed.length === 0) {
     return {
       name: 'audit-ci',
       status: 'PASS',
-      message: 'audit-ci: no high/critical vulnerabilities',
-      details: [],
+      message: 'audit-ci: no high/critical vulnerabilities in installer or mcp-server',
+      details: runs.map((r) => `${r.dir}: pass`),
       durationMs,
     };
+  }
+
+  const lines = [];
+  for (const r of failed) {
+    lines.push(`${r.dir}: audit failed`);
+    lines.push(...r.output.split('\n').filter(Boolean).slice(0, 10));
   }
 
   return {

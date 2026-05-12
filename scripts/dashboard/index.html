@@ -624,7 +624,7 @@ function renderLensHealthTile(payload){
   var mode=s.mode||'unknown';
   var color=mode==='full'?'var(--success)':mode==='partial'?'var(--warn)':'var(--danger)';
   var label=s.live_count+'/'+s.total+' live';
-  if(summary) summary.textContent=label+' — mode: '+mode;
+  if(summary) summary.textContent=label+' -- mode: '+mode;
 
   var html='';
   html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">';
@@ -647,7 +647,7 @@ function renderLensHealthTile(payload){
     if(!le) continue;
     var liveColor=le.live?'var(--success)':'var(--danger)';
     var liveLabel=le.live?'live':'down';
-    var lat=(le.latency_ms!=null)?le.latency_ms+' ms':'—';
+    var lat=(le.latency_ms!=null)?le.latency_ms+' ms':'--';
     html+='<div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px">';
     html+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
     html+='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+liveColor+'"></span>';

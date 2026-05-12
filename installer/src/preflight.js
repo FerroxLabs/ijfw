@@ -1,7 +1,7 @@
 // ijfw preflight -- entry point. Parses argv, loads gates, runs pipeline.
 
 import { readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runPreflight } from './preflight/runner.js';
 
@@ -114,4 +114,19 @@ export async function runPreflightCommand(argv, repoRoot) {
   const report = await runPreflight(gates, ctx);
 
   process.exit(report.outcome === 'pass' ? 0 : 1);
+}
+
+function defaultRepoRoot() {
+  let dir = __dirname;
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'mcp-server'))) return dir;
+    const next = resolve(dir, '..');
+    if (next === dir) break;
+    dir = next;
+  }
+  return process.cwd();
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await runPreflightCommand(process.argv, defaultRepoRoot());
 }

@@ -1,6 +1,6 @@
 # _context_engine.py -- IJFWContextEngine for Hermes (mirrors Wayland C6).
 #
-# Hermes ≡ Wayland for plugin work per PRD §4. This file mirrors the
+# Hermes == Wayland for plugin work per PRD section 4. This file mirrors the
 # Wayland _context_engine.py with two host adjustments:
 #   1. Profile env override is IJFW_HERMES_PROFILE_HOME (vs WAYLAND_PROFILE_HOME).
 #   2. Fallback ABC import attempts the Hermes module path; falls back to

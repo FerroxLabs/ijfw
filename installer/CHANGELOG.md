@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.1] -- 2026-05-12
+
+**Codex hook cleanup + release cadence hardening.** Tightens IJFW's Codex integration for Codex 0.130+, reduces the default dependency footprint, and moves more release drift into automated gates before it reaches users.
+
+- Codex `SessionStart` now emits `additionalContext` inside `hookSpecificOutput` with `hookEventName: "SessionStart"`, matching Codex's strict hook response shape. This closes the `SessionStart hook (failed): hook returned invalid session start JSON output` error.
+- Codex `PostToolUse` is now stdout-silent. IJFW still records local observations and failure signals, but it no longer re-injects cleaned tool output as `systemMessage`, which Codex renders as visible hook warning spam.
+- Codex hook Node shims now pass user/tool text after `--`, so tool output beginning with `---` is treated as data instead of a Node CLI option. This closes the `node: bad option: ---` failure.
+- Codex `UserPromptSubmit` and `PreToolUse` advisory output now use the same `hookSpecificOutput.additionalContext` shape when they do emit context.
+- Codex `Stop` now stays stdout-silent on routine session saves. Normal receipts are written locally; only actionable compression notices can surface by default. This closes the `Stop hook (completed) warning: [ijfw] Session #... saved` noise.
+- Codex bundle tests now cover strict `SessionStart` JSON and silent `PostToolUse` behavior for both routine output and failure-looking output.
+- The shipped MCP server no longer installs `@xenova/transformers` by default. Cold semantic vectors are explicit opt-in and `IJFW_VECTORS` now defaults to `off`, keeping the production install smaller and quieter under package audits.
+- The preflight audit gate now runs against both `installer` and `mcp-server`, so server-side dependency drift is covered by the same release gate as the installer.
+- `ijfw preflight` now routes through the canonical 11-gate preflight entrypoint from both installer and MCP CLI paths instead of falling back to `scripts/check-all.sh`.
+- Platform capability drift is now gated by `platform-capabilities.json` plus `scripts/check-platform-drift.js`, covering skill counts, hook-event counts, and marketplace/plugin manifest claims.
+- Update-check changelog URLs now point at GitLab releases, matching the canonical repository.
+- D2 graph-write lock timeout handling now throws the intended `EBUSY_GRAPH_WRITE` error instead of tripping an undeclared variable path under collision.
+
+Files: `codex/.codex/hooks/session-start.sh`, `codex/.codex/hooks/post-tool-use.sh`, `codex/.codex/hooks/pre-prompt.sh`, `codex/.codex/hooks/pre-tool-use.sh`, `codex/.codex/hooks/session-end.sh`, `scripts/observation/test-envelope-invariant-codex.sh`, `mcp-server/test-codex-bundle.js`, `mcp-server/src/vectors.js`, `mcp-server/package.json`, `installer/src/preflight/gates/audit-ci.js`, `installer/src/preflight.js`, `mcp-server/src/cross-orchestrator-cli.js`, `mcp-server/src/compute/graph-lock.js`, `platform-capabilities.json`, `scripts/check-platform-drift.js`.
+
 ## [1.2.6] -- 2026-05-01
 
 **Token sandbox + parallel workflow dispatch + DeepSeek frontier upgrade.** A new `ijfw_run` MCP tool keeps large command output out of your context window entirely -- builds, test suites, grep runs, and log tails are sandboxed to disk and summarized in a few lines instead of flooding thousands of tokens. The `ijfw-workflow` execution engine gains a formal Wave Table that makes parallel agent dispatch deterministic rather than inferred. DeepSeek moves to `deepseek-v4-pro` -- the actual frontier model -- so the Trident gets Frontier AI checking Frontier AI.

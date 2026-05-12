@@ -34,6 +34,7 @@ function sanitizeLabel(label) {
 export function runCommand(command, opts = {}) {
   return new Promise((resolve) => {
     const cwd = opts.cwd || process.cwd();
+    const timeoutMs = Number(opts.timeoutMs || opts.timeout || TIMEOUT_MS);
     const start = Date.now();
     let timedOut = false;
     let totalBytes = 0;
@@ -45,12 +46,25 @@ export function runCommand(command, opts = {}) {
       cwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     });
+
+    function killChild() {
+      try {
+        if (process.platform !== 'win32' && child.pid) {
+          process.kill(-child.pid, 'SIGKILL');
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch {
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      }
+    }
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try { child.kill('SIGKILL'); } catch {}
-    }, TIMEOUT_MS);
+      killChild();
+    }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : TIMEOUT_MS);
 
     function onData(chunk) {
       if (capped) return;
@@ -59,7 +73,7 @@ export function runCommand(command, opts = {}) {
         chunks.push(chunk.slice(0, remaining));
         totalBytes += remaining;
         capped = true;
-        try { child.kill('SIGKILL'); } catch {}
+        killChild();
       } else {
         chunks.push(chunk);
         totalBytes += chunk.length;

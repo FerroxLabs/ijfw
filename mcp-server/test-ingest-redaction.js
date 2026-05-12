@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * test-ingest-redaction.js -- D-PILLAR-SPEC §12 ingest scrub gate (real
+ * test-ingest-redaction.js -- D-PILLAR-SPEC section 12 ingest scrub gate (real
  * fix-wave C3).
  *
  * Verifies that secrets are stripped at the observation-ingest boundary

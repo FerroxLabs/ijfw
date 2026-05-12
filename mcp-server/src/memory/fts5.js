@@ -10,7 +10,7 @@
 //   - PRAGMA busy_timeout = 5000 + BEGIN IMMEDIATE for racing writers
 //   - PRAGMA quick_check post-write enforces integrity
 //
-// Security model (D-PILLAR-SPEC §12, real fix-wave C3):
+// Security model (D-PILLAR-SPEC section 12, real fix-wave C3):
 //   indexEntry runs `redactSecrets()` over `entry.body` AND `entry.source`
 //   BEFORE the INSERT. The scrub is the security gate that ensures secret-
 //   shaped tokens are never persisted in `memory_entries`, the FTS index,
@@ -37,7 +37,7 @@ import {
 import { autoIndexGraphFromMemoryBody } from '../compute/graph-auto-index.js';
 import { redactSecrets } from '../redactor.js';
 
-// D-PILLAR-SPEC §12 ingest scrub gate. Default-on; the only escape hatch
+// D-PILLAR-SPEC section 12 ingest scrub gate. Default-on; the only escape hatch
 // is the IJFW_INGEST_SCRUB=0 env var, used for local debugging only and
 // never a shipping posture. Read on every indexEntry so test harnesses
 // can flip it without re-importing.
@@ -196,7 +196,7 @@ export function indexEntry(db, entry) {
   if (typeof entry.body !== 'string' || entry.body.length === 0) {
     throw new MemoryDbError('indexEntry: entry.body must be a non-empty string.');
   }
-  // D-PILLAR-SPEC §12 ingest scrub gate. Replace `body` and `source`
+  // D-PILLAR-SPEC section 12 ingest scrub gate. Replace `body` and `source`
   // with their redacted forms BEFORE the INSERT, so the FTS index, the
   // graph auto-index pass below, and any downstream reader only ever
   // see scrubbed text. After this branch `entry` is unchanged for the

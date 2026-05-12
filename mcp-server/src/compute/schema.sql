@@ -7,7 +7,7 @@
 -- memory (empty in alpha), `trident_run` for C1 KS-stat convergence-stop.
 -- See ADR for migration triggers + risk assessment.
 --
--- v2 additions (PRD §9 Pillar C9.4 + C9.6):
+-- v2 additions (PRD section 9 Pillar C9.4 + C9.6):
 --   - FTS5 tokenizer flipped to `porter unicode61` so morphological
 --     variants ("authenticate"/"authenticating"/"running"/"ran") collapse
 --     to a shared stem. Migration 002 recreates raw_fts + compiled_fts.

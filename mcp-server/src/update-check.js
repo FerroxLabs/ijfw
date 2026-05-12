@@ -90,7 +90,7 @@ export async function ijfwUpdateCheck(args = {}) {
     latest,
     available,
     reachable: true,
-    changelog_url: `https://github.com/${REPO}/releases/tag/v${latest}`,
+    changelog_url: `https://gitlab.com/${REPO}/-/releases/v${latest}`,
   };
 
   if (available) {

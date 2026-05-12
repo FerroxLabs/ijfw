@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ijfw.dev/schema/agents-md-frontmatter-v1.json",
-  "title": "AGENTS.md Frontmatter (IJFW v1.3.0 alpha, schema=1)",
+  "title": "AGENTS.md Frontmatter (IJFW v1.3.1, schema=1)",
   "description": "Typed YAML frontmatter contract for AGENTS.md. A1 hoists; A3 (Phase 3) populates the project-type fields. compute_trust + compute_net are read by Wayland to set per-project sandbox defaults; env vars override only when explicitly set.",
   "type": "object",
   "additionalProperties": false,

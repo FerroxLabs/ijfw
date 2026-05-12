@@ -2,7 +2,7 @@
 /**
  * test-d1-tier-semantic.js -- D-Pillar / D1 4-tier semantic axis.
  *
- * Source authority: PRD-v2 §9 Pillar D D1 + .planning/1.3.0/D-PILLAR-SPEC.md §1.
+ * Source authority: PRD-v2 section 9 Pillar D D1 + .planning/1.3.0/D-PILLAR-SPEC.md section 1.
  *
  * Covers:
  *   1. Memory migration v1 -> v2 preserves existing rows + adds tier_semantic

@@ -5,10 +5,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { BASH } from './test/win-bash-helper.js';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -95,13 +96,163 @@ test('codex: session-start hook references ijfw memory path', () => {
   );
 });
 
+test('codex: session-start emits Codex 0.130 hookSpecificOutput shape', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'session-start.sh');
+  const cwd = mkdtempSync(join(tmpdir(), 'ijfw-codex-start-'));
+  try {
+    const payload = JSON.stringify({
+      cwd,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-test',
+      permission_mode: 'default',
+      session_id: 'test-session',
+      source: 'startup',
+      transcript_path: null
+    });
+    const out = execFileSync(BASH, [hook], {
+      cwd,
+      input: payload,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+    assert.ok(out, 'session-start should emit a startup envelope');
+    const obj = JSON.parse(out);
+    assert.equal(obj.continue, true);
+    assert.equal(typeof obj.systemMessage, 'string');
+    assert.equal(Object.prototype.hasOwnProperty.call(obj, 'additionalContext'), false);
+    if (obj.hookSpecificOutput) {
+      assert.equal(obj.hookSpecificOutput.hookEventName, 'SessionStart');
+      assert.equal(typeof obj.hookSpecificOutput.additionalContext, 'string');
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('codex: post-tool-use stays quiet for routine output', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'post-tool-use.sh');
+  const payload = JSON.stringify({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'echo hello' },
+    tool_response: { output: 'hello world' },
+    session_id: 'test-session'
+  });
+  const out = execFileSync(BASH, [hook], {
+    input: payload,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  assert.equal(out, '');
+});
+
+test('codex: post-tool-use stays quiet for failure signals too', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'post-tool-use.sh');
+  const payload = JSON.stringify({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test' },
+    tool_response: { output: '---\nError: test failed\n---\nbody' },
+    session_id: 'test-session'
+  });
+  const out = execFileSync(BASH, [hook], {
+    input: payload,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  assert.equal(out, '');
+});
+
+test('codex: stop hook stays quiet for routine session saves', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'session-end.sh');
+  const cwd = mkdtempSync(join(tmpdir(), 'ijfw-codex-stop-'));
+  try {
+    const payload = JSON.stringify({
+      hook_event_name: 'Stop',
+      session_id: 'test-session',
+      cwd
+    });
+    const out = execFileSync(BASH, [hook], {
+      cwd,
+      input: payload,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    assert.equal(out, '');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('codex: stop hook ignores non-regular transcript paths', () => {
+  if (!existsSync('/dev/zero')) return;
+  const hook = join(CODEX, '.codex', 'hooks', 'session-end.sh');
+  const cwd = mkdtempSync(join(tmpdir(), 'ijfw-codex-stop-device-'));
+  try {
+    const payload = JSON.stringify({
+      hook_event_name: 'Stop',
+      session_id: 'test-session',
+      cwd,
+      transcript_path: '/dev/zero'
+    });
+    const out = execFileSync(BASH, [hook], {
+      cwd,
+      input: payload,
+      timeout: 2000,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    assert.equal(out, '');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('codex: stop hook emits only actionable compress notice', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'session-end.sh');
+  const cwd = mkdtempSync(join(tmpdir(), 'ijfw-codex-stop-compress-'));
+  try {
+    const transcript = join(cwd, 'rollout.jsonl');
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        message: {
+          model: 'gpt-test',
+          usage: { input_tokens: 1, output_tokens: 2 }
+        }
+      }) + '\n'
+    );
+    const payload = JSON.stringify({
+      hook_event_name: 'Stop',
+      session_id: 'test-session',
+      cwd,
+      transcript_path: transcript
+    });
+    const out = execFileSync(BASH, [hook], {
+      cwd,
+      input: payload,
+      env: { ...process.env, IJFW_COMPRESS_THRESHOLD: '1' },
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+    assert.ok(out, 'compress threshold should emit a notice');
+    const obj = JSON.parse(out);
+    assert.equal(obj.continue, true);
+    assert.match(obj.systemMessage, /Context large -- run: ijfw compress/);
+    assert.doesNotMatch(obj.systemMessage, /Session #/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 // ---- Skills -----------------------------------------------------------------
 
 const EXPECTED_SKILLS = [
   'ijfw-workflow', 'ijfw-handoff', 'ijfw-cross-audit', 'ijfw-commit',
   'ijfw-status', 'ijfw-doctor', 'ijfw-recall', 'ijfw-team',
   'ijfw-compress', 'ijfw-review', 'ijfw-debug', 'ijfw-summarize',
-  'ijfw-critique', 'ijfw-memory-audit', 'ijfw-plan-check', 'ijfw-update'
+  'ijfw-critique', 'ijfw-memory-audit', 'ijfw-plan-check', 'ijfw-update',
+  'ijfw-dashboard', 'ijfw-design', 'ijfw-preflight'
 ];
 
 test('codex: all expected skill directories exist', () => {

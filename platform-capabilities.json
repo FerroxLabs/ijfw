@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "platforms": {
+    "claude": {
+      "skills": 22,
+      "hookEvents": 6,
+      "skillsPath": "claude/skills",
+      "hooksPath": "claude/hooks/hooks.json"
+    },
+    "codex": {
+      "skills": 19,
+      "hookEvents": 5,
+      "skillsPath": "codex/skills",
+      "hooksPath": "codex/.codex/hooks.json"
+    },
+    "gemini": {
+      "skills": 19,
+      "hookEvents": 11,
+      "skillsPath": "gemini/extensions/ijfw/skills",
+      "hooksPath": "gemini/extensions/ijfw/hooks/hooks.json"
+    },
+    "shared": {
+      "skills": 19,
+      "skillsPath": "shared/skills"
+    }
+  }
+}

@@ -198,16 +198,8 @@ test('runCommand: command not found handled gracefully', async () => {
 });
 
 test('runCommand: timeout enforced', async () => {
-  // We cannot override the module-level TIMEOUT_MS constant, so pass a very
-  // short timeout via a wrapper: spawn a sleep longer than our test budget
-  // and confirm the process is killed (exitCode null or nonzero, timedOut true).
-  // We use a direct spawn to simulate what happens; for the actual module we
-  // verify that runCommand resolves (does not hang) when the process exits.
   const r = await runCommand('sleep 60', { timeout: 100 });
-  // runCommand ignores opts.timeout (uses module constant), but the real
-  // behaviour we assert: it must eventually resolve and report exit info.
-  // The sleep will be killed by the OS when the test process exits.
-  // To actually test timeout we run a command that exits quickly.
+  assert.equal(r.timedOut, true);
   assert.ok(typeof r.exitCode === 'number' || r.exitCode === null);
 });
 

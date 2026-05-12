@@ -43,7 +43,7 @@ const DEFAULT_STALE_VALUE = 1;
  * propagateStaleMemory(memDb, computeDb, supersededNodeId, options) -> envelope
  *
  * Walk the COMPUTE kg graph from `supersededNodeId` (BFS, weight + depth
- * gated per D-PILLAR-SPEC §2). For every reachable node (excluding the
+ * gated per D-PILLAR-SPEC section 2). For every reachable node (excluding the
  * start node by default), find `memory_entries` rows whose `body` mentions
  * the node's name and flip their `stale_candidate` column to `staleValue`.
  *

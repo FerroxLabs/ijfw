@@ -782,7 +782,7 @@ DEDUP_TMP="$(mktemp -d -t ijfw-dedup-XXXXXX)"
 mkdir -p "$DEDUP_TMP/.ijfw"
 GEMINI_SS_HOOK="$REPO_ROOT/gemini/extensions/ijfw/hooks/session-start.sh"
 if [ -f "$GEMINI_SS_HOOK" ]; then
-  # Both invocations must cd into DEDUP_TMP — IJFW_DIR=".ijfw" is cwd-relative,
+  # Both invocations must cd into DEDUP_TMP -- IJFW_DIR=".ijfw" is cwd-relative,
   # so the lock dir resolution depends on the active cwd, not on cwd from stdin.
   OUT1=$(printf '{"session_id":"%s","cwd":"%s"}' "$SID_DEDUP" "$DEDUP_TMP" | \
     (cd "$DEDUP_TMP" && bash "$GEMINI_SS_HOOK" 2>/dev/null) || true)

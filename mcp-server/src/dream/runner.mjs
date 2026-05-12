@@ -106,7 +106,7 @@ log(`start: host=${opts.host}, reason=${opts.reason}, project=${opts.projectRoot
 // ---------------------------------------------------------------------------
 //
 // D1 (Wave 2 Agent E) lands `mcp-server/src/memory/tier-promotion.js`
-// with the deterministic promotion rules from D-PILLAR-SPEC.md §1. We
+// with the deterministic promotion rules from D-PILLAR-SPEC.md section 1. We
 // import-by-URL so a missing module is a soft skip rather than a top-
 // level ESM resolve failure.
 //
@@ -210,7 +210,7 @@ async function runTierPromotion() {
     }
     // GA real fix-wave F4: Working->Procedural was missing from the
     // dream-cycle dispatch. The function exists in tier-promotion.js
-    // (per D-PILLAR-SPEC §1) but the runner only fired We + Es,
+    // (per D-PILLAR-SPEC section 1) but the runner only fired We + Es,
     // leaving the Procedural tier orphaned. Wire it here.
     //
     // Source signal per spec: TaskUpdate completed events with duration
@@ -297,7 +297,7 @@ async function runTierPromotion() {
 // F4 helper: discover TaskUpdate completed events for Procedural promotion.
 // ---------------------------------------------------------------------------
 //
-// D-PILLAR-SPEC §1 Working->Procedural promotion fires from TaskUpdate
+// D-PILLAR-SPEC section 1 Working->Procedural promotion fires from TaskUpdate
 // completed events with duration >= 5min and matching git commit window.
 // The alpha runner does not yet have a dedicated TaskUpdate event source
 // in the working memory ledger (events arrive via observation bodies but

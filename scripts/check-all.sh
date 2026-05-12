@@ -93,6 +93,11 @@ else
 fi
 
 echo
+echo "== platform drift =="
+node scripts/check-platform-drift.js
+ok "platform capabilities match shipped surfaces"
+
+echo
 echo "== plugin Python syntax =="
 for pydir in "wayland/plugins/ijfw" "hermes/plugins/ijfw"; do
   [ -e "$pydir" ] || continue

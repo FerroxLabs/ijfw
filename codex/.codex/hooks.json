@@ -63,7 +63,7 @@
             "command": "hooks/post-tool-use.sh",
             "timeout": 10,
             "_ijfw": true,
-            "_description": "Trim tool output noise, capture error signals, emit cleaned output as additionalContext."
+            "_description": "Trim tool output noise and capture error signals locally; stdout stays silent on routine tool calls."
           }
         ]
       }

@@ -15,7 +15,7 @@
 // Integrity discipline:
 //   - openDb()    -- enforces schema version; refuses downgrade.
 //   - safeWrite() -- runs `redactSecrets()` over `body` and `topic` BEFORE
-//                    inserting (D-PILLAR-SPEC §12 ingest scrub gate), then
+//                    inserting (D-PILLAR-SPEC section 12 ingest scrub gate), then
 //                    inserts inside a transaction and runs PRAGMA quick_check
 //                    after each insert; throws IntegrityError on anything
 //                    other than 'ok'. The scrub default is on; setting
@@ -25,7 +25,7 @@
 //                    by bm25 rank.
 //   - closeDb()   -- clean close; suppresses double-close errors.
 //
-// Security model (D-PILLAR-SPEC §12, real fix-wave C3):
+// Security model (D-PILLAR-SPEC section 12, real fix-wave C3):
 //   Secrets are scrubbed at the observation-ingest boundary. By the time a
 //   row reaches the FTS index, the entity extractor, or the kg layer, all
 //   `redactSecrets`-recognised tokens have been replaced with
@@ -40,7 +40,7 @@ import { runMigrations, highestKnownVersion, SchemaVersionError } from './migrat
 import { autoIndexGraphFromBody } from './graph-auto-index.js';
 import { redactSecrets } from '../redactor.js';
 
-// D-PILLAR-SPEC §12 ingest scrub gate. Default-on; the only escape hatch
+// D-PILLAR-SPEC section 12 ingest scrub gate. Default-on; the only escape hatch
 // is the IJFW_INGEST_SCRUB=0 env var, which exists for local debugging
 // (e.g. asserting raw body shape in a fixture) and is NOT a shipping
 // posture. Read on every safeWrite call so test harnesses can flip it
@@ -271,7 +271,7 @@ export function safeWrite(db, table, row) {
     }
   }
 
-  // D-PILLAR-SPEC §12 ingest scrub gate. Replace `body` and `topic` with
+  // D-PILLAR-SPEC section 12 ingest scrub gate. Replace `body` and `topic` with
   // their redacted forms BEFORE the INSERT runs, so the FTS index, the
   // entity extractor (D2), and any downstream reader only ever see the
   // scrubbed text. This applies to every `safeWrite` regardless of table

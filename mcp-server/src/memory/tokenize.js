@@ -1,6 +1,6 @@
 // IJFW v1.3.0 -- shared tokenization + Jaccard similarity for tier-promotion.
 //
-// Source authority: .planning/1.3.0/D-PILLAR-SPEC.md §1 (Episodic ->
+// Source authority: .planning/1.3.0/D-PILLAR-SPEC.md section 1 (Episodic ->
 // Semantic supersession trigger B uses token-set Jaccard > 0.7).
 //
 // Zero-deps, deterministic. Lowercases, strips non-word chars, drops

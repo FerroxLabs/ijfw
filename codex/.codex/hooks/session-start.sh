@@ -2,7 +2,9 @@
 # IJFW SessionStart (Codex) -- initialize state, emit banner, register project.
 # Codex hook JSON in/out: reads JSON payload on stdin, writes JSON response on stdout.
 # Payload: { "event": "SessionStart", "session_id": "...", "cwd": "..." }
-# Response: { "continue": true, "systemMessage": "..." }  (optional)
+# Response: { "continue": true, "systemMessage": "...",
+#             "hookSpecificOutput": { "hookEventName": "SessionStart",
+#                                     "additionalContext": "..." } }  (optional)
 #
 # No set -e -- hooks must never crash Codex.
 
@@ -29,7 +31,7 @@ fi
 
 # Pre-flight: .ijfw must be a directory if it exists.
 if [ -e "$IJFW_DIR" ] && [ ! -d "$IJFW_DIR" ]; then
-  printf '{"continue":true,"systemMessage":"[ijfw] .ijfw is a file here -- IJFW needs it as a directory. Rename or remove it, then start a new session."}\n'
+  printf '%s\n' '{"continue":true,"systemMessage":"[ijfw] .ijfw is a file here -- IJFW needs it as a directory. Rename or remove it, then start a new session."}'
   exit 0
 fi
 
@@ -161,14 +163,20 @@ Last handoff: $LAST_HANDOFF"
 </ijfw-memory>"
 fi
 
-# Emit Codex-format JSON response.
-command -v node >/dev/null 2>&1 || { printf '{"continue":true,"systemMessage":"%s"}\n' "$BANNER"; exit 0; }
+# Emit Codex-format JSON response. Codex 0.130 rejects top-level
+# additionalContext; it must live under hookSpecificOutput.
+command -v node >/dev/null 2>&1 || exit 0
 node -e '
   const banner = process.argv[1] || "[ijfw] Ready";
   const mem = process.argv[2] || "";
   const out = { "continue": true, "systemMessage": banner };
-  if (mem) out.additionalContext = mem;
+  if (mem) {
+    out.hookSpecificOutput = {
+      hookEventName: "SessionStart",
+      additionalContext: mem
+    };
+  }
   process.stdout.write(JSON.stringify(out) + "\n");
-' "$BANNER" "$MEM_CONTEXT" 2>/dev/null || printf '{"continue":true,"systemMessage":"%s"}\n' "$BANNER"
+' -- "$BANNER" "$MEM_CONTEXT" 2>>"$HOME/.ijfw/logs/codex-session-start.log" || exit 0
 
 exit 0

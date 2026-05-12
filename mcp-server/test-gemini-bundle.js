@@ -82,7 +82,9 @@ test('gemini: before-model hook exists (BeforeModel injection)', () => {
 const EXPECTED_COMMANDS = [
   'ijfw-workflow', 'ijfw-handoff', 'ijfw-cross-audit', 'ijfw-commit',
   'ijfw-status', 'ijfw-doctor', 'ijfw-recall', 'ijfw-team',
-  'ijfw-compress', 'ijfw-review', 'ijfw-debug', 'ijfw-summarize'
+  'ijfw-compress', 'ijfw-review', 'ijfw-debug', 'ijfw-summarize',
+  'ijfw-critique', 'ijfw-memory-audit', 'plan-check', 'ijfw-update',
+  'ijfw-dashboard', 'ijfw-design', 'ijfw-preflight'
 ];
 
 test('gemini: all expected TOML command files exist', () => {
@@ -109,7 +111,8 @@ const EXPECTED_SKILLS = [
   'ijfw-workflow', 'ijfw-handoff', 'ijfw-cross-audit', 'ijfw-commit',
   'ijfw-status', 'ijfw-doctor', 'ijfw-recall', 'ijfw-team',
   'ijfw-compress', 'ijfw-review', 'ijfw-debug', 'ijfw-summarize',
-  'ijfw-critique', 'ijfw-memory-audit', 'ijfw-plan-check', 'ijfw-update'
+  'ijfw-critique', 'ijfw-memory-audit', 'ijfw-plan-check', 'ijfw-update',
+  'ijfw-dashboard', 'ijfw-design', 'ijfw-preflight'
 ];
 
 test('gemini: all expected skill directories exist', () => {

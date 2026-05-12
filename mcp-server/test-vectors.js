@@ -1,6 +1,5 @@
-// Vectors module tests. When @xenova/transformers isn't installed, the
-// embedder should gracefully report unavailable and BM25 continues to work.
-// When it IS installed, the hybrid rerank should merge scores.
+// Vectors module tests. The transformer backend is a user opt-in dependency,
+// so default installs stay BM25-only and audit-clean.
 // The test never downloads the model - embedder availability is probed only.
 
 import { test } from 'node:test';
@@ -14,7 +13,7 @@ test('vectorsEnabled reads env var correctly', () => {
   process.env.IJFW_VECTORS = 'on';
   assert.equal(vectorsEnabled(), true);
   delete process.env.IJFW_VECTORS;
-  assert.equal(vectorsEnabled(), true); // default on
+  assert.equal(vectorsEnabled(), false); // default off
   if (save === undefined) delete process.env.IJFW_VECTORS;
   else process.env.IJFW_VECTORS = save;
 });
@@ -24,6 +23,16 @@ test('vectorsEnabled respects 0/false/off variants', () => {
   for (const v of ['0', 'false', 'OFF', 'False']) {
     process.env.IJFW_VECTORS = v;
     assert.equal(vectorsEnabled(), false, `expected ${v} → disabled`);
+  }
+  if (save === undefined) delete process.env.IJFW_VECTORS;
+  else process.env.IJFW_VECTORS = save;
+});
+
+test('vectorsEnabled respects 1/true/on variants', () => {
+  const save = process.env.IJFW_VECTORS;
+  for (const v of ['1', 'true', 'ON', 'True']) {
+    process.env.IJFW_VECTORS = v;
+    assert.equal(vectorsEnabled(), true, `expected ${v} to enable vectors`);
   }
   if (save === undefined) delete process.env.IJFW_VECTORS;
   else process.env.IJFW_VECTORS = save;

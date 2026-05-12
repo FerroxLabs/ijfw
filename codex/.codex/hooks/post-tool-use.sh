@@ -4,8 +4,7 @@
 # Codex hook JSON in/out:
 #   stdin:  { "event": "PostToolUse", "tool": "...", "tool_input": {...},
 #             "tool_response": "...", "session_id": "..." }
-#   stdout: { "continue": true, "systemMessage": "..." }
-#            OR nothing (exit 0 with no output = pass through)
+#   stdout: nothing (exit 0 = pass through)
 #
 # PostToolUse in Codex also supports decision:"block" to abort tool calls,
 # but IJFW does not block -- observation and trimming only.
@@ -35,7 +34,7 @@ RESPONSE_TEXT=$(node -e '
     }
     process.stdout.write(parts.join("\n"));
   } catch { process.stdout.write(""); }
-' "$INPUT")
+' -- "$INPUT")
 [ -z "$RESPONSE_TEXT" ] && exit 0
 
 # Signal capture -- error/failure detection, scoped to tool_response only.
@@ -48,7 +47,7 @@ if [ -n "$FIRST_ERR" ] || [ -n "$FIRST_FAIL" ]; then
     const fs = require("fs");
     const rec = { ts: process.argv[1], error: process.argv[2] || null, fail: process.argv[3] || null, platform: "codex" };
     try { fs.appendFileSync(".ijfw/.session-signals.jsonl", JSON.stringify(rec) + "\n"); } catch {}
-  ' "$TS" "$FIRST_ERR" "$FIRST_FAIL" 2>/dev/null
+  ' -- "$TS" "$FIRST_ERR" "$FIRST_FAIL" 2>/dev/null
 fi
 
 # Trim noise from tool_response.
@@ -94,13 +93,7 @@ if [ -f "$_OBS_CAPTURE" ]; then
   disown $! 2>/dev/null || true
 fi
 
-# Emit as Codex systemMessage so trimmed output flows into agent context.
-node -e '
-  const out = process.argv[1] || "";
-  if (!out.trim()) process.exit(0);
-  process.stdout.write(JSON.stringify({ "continue": true, "systemMessage": out }) + "\n");
-' "$CLEANED" 2>>"$HOME/.ijfw/logs/codex-post-tool-use.log"
-NODE_RC=$?
-[ "$NODE_RC" != "0" ] && printf '%s [codex-post-tool-use] node emit failed: rc=%s\n' "$(date -u +%FT%TZ)" "$NODE_RC" >>"$HOME/.ijfw/logs/codex-post-tool-use.log" 2>/dev/null
-
+# Codex renders PostToolUse stdout as injected hook context/warnings. Stay
+# silent: the agent already receives the original tool output, while IJFW keeps
+# local observation + failure signals above.
 exit 0

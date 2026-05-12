@@ -30,7 +30,7 @@ COMMANDS
   install     Install IJFW into your AI coding agents
   uninstall   Remove IJFW from your AI coding agents
   help        Open the full IJFW guide (terminal, or --browser for rendered)
-  preflight   Run 12-gate quality pipeline before publishing
+  preflight   Run 11-gate quality pipeline before publishing
   dashboard   Start / stop / check the local observability dashboard
   design      Manage the visual design companion
   doctor      Diagnose IJFW installation health

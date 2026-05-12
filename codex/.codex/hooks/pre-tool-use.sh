@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # IJFW PreToolUse (Codex) -- scans the about-to-run command for destructive patterns.
-# Injects a verification reminder via systemMessage. Never blocks execution.
+# Injects a verification reminder via hook-specific additionalContext. Never blocks execution.
 #
 # Codex hook JSON in/out:
 #   stdin:  { "event": "PreToolUse", "tool": "...", "tool_input": {...}, "session_id": "..." }
-#   stdout: { "continue": true, "systemMessage": "..." }
+#   stdout: { "continue": true,
+#             "hookSpecificOutput": { "hookEventName": "PreToolUse",
+#                                     "additionalContext": "..." } }
 #            OR nothing (exit 0 with no output = pass through)
 #
 # No set -e -- hooks must never crash Codex.
@@ -61,10 +63,14 @@ if [ -n "$DETECTED" ]; then
   if command -v node >/dev/null 2>&1; then
     node -e '
       const msg = process.argv[1] || "";
-      process.stdout.write(JSON.stringify({ "continue": true, "systemMessage": msg }) + "\n");
-    ' "$MSG" 2>/dev/null
-  else
-    printf '{"continue":true,"systemMessage":"%s"}\n' "$MSG"
+      process.stdout.write(JSON.stringify({
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          additionalContext: msg
+        }
+      }) + "\n");
+    ' -- "$MSG" 2>/dev/null
   fi
 fi
 

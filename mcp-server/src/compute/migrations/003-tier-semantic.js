@@ -1,6 +1,6 @@
 // IJFW v1.3.0 -- compute migration 003: 4-tier semantic axis (D1).
 //
-// Source authority: PRD-v2 §9 Pillar D D1 + .planning/1.3.0/D-PILLAR-SPEC.md §1.
+// Source authority: PRD-v2 section 9 Pillar D D1 + .planning/1.3.0/D-PILLAR-SPEC.md section 1.
 //
 // Bumps compute schema 2 -> 3. Adds `tier_semantic` to BOTH content tables
 // in the compute db so dream-cycle promotions (Episodic -> Semantic via
@@ -11,7 +11,7 @@
 //   - raw.tier_semantic       DEFAULT 'working'   (raw observations are
 //                                                   session-bound by
 //                                                   definition; Working tier)
-//   - compiled.tier_semantic  DEFAULT 'semantic'  (per D-PILLAR-SPEC §1 the
+//   - compiled.tier_semantic  DEFAULT 'semantic'  (per D-PILLAR-SPEC section 1 the
 //                                                   compiled table IS the
 //                                                   natural Semantic tier;
 //                                                   procedural_candidate /
@@ -40,7 +40,7 @@ export function up(db) {
   );
 
   // --- compiled.tier_semantic --------------------------------------------
-  // Compiled rows are the natural Semantic tier per D-PILLAR-SPEC §1.
+  // Compiled rows are the natural Semantic tier per D-PILLAR-SPEC section 1.
   // Procedural candidate / procedural rows override the default at write
   // time. Episodic rows that get promoted to Semantic via supersession
   // also write into compiled with this default.

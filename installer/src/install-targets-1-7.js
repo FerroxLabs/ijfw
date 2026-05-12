@@ -369,7 +369,7 @@ export async function installCodex(ctx) {
     }
   }
 
-  ctx.log.ok('Installed Codex bundle: MCP + hooks + 15 skills + context');
+  ctx.log.ok('Installed Codex bundle: MCP + hooks + 19 skills + context');
   return { status: 'ok' };
 }
 
@@ -464,7 +464,7 @@ export async function installGemini(ctx) {
     copyIfAbsent(f.path, join(extDst, 'agents', f.name));
   }
 
-  ctx.log.ok('Installed Gemini bundle: MCP + extension + 15 skills + 11 hooks + policy');
+  ctx.log.ok('Installed Gemini bundle: MCP + extension + 19 skills + 11 hooks + policy');
   return { status: 'ok' };
 }
 

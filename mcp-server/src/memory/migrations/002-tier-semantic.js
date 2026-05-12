@@ -1,6 +1,6 @@
 // IJFW v1.3.0 -- memory migration 002: 4-tier semantic axis (D1).
 //
-// Source authority: PRD-v2 §9 Pillar D D1 + .planning/1.3.0/D-PILLAR-SPEC.md §1
+// Source authority: PRD-v2 section 9 Pillar D D1 + .planning/1.3.0/D-PILLAR-SPEC.md section 1
 // (tier promotion rules).
 //
 // Adds `tier_semantic` column ORTHOGONAL to existing tier_access (hot/warm/cold
@@ -10,7 +10,7 @@
 //
 // ADD-ONLY semantics. Default 'working' protects every legacy row -- existing
 // memory_entries pre-D1 are by definition session-bound observations, which is
-// the exact definition of Working in D-PILLAR-SPEC §1. Promotion to other
+// the exact definition of Working in D-PILLAR-SPEC section 1. Promotion to other
 // tiers happens via tier-promotion.js (separate module, not this migration).
 //
 // CREATE INDEX on (tier_semantic, created_at) so the search filter

@@ -1,13 +1,12 @@
 // --- Vector embeddings (W3.3 / H5a-b-c) ---
 //
-// Thin wrapper around @xenova/transformers. Lazily imports the library on
-// first use so the zero-deps default install path is unaffected -- users who
-// don't enable vectors never pay the ~5MB bundle cost, and the 23MB model
-// download only happens when the first embedding query fires.
+// Thin wrapper around a user-installed @xenova/transformers package. IJFW does
+// not ship that dependency by default: vectors are an explicit opt-in so the
+// zero-deps install path and npm-audit surface stay small.
 //
 // Environment control:
-//   IJFW_VECTORS=off  -- disable vectors entirely (BM25-only)
-//   IJFW_VECTORS=on   -- enable (default if the library is present)
+//   IJFW_VECTORS=off  -- disable vectors entirely (BM25-only; default)
+//   IJFW_VECTORS=on   -- enable if the library is installed by the user
 //   IJFW_VECTORS_MODEL -- override the embedding model (default: Xenova/all-MiniLM-L6-v2, ~23MB)
 //
 // Fallback: if @xenova/transformers isn't installed, vectors silently
@@ -129,8 +128,8 @@ async function loadPipeline() {
 }
 
 export function vectorsEnabled() {
-  const v = (process.env.IJFW_VECTORS || 'on').toLowerCase();
-  return v !== 'off' && v !== '0' && v !== 'false';
+  const v = (process.env.IJFW_VECTORS || 'off').toLowerCase();
+  return v === 'on' || v === '1' || v === 'true';
 }
 
 // Returns { available: true, embed(text) → Float32Array } or

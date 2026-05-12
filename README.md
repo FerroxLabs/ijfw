@@ -220,7 +220,7 @@ The observation ledger feeds into a session summary written at SessionEnd: files
 
 Three invariants run through every surface.
 
-**On-demand skill loading.** IJFW ships 20 skills (workflow, commit, handoff, review, critique, compress, team setup, debug, memory audit, cross-audit, summarize, and more). Only the core skill (under 60 lines) is always loaded. Everything else hot-loads on trigger and unloads when done. Your context window stays lean; your token bill stays low.
+**On-demand skill loading.** IJFW ships platform-native skill bundles (19 on Codex/Gemini, 22 on Claude Code) covering workflow, commit, handoff, review, critique, compress, team setup, debug, memory audit, cross-audit, summarize, and more. Only the core skill is always loaded. Everything else hot-loads on trigger and unloads when done. Your context window stays lean; your token bill stays low.
 
 **Natural-language invocation, context-aware.** Say "cross-audit this" and IJFW picks up the file you are looking at, the diff you just staged, or the range you just referenced. Say "plan this feature" and the workflow skill opens the Quick or Deep flow with the brief already seeded from your current conversation. You describe what you want; IJFW figures out the where.
 
@@ -290,7 +290,7 @@ Decisions, patterns, handoffs, and journal entries persist as plain markdown in 
 |------|-------|--------------|
 | Hot  | Plain markdown | Always on. Instant reads. Git friendly. |
 | Warm | BM25 ranked retrieval | Always on. Scales to around 10,000 entries. |
-| Cold | Optional semantic vectors via `@xenova/transformers` | Only if installed. Off by default. |
+| Cold | Optional semantic vectors | Off by default. Requires a user-installed embedding provider. |
 
 Ten MCP tools (cap raised 8 -> 10 in 1.1.6 to land the update-check + update-apply admin tools) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
 
@@ -357,7 +357,7 @@ When you do update, the model **never runs the install for you**. The `ijfw_upda
 ijfw update --confirm <token>
 ```
 
-This air-gaps prompt injection from code execution. Even if a hostile prompt convinces the model to call `ijfw_update_apply`, no code runs until a human types the token in the terminal. Provenance verified via `npm audit signatures` + GitHub release shasum cross-check. A `last_applied_version` sentinel prevents the detect→update→detect→update loop. Full threat model in [`docs/SECURITY.md`](docs/SECURITY.md).
+This air-gaps prompt injection from code execution. Even if a hostile prompt convinces the model to call `ijfw_update_apply`, no code runs until a human types the token in the terminal. Provenance verified via `npm audit signatures` + release shasum cross-check. A `last_applied_version` sentinel prevents the detect→update→detect→update loop. Full threat model in [`docs/SECURITY.md`](docs/SECURITY.md).
 
 * * *
 
@@ -399,9 +399,9 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 -   **Slash commands for every move**: `/workflow`, `/handoff`, `/cross-audit`, `/cross-research`, `/cross-critique`, `/memory-audit`, `/memory-consent`, `/memory-why`, `/metrics`, `/mode`, `/team`, `/consolidate`, `/compress`, `/status`, `/doctor`, `/ijfw-plan`, `/ijfw-execute`, `/ijfw-verify`, `/ijfw-ship`, `/ijfw-audit`, `/ijfw` (help).
     
--   **9 deterministic bash hooks**: SessionStart (memory injection + welcome-back beat), SessionStart-dashboard (auto-spawn local observability), SessionEnd (token-savings receipt + memory pointer), UserPromptSubmit (vague-prompt detector) + its capture pair, PreToolUse (pattern detection), PostToolUse (output trim + signal capture), PreCompact (session preservation), Observation-capture.
+-   **6 lifecycle hook events / 12 scripts**: SessionStart (memory injection + welcome-back beat), SessionStart-dashboard (auto-spawn local observability), SessionEnd (token-savings receipt + memory pointer), UserPromptSubmit (vague-prompt detector) + its capture pair, PreToolUse (pattern detection), PostToolUse (output trim + signal capture), PreCompact (session preservation), Observation-capture.
     
--   **20 on-demand skills**: workflow, memory, commit, handoff, review, critique, compress, team setup, debug, cross-audit, **design (DESIGN.md picker + 12 templates + 12-domain brand atlas, cross-platform)**, recall, dashboard, preflight, and more. Hot-loaded when triggered, unloaded when done.
+-   **22 on-demand skills**: workflow, memory, commit, handoff, review, critique, compress, team setup, debug, cross-audit, **design (DESIGN.md picker + 12 templates + 12-domain brand atlas, cross-platform)**, recall, dashboard, preflight, and more. Hot-loaded when triggered, unloaded when done.
     
 
 ### The MCP memory server
@@ -457,9 +457,9 @@ ijfw receipt last                  Redacted, shareable block from the last Tride
 
 | Platform | What ships |
 |----------|------------|
-| Claude Code | Native plugin via marketplace, MCP auto-registered, 9 hooks, 20 on-demand skills, 21 slash commands |
-| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 20 skills, 9 hooks, MCP registered, marketplace-ready |
-| Gemini CLI | Native extension (`gemini-extension.json`), 20 skills, 11 hook events, 21 TOML slash commands, policy engine, BeforeModel injection, checkpointing; observation ledger + dashboard write |
+| Claude Code | Native plugin via marketplace, MCP auto-registered, 6 hook events / 12 scripts, 22 on-demand skills, 22 slash commands |
+| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 19 skills, 5 hook events, MCP registered, marketplace-ready |
+| Gemini CLI | Native extension (`gemini-extension.json`), 19 skills, 11 hook events, 19 TOML slash commands, policy engine, BeforeModel injection, checkpointing; observation ledger + dashboard write |
 | Cursor | `.cursor/mcp.json` + `.cursor/rules/ijfw.mdc`; dashboard view-only (no hook lifecycle) |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` + `.windsurfrules`; dashboard view-only |
 | Copilot (VS Code) | `.vscode/mcp.json` + `.github/copilot-instructions.md`; dashboard view-only |
@@ -598,7 +598,7 @@ Yes. `ijfw off` disables the core skill. Each command is isolated. The MCP serve
 `ijfw import claude-mem` round-trips the SQLite store into IJFW markdown. Idempotent. Safe to rerun. `--dry-run` shows what would happen first.
 
 **Will it slow my sessions down?**  
-MCP handshake is about 50 ms. Memory recall across thousands of entries is under 10 ms. The PostToolUse hook (fires per tool call) measures ~100 ms median on M1 Pro -- 1.1.8 consolidated it from ~145 ms by collapsing multiple node spawns into one; further reduction is bounded below by node's cold-start floor and we won't trade zero-runtime-deps to go lower. Observation capture dispatches to a detached child so it never blocks the hot path. Numbers are from the `scripts/observation/` ledger and `post-tool-use.js`; reproducible with `time` on your own machine.
+MCP handshake is about 50 ms. Memory recall across thousands of entries is under 10 ms. Claude/Gemini hook enrichment stays best-effort, while Codex tool hooks are stdout-silent on routine success so Codex does not render normal work as hook warnings. Observation capture dispatches to a detached child so it never blocks the hot path. Numbers are from the `scripts/observation/` ledger and hook smoke tests; reproducible with `time` on your own machine.
 
 **How do I update?**  
 `ijfw update` pulls latest and reinstalls merge-safely. Your memory is preserved.

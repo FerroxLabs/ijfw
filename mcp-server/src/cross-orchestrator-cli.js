@@ -19,6 +19,8 @@ import { renderHeroLine } from './hero-line.js';
 import { ROSTER, isInstalled, isReachable } from './audit-roster.js';
 import { aggregatePortfolioFindings } from './cross-project-search.js';
 import { runImport, runImportAll, listImporters } from './importers/cli.js';
+import { validateToken } from './lib/token.js';
+import { isVersionStringValid } from './lib/npm-view.js';
 
 // ---------------------------------------------------------------------------
 // Auditor error translator (1.2.5)
@@ -332,7 +334,7 @@ Usage:
 Commands:
   install           Install IJFW into your AI coding agents.
   uninstall         Remove IJFW and revert AI-agent configs. Same as: ijfw off
-  preflight         Run the 12-gate quality pipeline (blocking + advisory).
+  preflight         Run the 11-gate quality pipeline (blocking + advisory).
   dashboard         Control the dashboard server (start, stop, status).
   demo              30-second live tour of the Trident (fires real auditors).
   cross             Fire external auditors at a target. Try: ijfw cross audit README.md
@@ -1180,7 +1182,7 @@ function cmdUpdateChangelog() {
     console.error(`could not fetch latest version: ${r.message}`);
     process.exit(1);
   }
-  const url = `https://api.github.com/repos/therealseandonahoe/ijfw/releases/tags/v${r.version}`;
+  const url = `https://gitlab.com/api/v4/projects/therealseandonahoe%2Fijfw/releases/v${r.version}`;
   const fetchRes = spawnSync('curl', ['-fsSL', '-H', 'User-Agent: ijfw', url], { encoding: 'utf8', timeout: 10_000 });
   if (fetchRes.status !== 0) {
     console.log(`No release notes available for v${r.version}.`);
@@ -1190,7 +1192,7 @@ function cmdUpdateChangelog() {
   let body = '';
   try {
     const data = JSON.parse(fetchRes.stdout || '{}');
-    body = data.body || '(no body)';
+    body = data.description || '(no body)';
   } catch { body = '(could not parse release JSON)'; }
   // ANSI strip + cap 4KB. Control-char regex is intentional -- defangs
   // CHANGELOG bytes fetched over HTTPS so paste into the terminal can't
@@ -1235,21 +1237,49 @@ function cmdUpdateConfirm(token) {
     process.exit(1);
   }
   let sentinelPath = null;
+  let pending = null;
+  let sessionId = null;
+  let sawPending = false;
   try {
     for (const dir of readdirSync(runRoot)) {
       const candidate = join(runRoot, dir, 'update-pending.json');
-      if (existsSync(candidate)) { sentinelPath = candidate; break; }
+      if (!existsSync(candidate)) continue;
+      sawPending = true;
+      const candidatePending = readJsonSafe(candidate);
+      if (candidatePending && candidatePending.token === token) {
+        sentinelPath = candidate;
+        pending = candidatePending;
+        sessionId = dir;
+        break;
+      }
     }
   } catch { /* */ }
   if (!sentinelPath) {
-    console.error('No pending update sentinel found. The MCP `ijfw_update_apply` tool issues sentinels.');
+    console.error(
+      sawPending
+        ? 'Token mismatch -- run ijfw_update_check + ijfw_update_apply via your AI to issue a fresh token.'
+        : 'No pending update sentinel found. The MCP `ijfw_update_apply` tool issues sentinels.'
+    );
     process.exit(1);
   }
-  const pending = readJsonSafe(sentinelPath);
-  if (!pending || pending.token !== token) {
-    console.error('Token mismatch -- run ijfw_update_check + ijfw_update_apply via your AI to issue a fresh token.');
+
+  if (!pending || !isVersionStringValid(pending.target_version)) {
+    try { rmSync(sentinelPath, { force: true }); } catch { /* */ }
+    console.error('Pending update sentinel is malformed -- run ijfw_update_check + ijfw_update_apply again.');
     process.exit(1);
   }
+  const tokenCheck = validateToken(sessionId, token);
+  if (!tokenCheck.ok || tokenCheck.target_version !== pending.target_version) {
+    try { rmSync(sentinelPath, { force: true }); } catch { /* */ }
+    const why =
+      tokenCheck.error === 'expired' ? 'Token expired' :
+      tokenCheck.error === 'already-consumed' ? 'Token already consumed' :
+      tokenCheck.error === 'mismatch' ? 'Token mismatch' :
+      'Token validation failed';
+    console.error(`${why} -- run ijfw_update_check + ijfw_update_apply to issue a fresh token.`);
+    process.exit(1);
+  }
+
   if (process.env.IJFW_FROM_MCP === '1') {
     console.error('Refusing: --confirm must be invoked from a terminal, not an MCP-spawned subprocess.');
     process.exit(1);
@@ -1286,6 +1316,13 @@ function cmdUpdateInteractive(opts = {}) {
   const r = npmViewVersion('@ijfw/install');
   if (!r.ok) {
     console.error(`Update check failed: ${r.message}`);
+    return 1;
+  }
+  if (opts._confirmedFromToken && r.version !== opts._confirmedFromToken) {
+    console.error(
+      `Update target changed from v${opts._confirmedFromToken} to v${r.version}. ` +
+      'Re-run ijfw_update_check so the terminal confirmation matches the package being installed.'
+    );
     return 1;
   }
   const cmp = cmpSemver(current, r.version);
@@ -1409,7 +1446,7 @@ function cmdUpdateInteractive(opts = {}) {
   return 0;
 }
 
-// `ijfw --version` (pure) and `ijfw --version --verbose` per v3 �section MEDIUM
+// `ijfw --version` (pure) and `ijfw --version --verbose` per v3 section MEDIUM
 function cmdVersion(opts = {}) {
   const root = repoRootFromCli();
   const pkgPath = join(root, 'installer', 'package.json');
@@ -1866,12 +1903,12 @@ function cmdUninstall() {
   process.exit(res.status ?? 1);
 }
 function cmdPreflight() {
-  const script = findCliAsset('scripts', 'check-all.sh');
+  const script = findCliAsset('installer', 'src', 'preflight.js');
   if (!script) {
-    console.error('check-all.sh not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
+    console.error('preflight.js not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
     process.exit(1);
   }
-  const res = spawnSync('bash', [script, ...process.argv.slice(3)], { stdio: 'inherit' });
+  const res = spawnSync(process.execPath, [script, ...process.argv.slice(3)], { stdio: 'inherit' });
   process.exit(res.status ?? 1);
 }
 function cmdDashboard(sub) {

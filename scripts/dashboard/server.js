@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkS
 import { homedir } from 'os';
 import { join, dirname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync, spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 // C9.7: Trident lens-health probes for the dashboard tile.
 import { probeLenses, healthTileShape } from '../../mcp-server/src/trident/lens-health.js';
 
@@ -115,7 +115,7 @@ function findCodburn() {
 function querySqlite(dbPath, sql) {
   if (!SQLITE3_AVAILABLE) return [];
   try {
-    const out = execSync(`sqlite3 "${dbPath}" "${sql}"`, { encoding: 'utf8', timeout: 5000 });
+    const out = execFileSync('sqlite3', [dbPath, sql], { encoding: 'utf8', timeout: 5000 });
     return out.trim().split('\n').filter(Boolean);
   } catch (err) {
     process.stderr.write(`[ijfw-dashboard] querySqlite(${dbPath}): ${err.message}\n`);

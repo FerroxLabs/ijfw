@@ -453,10 +453,17 @@ const CLI = resolve(dirname(fileURLToPath(import.meta.url)), 'src/cross-orchestr
 //                    either way -- so the assertion's spirit is preserved.
 function makeFakeNpm(dir, mode) {
   if (process.platform === 'win32') {
+    if (mode === 'view-newer') {
+      writeFileSync(join(dir, 'npm.cmd'), '@echo off\r\nif "%1"=="view" (echo "9.9.10" & exit /B 0)\r\nexit /B 7\r\n');
+      return dir;
+    }
     const code = mode === 'signal-kill' ? 143 : 7;
     writeFileSync(join(dir, 'npm.cmd'), `@echo off\r\nexit /B ${code}\r\n`);
   } else {
-    const body = mode === 'signal-kill' ? 'kill -TERM $$' : 'exit 7';
+    const body =
+      mode === 'signal-kill' ? 'kill -TERM $$' :
+      mode === 'view-newer' ? 'if [ "$1" = "view" ]; then echo "\\"9.9.10\\""; exit 0; fi\nexit 7' :
+      'exit 7';
     writeFileSync(join(dir, 'npm'), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
   return dir;
@@ -524,6 +531,24 @@ test('cmdUpdateConfirm cleans sentinel on install signal-kill', () => {
 
   assert.equal(readPendingSentinel(sid).ok, false,
     `sentinel must be gone after signal-kill path. status=${r.status} signal=${r.signal} stdout=${(r.stdout || '').slice(0, 400)} stderr=${(r.stderr || '').slice(0, 400)}`);
+  rmSync(fakeBin, { recursive: true, force: true });
+  cleanup(d);
+});
+
+test('cmdUpdateConfirm rejects if npm latest differs from confirmed token target', () => {
+  const d = isolated();
+  const sid = 'test-session-target-drift';
+  const tok = issueToken(sid, '9.9.9');
+  writePendingSentinel(sid, '9.9.9', tok.token);
+  assert.equal(readPendingSentinel(sid).ok, true, 'sentinel must exist before drift rejection');
+
+  const fakeBin = mkdtempSync(join(tmpdir(), 'ijfw-fakebin-'));
+  makeFakeNpm(fakeBin, 'view-newer');
+  const r = spawnConfirm(tok.token, d, fakeBin);
+
+  assert.equal(r.status, 1, `target drift should reject. stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.match(r.stderr, /Update target changed from v9\.9\.9 to v9\.9\.10/);
+  assert.equal(readPendingSentinel(sid).ok, false, 'sentinel must be gone after drift rejection');
   rmSync(fakeBin, { recursive: true, force: true });
   cleanup(d);
 });

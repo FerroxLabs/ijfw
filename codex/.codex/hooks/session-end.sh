@@ -3,16 +3,17 @@
 # Also implements PreCompact workaround: checks context utilization estimate and
 # emits a compress hint when the session token count exceeds threshold.
 #
-# Codex hook JSON in/out: reads JSON payload on stdin, writes JSON response on stdout.
+# Codex hook JSON in/out: reads JSON payload on stdin. Routine success writes
+# nothing to stdout because Codex renders Stop hook stdout as a visible warning.
 # Payload: { "event": "Stop", "session_id": "...", "stopReason": "...", "cwd": "..." }
-# Response: { "continue": true, "systemMessage": "..." }
+# Actionable response only: { "continue": true, "systemMessage": "..." }
 #
 # PreCompact workaround (locked decision #3):
 #   Codex has no native PreCompact event. This Stop hook reads the session JSONL
 #   transcript (if transcript_path is in the payload) and estimates output token
 #   count. When output_tokens > IJFW_COMPRESS_THRESHOLD (default 40000), it emits
-#   a compress-hint systemMessage so the next session starts with the preserve
-#   instructions in context. Best-effort: works when transcript_path is present.
+#   a compress-hint systemMessage. Best-effort: works when transcript_path is
+#   present. Set IJFW_CODEX_HOOK_NOTICES=1 to also surface routine receipts.
 #
 # No set -e -- hooks must never crash Codex.
 
@@ -63,6 +64,7 @@ fi
 
 # Write metrics JSONL + check for PreCompact threshold.
 COMPRESS_HINT=""
+METRICS_HAS_USAGE="0"
 if command -v node >/dev/null 2>&1; then
   COMPRESS_THRESHOLD="${IJFW_COMPRESS_THRESHOLD:-40000}"
   RESULT=$(node -e '
@@ -76,7 +78,13 @@ if command -v node >/dev/null 2>&1; then
       if (stdin.trim()) {
         const payload = JSON.parse(stdin);
         const tp = payload && (payload.transcript_path || (payload.session && payload.session.transcript_path));
-        if (tp && fs.existsSync(tp)) {
+        const maxBytes = Number(process.env.IJFW_TRANSCRIPT_MAX_BYTES || 100 * 1024 * 1024);
+        let ok = false;
+        try {
+          const st = tp && fs.statSync(tp);
+          ok = !!(st && st.isFile() && st.size <= maxBytes);
+        } catch {}
+        if (ok) {
           const lines = fs.readFileSync(tp, "utf8").split("\n");
           for (const line of lines) {
             if (!line.trim()) continue;
@@ -125,18 +133,25 @@ if command -v node >/dev/null 2>&1; then
     const threshold = Number(process.argv[7]) || 40000;
     const needsCompress = usage.output_tokens > threshold;
 
-    const out = { metrics: o, needs_compress: needsCompress };
+    const hasUsage = (
+      usage.input_tokens +
+      usage.output_tokens +
+      usage.cache_read_input_tokens +
+      usage.cache_creation_input_tokens
+    ) > 0;
+    const out = { metrics: o, needs_compress: needsCompress, has_usage: hasUsage };
     process.stdout.write(JSON.stringify(out));
   ' "$ISO_TIMESTAMP" "$SESSION_NUM" "$MODE" "$ROUTING" "$MEMORY_STORES" "$HAS_HANDOFF" "$COMPRESS_THRESHOLD" "$HOOK_STDIN" 2>/dev/null)
 
   if [ -n "$RESULT" ]; then
-    METRICS=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(JSON.stringify(r.metrics)||"")}catch{}' "$RESULT" 2>/dev/null)
-    NEEDS_COMPRESS=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(r.needs_compress?"1":"0")}catch{process.stdout.write("0")}' "$RESULT" 2>/dev/null)
+    METRICS=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(JSON.stringify(r.metrics)||"")}catch{}' -- "$RESULT" 2>/dev/null)
+    NEEDS_COMPRESS=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(r.needs_compress?"1":"0")}catch{process.stdout.write("0")}' -- "$RESULT" 2>/dev/null)
+    METRICS_HAS_USAGE=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(r.has_usage?"1":"0")}catch{process.stdout.write("0")}' -- "$RESULT" 2>/dev/null)
     if [ -n "$METRICS" ]; then
       printf '%s\n' "$METRICS" >> "$METRICS_FILE" 2>/dev/null
     fi
     if [ "${NEEDS_COMPRESS:-0}" = "1" ]; then
-      COMPRESS_HINT=" | Context large -- run: ijfw compress"
+      COMPRESS_HINT="Context large -- run: ijfw compress"
     fi
   fi
 fi
@@ -194,16 +209,21 @@ if [ -d "$IJFW_DIR/sessions" ]; then
   fi
 fi
 
-RECEIPT="[ijfw] Session #$SESSION_NUM saved$COMPRESS_HINT"
+NOTICE=""
+if [ -n "$COMPRESS_HINT" ]; then
+  NOTICE="[ijfw] $COMPRESS_HINT"
+elif [ "${IJFW_CODEX_HOOK_NOTICES:-}" = "1" ]; then
+  NOTICE="[ijfw] Session #$SESSION_NUM saved"
+fi
 
 # 1.1.6 cross-platform status card -- one-line context+update nudge.
 # Pulls from the same composer Claude's statusLine + Gemini AfterAgent use.
 # Best-effort: silent on any failure; never breaks the response.
 STATUS_CARD=""
-if command -v node >/dev/null 2>&1; then
+if [ "${IJFW_CODEX_HOOK_NOTICES:-}" = "1" ] && [ "${METRICS_HAS_USAGE:-0}" = "1" ] && command -v node >/dev/null 2>&1; then
   STATUS_CARD_JS="$HOME/.ijfw/mcp-server/src/lib/status-card.js"
   if [ -f "$STATUS_CARD_JS" ] && [ -n "${METRICS:-}" ]; then
-    STATUS_CARD=$(node -e '
+    STATUS_CARD=$(node --input-type=module -e '
       try {
         const { composeStatusCard } = await import(process.argv[1]);
         const m = JSON.parse(process.argv[2] || "{}");
@@ -213,21 +233,22 @@ if command -v node >/dev/null 2>&1; then
         const card = composeStatusCard({ contextPct: pct });
         if (card) process.stdout.write(card);
       } catch {}
-    ' "$STATUS_CARD_JS" "$METRICS" 2>/dev/null)
+    ' -- "$STATUS_CARD_JS" "$METRICS" 2>/dev/null)
   fi
 fi
 if [ -n "$STATUS_CARD" ]; then
-  RECEIPT="$RECEIPT"$'\n'"$STATUS_CARD"
+  NOTICE="$NOTICE"$'\n'"$STATUS_CARD"
 fi
 
-# Emit Codex-format JSON response.
+# Emit Codex-format JSON response only for actionable/opt-in notices.
+[ -z "$NOTICE" ] && exit 0
 if command -v node >/dev/null 2>&1; then
   node -e '
-    const receipt = process.argv[1] || "[ijfw] Session saved";
-    process.stdout.write(JSON.stringify({ "continue": true, "systemMessage": receipt }) + "\n");
-  ' "$RECEIPT" 2>/dev/null
-else
-  printf '{"continue":true,"systemMessage":"%s"}\n' "$RECEIPT"
+    const notice = process.argv[1] || "";
+    if (notice.trim()) {
+      process.stdout.write(JSON.stringify({ "continue": true, "systemMessage": notice }) + "\n");
+    }
+  ' -- "$NOTICE" 2>/dev/null
 fi
 
 exit 0

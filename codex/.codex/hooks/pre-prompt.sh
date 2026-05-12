@@ -3,7 +3,9 @@
 #
 # Codex hook JSON in/out:
 #   stdin:  { "event": "UserPromptSubmit", "prompt": "...", "session_id": "..." }
-#   stdout: { "continue": true, "systemMessage": "..." }
+#   stdout: { "continue": true,
+#             "hookSpecificOutput": { "hookEventName": "UserPromptSubmit",
+#                                     "additionalContext": "..." } }
 #            OR nothing (exit 0 with no output = pass through)
 #
 # Bypass conditions:
@@ -55,6 +57,7 @@ done
 RESULT=$(node --input-type=module -e "
 const { checkPrompt } = await import(process.argv[2]);
 import { writeFileSync, mkdirSync } from 'fs';
+process.stdout.on('error', () => process.exit(0));
 let payload = {};
 try { payload = JSON.parse(process.argv[1] || '{}'); } catch {}
 const prompt = payload.prompt || '';
@@ -78,9 +81,15 @@ if (r.vague) {
     hint += ' | Try: ' + r.rewrite.slice(0,2).join(' OR ');
   }
   hint += ' | Start with * to skip.';
-  process.stdout.write(JSON.stringify({ continue: true, systemMessage: hint }) + '\n');
+  process.stdout.write(JSON.stringify({
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: hint
+    }
+  }) + '\n');
 }
-" "$HOOK_STDIN" "$DETECTOR" 2>>"$HOME/.ijfw/logs/codex-pre-prompt.log")
+" -- "$HOOK_STDIN" "$DETECTOR" 2>>"$HOME/.ijfw/logs/codex-pre-prompt.log")
 
 # Dispatch session-request observation ASYNC (does not affect stdout envelope).
 _OBS_CAPTURE="$(dirname "$0")/user-prompt-submit-capture.sh"

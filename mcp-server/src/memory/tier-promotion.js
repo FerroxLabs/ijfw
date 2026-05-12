@@ -1,6 +1,6 @@
 // IJFW v1.3.0 -- D1 tier promotion logic.
 //
-// Source authority: .planning/1.3.0/D-PILLAR-SPEC.md §1 (tier promotion rules).
+// Source authority: .planning/1.3.0/D-PILLAR-SPEC.md section 1 (tier promotion rules).
 //
 // Implements the four promotion edges defined in the spec:
 //
@@ -32,7 +32,7 @@
 
 import { tokenizeBody, jaccardSimilarity } from './tokenize.js';
 
-// Constants from D-PILLAR-SPEC §1.
+// Constants from D-PILLAR-SPEC section 1.
 const JACCARD_THRESHOLD = 0.7;
 const PROCEDURAL_MIN_DURATION_MS = 5 * 60 * 1000;
 const PROCEDURAL_PATTERN_MIN_CHAINS = 3;
@@ -51,7 +51,7 @@ export const TIERS = Object.freeze({
 
 /**
  * Promote Working tier observations from the just-ended session into a
- * single Episodic summary record. Per D-PILLAR-SPEC §1, this is invoked
+ * single Episodic summary record. Per D-PILLAR-SPEC section 1, this is invoked
  * at SessionEnd boundary by the D3 hook; it is idempotent per session
  * (a session that's already been consolidated is skipped).
  *
@@ -124,7 +124,7 @@ export function promoteWorkingToEpisodic(db, opts = {}) {
 /**
  * Promote Episodic records to Semantic when supersession criteria are met.
  *
- * Per D-PILLAR-SPEC §1 trigger A (explicit) + trigger B (supersession):
+ * Per D-PILLAR-SPEC section 1 trigger A (explicit) + trigger B (supersession):
  *   A. If an Episodic record's `source` carries the literal substring
  *      `promote:semantic` (set by user via slash command or skill), promote.
  *   B. If two Episodic records have token-set Jaccard similarity > 0.7,
@@ -243,7 +243,7 @@ export function promoteEpisodicToSemantic(db) {
 
 /**
  * Promote Working tier observations into a procedural_candidate (and on
- * pattern match, into Procedural) per D-PILLAR-SPEC §1.
+ * pattern match, into Procedural) per D-PILLAR-SPEC section 1.
  *
  * Caller provides a TaskUpdate event:
  *   { task_id, status, start_ts, end_ts, body, session_id, commit_tags? }
@@ -360,7 +360,7 @@ export function promoteWorkingToProcedural(db, taskUpdate = {}) {
 // --- Semantic -> archived (alpha no-op) ------------------------------------
 
 /**
- * Per D-PILLAR-SPEC §1: no promotion in alpha. Function exists so callers
+ * Per D-PILLAR-SPEC section 1: no promotion in alpha. Function exists so callers
  * that wire up the four-edge state machine don't get an undefined-import
  * error; returns a no-op shape consistent with the others.
  */

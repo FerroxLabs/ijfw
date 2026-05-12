@@ -90,7 +90,13 @@ if command -v node >/dev/null 2>&1; then
       if (stdin.trim()) {
         const payload = JSON.parse(stdin);
         const tp = payload && payload.transcript_path;
-        if (tp && fs.existsSync(tp)) {
+        const maxBytes = Number(process.env.IJFW_TRANSCRIPT_MAX_BYTES || 100 * 1024 * 1024);
+        let ok = false;
+        try {
+          const st = tp && fs.statSync(tp);
+          ok = !!(st && st.isFile() && st.size <= maxBytes);
+        } catch {}
+        if (ok) {
           const lines = fs.readFileSync(tp, "utf8").split("\n");
           for (const line of lines) {
             if (!line.trim()) continue;

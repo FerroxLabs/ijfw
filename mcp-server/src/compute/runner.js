@@ -35,7 +35,7 @@
 import { spawn } from 'child_process';
 import {
   existsSync, mkdirSync, writeFileSync, appendFileSync,
-  rmSync,
+  realpathSync, rmSync,
 } from 'fs';
 import { join, isAbsolute, resolve, sep } from 'path';
 import { homedir, tmpdir } from 'os';
@@ -138,27 +138,51 @@ function resolveLogDir(sessionId, projectRoot) {
   return { dir: null, ok: false };
 }
 
-// Path-prefix check: warn the caller if they passed an allowedPaths entry
-// that escapes the project root or cwd. The OS wrapper does real enforcement;
-// this is purely a developer-experience surface.
-function validateAllowedPaths({ projectRoot, cwd, allowedPaths }) {
+function canonicalPath(p) {
+  const resolved = resolve(p);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function isPathWithin(pathname, root) {
+  if (!pathname || !root) return false;
+  const child = resolve(pathname);
+  const parent = resolve(root);
+  return child === parent || child.startsWith(parent + sep);
+}
+
+// Normalize caller-supplied write allow-list paths before they reach the OS
+// sandbox. Symlinks are resolved first so a project-local link to /tmp or $HOME
+// cannot smuggle an outside write root into sandbox-exec/nsjail/bwrap.
+function normalizeAllowedPaths({ projectRoot, cwd, allowedPaths }) {
   const warnings = [];
+  const safePaths = [];
+  const projectReal = projectRoot ? canonicalPath(projectRoot) : null;
+  const cwdReal = cwd ? canonicalPath(cwd) : null;
+
   for (const p of allowedPaths || []) {
     if (!isAbsolute(p)) {
       warnings.push(`allowedPaths entry "${p}" is not absolute -- ignoring.`);
       continue;
     }
-    const norm = resolve(p);
-    const inProject = projectRoot && norm.startsWith(projectRoot + sep);
-    const inCwd = cwd && norm.startsWith(cwd + sep);
-    if (!inProject && !inCwd && norm !== projectRoot && norm !== cwd) {
+
+    const requested = resolve(p);
+    const norm = canonicalPath(requested);
+    const inProject = isPathWithin(norm, projectReal);
+    const inCwd = isPathWithin(norm, cwdReal);
+    if (!inProject && !inCwd) {
       warnings.push(
-        `allowedPaths entry "${norm}" is outside cwd and projectRoot. ` +
-        'OS sandbox enforcement may still block; this is a best-effort warning.'
+        `allowedPaths entry "${requested}" resolves outside cwd and projectRoot -- ignoring.`
       );
+      continue;
     }
+    safePaths.push(norm);
   }
-  return warnings;
+
+  return { allowedPaths: Array.from(new Set(safePaths)), warnings };
 }
 
 function makeTempDir() {
@@ -199,7 +223,6 @@ export async function runCompute(opts = {}) {
   const timeoutMs = clampTimeout(opts.timeoutMs);
   const allowNet = !!opts.allowNet;
   const vmOnly = !!opts.vmOnly;
-  const allowedPaths = (opts.allowedPaths || []).map((p) => resolve(p));
   const sessionId = String(opts.sessionId || newSessionId());
 
   // vm.Script JS-only path -- short-circuit before spawn.
@@ -275,8 +298,13 @@ export async function runCompute(opts = {}) {
   }
 
   const env = scrubEnv();
-  // Best-effort warnings for caller-supplied allowedPaths.
-  const pathWarnings = validateAllowedPaths({ projectRoot, cwd: tempDir, allowedPaths });
+  const allowedPathResult = normalizeAllowedPaths({
+    projectRoot,
+    cwd: tempDir,
+    allowedPaths: opts.allowedPaths || [],
+  });
+  const allowedPaths = allowedPathResult.allowedPaths;
+  const pathWarnings = allowedPathResult.warnings;
   for (const w of pathWarnings) {
     writeLog(`[allowlist-warning] ${w}\n`);
   }
@@ -414,3 +442,4 @@ export async function runCompute(opts = {}) {
 
 // Re-export for tests.
 export { resolvePython, detectSandbox };
+export const __test = { normalizeAllowedPaths };

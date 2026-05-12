@@ -2,7 +2,7 @@
 /**
  * test-memory-staleness.js -- GA real fix-wave F2 (memory-side staleness propagation).
  *
- * Source authority: GA real fix-wave finding F2 + .planning/1.3.0/D-PILLAR-SPEC.md §2.
+ * Source authority: GA real fix-wave finding F2 + .planning/1.3.0/D-PILLAR-SPEC.md section 2.
  *
  * Verifies that mcp-server/src/memory/staleness.js#propagateStaleMemory
  * actually writes to memory_entries.stale_candidate. Pre-F2, the compute

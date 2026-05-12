@@ -161,15 +161,16 @@ function cloneOrPull(dir, branch) {
       // Re-point origin if a host migration moved the canonical home.
       // Without this, users from a prior canonical host see fetch 404s and abort.
       // Only migrate known stale canonical HTTPS URLs -- never clobber SSH remotes,
-      // forks, or user-customized origins.
-      const STALE_ORIGINS = [
-        'https://github.com/seandonahoe/ijfw.git',
-        'https://github.com/seandonahoe/ijfw',
-        'https://github.com/seandonahoe/ijfw/',
-        'https://github.com/seandonahoe/ijfw.git/',
+      // forks, or user-customized origins. Match is case-insensitive on the
+      // username segment because GitHub user URLs can be mixed-case
+      // (e.g. TheRealSeanDonahoe vs seandonahoe) and a strict case-sensitive
+      // list misses those checkouts.
+      const STALE_PATTERNS = [
+        /^https:\/\/github\.com\/seandonahoe\/ijfw(\.git)?\/?$/i,
+        /^https:\/\/github\.com\/therealseandonahoe\/ijfw(\.git)?\/?$/i,
       ];
       const currentOrigin = (stdout || '').trim();
-      if (STALE_ORIGINS.includes(currentOrigin)) {
+      if (STALE_PATTERNS.some((re) => re.test(currentOrigin))) {
         const setUrl = spawnSync('git', ['-C', dir, 'remote', 'set-url', 'origin', DEFAULT_REPO], { stdio: 'inherit' });
         if (setUrl.status !== 0) {
           console.warn(`  [!] origin migration failed -- could not repoint ${currentOrigin} to ${DEFAULT_REPO}`);

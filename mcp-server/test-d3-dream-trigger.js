@@ -140,8 +140,8 @@ test('shell trigger returns within 250ms cold-start hook-latency budget', () => 
   // detach -- it MUST NOT block on the dream cycle itself (which can
   // take 100s of ms or more once D1's promotion logic does real work).
   // Anything under 250ms proves detachment; the documented cold-start
-  // budget for this hook is 250ms (PRD §11 "SessionEnd hook latency
-  // budget breached by dream invocation" mitigation; D-PILLAR-SPEC §D3
+  // budget for this hook is 250ms (PRD section 11 "SessionEnd hook latency
+  // budget breached by dream invocation" mitigation; D-PILLAR-SPEC section D3
   // amended in GA real fix-wave finding C4).
   // Windows process-spawn overhead (bash + node + git-bash translation
   // layer) makes the 250ms cold-start budget unrealistic. The detachment

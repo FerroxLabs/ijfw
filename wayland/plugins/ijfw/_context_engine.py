@@ -5,7 +5,7 @@
 # colon-syntax dispatcher. Owns the singleton slot for B1 (blackboard)
 # to compose into via attach_blackboard_extension() -- B1 NEVER calls
 # register_context_engine() itself (composition contract pinned in
-# PLAN-alpha.md §6 F10).
+# PLAN-alpha.md section 6 F10).
 #
 # Profile invariant (V3-B3): every path resolves through
 # profileHome(getActiveProfile()) via the live ctx -- never hardcoded

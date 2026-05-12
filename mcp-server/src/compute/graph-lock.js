@@ -71,7 +71,6 @@ export function acquireGraphWriteLock(projectRoot, opts = {}) {
   const lp = lockPath(projectRoot);
 
   const deadline = Date.now() + waitMs;
-  let _lastErr;
   while (true) {
     reclaimIfStale(lp);
     const payload = String(process.pid) + '\n' + String(Date.now()) + '\n';
@@ -86,7 +85,6 @@ export function acquireGraphWriteLock(projectRoot, opts = {}) {
         },
       };
     } catch (err) {
-      lastErr = err;
       if (!err || err.code !== 'EEXIST') throw err;
     }
     if (Date.now() >= deadline) {

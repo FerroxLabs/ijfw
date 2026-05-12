@@ -172,7 +172,7 @@ Run `/team setup` in Claude Code, or `ijfw team` from the shell, to see your cur
 |------|-------|--------------|
 | Hot  | Plain markdown in `.ijfw/memory/` | Always on. Instant reads. Git friendly. |
 | Warm | BM25 ranked search | Always on. Scales to around 10,000 entries per project. |
-| Cold | Optional semantic vectors | Only if you install `@xenova/transformers`. Off by default. |
+| Cold | Optional semantic vectors | Off by default. Requires a user-installed embedding provider. |
 
 Every session also ends with an optional "dream cycle". Run `/consolidate` or "run a dream cycle" to have IJFW sweep the day's memory: promote observed patterns into your knowledge base, prune stale entries, reconcile contradictions, optionally lift winners into global memory so every future project benefits. Memory that grows sharper over time instead of heavier.
 
@@ -359,9 +359,9 @@ IJFW configures six AI coding agents with native affordances on each, plus a uni
 
 | Platform | What ships |
 |----------|------------|
-| Claude Code | Native plugin via marketplace, MCP auto-registered, 9 hooks, 20 on-demand skills, 21 slash commands |
-| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 20 skills, 9 hooks, MCP registered, marketplace-ready |
-| Gemini CLI | Native extension (`gemini-extension.json`), 20 skills, 11 hook events, 21 TOML slash commands, policy engine, BeforeModel injection, checkpointing |
+| Claude Code | Native plugin via marketplace, MCP auto-registered, 6 hook events / 12 scripts, 22 on-demand skills, 22 slash commands |
+| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 19 skills, 5 hook events, MCP registered, marketplace-ready |
+| Gemini CLI | Native extension (`gemini-extension.json`), 19 skills, 11 hook events, 19 TOML slash commands, policy engine, BeforeModel injection, checkpointing |
 | Cursor | `.cursor/mcp.json` plus `.cursor/rules/ijfw.mdc`. Dashboard view-only. |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` plus `.windsurfrules`. Dashboard view-only. |
 | Copilot (VS Code) | `.vscode/mcp.json` plus `.github/copilot-instructions.md`. Dashboard view-only. |

@@ -1,15 +1,15 @@
 ---
-ijfw_version: 1.3.0
+ijfw_version: 1.3.1
 ijfw_schema: 1
 type: software
 primary_type: software
-secondary_types:
-  - book
-  - content
-  - design
-confidence: 0.851
-detected_at: 2026-05-08T14:14:07.982Z
+secondary_types: []
+confidence: 0.933
+detected_at: 2026-05-10T23:27:22.240Z
 signals:
+  - kind: agents_md_frontmatter
+    weight: 0.9
+    value: software
   - kind: manifest
     weight: 0.9
     manifests: [package.json, package.json, package.json]
@@ -22,27 +22,27 @@ signals:
   - kind: file_extension_ratio
     weight: 0.7
     domain: software
-    ratio: 0.37
-    count: 306
+    ratio: 0.413
+    count: 366
   - kind: file_extension_ratio
     weight: 0.7
     domain: design
-    ratio: 0.174
+    ratio: 0.163
     count: 144
   - kind: file_extension_ratio
     weight: 0.7
     domain: content
-    ratio: 0.128
+    ratio: 0.12
     count: 106
   - kind: file_extension_ratio
     weight: 0.7
     domain: business
-    ratio: 0.185
+    ratio: 0.173
     count: 153
   - kind: file_extension_ratio
     weight: 0.7
     domain: book
-    ratio: 0.142
+    ratio: 0.132
     count: 117
   - kind: filename_pattern
     weight: 0.4
@@ -678,7 +678,8 @@ yours -- IJFW will never touch it.
 <!-- IJFW-MEMORY-START -->
 Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context.
 
-Last handoff: # Handoff: 2026-05-06 (post-1.2.10 publish) ## TLDR (60 seconds)
+Last handoff: # Handoff: 2026-05-06 (post-1.2.10 publish)
+## TLDR (60 seconds)
 <!-- IJFW-MEMORY-END -->
 
 <!-- IJFW-ROUTING-START -->

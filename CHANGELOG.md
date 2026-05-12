@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.3.1] -- 2026-05-12
+
+**Codex hook cleanup + release cadence hardening.** Tightens IJFW's Codex integration for Codex 0.130+, reduces the default dependency footprint, and moves more release drift into automated gates before it reaches users.
+
+- Codex `SessionStart` now emits `additionalContext` inside `hookSpecificOutput` with `hookEventName: "SessionStart"`, matching Codex's strict hook response shape.
+- Codex `PostToolUse` and routine `Stop` saves now stay stdout-silent. IJFW still records local observations, failure signals, and receipts; Codex no longer renders normal hook activity as warning spam.
+- Codex hook Node shims now pass user/tool text after `--`, so tool output beginning with `---` is treated as data instead of a Node CLI option.
+- Codex `UserPromptSubmit` and `PreToolUse` advisory output now use the same `hookSpecificOutput.additionalContext` shape when they do emit context.
+- Cold semantic vectors are explicit opt-in and `IJFW_VECTORS` now defaults to `off`, keeping the production install smaller and quieter under package audits.
+- The preflight audit gate now runs against both `installer` and `mcp-server`, and both installer and MCP CLI paths route through the canonical 11-gate preflight entrypoint.
+- Platform capability drift is now gated by `platform-capabilities.json` plus `scripts/check-platform-drift.js`, covering skill counts, hook-event counts, and marketplace/plugin manifest claims.
+- Update-check changelog URLs now point at GitLab releases, matching the canonical repository.
+- D2 graph-write lock timeout handling now throws the intended `EBUSY_GRAPH_WRITE` error instead of tripping an undeclared variable path under collision.
+
 ## [1.3.0] -- 2026-05-09
 
 **Memory Engine 2.0 lands as Pillar D, joining Universal Foundations + Multi-CLI Orchestration + Frontier Trident as the four-pillar architecture release.** Connected memory (engine #4) gains semantic-tier consolidation, a regex symbol graph with BFS traversal, cascading staleness across compute and memory stores, and inline-at-SessionEnd dream consolidation. Tool surface stays at 10 MCP tools; zero new production dependencies; one combined commit per the bundled-release rule.
@@ -160,14 +174,14 @@ The Wayland/Hermes MCP dispatcher wraps every tool response as `{"result": ...}`
 
 ### Deep audit hardening across every surface
 
-A multi-agent audit pass reviewed the cumulative diff against the 1.2.9 ship and surfaced 90+ findings across CLI dispatch, install scripts, hooks, dashboard server, platform configs, and tests. Six fix waves closed every Critical, High, Medium, and Low — then five audit rounds (codex + gemini + 3 Claude specialists per round) re-checked the patched code until every reachable auditor signed off READY. Net trajectory: 63 -> 14 -> 3 -> 4 -> 3 -> 3 -> 0 net findings.
+A multi-agent audit pass reviewed the cumulative diff against the 1.2.9 ship and surfaced 90+ findings across CLI dispatch, install scripts, hooks, dashboard server, platform configs, and tests. Six fix waves closed every Critical, High, Medium, and Low -- then five audit rounds (codex + gemini + 3 Claude specialists per round) re-checked the patched code until every reachable auditor signed off READY. Net trajectory: 63 -> 14 -> 3 -> 4 -> 3 -> 3 -> 0 net findings.
 
 Highlights:
 
 - **Hook supervision** is now canonical across Claude / Codex / Gemini. Every detached spawn closes stdin, redirects to a scoped log under `~/.ijfw/logs/`, and disowns the actual child PID (no more subshell-PID drift). 11 distinct log files keep crashes visible -- the silent-failure class that drove the 1.2.9 audit is gone.
 - **Atomic writes** unified through `mcp-server/src/lib/atomic-io.js`. State, settings, port files, marketplace JSON, uninstall configs, and context-monitor state all use the canonical `writeAtomic` (or an inline equivalent in installer/hook contexts that can't import it) -- temp files clean up on rename failure on every platform.
 - **Dashboard server** is faster and safer. The `ttlCache` invalidator is now lazy (cache hits skip the filesystem walk entirely), the cache key includes the `~/.ijfw/metrics/sessions.jsonl` ledger so cost panels stay fresh after Codex/Gemini sessions write, `/api/memory/file` canonicalizes both sides via `path.relative` so Windows backslash paths work, SSE backfill caps at 50 with `?offset` pagination, and corrupt config files are renamed aside (`<file>.corrupt.<ts>`) instead of silently returning defaults.
-- **`ijfw update --confirm`** holds the pending sentinel through install via explicit SIGINT/SIGTERM handlers + a return-code refactor (Node's `try/finally` does not run on `process.exit()` — the previous shape leaked the sentinel on every happy path). Real subprocess tests exercise spawn-error / non-zero / signal-kill cleanup paths.
+- **`ijfw update --confirm`** holds the pending sentinel through install via explicit SIGINT/SIGTERM handlers + a return-code refactor (Node's `try/finally` does not run on `process.exit()` -- the previous shape leaked the sentinel on every happy path). Real subprocess tests exercise spawn-error / non-zero / signal-kill cleanup paths.
 - **Install scripts** got `set -euo pipefail` with a 38-guard audit on every tolerable-failure operation. `cp -r` of plugin/MCP source is no longer suppressed with `|| true` (disk-full / AV-quarantine fail loud now). Origin migration uses a 4-entry HTTPS-only allow-list -- SSH remotes and forks stay untouched on `npm install -g @ijfw/install` and `ijfw update`. Cline detection extended to 11 paths across 3 OSes (VS Codium, VS Code Insiders, Flatpak, Snap variants).
 - **Wayland + Hermes parity** verified end-to-end. `_load_patterns` shape, warning copy, and observation logging are now identical across both plugins. User-facing strings centralized in `_strings.py` with snapshot tests so wording stays Sutherland-framed (lead with what works, never with "failed"/"missing").
 - **MCP templates** for Codex / Cursor / Copilot / Windsurf / Gemini now use `${HOME}` / `${userHome}` env-var expansion -- manual-copy of the template files works without install-time substitution.
