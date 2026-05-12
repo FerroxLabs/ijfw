@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { BASH } from './test/win-bash-helper.js';
 import { join, dirname } from 'node:path';
@@ -17,7 +17,28 @@ const REPO = join(__dirname, '..');
 const CODEX = join(REPO, 'codex');
 
 function rmTmpDir(dir) {
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    return;
+  } catch (err) {
+    if (!['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(err?.code)) throw err;
+  }
+
+  const tombstone = `${dir}.delete-${process.pid}-${Date.now()}`;
+  try {
+    renameSync(dir, tombstone);
+  } catch (err) {
+    if (!['ENOENT', 'EBUSY', 'EPERM', 'ENOTEMPTY'].includes(err?.code)) throw err;
+    console.info(`[info] Codex hook temp cleanup deferred to OS: ${err?.code || 'unknown'}`);
+    return;
+  }
+
+  try {
+    rmSync(tombstone, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  } catch (err) {
+    if (!['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(err?.code)) throw err;
+    console.info(`[info] Codex hook temp cleanup deferred to OS: ${err?.code || 'unknown'}`);
+  }
 }
 
 // ---- Manifest ---------------------------------------------------------------
