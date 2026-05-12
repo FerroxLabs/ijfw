@@ -16,6 +16,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..');
 const CODEX = join(REPO, 'codex');
 
+function rmTmpDir(dir) {
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
 // ---- Manifest ---------------------------------------------------------------
 
 test('codex: plugin.json is valid JSON', () => {
@@ -125,7 +129,7 @@ test('codex: session-start emits Codex 0.130 hookSpecificOutput shape', () => {
       assert.equal(typeof obj.hookSpecificOutput.additionalContext, 'string');
     }
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmTmpDir(cwd);
   }
 });
 
@@ -180,7 +184,7 @@ test('codex: stop hook stays quiet for routine session saves', () => {
     });
     assert.equal(out, '');
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmTmpDir(cwd);
   }
 });
 
@@ -204,7 +208,7 @@ test('codex: stop hook ignores non-regular transcript paths', () => {
     });
     assert.equal(out, '');
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmTmpDir(cwd);
   }
 });
 
@@ -241,7 +245,7 @@ test('codex: stop hook emits only actionable compress notice', () => {
     assert.match(obj.systemMessage, /Context large -- run: ijfw compress/);
     assert.doesNotMatch(obj.systemMessage, /Session #/);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmTmpDir(cwd);
   }
 });
 
