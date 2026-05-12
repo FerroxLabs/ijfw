@@ -198,7 +198,7 @@ test('runCommand: command not found handled gracefully', async () => {
 });
 
 test('runCommand: timeout enforced', async () => {
-  const r = await runCommand('sleep 60', { timeout: 100 });
+  const r = await runCommand('node -e "setTimeout(() => {}, 60000)"', { timeout: 100 });
   assert.equal(r.timedOut, true);
   assert.ok(typeof r.exitCode === 'number' || r.exitCode === null);
 });
