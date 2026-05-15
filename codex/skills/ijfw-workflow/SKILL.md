@@ -97,8 +97,8 @@ For focused work. Picks up from current context. Each move has ONE input slot.
 
 ### Move 1 -- FRAME (45s)
 
-- AI parses the goal from the ask or asks: `Goal in one line.`
-- Memory hook fires. AI pastes up to 3 related recalls inline.
+- Assistant parses the goal from the ask or asks: `Goal in one line.`
+- Memory hook fires. Assistant pastes up to 3 related recalls inline.
 - **Rewrite vague asks into verifiable goals before echoing back:**
   - "Add validation" -> "Write tests for invalid inputs (empty, malformed, oversized), then make them pass."
   - "Fix the bug" -> "Write a failing test that reproduces the reported symptom, then make it pass."
@@ -106,18 +106,18 @@ For focused work. Picks up from current context. Each move has ONE input slot.
   - "Make it faster" -> "Benchmark the hot path, identify the bottleneck with profiling, change it, show the benchmark improved."
   - "Clean up the code" -> "Pick one specific smell. Fix only that. Diff fits in one commit message."
 - If the ask cannot be reduced to a checkable outcome, surface that gap before proceeding.
-- AI echoes: `So: <concise goal>. Yes?`
+- Assistant echoes: `So: <concise goal>. Yes?`
 - User confirms or edits.
 
 ### Move 2 -- WHY (30s)
 
-- AI asks: `Why does this matter? What's broken if we don't ship it?`
+- Assistant asks: `Why does this matter? What's broken if we don't ship it?`
 - Single 5-Whys drill -- one follow-up question if the answer stays surface.
-- AI surfaces the root motivation: `Root: <X>. That means we should <design implication>.`
+- Assistant surfaces the root motivation: `Root: <X>. That means we should <design implication>.`
 
 ### Move 3 -- SHAPE (60s)
 
-- AI proposes **3 approaches**, each as 1 line + 1 tradeoff:
+- Assistant proposes **3 approaches**, each as 1 line + 1 tradeoff:
   > A: <approach> -- tradeoff: <cost>
   > B: <approach> -- tradeoff: <cost>
   > C: <approach> -- tradeoff: <cost>
@@ -125,13 +125,13 @@ For focused work. Picks up from current context. Each move has ONE input slot.
 
 ### Move 4 -- STRESS (30s)
 
-- AI runs a pre-mortem flash: `Top risk: <concrete scenario>. Mitigation: <concrete fix>.`
+- Assistant runs a pre-mortem flash: `Top risk: <concrete scenario>. Mitigation: <concrete fix>.`
 - User confirms mitigation or swaps.
 - Sutherland wow: the risk the user hadn't thought of.
 
 ### Move 5 -- LOCK (15s)
 
-- AI pastes the brief in-chat (max 6 lines: goal / root / approach / risk / mitigation / success).
+- Assistant pastes the brief in-chat (max 6 lines: goal / root / approach / risk / mitigation / success).
 - User says one word: `lock` / `fix <X>` / `go deeper`.
 - On `lock`: write `.ijfw/memory/brief.md`. Route straight to PLAN.
 
@@ -163,26 +163,26 @@ For substantial projects. Modules are a spine, not a checklist. Every module has
 
 ### Module 3 -- HMW (3 min)
 
-- AI proposes 2-3 "How Might We" reframings based on FRAME + RECON.
+- Assistant proposes 2-3 "How Might We" reframings based on FRAME + RECON.
 - User picks one, rejects, or edits.
 - The chosen HMW anchors DIVERGE.
 
 ### Module 4 -- DIVERGE (8 min)
 
-- AI sketches **4-5 approaches** as 2-line bullets (shape + key tradeoff).
+- Assistant sketches **4-5 approaches** as 2-line bullets (shape + key tradeoff).
 - User picks 2, rejects, or says `hybrid A + C`.
-- No blank page. If user wants a 6th sketch, AI generates it on demand.
+- No blank page. If user wants a 6th sketch, Assistant generates it on demand.
 
 ### Module 5 -- CONVERGE (5 min)
 
-- AI drafts success metrics / acceptance criteria from the chosen approach.
-- Pre-mortem pass: AI generates 4-5 plausible failure scenarios.
-- User picks top 2 risks. AI proposes mitigation for each.
+- Assistant drafts success metrics / acceptance criteria from the chosen approach.
+- Pre-mortem pass: Assistant generates 4-5 plausible failure scenarios.
+- User picks top 2 risks. Assistant proposes mitigation for each.
 - Artifact: metrics + risks + mitigations appended to brief.md.
 
 ### Module 6 -- LOCK (2 min)
 
-- AI pastes the full brief (goal / HMW / approach / metrics / risks / mitigations) in-chat.
+- Assistant pastes the full brief (goal / HMW / approach / metrics / risks / mitigations) in-chat.
 - Optional Trident cross-critique fires here if ENABLED (see below).
 - User says `lock` / `fix <X>` / `skip Trident` / `route to plan`.
 - On `lock`: promote `.ijfw/memory/brief-draft.md` to `.ijfw/memory/brief.md` or write the confirmed brief there, then route to PLAN phase.
@@ -195,9 +195,9 @@ Writes a 2-paragraph press-release + 5-question FAQ. Forces customer-POV thinkin
 
 ### ANTI-SCOPE (2 min) -- "what we won't do"
 Auto-triggers when: 5+ candidate features surfaced in DIVERGE, or domain is feature-heavy (CRM, dashboards, admin panels).
-AI lists 5 things we could build but won't. User confirms or pulls one back in.
+Assistant lists 5 things we could build but won't. User confirms or pulls one back in.
 
-### TRIDENT CROSS-CRITIQUE (~2 min) -- external AI challenge
+### TRIDENT CROSS-CRITIQUE (~2 min) -- external model challenge
 Auto-triggers when: new project, major refactor, public launch, or LOCK on brief > 20 lines.
 Fires `ijfw cross critique <brief>` in background. Surfaces consensus + contested findings. User decides.
 User override: `skip Trident` or `force Trident` at any LOCK.
@@ -211,7 +211,7 @@ After LOCK, the brief drives every downstream phase. Same discipline, same memor
 ## PLAN (after LOCK)
 
 - Memory hook: recall past similar plans.
-- AI drafts `.ijfw/memory/plan.md` (max 15 tasks for Quick, 30 for Deep).
+- Assistant drafts `.ijfw/memory/plan.md` (max 15 tasks for Quick, 30 for Deep).
 - Each task: what / how-to-verify / file paths.
 - User reviews. One-word commit: `approve` / `trim` / `expand`.
 
@@ -421,4 +421,4 @@ On session resume: read this file, echo the current state, offer `continue` / `r
 
 ---
 
-**Invariant:** every move the user experiences should make them feel smarter and more in control -- memory recall surfaces forgotten context, AI proposes before the user has to, Trident challenges before they commit, one word advances. Anything that makes them feel stupid or stuck is a workflow bug.
+**Invariant:** every move the user experiences should make them feel smarter and more in control -- memory recall surfaces forgotten context, Assistant proposes before the user has to, Trident challenges before they commit, one word advances. Anything that makes them feel stupid or stuck is a workflow bug.
