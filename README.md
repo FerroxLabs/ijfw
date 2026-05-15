@@ -168,7 +168,7 @@ ijfw preflight
 | 10 | pack-smoke | yes | `npm pack` -> temp install -> `ijfw --help` exits 0 |
 | 11 | upgrade-smoke | yes | Plugin key wiring after upgrade from floor version |
 
-Each gate uses `npx --yes <tool>@<pinned-version>` with versions tracked in `preflight-versions.json`. Missing tools are reported as "skipped" with a positive install hint. Preflight is optional -- it is not on the install path -- so the three-second install promise holds.
+Tool-backed gates use `npx --yes <tool>@<pinned-version>` with versions tracked in `preflight-versions.json`; the dependency-audit gate reads `npm audit --json` directly from the installer and MCP lockfiles. Missing tools are reported as "skipped" with a positive install hint. Preflight is optional -- it is not on the install path -- so the three-second install promise holds.
 
 SLO: warm cache <=90s, cold cache <=240s. Both are printed in the summary line.
 

@@ -677,7 +677,7 @@ Platform count: **8 install targets -> 13 MCP-integrated + 1 rules-only**. Same 
 
 - `ijfw preflight` -- 11-gate quality pipeline covering shell lint, JS lint, security scan, secret detection, npm audit, dead-code detection, license check, pack-smoke, and upgrade-smoke.
 - Blocking vs advisory distinction: exit 0 when all blocking gates pass even if advisory warnings exist. Exit 1 on any blocking failure.
-- Each gate uses `npx --yes <tool>@<pinned-version>`. Pinned versions in `preflight-versions.json`. Missing tools report "skipped" with a positive install hint, not a failure.
+- Tool-backed gates use `npx --yes <tool>@<pinned-version>`. The dependency-audit gate uses `npm audit --json` directly against the package lockfiles. Pinned versions live in `preflight-versions.json`; missing tools report "skipped" with a positive install hint, not a failure.
 - Warm-cache SLO: <=90s. Cold-cache: <=240s. Both printed in the summary line.
 - `prepublishOnly` in `installer/package.json` now runs preflight before every publish so no tag can ship with a blocking gate open.
 
