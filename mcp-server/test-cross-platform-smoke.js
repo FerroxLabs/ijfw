@@ -221,6 +221,7 @@ test('claude: ~/.claude/settings.json registers ijfw-memory + plugin', async () 
 test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', async () => {
   const sb = isolatedSandbox('codex');
   try {
+    mkdirSync(join(sb.proj, '.ijfw'), { recursive: true });
     await installInSandbox('codex', sb);
     const cfg = HOME_PATHS.codex(sb.home)[0];
     assert.ok(existsSync(cfg), `config.toml missing at ${cfg}`);
@@ -236,6 +237,8 @@ test('codex: ~/.codex/config.toml gets [mcp_servers.ijfw-memory] block', async (
     const text2 = readText(cfg);
     const occurrences = text2.split('[mcp_servers.ijfw-memory]').length - 1;
     assert.equal(occurrences, 1, `expected 1 mcp block, got ${occurrences}`);
+    assert.ok(existsSync(join(sb.home, '.codex', 'commands', 'cross-audit.md')), 'user command alias missing');
+    assert.ok(existsSync(join(sb.proj, '.codex', 'commands', 'cross-audit.md')), 'project command alias missing');
   } finally { cleanup(sb); }
 });
 

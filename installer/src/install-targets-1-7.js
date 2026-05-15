@@ -21,6 +21,11 @@
 // clineMerge, backup, installHook, writeAtomic, isLive, prettyName,
 // printOk, printNote, printInfo, printWarn.
 
+/* eslint-disable security/detect-non-literal-fs-filename -- Per-target
+ * installer functions operate on validated IJFW home, repo, and platform
+ * config paths supplied by install-flow. Dynamic filesystem calls here are
+ * the intentional installer write surface. */
+
 import {
   existsSync,
   mkdirSync,
@@ -359,7 +364,17 @@ export async function installCodex(ctx) {
     copyDirIfAbsent(sd.path, join(userSkills, sd.name));
   }
 
-  // 6. Project-level skills (only if we look like a project).
+  // 6. User-level command aliases. Codex currently treats skills as the
+  // primary extension surface, but these files keep parity with Claude and
+  // are ready for hosts that index command packs.
+  const userCommands = join(ctx.home, '.codex', 'commands');
+  ensureDir(userCommands);
+  const repoCommands = join(ctx.repoRoot, 'codex', 'commands');
+  for (const f of listFiles(repoCommands, '.md')) {
+    copyIfAbsent(f.path, join(userCommands, f.name));
+  }
+
+  // 7. Project-level skills and command aliases (only if we look like a project).
   const cwd = ctx.cwd || process.cwd();
   if (existsSync(join(cwd, '.codex', 'config.toml')) || existsSync(join(cwd, '.ijfw'))) {
     const projSkills = join(cwd, '.codex', 'skills');
@@ -367,9 +382,14 @@ export async function installCodex(ctx) {
     for (const sd of listSubdirs(repoSkills)) {
       copyDirIfAbsent(sd.path, join(projSkills, sd.name));
     }
+    const projCommands = join(cwd, '.codex', 'commands');
+    ensureDir(projCommands);
+    for (const f of listFiles(repoCommands, '.md')) {
+      copyIfAbsent(f.path, join(projCommands, f.name));
+    }
   }
 
-  ctx.log.ok('Installed Codex bundle: MCP + hooks + 19 skills + context');
+  ctx.log.ok('Installed Codex bundle: MCP + hooks + 19 skills + 22 command aliases + context');
   return { status: 'ok' };
 }
 

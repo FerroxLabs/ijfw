@@ -140,8 +140,8 @@ ijfw preflight
 |---|------|-----------------|-----------------|
 | 1 | shellcheck | yes | Unbound variables, POSIX violations in hook scripts |
 | 2 | oxlint | yes | Unused imports, dead variables in JS/TS |
-| 3 | eslint-security | advisory | Security anti-patterns (non-literal fs paths, injection sinks) |
-| 4 | psscriptanalyzer | advisory on macOS | PowerShell lint (blocking in Windows CI) |
+| 3 | eslint-security | yes | High-signal JS security rules such as eval, unsafe regex, non-literal require |
+| 4 | psscriptanalyzer | yes | PowerShell lint via PSScriptAnalyzer, or deterministic static fallback when `pwsh` is absent |
 | 5 | publint | yes | package.json bin/exports integrity |
 | 6 | gitleaks | yes | Plaintext secrets and credentials |
 | 7 | audit-ci | yes | npm audit: high and critical vulnerabilities |

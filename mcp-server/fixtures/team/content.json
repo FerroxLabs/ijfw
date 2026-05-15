@@ -1,0 +1,47 @@
+{
+  "charter": {
+    "schema_version": "team-charter/v1",
+    "team_name": "content-production-team",
+    "project_archetypes": ["content"],
+    "roles": [
+      {
+        "name": "content-strategist",
+        "role_type": "content",
+        "model": "sonnet",
+        "effort": "medium",
+        "phase_scope": ["plan", "execute"],
+        "owns": [{"artifact_type": "brief", "paths": ["content/briefs/**"]}],
+        "reviews": [{"artifact_type": "article", "criteria": ["positioning", "brand-voice"]}],
+        "handoff": {"format": "markdown", "required_sections": ["message", "audience", "risks"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+      },
+      {
+        "name": "editor",
+        "role_type": "review",
+        "model": "sonnet",
+        "effort": "medium",
+        "phase_scope": ["review", "verify"],
+        "owns": [{"artifact_type": "article", "paths": ["content/posts/**"]}],
+        "reviews": [{"artifact_type": "brief", "criteria": ["clarity", "seo", "voice"]}],
+        "handoff": {"format": "markdown", "required_sections": ["edits", "findings", "publication_status"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": ["content/posts/**"]}
+      }
+    ]
+  },
+  "workflow": {
+    "schema_version": "team-workflow/v1",
+    "project_archetypes": ["content"],
+    "artifacts": [
+      {"id": "campaign-brief", "type": "brief", "paths": ["content/briefs/campaign.md"], "owner": "content-strategist", "reviewers": ["editor"], "depends_on": [], "verification": ["brand voice review"]},
+      {"id": "article-draft", "type": "article", "paths": ["content/posts/*.mdx"], "owner": "editor", "reviewers": ["content-strategist"], "depends_on": ["campaign-brief"], "verification": ["seo checklist"]}
+    ],
+    "waves": [
+      {"id": "w1", "mode": "sequential", "artifact_ids": ["campaign-brief"]},
+      {"id": "w2", "mode": "review", "artifact_ids": ["article-draft"]}
+    ]
+  },
+  "blackboard": {
+    "tasks": [{"id": "task-brief", "title": "Prepare campaign brief", "status": "ready", "artifact_ids": ["campaign-brief"], "owner": "content-strategist"}],
+    "claims": [{"id": "claim-brief", "artifact_id": "campaign-brief", "agent": "content-strategist", "status": "active", "paths": ["content/briefs/campaign.md"]}]
+  }
+}

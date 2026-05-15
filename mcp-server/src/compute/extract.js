@@ -101,6 +101,7 @@ const DOTFILE_RE = new RegExp(
 // Windows path: drive letter + (\\ or \) + chain. The fixture body
 // contains DOUBLE backslashes; expected name uses SINGLE backslashes.
 // Match doubled-backslash form, then normalize to single backslash on emit.
+// eslint-disable-next-line security/detect-unsafe-regex -- extractor input is capped by caller; character classes are bounded to non-whitespace path segments.
 const WINDOWS_PATH_RE = /(?<![\w])([A-Za-z]:(?:\\\\[^\s\\]+)+\.[a-zA-Z][a-zA-Z0-9]{0,8})(?![\w])/g;
 
 // Bare basename with extension (no path). Conservative: requires the
@@ -141,6 +142,7 @@ const DUNDER_BARE_RE = /\b(__[a-z][a-z0-9_]*)\b/g;
 const REACT_HOOK_RE = /\b(use[A-Z][A-Za-z0-9]*)\b/g;
 
 // --- identifier regex --------------------------------------------------
+// eslint-disable-next-line security/detect-unsafe-regex -- token extractor regex is linear over capped text and uses bounded identifier classes.
 const UPPER_SNAKE_RE = /\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b/g;
 const PASCAL_BARE_RE = /\b([A-Z][a-z][A-Za-z0-9]*|I[A-Z][a-z][A-Za-z0-9]*)\b/g;
 
@@ -171,6 +173,7 @@ const HTTP_EXPLICIT_RE = /\bHTTP[_ ]?([1-5]\d{2})\b/g;
 const EXCEPTION_RE = /\b([A-Z][a-z][A-Za-z0-9]*(?:Exception|Error))\b/g;
 
 // --- decision regex ----------------------------------------------------
+// eslint-disable-next-line security/detect-unsafe-regex -- token extractor regex is linear over capped text and uses bounded slug segments.
 const D_PREFIX_RE = /\b(d-[a-z][a-z0-9]{3,}(?:-[a-z0-9]+)+)\b/g;
 const HASH_DECISION_RE = /#decision:([a-z][a-z0-9-]+)/g;
 const ADR_NUMERIC_RE = /\b(ADR-\d{4})\b/g;

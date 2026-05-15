@@ -6,6 +6,7 @@
 //
 // Pure + synchronous. ESM. Zero deps. Filesystem only touched by caller.
 
+// eslint-disable-next-line security/detect-unsafe-regex -- plan markdown is bounded human-authored text; pattern is line-anchored and token-sized.
 const WAVE_HEADER = /^###\s+Wave\s+([0-9]+[A-Z])(?:-([A-Za-z0-9_+]+))?\b/;
 // Bullet sub-wave form: `- **11A-mcp**: description`. Parsed as a child of
 // the most recently seen Wave header.

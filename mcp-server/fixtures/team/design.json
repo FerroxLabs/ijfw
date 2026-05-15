@@ -1,0 +1,47 @@
+{
+  "charter": {
+    "schema_version": "team-charter/v1",
+    "team_name": "design-studio-team",
+    "project_archetypes": ["design"],
+    "roles": [
+      {
+        "name": "product-designer",
+        "role_type": "design",
+        "model": "sonnet",
+        "effort": "medium",
+        "phase_scope": ["discovery", "shape", "execute"],
+        "owns": [{"artifact_type": "screen", "paths": ["design/screens/**"]}],
+        "reviews": [{"artifact_type": "prototype", "criteria": ["usability", "accessibility"]}],
+        "handoff": {"format": "markdown", "required_sections": ["rationale", "changed_artifacts", "open_questions"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": ["design/tokens/**"]}
+      },
+      {
+        "name": "visual-qa",
+        "role_type": "review",
+        "model": "sonnet",
+        "effort": "low",
+        "phase_scope": ["review", "verify"],
+        "owns": [{"artifact_type": "audit", "paths": ["design/reviews/**"]}],
+        "reviews": [{"artifact_type": "screen", "criteria": ["layout", "contrast", "responsive-fit"]}],
+        "handoff": {"format": "markdown", "required_sections": ["findings", "severity", "recommendations"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+      }
+    ]
+  },
+  "workflow": {
+    "schema_version": "team-workflow/v1",
+    "project_archetypes": ["design"],
+    "artifacts": [
+      {"id": "screen-system", "type": "screen", "paths": ["design/screens/**"], "owner": "product-designer", "reviewers": ["visual-qa"], "depends_on": [], "verification": ["visual audit"]},
+      {"id": "design-review", "type": "audit", "paths": ["design/reviews/**"], "owner": "visual-qa", "reviewers": ["product-designer"], "depends_on": ["screen-system"], "verification": ["accessibility checklist"]}
+    ],
+    "waves": [
+      {"id": "w1", "mode": "parallel", "artifact_ids": ["screen-system"]},
+      {"id": "w2", "mode": "review", "artifact_ids": ["design-review"]}
+    ]
+  },
+  "blackboard": {
+    "tasks": [{"id": "task-screens", "title": "Draft core screens", "status": "ready", "artifact_ids": ["screen-system"], "owner": "product-designer"}],
+    "claims": [{"id": "claim-screens", "artifact_id": "screen-system", "agent": "product-designer", "status": "active", "paths": ["design/screens/**"]}]
+  }
+}

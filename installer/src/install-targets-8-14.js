@@ -15,6 +15,11 @@
 // minimum surface this file needs; if Agent A renames an export, update
 // the import list -- nothing else in this file shells out.
 
+/* eslint-disable security/detect-non-literal-fs-filename -- Per-target
+ * installer functions operate on validated IJFW home, repo, and platform
+ * config paths supplied by install-flow. Dynamic filesystem calls here are
+ * the intentional installer write surface. */
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';

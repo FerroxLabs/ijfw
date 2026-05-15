@@ -45,7 +45,7 @@ if (src.startsWith(FM_OPEN)) {
 } else {
   // No frontmatter at all -- inject a fresh one with A3 fields plus the
   // alpha defaults expected by the schema.
-  fm = "ijfw_version: 1.3.1\nijfw_schema: 1\n";
+  fm = "ijfw_version: 1.3.2\nijfw_schema: 1\n";
 }
 
 // Parse the simple YAML lines we manage. We only touch keys we own; user

@@ -158,8 +158,8 @@ ijfw preflight
 |---|------|-----------------|-----------------|
 | 1 | shellcheck | yes | Unbound variables, POSIX violations in hook scripts |
 | 2 | oxlint | yes | Unused imports, dead variables in JS/TS |
-| 3 | eslint-security | advisory | Security anti-patterns (non-literal fs paths, injection sinks) |
-| 4 | psscriptanalyzer | advisory on macOS | PowerShell lint (blocking in Windows CI) |
+| 3 | eslint-security | yes | High-signal JS security rules such as eval, unsafe regex, non-literal require |
+| 4 | psscriptanalyzer | yes | PowerShell lint via PSScriptAnalyzer, or deterministic static fallback when `pwsh` is absent |
 | 5 | publint | yes | package.json bin/exports integrity |
 | 6 | gitleaks | yes | Plaintext secrets and credentials |
 | 7 | audit-ci | yes | npm audit: high and critical vulnerabilities |
@@ -220,7 +220,7 @@ The observation ledger feeds into a session summary written at SessionEnd: files
 
 Three invariants run through every surface.
 
-**On-demand skill loading.** IJFW ships platform-native skill bundles (19 on Codex/Gemini, 22 on Claude Code) covering workflow, commit, handoff, review, critique, compress, team setup, debug, memory audit, cross-audit, summarize, and more. Only the core skill is always loaded. Everything else hot-loads on trigger and unloads when done. Your context window stays lean; your token bill stays low.
+**On-demand skill loading.** IJFW ships platform-native skill bundles (19 on Codex/Gemini, 22 on Claude Code) covering workflow, commit, handoff, review, critique, compress, team setup, debug, memory audit, cross-audit, summarize, and more. Codex also gets Claude-parity command aliases and generated project agents from Team Assembly. Only the core skill is always loaded. Everything else hot-loads on trigger and unloads when done. Your context window stays lean; your token bill stays low.
 
 **Natural-language invocation, context-aware.** Say "cross-audit this" and IJFW picks up the file you are looking at, the diff you just staged, or the range you just referenced. Say "plan this feature" and the workflow skill opens the Quick or Deep flow with the brief already seeded from your current conversation. You describe what you want; IJFW figures out the where.
 
@@ -363,7 +363,7 @@ This air-gaps prompt injection from code execution. Even if a hostile prompt con
 
 ## The 30-second test drive
 
-Every command ships in three forms: a Claude Code slash command, a shell command, and a natural-language phrase. Use whichever fits the moment.
+Every command ships in the form your host understands: Claude Code slash commands, Codex command aliases, shell commands, and natural-language phrases. Use whichever fits the moment.
 
 **Health check.** Probes every AI CLI and API key on your machine. Tells you what is live, what is standing by, and the literal command to enable each one. No mystery.
 
@@ -395,13 +395,15 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 ## What's in the box
 
-### The Claude Code plugin (richest integration)
+### Native Claude + Codex command surfaces
 
--   **Slash commands for every move**: `/workflow`, `/handoff`, `/cross-audit`, `/cross-research`, `/cross-critique`, `/memory-audit`, `/memory-consent`, `/memory-why`, `/metrics`, `/mode`, `/team`, `/consolidate`, `/compress`, `/status`, `/doctor`, `/ijfw-plan`, `/ijfw-execute`, `/ijfw-verify`, `/ijfw-ship`, `/ijfw-audit`, `/ijfw` (help).
+-   **Claude Code slash commands for every move**: `/workflow`, `/handoff`, `/cross-audit`, `/cross-research`, `/cross-critique`, `/memory-audit`, `/memory-consent`, `/memory-why`, `/metrics`, `/mode`, `/team`, `/consolidate`, `/compress`, `/status`, `/doctor`, `/ijfw-plan`, `/ijfw-execute`, `/ijfw-verify`, `/ijfw-ship`, `/ijfw-audit`, `/ijfw` (help).
+
+-   **Codex command aliases with Claude parity**: the same 22 command files ship under `codex/commands/`, install to `~/.codex/commands`, and also land in project `.codex/commands` when a project already has IJFW/Codex state. The terminal mirrors the same intents through `ijfw cross-audit`, `ijfw workflow`, `ijfw memory-audit`, `ijfw ijfw-verify`, and the canonical `ijfw cross audit <target>`.
     
 -   **6 lifecycle hook events / 12 scripts**: SessionStart (memory injection + welcome-back beat), SessionStart-dashboard (auto-spawn local observability), SessionEnd (token-savings receipt + memory pointer), UserPromptSubmit (vague-prompt detector) + its capture pair, PreToolUse (pattern detection), PostToolUse (output trim + signal capture), PreCompact (session preservation), Observation-capture.
     
--   **22 on-demand skills**: workflow, memory, commit, handoff, review, critique, compress, team setup, debug, cross-audit, **design (DESIGN.md picker + 12 templates + 12-domain brand atlas, cross-platform)**, recall, dashboard, preflight, and more. Hot-loaded when triggered, unloaded when done.
+-   **On-demand skills**: workflow, memory, commit, handoff, review, critique, compress, team setup, debug, cross-audit, **design (DESIGN.md picker + 12 templates + 12-domain brand atlas, cross-platform)**, recall, dashboard, preflight, and more. Hot-loaded when triggered, unloaded when done.
     
 
 ### The MCP memory server
@@ -430,9 +432,18 @@ ijfw preflight                     Run 11-gate quality pipeline (blocking + advi
 ijfw dashboard start               Start localhost:37891 SSE dashboard (opens browser).
 ijfw dashboard stop                Graceful shutdown.
 ijfw dashboard status              Port + observation count.
+ijfw design start                  Start localhost visual design companion.
+ijfw team init                     Generate project-specific agent team.
+ijfw swarm plan                    Plan artifact-aware parallel work.
+ijfw swarm prepare                 Write ready/blocked swarm tasks to blackboard.
+ijfw swarm prompt <task> --codex   Pasteable Codex worker/explorer dispatch brief.
+ijfw recover status                Latest checkpoint + active claims + next step.
+ijfw codex doctor                  Codex-native bundle health.
+ijfw codex sync-agents             Generate .codex/agents from Team Assembly.
 ijfw status                        Hero line + recent runs + cache savings.
 ijfw doctor                        CLI + API-key reachability with literal fix commands.
 ijfw cross audit <file>            Codex + Gemini adversarial review.
+ijfw cross-audit <file>            Slash-style terminal alias for the same Trident path.
 ijfw cross research "<topic>"      Multi-source research.
 ijfw cross critique <range>        Structured counter-argument generation.
 ijfw cross project-audit <rule>    Same audit across every registered IJFW project.
@@ -458,7 +469,7 @@ ijfw receipt last                  Redacted, shareable block from the last Tride
 | Platform | What ships |
 |----------|------------|
 | Claude Code | Native plugin via marketplace, MCP auto-registered, 6 hook events / 12 scripts, 22 on-demand skills, 22 slash commands |
-| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 19 skills, 5 hook events, MCP registered, marketplace-ready |
+| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 19 skills, 22 command aliases, 6 hook events, MCP registered, `.codex/agents` generation from Team Assembly, marketplace-ready |
 | Gemini CLI | Native extension (`gemini-extension.json`), 19 skills, 11 hook events, 19 TOML slash commands, policy engine, BeforeModel injection, checkpointing; observation ledger + dashboard write |
 | Cursor | `.cursor/mcp.json` + `.cursor/rules/ijfw.mdc`; dashboard view-only (no hook lifecycle) |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` + `.windsurfrules`; dashboard view-only |

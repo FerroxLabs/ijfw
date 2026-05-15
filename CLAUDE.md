@@ -38,8 +38,7 @@ Author: Sean Donahoe
 <ijfw-memory>
 Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context.
 
-Last handoff: # Handoff: 2026-05-06 (post-1.2.10 publish)
-## TLDR (60 seconds)
+Last handoff: IJFW 1.3.2 RC audit/verify pass is complete locally. The 1.3.1 release caution still applies: user explicitly said, "When windows completes and verifies we go forward. Remember that". Do NOT create/push tags or attempt npm publish until Windows CI/release clearance is explicitly given by the user. Current 1.3.2 verification has passed 880/880 Node tests, 158/158 focused regression tests, package dry-runs, temp-project swarm E2E, cross-audit reconciliation, platform drift, diff hygiene, and preflight blocking gates. Findings fixed during audit: hermetic update-confirm npm test PATH, Trident EPIPE hardening, workflow bootstrap/fallback guidance, team/AGENTS mirroring specificity, Codex dispatch command order, and memory/release-gate consistency. Advisory warnings only: eslint-security non-literal fs warnings in installer paths and PSScriptAnalyzer skipped because pwsh unavailable locally. No tag or publish performed.
 </ijfw-memory>
 
 <ijfw-routing>

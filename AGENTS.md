@@ -1,11 +1,11 @@
 ---
-ijfw_version: 1.3.1
+ijfw_version: 1.3.2
 ijfw_schema: 1
 type: software
 primary_type: software
 secondary_types: []
 confidence: 0.933
-detected_at: 2026-05-10T23:27:22.240Z
+detected_at: 2026-05-13T00:21:55.553Z
 signals:
   - kind: agents_md_frontmatter
     weight: 0.9
@@ -23,26 +23,26 @@ signals:
     weight: 0.7
     domain: software
     ratio: 0.413
-    count: 366
+    count: 372
   - kind: file_extension_ratio
     weight: 0.7
     domain: design
-    ratio: 0.163
+    ratio: 0.16
     count: 144
   - kind: file_extension_ratio
     weight: 0.7
     domain: content
-    ratio: 0.12
+    ratio: 0.118
     count: 106
   - kind: file_extension_ratio
     weight: 0.7
     domain: business
-    ratio: 0.173
-    count: 153
+    ratio: 0.179
+    count: 161
   - kind: file_extension_ratio
     weight: 0.7
     domain: book
-    ratio: 0.132
+    ratio: 0.13
     count: 117
   - kind: filename_pattern
     weight: 0.4
@@ -678,8 +678,7 @@ yours -- IJFW will never touch it.
 <!-- IJFW-MEMORY-START -->
 Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context.
 
-Last handoff: # Handoff: 2026-05-06 (post-1.2.10 publish)
-## TLDR (60 seconds)
+Last handoff: IJFW 1.3.2 RC audit/verify pass is complete locally. The 1.3.1 release caution still applies: user explicitly said, "When windows completes and verifies we go forward. Remember that". Do NOT create/push tags or attempt npm publish until Windows CI/release clearance is explicitly given by the user. Current 1.3.2 verification has passed 880/880 Node tests, 158/158 focused regression tests, package dry-runs, temp-project swarm E2E, cross-audit reconciliation, platform drift, diff hygiene, and preflight blocking gates. Findings fixed during audit: hermetic update-confirm npm test PATH, Trident EPIPE hardening, workflow bootstrap/fallback guidance, team/AGENTS mirroring specificity, Codex dispatch command order, and memory/release-gate consistency. Advisory warnings only: eslint-security non-literal fs warnings in installer paths and PSScriptAnalyzer skipped because pwsh unavailable locally. No tag or publish performed.
 <!-- IJFW-MEMORY-END -->
 
 <!-- IJFW-ROUTING-START -->

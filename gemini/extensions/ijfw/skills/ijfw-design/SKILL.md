@@ -7,7 +7,14 @@ description: "First-class design intelligence. Dispatches to the best available 
 
 ## Rule 0 - Real HTML mockups, never ASCII
 
-When asked to show a design, mockup, layout, screen, or variant, produce REAL HTML. Write to `.planning/<feature>/mockups/<variant>/index.html`, then open in the browser (platform-aware: `open` / `xdg-open` / `wslview`). Use the active `DESIGN.md` or the picked template as the source of truth -- real colors, real type scale, real spacing, real content.
+When asked to show a design, mockup, layout, screen, or variant, produce REAL HTML and use the live design companion when a shell is available:
+
+1. Start the companion with `ijfw design start` (or `ijfw design start --no-open` in CI/headless sessions). It serves `http://localhost:<port>/design`.
+2. Write standalone HTML variants under `.planning/<feature>/mockups/<variant>/index.html` or `.planning/brainstorm/<option>.html`.
+3. Push the active variant with `ijfw design push <file.html>`. The open browser reloads automatically.
+4. When comparing options, create a tabbed `viewer.html` that loads option files from `/design/files/<name>.html`, then push the viewer and its option files together: `ijfw design push .planning/brainstorm/*.html`.
+
+Use the active `DESIGN.md` or the picked template as the source of truth -- real colors, real type scale, real spacing, real content. Prefer DESIGN.md tokens first, then the chosen template/brand direction, then internal heuristics.
 
 ASCII wireframes in chat are a LAST-RESORT FALLBACK, permitted only when:
 - The user explicitly asks for text-only ("just ASCII is fine").
@@ -17,6 +24,33 @@ Do not default to ASCII boxes. Do not "sketch" in chat. The entire point of this
 
 Structural diagrams (Mermaid architecture, data flow, component boundaries) are the exception -- those stay as text by convention.
 
+## Live Visual Loop
+
+For UI/design brainstorming, offer the live companion before SHAPE:
+`This is visual. Want me to open a live preview while we brainstorm?`
+
+If declined, continue with durable design notes in `DESIGN.md` or the current planning artifact and do not start a local server. If accepted, start the companion immediately and push a placeholder or first option so the user sees the loop working. For each design choice, update the HTML and run `ijfw design push <file.html>`; do not merely say where the file is. For multi-option viewers, push every supporting `.html` file so iframe tabs can resolve through `/design/files/`. If the companion cannot start, fall back to opening the HTML file directly and report the path.
+
+The companion is for transient visual feedback: fast previews, option comparison, and live browser reloads. `DESIGN.md` is durable design memory: tokens, rationale, constraints, critiques, and handoff notes that should survive sessions, platforms, and project phases. Do not treat a pushed preview as the source of truth; persist decisions in `DESIGN.md`.
+
+## Durable Design Intelligence Commands
+
+Use the durable `ijfw design` commands whenever the work needs a design contract, not just a preview. These commands are project-agnostic: they can apply to UI, content layout, brand systems, documents, diagrams, presentations, marketing surfaces, product packaging, or other non-code visual artifacts.
+
+- `ijfw design init` -- create or refresh `DESIGN.md` from detected project context, an existing template, or a chosen brand/style direction.
+- `ijfw design plan` -- turn the current goal into a visual plan with scope, surfaces, constraints, success criteria, and DESIGN.md updates to make.
+- `ijfw design audit` -- inspect the current design contract or artifact for consistency, accessibility, hierarchy, brand fit, and missing decisions.
+- `ijfw design critique` -- challenge the design direction, naming weak assumptions, visual risks, and alternatives before execution.
+- `ijfw design polish` -- propose refinements that improve visual quality while preserving the existing direction.
+- `ijfw design normalize` -- reduce drift by aligning colors, typography, spacing, tone, components, or layout patterns back to the contract.
+- `ijfw design bolder` -- explore a stronger or more distinctive version of the direction while keeping the project constraints visible.
+- `ijfw design quieter` -- explore a calmer, more restrained version for dense, operational, editorial, or high-trust contexts.
+- `ijfw design handoff` -- summarize the durable state: selected direction, open questions, accepted/rejected choices, artifact links, and next visual tasks.
+
+Prefer this split:
+- Use `ijfw design start/open/status/stop/push/clear` for the live companion loop.
+- Use `ijfw design init/plan/audit/critique/polish/normalize/bolder/quieter/handoff` for durable design reasoning and `DESIGN.md` memory.
+
 ## Step 1 - Check DESIGN.md
 
 Check project root for `DESIGN.md`. If it exists:
@@ -24,6 +58,8 @@ Check project root for `DESIGN.md`. If it exists:
 - Skip the picker entirely. Write the design-pass sentinel and proceed.
 
 ## Step 2 - No DESIGN.md: Three-Option Picker
+
+MCP-only platforms (OpenCode, Qwen Code, Kimi Code, OpenClaw) access the same picker via `ijfw_memory_recall({context_hint: 'design_template[:<name>]'})`. Aider reads `DESIGN.md` once written.
 
 Present exactly three options. Wait for user selection before proceeding. If the user's input doesn't match a valid template name or brand, re-prompt with the numbered list.
 
@@ -77,6 +113,6 @@ Preflight gate `design-pass` checks for this sentinel on UI file changes.
 ## Graduated Offer (Quick mode)
 
 Before any UI code is written, emit:
-`I'll run a design pass first. Hit enter to skip, or say 'show me' to see the plan. (auto-fire in 2s)`
+`I'll run a design pass first. Say "show me" to open it, or "skip" to continue.`
 
-Auto-fire if no response in 2 seconds. One-keystroke skip accepted.
+Wait for the user's next turn. One-word `show me` opens the design pass; `skip` continues without the visual companion.

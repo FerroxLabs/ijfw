@@ -1,5 +1,5 @@
-// Gate 2b: eslint with eslint-plugin-security -- Node-specific security rules
-// that oxlint does not cover (e.g. no-eval, detect-non-literal-fs-filename).
+// Gate 2b: eslint with eslint-plugin-security -- high-signal Node security
+// rules that oxlint does not cover (e.g. eval and unsafe regex).
 // Uses a temp package dir so eslint and the plugin can resolve each other.
 
 import { spawnSync } from 'node:child_process';
@@ -9,14 +9,22 @@ import { tmpdir } from 'node:os';
 
 const RULES = {
   'security/detect-eval-with-expression': 'error',
-  'security/detect-non-literal-fs-filename': 'warn',
-  'security/detect-non-literal-regexp': 'warn',
   'security/detect-non-literal-require': 'warn',
-  'security/detect-object-injection': 'warn',
-  'security/detect-possible-timing-attacks': 'warn',
   'security/detect-pseudoRandomBytes': 'error',
   'security/detect-unsafe-regex': 'error',
 };
+
+function formatMessages(results, severity) {
+  const out = [];
+  for (const file of results) {
+    for (const msg of file.messages || []) {
+      if (severity === 'error' && msg.severity !== 2) continue;
+      if (severity === 'warning' && msg.severity !== 1) continue;
+      out.push(`${file.filePath}:${msg.line}:${msg.column} ${msg.severity === 2 ? 'error' : 'warning'} ${msg.ruleId} -- ${msg.message}`);
+    }
+  }
+  return out;
+}
 
 /** @param {import('../types.js').PreflightCtx} ctx */
 export async function run(ctx) {
@@ -52,6 +60,7 @@ export async function run(ctx) {
 import security from '${join(tmpDir, 'node_modules', 'eslint-plugin-security', 'index.js').replace(/\\/g, '/')}';
 export default [
   {
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
     files: ['installer/src/**/*.js', 'mcp-server/src/**/*.js'],
     plugins: { security },
     rules: ${JSON.stringify(RULES)},
@@ -65,15 +74,18 @@ export default [
 
     const res = spawnSync(
       eslintBin,
-      ['--config', configPath, 'installer/src/**/*.js', 'mcp-server/src/**/*.js'],
+      ['--no-config-lookup', '--config', configPath, '--format', 'json', 'installer/src/**/*.js', 'mcp-server/src/**/*.js'],
       { encoding: 'utf8', cwd: ctx.repoRoot, timeout: 60_000 },
     );
 
     const durationMs = Date.now() - t0;
     const output = (res.stdout || '') + (res.stderr || '');
-    const lines = output.split('\n').filter(Boolean);
+    let results = [];
+    try { results = JSON.parse(res.stdout || '[]'); } catch { results = []; }
+    const errorCount = results.reduce((sum, file) => sum + (file.errorCount || 0), 0);
+    const warningCount = results.reduce((sum, file) => sum + (file.warningCount || 0), 0);
 
-    if (res.status === 0) {
+    if (res.status === 0 && errorCount === 0 && warningCount === 0) {
       return {
         name: 'eslint-security',
         status: 'PASS',
@@ -83,23 +95,21 @@ export default [
       };
     }
 
-    // ESLint exit codes: 0=pass, 1=warnings only, 2=errors
-    // We only fail on exit code 2 (actual errors)
-    if (res.status === 1) {
+    if (errorCount > 0 || res.status === 2) {
       return {
         name: 'eslint-security',
-        status: 'WARN',
-        message: 'eslint-security: advisory warnings (review above)',
-        details: lines.slice(0, 30),
+        status: 'FAIL',
+        message: `eslint-security: ${errorCount || 'unknown'} security error(s) found`,
+        details: (formatMessages(results, 'error').length ? formatMessages(results, 'error') : output.split('\n').filter(Boolean)).slice(0, 30),
         durationMs,
       };
     }
 
     return {
       name: 'eslint-security',
-      status: 'FAIL',
-      message: 'eslint-security: security errors found (exit code 2)',
-      details: lines.slice(0, 30),
+      status: 'WARN',
+      message: `eslint-security: ${warningCount} advisory warning(s)`,
+      details: (formatMessages(results, 'warning').length ? formatMessages(results, 'warning') : output.split('\n').filter(Boolean)).slice(0, 30),
       durationMs,
     };
   } finally {

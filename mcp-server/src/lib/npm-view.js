@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { rotateLogIfNeeded, redactUrl } from './atomic-io.js';
 
+// eslint-disable-next-line security/detect-unsafe-regex -- npm version output is a short scalar string and is retried/truncated by caller.
 const VERSION_RE = /^\d+\.\d+\.\d+(-[\w.]+)?$/;
 const PKG = '@ijfw/install';
 

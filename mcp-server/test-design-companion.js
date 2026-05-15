@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * IJFW design companion tests.
- * Tests: GET /design placeholder, GET /design serves newest html,
- *        GET /design/stream SSE connect, ijfw design push, ijfw design clear.
+ * Tests: GET /design placeholder, GET /design serves newest html with live reload,
+ *        GET /design/files support, GET /design/stream SSE connect,
+ *        ijfw design start, push, clear.
  * Run: node mcp-server/test-design-companion.js
  */
 
@@ -41,6 +42,7 @@ test('GET /design returns placeholder when no files pushed', async () => {
     assert.equal(res.status, 200);
     const text = await res.text();
     assert.ok(text.includes('ijfw design push'), 'placeholder must mention push command');
+    assert.ok(text.includes('__ijfwDesignLiveReload'), 'placeholder must include live reload hook');
   } finally {
     server.close();
   }
@@ -60,6 +62,7 @@ test('GET /design serves newest html file', async () => {
     assert.equal(res.status, 200);
     const text = await res.text();
     assert.ok(text.includes('newest-design'), 'should serve newest file content');
+    assert.ok(text.includes('__ijfwDesignLiveReload'), 'served design must include live reload hook');
   } finally {
     server.close();
     rmSync(CONTENT_DIR, { recursive: true, force: true });
@@ -67,9 +70,27 @@ test('GET /design serves newest html file', async () => {
 });
 
 // 3. GET /design/stream responds with SSE headers and connected comment
+test('GET /design/files serves pushed support files', async () => {
+  mkdirSync(CONTENT_DIR, { recursive: true });
+  writeFileSync(join(CONTENT_DIR, 'option-a.html'), '<html><body>option-a</body></html>', 'utf8');
+
+  const { port, server } = await startServer({ port: BASE_PORT + 2 });
+  try {
+    const res  = await fetchOk(`http://localhost:${port}/design/files/option-a.html`);
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    assert.ok(text.includes('option-a'), 'should serve requested support file');
+    assert.ok(text.includes('__ijfwDesignLiveReload'), 'support file must include live reload hook');
+  } finally {
+    server.close();
+    rmSync(CONTENT_DIR, { recursive: true, force: true });
+  }
+});
+
+// 4. GET /design/stream responds with SSE headers and connected comment
 test('GET /design/stream returns SSE headers', async () => {
   mkdirSync(CONTENT_DIR, { recursive: true });
-  const { port, server } = await startServer({ port: BASE_PORT + 2 });
+  const { port, server } = await startServer({ port: BASE_PORT + 3 });
   try {
     const ctrl = new AbortController();
     const res  = await fetch(`http://localhost:${port}/design/stream`, { signal: ctrl.signal });
@@ -87,22 +108,54 @@ test('GET /design/stream returns SSE headers', async () => {
   }
 });
 
-// 4. ijfw design push copies file to content dir
-test('ijfw design push copies file to content dir', async () => {
+// 5. ijfw design start exposes /design through the dashboard server.
+test('ijfw design start launches live companion URL', async () => {
+  const ijfwBin = resolve(__dirname, '..', 'installer', 'src', 'ijfw.js');
+  const start = spawnSync(process.execPath, [ijfwBin, 'design', 'start', '--no-open'], { encoding: 'utf8' });
+  assert.equal(start.status, 0, 'design start should exit 0');
+  assert.match(start.stdout, /Design companion running at http:\/\/localhost:\d+\/design/);
+
+  const portMatch = start.stdout.match(/localhost:(\d+)\/design/);
+  assert.ok(portMatch, 'start output should include design URL');
+  const res = await fetchOk(`http://localhost:${portMatch[1]}/design`);
+  assert.equal(res.status, 200);
+
+  const stop = spawnSync(process.execPath, [ijfwBin, 'design', 'stop'], { encoding: 'utf8' });
+  assert.equal(stop.status, 0, 'design stop should exit 0');
+});
+
+// 6. ijfw design push copies one or more files to content dir
+test('ijfw design push copies html files to content dir', async () => {
   const srcFile = join(TEST_HOME, 'mydesign.html');
+  const srcFile2 = join(TEST_HOME, 'option-b.html');
   writeFileSync(srcFile, '<html><body>pushed</body></html>', 'utf8');
+  writeFileSync(srcFile2, '<html><body>pushed-b</body></html>', 'utf8');
 
   const ijfwBin = resolve(__dirname, '..', 'installer', 'src', 'ijfw.js');
-  const r = spawnSync(process.execPath, [ijfwBin, 'design', 'push', srcFile], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [ijfwBin, 'design', 'push', srcFile, srcFile2], { encoding: 'utf8' });
   assert.equal(r.status, 0, 'push should exit 0');
 
   const dest = join(TEST_HOME, '.ijfw', 'design-companion', 'content', 'mydesign.html');
+  const dest2 = join(TEST_HOME, '.ijfw', 'design-companion', 'content', 'option-b.html');
   const { existsSync, readFileSync } = await import('node:fs');
   assert.ok(existsSync(dest), 'file must exist in content dir');
+  assert.ok(existsSync(dest2), 'second file must exist in content dir');
   assert.ok(readFileSync(dest, 'utf8').includes('pushed'));
+  assert.ok(readFileSync(dest2, 'utf8').includes('pushed-b'));
 });
 
-// 5. ijfw design clear removes all files from content dir
+// 7. ijfw design push only accepts standalone HTML
+test('ijfw design push rejects non-html files', async () => {
+  const srcFile = join(TEST_HOME, 'not-html.txt');
+  writeFileSync(srcFile, 'plain text', 'utf8');
+
+  const ijfwBin = resolve(__dirname, '..', 'installer', 'src', 'ijfw.js');
+  const r = spawnSync(process.execPath, [ijfwBin, 'design', 'push', srcFile], { encoding: 'utf8' });
+  assert.notEqual(r.status, 0, 'non-html push should exit non-zero');
+  assert.match(r.stderr, /standalone \.html/);
+});
+
+// 8. ijfw design clear removes all files from content dir
 test('ijfw design clear empties content dir', async () => {
   const destDir = join(TEST_HOME, '.ijfw', 'design-companion', 'content');
   mkdirSync(destDir, { recursive: true });

@@ -36,10 +36,12 @@ const PATTERNS = [
   // GCP / Google API keys -- `AIza...` (39 chars total).
   { re: /AIza[0-9A-Za-z_-]{35}/g,                  label: 'gcp'       },
   // Sentry DSN -- https://<key>@o<org>.ingest.sentry.io/<project>.
+  // eslint-disable-next-line security/detect-unsafe-regex -- redactor scans bounded tool output; this is an anchored secret pattern, not user-controlled matching logic.
   { re: /https?:\/\/[0-9a-f]{32,}(?::[0-9a-f]{32,})?@[\w.-]*sentry\.io\/[0-9]+/gi, label: 'sentry' },
   // Cloudflare API tokens (40 chars base64url). Conservative: only flag when
   // contextualized (CF_API_TOKEN=..., CLOUDFLARE_TOKEN=..., cf_auth_key=...)
   // so we don't eat bare git commit SHAs or content hashes.
+  // eslint-disable-next-line security/detect-unsafe-regex -- redactor scans bounded tool output and requires a Cloudflare context prefix before matching a token.
   { re: /(?:cf|cloudflare)[_-]?(?:api[_-]?)?(?:token|auth|key)s?[= :]+[A-Za-z0-9_-]{40,}/gi, label: 'cloudflare' },
   // Webhook URLs (Slack, Discord, MS Teams) -- include the secret path segment.
   { re: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/g, label: 'webhook' },

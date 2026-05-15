@@ -9,7 +9,7 @@
     },
     "codex": {
       "skills": 19,
-      "hookEvents": 5,
+      "hookEvents": 6,
       "skillsPath": "codex/skills",
       "hooksPath": "codex/.codex/hooks.json"
     },

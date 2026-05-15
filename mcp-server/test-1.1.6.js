@@ -471,7 +471,10 @@ function makeFakeNpm(dir, mode) {
 
 function spawnConfirm(token, ijfwHome, fakeBinDir) {
   const env = { ...process.env, IJFW_HOME: ijfwHome, IJFW_FROM_MCP: '0' };
-  if (fakeBinDir !== null) env.PATH = fakeBinDir + PATH_DELIM + (process.env.PATH || '');
+  // Keep update-confirm subprocesses hermetic. These tests verify fake npm
+  // failure modes; falling through to the developer machine's real npm makes
+  // the suite network-dependent and can turn drift checks into 10s timeouts.
+  if (fakeBinDir !== null) env.PATH = fakeBinDir;
   return spawnSync(process.execPath, [CLI, 'update', '--confirm', token], {
     encoding: 'utf8', env, timeout: 15_000,
   });

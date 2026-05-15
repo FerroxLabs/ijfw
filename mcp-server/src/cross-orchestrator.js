@@ -182,6 +182,14 @@ function spawnCli(pick, request, timeoutMs, signal = null, env = process.env) {
     // Listen for external abort (runAc).
     if (signal) signal.addEventListener('abort', killAndAbort, { once: true });
 
+    // CLI children can exit before consuming stdin (for example auth failures,
+    // startup validation, or commands that reject piped input). Treat pipe
+    // errors as child stderr/exit evidence, not uncaught process exceptions.
+    proc.stdin.on('error', (err) => {
+      if (err?.code && !stderr.includes(err.code)) stderr += `${stderr ? '\n' : ''}stdin ${err.code}`;
+    });
+    proc.stdout.on('error', () => {});
+    proc.stderr.on('error', () => {});
     proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
     // Single-settlement guard: error + close can both fire on spawn failure.
@@ -200,7 +208,7 @@ function spawnCli(pick, request, timeoutMs, signal = null, env = process.env) {
     try {
       const flushed = proc.stdin.write(request);
       if (flushed) {
-        proc.stdin.end();
+        try { proc.stdin.end(); } catch { /* stdin may close before end */ }
       } else {
         proc.stdin.once('drain', () => { try { proc.stdin.end(); } catch { /* */ } });
       }

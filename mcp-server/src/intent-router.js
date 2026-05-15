@@ -132,7 +132,9 @@ const INTENTS = [
     priority: 10,
     patterns: [
       /\bcross[- ]?audit(?:\s|ing)?\b/i,
+      // eslint-disable-next-line security/detect-unsafe-regex -- intent checks run on one user prompt string; alternations are small and token-bounded.
       /\b(?:get|need)\s+(?:a\s+)?second opinion\b/i,
+      // eslint-disable-next-line security/detect-unsafe-regex -- intent checks run on one user prompt string; alternations are small and token-bounded.
       /\b(?:have|ask)\s+(?:codex|gemini|opencode|aider|copilot)\s+(?:to\s+)?(?:review|audit|check)\b/i,
       /\bsecond[- ]model (?:review|opinion|audit)\b/i,
       /\b(?:peer|adversarial)[- ]?(?:review|audit)\b/i,

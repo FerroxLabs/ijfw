@@ -1,0 +1,47 @@
+{
+  "charter": {
+    "schema_version": "team-charter/v1",
+    "team_name": "research-synthesis-team",
+    "project_archetypes": ["research"],
+    "roles": [
+      {
+        "name": "research-lead",
+        "role_type": "research",
+        "model": "sonnet",
+        "effort": "high",
+        "phase_scope": ["question", "collect", "synthesize"],
+        "owns": [{"artifact_type": "evidence_table", "paths": ["research/evidence/**"]}],
+        "reviews": [{"artifact_type": "synthesis", "criteria": ["method", "source-quality"]}],
+        "handoff": {"format": "markdown", "required_sections": ["sources", "findings", "confidence"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+      },
+      {
+        "name": "method-reviewer",
+        "role_type": "review",
+        "model": "sonnet",
+        "effort": "medium",
+        "phase_scope": ["review", "verify"],
+        "owns": [{"artifact_type": "method_audit", "paths": ["research/reviews/**"]}],
+        "reviews": [{"artifact_type": "evidence_table", "criteria": ["bias", "traceability", "coverage"]}],
+        "handoff": {"format": "markdown", "required_sections": ["limitations", "risk", "recommendations"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+      }
+    ]
+  },
+  "workflow": {
+    "schema_version": "team-workflow/v1",
+    "project_archetypes": ["research"],
+    "artifacts": [
+      {"id": "evidence-table", "type": "evidence_table", "paths": ["research/evidence/table.md"], "owner": "research-lead", "reviewers": ["method-reviewer"], "depends_on": [], "verification": ["source audit"]},
+      {"id": "method-audit", "type": "method_audit", "paths": ["research/reviews/method.md"], "owner": "method-reviewer", "reviewers": ["research-lead"], "depends_on": ["evidence-table"], "verification": ["methodology review"]}
+    ],
+    "waves": [
+      {"id": "w1", "mode": "parallel", "artifact_ids": ["evidence-table"]},
+      {"id": "w2", "mode": "review", "artifact_ids": ["method-audit"]}
+    ]
+  },
+  "blackboard": {
+    "tasks": [{"id": "task-evidence", "title": "Build evidence table", "status": "ready", "artifact_ids": ["evidence-table"], "owner": "research-lead"}],
+    "claims": [{"id": "claim-evidence", "artifact_id": "evidence-table", "agent": "research-lead", "status": "active", "paths": ["research/evidence/table.md"]}]
+  }
+}

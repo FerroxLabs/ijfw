@@ -20,6 +20,7 @@ import { computeValueDelivered } from './cost/savings.js';
 import { listMemoryFiles, listKnownProjects } from './memory/reader.js';
 import { searchMemory } from './memory/search.js';
 import { buildRecallCounts, mergeRecallCounts, topRecalled } from './memory/recall-counter.js';
+import { PLACEHOLDER_HTML } from './design-companion.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // REPO_ROOT: IJFW_PROJECT_ROOT override > user's interactive shell cwd (PWD) > process.cwd() fallback.
@@ -131,6 +132,24 @@ const DEFAULT_PORT     = 37891;
 const PORT_WALK_MAX    = 10;  // walk up to 37891+PORT_WALK_MAX (37900)
 const BACKFILL_DEFAULT = 200;
 const BACKFILL_CAP     = 50;  // max observations sent on fresh connect (W4.6)
+
+const DESIGN_LIVE_RELOAD_SCRIPT = `
+<script>
+(function(){
+  if (window.__ijfwDesignLiveReload) return;
+  window.__ijfwDesignLiveReload = true;
+  try {
+    var events = new EventSource('/design/stream');
+    events.addEventListener('reload', function(){ window.location.reload(); });
+  } catch (_) {}
+})();
+</script>`;
+
+function injectDesignLiveReload(html) {
+  if (typeof html !== 'string' || html.includes('__ijfwDesignLiveReload')) return html;
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, DESIGN_LIVE_RELOAD_SCRIPT + '\n</body>');
+  return html + DESIGN_LIVE_RELOAD_SCRIPT;
+}
 
 // ---------- integer param validator ----------
 // Rejects numeric-prefix garbage like "10xyz" that parseInt accepts (W9-M2).
@@ -699,6 +718,29 @@ export async function startServer(options = {}) {
     }],
 
     // ---------- design companion ----------
+    [/^\/design\/files\/[^/]+\.html$/, async (req, res, url) => {
+      const contentDir = join(homedir(), '.ijfw', 'design-companion', 'content');
+      mkdirSync(contentDir, { recursive: true });
+      const name = url.pathname.split('/').pop();
+      const filePath = join(contentDir, name);
+      let html = null;
+      try {
+        if (existsSync(filePath)) html = readFileSync(filePath, 'utf8');
+      } catch {}
+      if (!html) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('404 Not Found');
+        return;
+      }
+      html = injectDesignLiveReload(html);
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy': "default-src 'self' https: data:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self'",
+      });
+      res.end(html);
+    }],
+
     ['/design', async (req, res) => {
       const contentDir = join(homedir(), '.ijfw', 'design-companion', 'content');
       mkdirSync(contentDir, { recursive: true });
@@ -714,12 +756,13 @@ export async function startServer(options = {}) {
         }
       } catch {}
       if (!html) {
-        html = `<!doctype html><html><body><pre>Design companion active. Push a design with: ijfw design push file.html</pre></body></html>`;
+        html = PLACEHOLDER_HTML;
       }
+      html = injectDesignLiveReload(html);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
-        'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+        'Content-Security-Policy': "default-src 'self' https: data:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self'",
       });
       res.end(html);
     }],

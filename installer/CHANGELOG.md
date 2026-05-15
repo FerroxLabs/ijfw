@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.2] -- 2026-05-15
+
+**Project-agnostic swarm orchestration + live visual workflow + richer Codex native surface.** Adds first-class Team Assembly, blackboard coordination, swarm task lifecycle, conservative git worktrees, recovery checkpoints, Superpowers-style live design previews, and Claude-parity Codex command aliases.
+
+- `ijfw design start/open/status/stop/push/clear` now runs a localhost visual companion with live reload, placeholder preview, and multi-file HTML support under `/design`.
+- `ijfw team init/status` creates project-specific agent charters and workflow manifests across software, design, content, book, research, business, and mixed projects.
+- `.ijfw/blackboard/` now provides runtime coordination: artifact claims, notes/findings/decisions/blockers, handoffs, prepared tasks, and append-only events.
+- `ijfw swarm plan/prepare/tasks/start/complete/block/ready/status` turns team workflows into artifact-aware parallel waves with explicit dependencies and review tasks.
+- `ijfw swarm prompt <task-id>` renders a scoped worker prompt for subagents, including artifact scope, dependencies, blockers, checks, blackboard commands, and non-revert rules.
+- Codex-native dispatch now covers `ijfw codex doctor`, `ijfw codex sync-agents`, `.codex/agents/*.toml` generation from Team Assembly, and `ijfw swarm prompt <task-id> --codex` for pasteable Codex worker/explorer dispatch.
+- `ijfw swarm worktree create/list/integrate/cleanup` adds conservative isolated git worktrees for in-progress code-heavy tasks, with no automatic conflict resolution.
+- `ijfw memory checkpoint <label>` and `ijfw recover status/latest` create durable workflow snapshots so project state can be recovered after context loss.
+- Workflow and team skills now include SWARM/PREPARE lifecycle guidance, review gates, worktree safety rules, and checkpoint expectations at stage transitions.
+- Codex now ships the same 22 IJFW command aliases as Claude, installs them to `~/.codex/commands` and project `.codex/commands` when applicable, and advertises `commands_dir` in the Codex plugin manifest.
+- The terminal CLI exposes the same command vocabulary as the agent surfaces: `ijfw cross audit <target>`, `ijfw cross-audit`, `ijfw workflow`, `ijfw memory-audit`, `ijfw ijfw-verify`, and related aliases all route through the shared IJFW command dispatcher.
+
+Files: `mcp-server/src/blackboard.js`, `mcp-server/src/team/`, `mcp-server/src/swarm/`, `mcp-server/src/recovery/`, `mcp-server/src/dashboard-server.js`, `mcp-server/src/cross-orchestrator-cli.js`, `installer/src/ijfw.js`, `shared/skills/ijfw-workflow/SKILL.md`, platform workflow/team/design skill mirrors, and related fixtures/tests.
+
 ## [1.3.1] -- 2026-05-12
 
 **Codex hook cleanup + release cadence hardening.** Tightens IJFW's Codex integration for Codex 0.130+, reduces the default dependency footprint, and moves more release drift into automated gates before it reaches users.

@@ -64,6 +64,16 @@ Or use the /skills menu. Skills are also auto-selected by Codex on description m
 | $ijfw-memory-audit | audit memory, clean memory           |
 | $ijfw-update       | update ijfw, upgrade                 |
 
+## Command Aliases
+IJFW installs Claude-parity command alias files to `.codex/commands/` and
+`~/.codex/commands/`. Use them when the host exposes command packs. In the
+terminal, use the same intent names through `ijfw`:
+- `ijfw cross audit <target>` or `ijfw cross-audit <target>`
+- `ijfw cross critique <target>` or `ijfw cross-critique <target>`
+- `ijfw cross research <topic>` or `ijfw cross-research <topic>`
+- `ijfw workflow`, `ijfw team`, `ijfw swarm`, `ijfw memory-audit`
+- `ijfw preflight`, `ijfw doctor`, `ijfw status`
+
 ## Cross-Audit / Research / Critique
 Run: `ijfw cross <mode> <target>`
 This is the Trident path for Codex. Modes: audit, research, critique.

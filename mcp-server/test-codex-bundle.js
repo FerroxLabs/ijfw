@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { BASH } from './test/win-bash-helper.js';
 import { join, dirname } from 'node:path';
@@ -60,6 +60,31 @@ test('codex: plugin.json skills_dir resolves to existing directory', () => {
   assert.ok(existsSync(skillsDir), `skills_dir "${manifest.skills_dir}" does not exist`);
 });
 
+test('codex: plugin.json commands_dir resolves to existing directory', () => {
+  const manifest = JSON.parse(readFileSync(join(CODEX, '.codex-plugin', 'plugin.json'), 'utf8'));
+  assert.equal(typeof manifest.commands_dir, 'string', 'manifest missing commands_dir');
+  const commandsDir = join(CODEX, manifest.commands_dir);
+  assert.ok(existsSync(commandsDir), `commands_dir "${manifest.commands_dir}" does not exist`);
+});
+
+test('codex: command aliases mirror Claude command names', () => {
+  const claudeCommands = readdirSync(join(REPO, 'claude', 'commands'))
+    .filter((name) => name.endsWith('.md'))
+    .sort();
+  const codexCommands = readdirSync(join(CODEX, 'commands'))
+    .filter((name) => name.endsWith('.md'))
+    .sort();
+  assert.deepEqual(codexCommands, claudeCommands);
+});
+
+test('codex: command alias files are non-empty and have descriptions', () => {
+  for (const name of readdirSync(join(CODEX, 'commands')).filter((item) => item.endsWith('.md'))) {
+    const content = readFileSync(join(CODEX, 'commands', name), 'utf8');
+    assert.ok(content.length > 50, `command alias suspiciously short: ${name}`);
+    assert.match(content, /^---\ndescription: /, `command alias missing frontmatter description: ${name}`);
+  }
+});
+
 // ---- hooks.json -------------------------------------------------------------
 
 // Codex CLI 0.120+ schema (per codex-rs/hooks/src/engine/config.rs):
@@ -73,7 +98,7 @@ test('codex: hooks.json is valid JSON with expected events', () => {
     'hooks.json: top-level must be an object');
   assert.ok(obj.hooks && typeof obj.hooks === 'object' && !Array.isArray(obj.hooks),
     'hooks.json: "hooks" must be a map keyed by event name');
-  for (const expected of ['SessionStart', 'Stop', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse']) {
+  for (const expected of ['SessionStart', 'Stop', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse']) {
     assert.ok(Array.isArray(obj.hooks[expected]),
       `hooks.json event missing or not an array: ${expected}`);
     assert.ok(obj.hooks[expected].length > 0,
@@ -99,7 +124,7 @@ test('codex: all hook scripts listed in hooks.json exist on disk', () => {
 
 test('codex: hook scripts pass bash syntax check', () => {
   const hooksDir = join(CODEX, '.codex', 'hooks');
-  const scripts = ['session-start.sh', 'session-end.sh', 'pre-prompt.sh', 'pre-tool-use.sh', 'post-tool-use.sh', 'after-agent.sh'];
+  const scripts = ['session-start.sh', 'session-end.sh', 'pre-prompt.sh', 'pre-tool-use.sh', 'permission-request.sh', 'post-tool-use.sh', 'after-agent.sh'];
   for (const s of scripts) {
     const abs = join(hooksDir, s);
     if (existsSync(abs)) {
@@ -186,6 +211,84 @@ test('codex: post-tool-use stays quiet for failure signals too', () => {
     stdio: ['pipe', 'pipe', 'pipe']
   });
   assert.equal(out, '');
+});
+
+test('codex: permission-request denies high-risk release/destructive commands', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'permission-request.sh');
+  const payload = JSON.stringify({
+    hook_event_name: 'PermissionRequest',
+    tool_name: 'Bash',
+    tool_input: { command: 'npm publish && git push --force' },
+    session_id: 'test-session'
+  });
+  const out = execFileSync(BASH, [hook], {
+    input: payload,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  }).trim();
+  assert.ok(out, 'permission-request should emit a deny decision');
+  const obj = JSON.parse(out);
+  assert.equal(obj.continue, true);
+  assert.equal(obj.hookSpecificOutput.hookEventName, 'PermissionRequest');
+  assert.equal(obj.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(obj.hookSpecificOutput.permissionDecisionReason, /npm publish/);
+});
+
+test('codex: permission-request still denies when IJFW log directory is absent', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'permission-request.sh');
+  const home = mkdtempSync(join(tmpdir(), 'ijfw-codex-hook-home-'));
+  try {
+    const payload = JSON.stringify({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'git reset --hard HEAD~1' },
+      session_id: 'test-session'
+    });
+    const out = execFileSync(BASH, [hook], {
+      input: payload,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+    assert.ok(out, 'permission-request should not depend on a pre-existing log directory');
+    const obj = JSON.parse(out);
+    assert.equal(obj.hookSpecificOutput.permissionDecision, 'deny');
+    assert.match(obj.hookSpecificOutput.permissionDecisionReason, /reset --hard/);
+  } finally {
+    rmTmpDir(home);
+  }
+});
+
+test('codex: permission-request stays quiet for benign read-only commands', () => {
+  const hook = join(CODEX, '.codex', 'hooks', 'permission-request.sh');
+  const payload = JSON.stringify({
+    hook_event_name: 'PermissionRequest',
+    tool_name: 'Bash',
+    tool_input: { command: 'git status --short' },
+    session_id: 'test-session'
+  });
+  const out = execFileSync(BASH, [hook], {
+    input: payload,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  assert.equal(out, '');
+});
+
+test('codex: doctor works from a non-IJFW project directory using bundled assets', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'ijfw-codex-doctor-'));
+  try {
+    const out = execFileSync(process.execPath, [join(REPO, 'mcp-server', 'src', 'cross-orchestrator-cli.js'), 'codex', 'doctor'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    assert.match(out, /IJFW Codex doctor/);
+    assert.match(out, /plugin metadata -- version 1\.3\.2/);
+    assert.match(out, /skills -- /);
+  } finally {
+    rmTmpDir(cwd);
+  }
 });
 
 test('codex: stop hook stays quiet for routine session saves', () => {
@@ -320,7 +423,7 @@ test('codex: plugin.json is ASCII-only', () => {
 
 test('codex: hooks do not contain calls to AI endpoints', () => {
   const hooksDir = join(CODEX, '.codex', 'hooks');
-  const scripts = ['session-start.sh', 'session-end.sh', 'pre-prompt.sh', 'pre-tool-use.sh', 'post-tool-use.sh'];
+  const scripts = ['session-start.sh', 'session-end.sh', 'pre-prompt.sh', 'pre-tool-use.sh', 'permission-request.sh', 'post-tool-use.sh'];
   const aiPattern = /curl|wget.*(openai|anthropic|googleapis|gemini)/i;
   for (const s of scripts) {
     const abs = join(hooksDir, s);

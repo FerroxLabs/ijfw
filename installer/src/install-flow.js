@@ -22,6 +22,12 @@
 //   Step 11 -- summary                      : 1578-1612
 //   Step 12 -- post-commit hook (opt-in)    : 1614-1660
 
+/* eslint-disable security/detect-non-literal-fs-filename -- This installer
+ * orchestrator intentionally operates on validated repo-root and IJFW home
+ * paths. Inputs are constrained by install target selection and install-flow
+ * arguments; dynamic filesystem calls here are the expected installer surface,
+ * not arbitrary path execution. */
+
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -740,6 +746,7 @@ export async function runInstall({
   let claudeNeedsRestart = false;
 
   for (const target of targetList) {
+    // eslint-disable-next-line security/detect-object-injection -- targetList is filtered against CANONICAL_ORDER; TARGET_FNS is the fixed installer dispatch table.
     const fn = TARGET_FNS[target];
     if (typeof fn !== 'function') {
       // Defensive: should be unreachable because targetList is filtered against

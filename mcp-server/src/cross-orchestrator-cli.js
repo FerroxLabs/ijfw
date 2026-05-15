@@ -7,7 +7,7 @@
 //
 // Zero external deps. Parse argv manually.
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, readdirSync, rmSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, readdirSync, rmSync, realpathSync, copyFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -21,6 +21,42 @@ import { aggregatePortfolioFindings } from './cross-project-search.js';
 import { runImport, runImportAll, listImporters } from './importers/cli.js';
 import { validateToken } from './lib/token.js';
 import { isVersionStringValid } from './lib/npm-view.js';
+import {
+  addBlackboardNote,
+  blackboardStatus,
+  claimArtifact,
+  initBlackboard,
+  readBlackboard,
+  releaseClaim,
+  writeHandoff,
+} from './blackboard.js';
+import { createTeamAssembly, readTeamAssembly } from './team/generator.js';
+import {
+  blockSwarmTask,
+  buildSwarmPlan,
+  completeSwarmTask,
+  listSwarmTasks,
+  prepareSwarmTasks,
+  readySwarmTask,
+  startSwarmTask,
+  swarmPlanSummary,
+} from './swarm/planner.js';
+import { createCheckpoint, latestCheckpoint, recoveryStatus } from './recovery/checkpoint.js';
+import {
+  cleanupTaskWorktree,
+  createTaskWorktree,
+  integrateTaskWorktree,
+  listTaskWorktrees,
+} from './swarm/worktree.js';
+import { renderSwarmDispatchPrompt } from './swarm/dispatch-prompt.js';
+import { syncCodexAgents } from './codex-agents.js';
+import {
+  DESIGN_ACTIONS,
+  auditDesignText,
+  designActionGuide,
+  initialDesignMarkdown,
+  loadDesignContext,
+} from './design-intelligence.js';
 
 // ---------------------------------------------------------------------------
 // Auditor error translator (1.2.5)
@@ -171,10 +207,110 @@ function parseArgs(argv) {
   return out;
 }
 
+const COMMAND_ALIAS_HELP = {
+  workflow: {
+    title: 'IJFW workflow',
+    usage: 'Use the ijfw-workflow skill in agents. Terminal helpers: ijfw team init, ijfw swarm plan, ijfw swarm prepare.',
+  },
+  handoff: {
+    title: 'IJFW handoff',
+    usage: 'Use the ijfw-handoff skill in agents, or record swarm handoff text with: ijfw blackboard handoff --message "<summary>".',
+  },
+  compress: {
+    title: 'IJFW compress',
+    usage: 'Use the ijfw-compress skill in agents. Terminal context compression is host-specific and should preserve exact paths, commands, versions, and decisions.',
+  },
+  consolidate: {
+    title: 'IJFW consolidate',
+    usage: 'Use the ijfw-handoff or ijfw-memory-audit skill to consolidate decisions into memory. For swarm state, run: ijfw memory checkpoint <label>.',
+  },
+  'ijfw-audit': {
+    title: 'IJFW audit',
+    usage: 'Run verification with: ijfw preflight. For multi-model review, run: ijfw cross audit <target>.',
+  },
+  'ijfw-execute': {
+    title: 'IJFW execute',
+    usage: 'Use ijfw-workflow in agents, then terminal helpers: ijfw team init, ijfw swarm plan, ijfw swarm prepare, ijfw swarm start <task-id>.',
+  },
+  'ijfw-help': {
+    title: 'IJFW help',
+    usage: 'Run: ijfw help. Add --browser for the rendered local guide.',
+  },
+  'ijfw-plan': {
+    title: 'IJFW plan',
+    usage: 'Use ijfw-workflow for planning. Terminal helpers: ijfw team init, ijfw swarm plan, ijfw swarm prepare --reviews.',
+  },
+  'ijfw-ship': {
+    title: 'IJFW ship',
+    usage: 'Run: ijfw preflight. Do not publish or tag until your release gate is explicitly cleared.',
+  },
+  'ijfw-verify': {
+    title: 'IJFW verify',
+    usage: 'Run: ijfw preflight. For focused review, run: ijfw cross audit <target>.',
+  },
+  'memory-audit': {
+    title: 'IJFW memory audit',
+    usage: 'Use the ijfw-memory-audit skill in agents. Terminal safety net: ijfw recover status and ijfw memory checkpoint <label>.',
+  },
+  'memory-consent': {
+    title: 'IJFW memory consent',
+    usage: 'Use IJFW memory tools only for explicit project memory. Terminal checkpoint: ijfw memory checkpoint <label>.',
+  },
+  'memory-why': {
+    title: 'IJFW memory why',
+    usage: 'Use ijfw-recall or ijfw-memory-audit in agents to inspect why memory exists. Terminal recovery state: ijfw recover latest.',
+  },
+  metrics: {
+    title: 'IJFW metrics',
+    usage: 'Open the dashboard with: ijfw dashboard start. Agent-side metrics are available through ijfw_metrics.',
+  },
+  mode: {
+    title: 'IJFW mode',
+    usage: 'Inspect configuration with: ijfw config --audit. Statusline mode helpers: ijfw statusline --status, --compose, or --disable.',
+  },
+};
+
+function parseCrossAlias(mode, args) {
+  let only = null;
+  let confirm = false;
+  let expand = false;
+  const positional = [];
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--confirm') confirm = true;
+    else if (arg === '--expand') expand = true;
+    else if (arg === '--with' && args[i + 1]) only = args[++i];
+    else if (arg.startsWith('--with=')) only = arg.slice('--with='.length);
+    else if (!arg.startsWith('--')) positional.push(arg);
+  }
+  const target = mode === 'research' ? positional.join(' ').trim() : positional[0];
+  return { cmd: 'cross', mode, target: target || undefined, only, confirm, expand };
+}
+
+function parseCommandAlias(args) {
+  const name = args[0];
+  if (name === 'cross-audit') {
+    return parseCrossAlias('audit', args);
+  }
+  if (name === 'cross-critique') {
+    return parseCrossAlias('critique', args);
+  }
+  if (name === 'cross-research') {
+    return parseCrossAlias('research', args);
+  }
+  if (Object.prototype.hasOwnProperty.call(COMMAND_ALIAS_HELP, name)) {
+    return { cmd: 'command-alias', alias: name };
+  }
+  return null;
+}
+
 function parseArgsInner(args) {
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
     return { cmd: 'help' };
   }
+
+  const alias = parseCommandAlias(args);
+  if (alias) return alias;
 
   if (args[0] === '--version' || args[0] === '-v') {
     return { cmd: 'version', verbose: args.includes('--verbose') };
@@ -256,6 +392,34 @@ function parseArgsInner(args) {
     return { cmd: 'dashboard', sub: args[1] || 'status' };
   }
 
+  if (args[0] === 'design') {
+    return { cmd: 'design', sub: args[1] || 'status' };
+  }
+
+  if (args[0] === 'blackboard') {
+    return { cmd: 'blackboard', sub: args[1] || 'status' };
+  }
+
+  if (args[0] === 'team') {
+    return { cmd: 'team', sub: args[1] || 'status' };
+  }
+
+  if (args[0] === 'swarm') {
+    return { cmd: 'swarm', sub: args[1] || 'status' };
+  }
+
+  if (args[0] === 'codex') {
+    return { cmd: 'codex', sub: args[1] || 'doctor' };
+  }
+
+  if (args[0] === 'memory' && args[1] === 'checkpoint') {
+    return { cmd: 'memory-checkpoint', label: args[2] || 'manual' };
+  }
+
+  if (args[0] === 'recover') {
+    return { cmd: 'recover', sub: args[1] || 'status' };
+  }
+
   if (args[0] === 'receipt') {
     return { cmd: 'receipt', sub: args[1] || 'last' };
   }
@@ -321,6 +485,14 @@ Usage:
   ijfw uninstall
   ijfw preflight
   ijfw dashboard [start|stop|status]
+  ijfw design [start|open|status|stop|push|clear|init|plan|audit|critique|polish|normalize|bolder|quieter|handoff]
+  ijfw blackboard [init|status|claim|release|note|handoff]
+  ijfw team [init|status]
+  ijfw swarm [plan|prepare|tasks|prompt|start|complete|block|ready|status]
+  ijfw swarm worktree [create|list|integrate|cleanup]
+  ijfw codex [doctor|sync-agents]
+  ijfw memory checkpoint <label>
+  ijfw recover [status|latest]
   ijfw cross <mode> <target> [options]
   ijfw cross project-audit <rule-file> [--dry-run]
   ijfw import <tool> [--all] [--dry-run] [--force] [--path <p>]
@@ -336,6 +508,11 @@ Commands:
   uninstall         Remove IJFW and revert AI-agent configs. Same as: ijfw off
   preflight         Run the 11-gate quality pipeline (blocking + advisory).
   dashboard         Control the dashboard server (start, stop, status).
+  design            Control the live visual design companion.
+  blackboard        Coordinate project-local swarm state and artifact claims.
+  team              Assemble project agents, charter, and workflow manifest.
+  swarm             Plan artifact-aware parallel work from the team manifest.
+  recover           Show the latest checkpoint and next recovery step.
   demo              30-second live tour of the Trident (fires real auditors).
   cross             Fire external auditors at a target. Try: ijfw cross audit README.md
   import            Pull memory in from another tool. Try: ijfw import claude-mem --all
@@ -376,6 +553,18 @@ Examples:
   ijfw status
   ijfw doctor
 `.trim());
+}
+
+function cmdCommandAlias(alias) {
+  const info = COMMAND_ALIAS_HELP[alias];
+  if (!info) {
+    console.error(`Unknown command alias: ${alias}`);
+    process.exit(1);
+  }
+  console.log(`${info.title}`);
+  console.log('');
+  console.log(info.usage);
+  process.exit(0);
 }
 
 async function cmdStatus(projectDir, opts = {}) {
@@ -554,8 +743,10 @@ const INTEGRATION_DEPTH = {
     label: 'Codex',
     checks: [
       { name: 'native skills',  detect: () => existsSync(join(homedir(), '.codex', 'skills')) },
+      { name: 'command aliases', detect: () => existsSync(join(homedir(), '.codex', 'commands', 'ijfw.md')) && existsSync(join(homedir(), '.codex', 'commands', 'cross-audit.md')) },
       { name: 'hooks',          detect: () => existsSync(join(homedir(), '.codex', 'hooks.json')) },
       { name: 'context file',   detect: () => existsSync(join(homedir(), '.codex', 'IJFW.md')) },
+      { name: 'project agents',  detect: () => existsSync(join(process.cwd(), '.codex', 'agents')) },
       { name: 'MCP',            detect: () => { try { const t = readFileSync(join(homedir(), '.codex', 'config.toml'), 'utf8'); return t.includes('ijfw-memory'); } catch { return false; } } },
     ],
   },
@@ -1093,6 +1284,7 @@ function npmViewVersion(pkg = '@ijfw/install') {
     return { ok: false, message: stderr || `npm view exited ${r.status} with no stderr` };
   }
   const raw = (r.stdout || '').trim().replace(/^"|"$/g, '');
+  // eslint-disable-next-line security/detect-unsafe-regex -- raw is npm's short version string response and is truncated in the error path.
   if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(raw)) return { ok: false, message: `malformed: ${raw.slice(0, 80)}` };
   return { ok: true, version: raw };
 }
@@ -1831,6 +2023,8 @@ if (isMainModule) {
     cmdCross(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'cross-project-audit') {
     cmdCrossProjectAudit(parsed).catch(err => { console.error(err.message); process.exit(1); });
+  } else if (parsed.cmd === 'command-alias') {
+    cmdCommandAlias(parsed.alias);
   } else if (parsed.cmd === 'import') {
     cmdImport(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'doctor') {
@@ -1857,6 +2051,20 @@ if (isMainModule) {
     cmdPreflight();
   } else if (parsed.cmd === 'dashboard') {
     cmdDashboard(parsed.sub);
+  } else if (parsed.cmd === 'design') {
+    cmdDesign(parsed.sub);
+  } else if (parsed.cmd === 'blackboard') {
+    cmdBlackboard(parsed.sub);
+  } else if (parsed.cmd === 'team') {
+    cmdTeam(parsed.sub);
+  } else if (parsed.cmd === 'swarm') {
+    cmdSwarm(parsed.sub);
+  } else if (parsed.cmd === 'codex') {
+    cmdCodex(parsed.sub);
+  } else if (parsed.cmd === 'memory-checkpoint') {
+    cmdMemoryCheckpoint(parsed.label);
+  } else if (parsed.cmd === 'recover') {
+    cmdRecover(parsed.sub);
   } else {
     console.error(`Unknown command: ${parsed.raw}`);
     printUsage();
@@ -1919,4 +2127,671 @@ function cmdDashboard(sub) {
   }
   const res = spawnSync(process.execPath, [script, sub], { stdio: 'inherit' });
   process.exit(res.status ?? 1);
+}
+
+function dashboardPort() {
+  try {
+    const n = Number.parseInt(readFileSync(join(homedir(), '.ijfw', 'dashboard.port'), 'utf8').trim(), 10);
+    return Number.isFinite(n) ? n : 37891;
+  } catch {
+    return 37891;
+  }
+}
+
+function openDesignUrl(url) {
+  if (process.env.CI || process.env.NO_OPEN) return;
+  const res = process.platform === 'darwin'
+    ? spawnSync('open', [url], { stdio: 'ignore' })
+    : process.platform === 'win32'
+      ? spawnSync('cmd', ['/c', 'start', '', url], { stdio: 'ignore' })
+      : spawnSync('xdg-open', [url], { stdio: 'ignore' });
+  return res.status ?? 0;
+}
+
+function cmdDesign(sub) {
+  const contentDir = join(homedir(), '.ijfw', 'design-companion', 'content');
+  mkdirSync(contentDir, { recursive: true });
+
+  if (sub === 'start' || sub === 'open') {
+    const dash = findCliAsset('mcp-server', 'bin', 'ijfw-dashboard');
+    if (!dash) {
+      console.error('Design companion server not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
+      process.exit(1);
+    }
+    const noOpen = process.argv.includes('--no-open');
+    const res = spawnSync(process.execPath, [dash, 'start', '--no-open'], { stdio: sub === 'start' ? 'inherit' : 'ignore' });
+    if ((res.status ?? 1) !== 0) process.exit(res.status ?? 1);
+    const url = `http://localhost:${dashboardPort()}/design`;
+    if (!noOpen) openDesignUrl(url);
+    console.log(`Design companion running at ${url}`);
+    process.exit(0);
+  }
+
+  if (sub === 'status' || sub === 'stop') {
+    const dash = findCliAsset('mcp-server', 'bin', 'ijfw-dashboard');
+    if (!dash) {
+      console.error('Design companion server not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
+      process.exit(1);
+    }
+    const res = spawnSync(process.execPath, [dash, sub === 'status' ? 'status' : 'stop'], { stdio: 'inherit' });
+    if (sub === 'status' && (res.status ?? 1) === 0) console.log(`Design companion URL: http://localhost:${dashboardPort()}/design`);
+    process.exit(res.status ?? 0);
+  }
+
+  if (sub === 'push') {
+    const filePaths = process.argv.slice(4);
+    if (filePaths.length === 0) {
+      console.error('Usage: ijfw design push <file.html> [more.html ...]');
+      process.exit(1);
+    }
+    for (const filePath of filePaths) {
+      const abs = resolve(filePath);
+      if (!abs.toLowerCase().endsWith('.html')) {
+        console.error('Design companion accepts standalone .html files.');
+        process.exit(1);
+      }
+      if (!existsSync(abs)) {
+        console.error(`File not found: ${abs}`);
+        process.exit(1);
+      }
+      const dest = join(contentDir, basename(abs));
+      copyFileSync(abs, dest);
+      console.log(`Design pushed: ${dest}`);
+    }
+    console.log(`Preview: http://localhost:${dashboardPort()}/design`);
+    process.exit(0);
+  }
+
+  if (sub === 'clear') {
+    for (const f of readdirSync(contentDir)) rmSync(join(contentDir, f), { force: true });
+    console.log('Design companion content cleared.');
+    process.exit(0);
+  }
+
+  if (sub === 'init') {
+    const path = join(process.cwd(), 'DESIGN.md');
+    if (existsSync(path) && !process.argv.includes('--force')) {
+      console.log(`DESIGN.md already exists: ${path}`);
+      console.log('Use --force to replace it.');
+      process.exit(1);
+    }
+    const name = optionValue(process.argv.slice(4), ['--name']) || basename(process.cwd());
+    const direction = optionValue(process.argv.slice(4), ['--direction']) || '';
+    writeFileSync(path, initialDesignMarkdown({ projectName: name, direction }), { mode: 0o644 });
+    console.log(`Created ${path}`);
+    process.exit(0);
+  }
+
+  if (DESIGN_ACTIONS.includes(sub)) {
+    const context = loadDesignContext(process.cwd());
+    const target = optionValue(process.argv.slice(4), ['--file', '-f']);
+    const guide = designActionGuide(sub, context);
+    console.log(`Design ${sub}`);
+    console.log(`DESIGN.md: ${context.exists ? context.path : 'not found'}`);
+    for (const line of guide.guidance) console.log(`- ${line}`);
+    console.log(`- ${guide.reminder}`);
+    if (context.exists) {
+      console.log('');
+      console.log(context.summary);
+    }
+    if (sub === 'audit' && target) {
+      const abs = resolve(target);
+      if (!existsSync(abs)) {
+        console.error(`File not found: ${abs}`);
+        process.exit(1);
+      }
+      const audit = auditDesignText(readFileSync(abs, 'utf8'));
+      console.log('');
+      console.log(`Static audit: ${audit.summary}`);
+      for (const item of audit.findings) console.log(`- [${item.severity}] ${item.rule}: ${item.message}`);
+    }
+    process.exit(0);
+  }
+
+  console.log('Usage: ijfw design start [--no-open] | open | status | stop | push <file.html> [more.html ...] | clear | init [--force] [--name <name>] [--direction <text>] | plan|audit|critique|polish|normalize|bolder|quieter|handoff [--file <artifact>]');
+  process.exit(1);
+}
+
+function optionValue(args, names) {
+  for (let i = 0; i < args.length; i++) {
+    if (names.includes(args[i]) && args[i + 1]) return args[i + 1];
+    for (const name of names) {
+      const prefix = `${name}=`;
+      if (args[i].startsWith(prefix)) return args[i].slice(prefix.length);
+    }
+  }
+  return null;
+}
+
+function printBlackboardStatus(status) {
+  console.log(`Blackboard: ${status.initialized ? status.dir : 'not initialized'}`);
+  console.log(`Tasks: ${status.tasks.open} open / ${status.tasks.total} total`);
+  console.log(`Claims: ${status.claims.active} active / ${status.claims.total} total`);
+  for (const claim of status.claims.active_items) {
+    const claimPaths = claim.paths.length ? ` (${claim.paths.join(', ')})` : '';
+    console.log(`  ${claim.artifact_id} -> ${claim.agent}${claimPaths}`);
+  }
+  const blockerCount = status.recent.blockers.length;
+  if (blockerCount) console.log(`Recent blockers: ${blockerCount}`);
+  if (status.health.tasks !== 'ok' || status.health.claims !== 'ok') {
+    console.log(`Health: tasks=${status.health.tasks}, claims=${status.health.claims}`);
+  }
+}
+
+function cmdBlackboard(sub) {
+  const args = process.argv.slice(4);
+
+  if (sub === 'init') {
+    const result = initBlackboard(process.cwd());
+    console.log(`Blackboard initialized: ${result.dir}`);
+    process.exit(0);
+  }
+
+  if (sub === 'status') {
+    printBlackboardStatus(blackboardStatus(process.cwd()));
+    process.exit(0);
+  }
+
+  if (sub === 'claim') {
+    const artifact = optionValue(args, ['--artifact', '-a']) || args[0];
+    const owner = optionValue(args, ['--owner', '-o']);
+    const paths = optionValue(args, ['--paths', '-p']);
+    const note = optionValue(args, ['--note']);
+    const result = claimArtifact(process.cwd(), { artifact, owner, paths, note });
+    if (!result.ok) {
+      if (result.error === 'conflict') {
+        console.error(`Claim conflict for ${artifact}:`);
+        for (const conflict of result.conflicts) {
+          console.error(`  ${(conflict.artifact_id || conflict.artifact)} -> ${(conflict.agent || conflict.owner)}`);
+        }
+      } else {
+        console.error(`Claim failed: ${result.error}`);
+      }
+      process.exit(1);
+    }
+    console.log(`Claimed ${result.claim.artifact_id} for ${result.claim.agent}`);
+    process.exit(0);
+  }
+
+  if (sub === 'release') {
+    const artifact = optionValue(args, ['--artifact', '-a']) || args[0];
+    const owner = optionValue(args, ['--owner', '-o']);
+    const result = releaseClaim(process.cwd(), { artifact, owner });
+    if (!result.ok) {
+      console.error(`Release failed: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Released ${result.released} claim(s) for ${artifact}`);
+    process.exit(0);
+  }
+
+  if (sub === 'note' || sub === 'finding' || sub === 'decision' || sub === 'blocker') {
+    const kind = sub === 'note' ? (optionValue(args, ['--kind', '-k']) || 'note') : sub;
+    const author = optionValue(args, ['--author', '--owner', '-o']) || 'cli';
+    const artifact = optionValue(args, ['--artifact', '-a']);
+    const message = optionValue(args, ['--message', '-m']) || args.filter((arg) => !arg.startsWith('--')).join(' ');
+    const result = addBlackboardNote(process.cwd(), { kind, author, artifact, message });
+    if (!result.ok) {
+      console.error(`Note failed: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Recorded ${result.entry.kind}: ${result.entry.message}`);
+    process.exit(0);
+  }
+
+  if (sub === 'handoff') {
+    const message = optionValue(args, ['--message', '-m']) || args.join(' ');
+    const result = writeHandoff(process.cwd(), message);
+    if (!result.ok) {
+      console.error(`Handoff failed: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Handoff written: ${result.path}`);
+    process.exit(0);
+  }
+
+  console.log('Usage: ijfw blackboard init | status | claim --artifact <id> --owner <agent> [--paths <globs>] | release --artifact <id> [--owner <agent>] | note|finding|decision|blocker --message <text> | handoff --message <markdown>');
+  process.exit(1);
+}
+
+function cmdTeam(sub) {
+  const args = process.argv.slice(4);
+  if (sub === 'init' || sub === 'create') {
+    const archetype = optionValue(args, ['--archetype', '--type', '-t']);
+    const teamName = optionValue(args, ['--name']);
+    const force = args.includes('--force');
+    const result = createTeamAssembly(process.cwd(), { archetype, teamName, force });
+    if (!result.ok) {
+      if (result.error === 'exists') {
+        console.error('Team assembly already exists. Re-run with --force to replace .ijfw/team/charter.json and workflow.json.');
+      } else {
+        console.error(`Team assembly failed: ${result.error}`);
+      }
+      process.exit(1);
+    }
+    console.log(`Team ready: ${result.team_name}`);
+    console.log(`Archetype: ${result.archetype}`);
+    console.log(`Agents: ${result.agentFiles.length} saved to ${result.agentsDir}`);
+    if (result.codexAgents?.ok) console.log(`Codex agents: ${result.codexAgents.count} saved to ${result.codexAgents.agentsDir}`);
+    console.log(`Charter: ${result.charterPath}`);
+    console.log(`Workflow: ${result.workflowPath}`);
+    createCheckpoint(process.cwd(), 'team-init', { actor: 'ijfw', message: 'Team assembly initialized' });
+    process.exit(0);
+  }
+
+  if (sub === 'status') {
+    const state = readTeamAssembly(process.cwd());
+    if (!state.ok) {
+      console.log('No complete team assembly found. Run: ijfw team init');
+      if (state.validation.charter.errors.length) console.log(`Charter: ${state.validation.charter.errors.join('; ')}`);
+      if (state.validation.workflow.errors.length) console.log(`Workflow: ${state.validation.workflow.errors.join('; ')}`);
+      process.exit(1);
+    }
+    console.log(`Team: ${state.charter.team_name}`);
+    console.log(`Archetypes: ${state.charter.project_archetypes.join(', ')}`);
+    console.log(`Roles: ${state.charter.roles.map((role) => role.name).join(', ')}`);
+    console.log(`Artifacts: ${state.workflow.artifacts.length}`);
+    console.log(`Agents: ${state.agents.length} in ${state.agentsDir}`);
+    process.exit(0);
+  }
+
+  console.log('Usage: ijfw team init [--archetype <type>] [--name <team-name>] [--force] | status');
+  process.exit(1);
+}
+
+function cmdCodex(sub) {
+  if (sub === 'sync-agents') {
+    const result = syncCodexAgents(process.cwd());
+    if (!result.ok) {
+      console.log(`Codex agent sync halted: ${result.error}`);
+      console.log('Run: ijfw team init');
+      process.exit(1);
+    }
+    console.log(`Codex agents synced: ${result.count}`);
+    console.log(`Directory: ${result.agentsDir}`);
+    process.exit(0);
+  }
+
+  if (sub === 'doctor' || sub === 'status') {
+    const result = codexDoctor(process.cwd());
+    console.log('IJFW Codex doctor');
+    for (const item of result.checks) {
+      const mark = item.ok ? '[ ok ]' : item.required ? '[ !! ]' : '[ .. ]';
+      console.log(`  ${mark} ${item.name} -- ${item.message}`);
+      if (!item.ok && item.fix) console.log(`         fix: ${item.fix}`);
+    }
+    process.exit(result.ok ? 0 : 1);
+  }
+
+  console.log('Usage: ijfw codex doctor | sync-agents');
+  process.exit(1);
+}
+
+function codexDoctor(projectRoot) {
+  const root = resolve(projectRoot);
+  const checks = [];
+  const pluginPath = findFirstExisting(
+    join(root, 'codex', '.codex-plugin', 'plugin.json'),
+    findCliAsset('codex', '.codex-plugin', 'plugin.json'),
+  );
+  const hooksPath = findFirstExisting(
+    join(homedir(), '.codex', 'hooks.json'),
+    join(root, 'codex', '.codex', 'hooks.json'),
+    findCliAsset('codex', '.codex', 'hooks.json'),
+  );
+  const configPath = findFirstExisting(
+    join(homedir(), '.codex', 'config.toml'),
+    join(root, 'codex', '.codex', 'config.toml'),
+    findCliAsset('codex', '.codex', 'config.toml'),
+  );
+  const skillsDirs = [
+    join(homedir(), '.codex', 'skills'),
+    join(root, 'codex', 'skills'),
+    findCliAsset('codex', 'skills'),
+  ].filter(Boolean);
+  const projectAgents = join(root, '.codex', 'agents');
+  const repoAgents = join(root, 'codex', '.codex', 'agents');
+  const agentsMd = join(root, 'AGENTS.md');
+
+  const plugin = readJsonFile(pluginPath);
+  checks.push({
+    name: 'plugin metadata',
+    ok: plugin?.version === '1.3.2',
+    required: true,
+    message: plugin ? `version ${plugin.version}` : 'missing plugin.json',
+    fix: 'update codex/.codex-plugin/plugin.json',
+  });
+
+  const hooks = readJsonFile(hooksPath);
+  const hookEvents = hooks?.hooks && typeof hooks.hooks === 'object' ? Object.keys(hooks.hooks) : [];
+  const missingHooks = ['SessionStart', 'Stop', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse'].filter((event) => !hookEvents.includes(event));
+  checks.push({
+    name: 'hooks',
+    ok: missingHooks.length === 0,
+    required: true,
+    message: missingHooks.length ? `missing ${missingHooks.join(', ')}` : 'six Codex hook events configured',
+    fix: 'restore codex/.codex/hooks.json and hook scripts',
+  });
+
+  checks.push({
+    name: 'MCP config',
+    ok: existsSync(configPath) && readFileSync(configPath, 'utf8').includes('ijfw-memory'),
+    required: true,
+    message: existsSync(configPath) ? 'ijfw-memory configured' : 'missing config.toml',
+    fix: 'run ijfw install or restore codex/.codex/config.toml',
+  });
+
+  const skills = maxSkillCount(skillsDirs);
+  checks.push({
+    name: 'skills',
+    ok: skills.count >= 19,
+    required: true,
+    message: `${skills.count} skill(s) found${skills.dir ? ` in ${skills.dir}` : ''}`,
+    fix: 'run ijfw install or restore codex/skills',
+  });
+
+  checks.push({
+    name: 'custom agents',
+    ok: existsSync(projectAgents) || existsSync(repoAgents),
+    required: false,
+    message: existsSync(projectAgents) ? '.codex/agents present' : existsSync(repoAgents) ? 'repo agent templates present' : 'not generated yet',
+    fix: 'run ijfw team init or ijfw codex sync-agents',
+  });
+
+  checks.push({
+    name: 'AGENTS.md',
+    ok: existsSync(agentsMd) && readFileSync(agentsMd, 'utf8').includes('IJFW-MEMORY-START'),
+    required: false,
+    message: existsSync(agentsMd) ? 'AGENTS.md memory block present' : 'missing AGENTS.md',
+    fix: 'start a new IJFW-enabled session or run ijfw install',
+  });
+
+  return { ok: checks.every((item) => item.ok || !item.required), checks };
+}
+
+function findFirstExisting(...paths) {
+  return paths.filter(Boolean).find((path) => existsSync(path)) || paths.filter(Boolean)[0] || '';
+}
+
+function maxSkillCount(dirs) {
+  let best = { count: 0, dir: null };
+  for (const dir of dirs) {
+    if (!dir || !existsSync(dir)) continue;
+    const count = readdirSync(dir).filter((name) => existsSync(join(dir, name, 'SKILL.md'))).length;
+    if (count > best.count) best = { count, dir };
+  }
+  return best;
+}
+
+function readJsonFile(path) {
+  try {
+    if (!existsSync(path)) return null;
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function cmdSwarm(sub) {
+  const args = process.argv.slice(4);
+  if (sub === 'worktree') {
+    cmdSwarmWorktree(args[0] || 'list', args.slice(1));
+    return;
+  }
+
+  if (sub === 'plan') {
+    const plan = buildSwarmPlan(process.cwd());
+    console.log(swarmPlanSummary(plan));
+    process.exit(plan.ok ? 0 : 1);
+  }
+
+  if (sub === 'status') {
+    const plan = buildSwarmPlan(process.cwd());
+    if (!plan.ok) {
+      console.log(swarmPlanSummary(plan));
+      process.exit(1);
+    }
+    const blackboard = readBlackboard(process.cwd());
+    const preparedTasks = blackboard.tasks.data.tasks || [];
+    const ready = preparedTasks.length
+      ? preparedTasks.filter((task) => task.status === 'ready').length
+      : plan.waves.reduce((n, wave) => n + wave.tasks.filter((task) => !task.blocked).length, 0);
+    const blocked = preparedTasks.length
+      ? preparedTasks.filter((task) => task.status === 'blocked').length
+      : plan.waves.reduce((n, wave) => n + wave.tasks.filter((task) => task.blocked).length, 0);
+    const inProgress = preparedTasks.filter((task) => task.status === 'in_progress').length;
+    const done = preparedTasks.filter((task) => task.status === 'done').length;
+    console.log(`Swarm: planned, not executing`);
+    console.log(`Team: ${plan.team_name}`);
+    console.log(`Prepared tasks: ${preparedTasks.length}`);
+    console.log(`Ready tasks: ${ready}`);
+    if (preparedTasks.length) console.log(`In progress tasks: ${inProgress}`);
+    if (preparedTasks.length) console.log(`Done tasks: ${done}`);
+    console.log(`Blocked tasks: ${blocked}`);
+    console.log(`Next: run 'ijfw swarm plan' for the wave breakdown, or dispatch ready tasks.`);
+    process.exit(blocked ? 2 : 0);
+  }
+
+  if (sub === 'prepare') {
+    const replace = !process.argv.includes('--append');
+    const includeReviews = process.argv.includes('--reviews');
+    const result = prepareSwarmTasks(process.cwd(), { replace, includeReviews });
+    if (!result.ok) {
+      console.log(result.message || `Swarm prepare failed: ${result.error}`);
+      process.exit(1);
+    }
+    const ready = result.tasks.filter((task) => task.status === 'ready').length;
+    const blocked = result.tasks.filter((task) => task.status === 'blocked').length;
+    console.log(`Swarm tasks prepared: ${result.written}`);
+    console.log(`Ready: ${ready}`);
+    console.log(`Blocked: ${blocked}`);
+    console.log(`Blackboard tasks: ${result.total}`);
+    createCheckpoint(process.cwd(), 'swarm-prepare', { actor: 'ijfw', message: 'Swarm tasks prepared' });
+    process.exit(blocked ? 2 : 0);
+  }
+
+  if (sub === 'tasks' || sub === 'list') {
+    const result = listSwarmTasks(process.cwd());
+    if (!result.ok) {
+      console.log(`Swarm tasks unavailable: ${result.error}`);
+      process.exit(1);
+    }
+    if (!result.tasks.length) {
+      console.log('No prepared swarm tasks. Run: ijfw swarm prepare');
+      process.exit(0);
+    }
+    for (const task of result.tasks) {
+      const artifacts = (task.artifact_ids || []).join(',');
+      console.log(`${task.id} [${task.status}] ${task.owner} -> ${artifacts}`);
+    }
+    process.exit(0);
+  }
+
+  if (sub === 'prompt' || sub === 'dispatch-prompt') {
+    const taskId = args[0];
+    const codex = args.includes('--codex');
+    const result = listSwarmTasks(process.cwd());
+    if (!result.ok) {
+      console.log(`Swarm tasks unavailable: ${result.error}`);
+      process.exit(1);
+    }
+    const task = result.tasks.find((item) => item.id === taskId);
+    if (!task) {
+      console.log(`Swarm prompt unavailable: task-not-found`);
+      process.exit(1);
+    }
+    console.log(renderSwarmDispatchPrompt(task, { projectRoot: process.cwd(), codex }));
+    process.exit(0);
+  }
+
+  if (sub === 'start') {
+    const taskId = args[0];
+    const owner = optionValue(args.slice(1), ['--owner', '-o']);
+    const result = startSwarmTask(process.cwd(), taskId, { owner });
+    if (!result.ok) {
+      console.log(`Swarm start halted: ${result.error}`);
+      if (result.dependency) console.log(`Dependency pending: ${result.dependency.id} [${result.dependency.status}]`);
+      if (result.claim?.conflicts) {
+        for (const conflict of result.claim.conflicts) console.log(`Claim held: ${conflict.artifact_id} -> ${conflict.agent}`);
+      }
+      process.exit(1);
+    }
+    console.log(`Started ${result.task.id} for ${result.task.active_owner || result.task.owner}`);
+    createCheckpoint(process.cwd(), 'task-start', { actor: result.task.active_owner || result.task.owner, message: result.task.id });
+    process.exit(0);
+  }
+
+  if (sub === 'complete' || sub === 'done') {
+    const taskId = args[0];
+    const owner = optionValue(args.slice(1), ['--owner', '-o']);
+    const message = optionValue(args.slice(1), ['--message', '-m']) || positionalMessage(args.slice(1), ['--owner', '-o']);
+    const result = completeSwarmTask(process.cwd(), taskId, { owner, message });
+    if (!result.ok) {
+      console.log(`Swarm complete halted: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Completed ${result.task.id}`);
+    createCheckpoint(process.cwd(), 'task-complete', { actor: result.task.active_owner || result.task.owner, message: result.task.id });
+    process.exit(0);
+  }
+
+  if (sub === 'block') {
+    const taskId = args[0];
+    const owner = optionValue(args.slice(1), ['--owner', '-o']);
+    const message = optionValue(args.slice(1), ['--message', '-m']) || args.slice(1).filter((arg) => !arg.startsWith('--')).join(' ');
+    const result = blockSwarmTask(process.cwd(), taskId, { owner, message });
+    if (!result.ok) {
+      console.log(`Swarm block halted: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Blocked ${result.task.id}: ${result.task.blocker}`);
+    createCheckpoint(process.cwd(), 'task-block', { actor: owner || result.task.owner, message: result.task.id });
+    process.exit(0);
+  }
+
+  if (sub === 'ready') {
+    const taskId = args[0];
+    const result = readySwarmTask(process.cwd(), taskId);
+    if (!result.ok) {
+      console.log(`Swarm ready halted: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Ready ${result.task.id}`);
+    createCheckpoint(process.cwd(), 'task-ready', { actor: 'ijfw', message: result.task.id });
+    process.exit(0);
+  }
+
+  console.log('Usage: ijfw swarm plan | prepare [--append] [--reviews] | tasks | prompt <task-id> [--codex] | start <task-id> [--owner <agent>] | complete <task-id> [--message <text>] | block <task-id> --message <why> | ready <task-id> | status');
+  process.exit(1);
+}
+
+function positionalMessage(args, valueOptions = []) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (valueOptions.includes(arg)) {
+      i++;
+      continue;
+    }
+    if (valueOptions.some((name) => arg.startsWith(`${name}=`))) continue;
+    if (!arg.startsWith('--')) out.push(arg);
+  }
+  return out.join(' ').trim() || null;
+}
+
+function cmdSwarmWorktree(sub, args) {
+  if (sub === 'create') {
+    const taskId = args[0];
+    const force = args.includes('--force');
+    const allowDirty = args.includes('--allow-dirty');
+    const result = createTaskWorktree(process.cwd(), taskId, { force, allowDirty });
+    if (!result.ok) {
+      console.log(`Worktree create halted: ${result.error}`);
+      if (result.detail) for (const line of result.detail.slice(0, 10)) console.log(`  ${line}`);
+      process.exit(1);
+    }
+    console.log(`Worktree created: ${result.path}`);
+    console.log(`Branch: ${result.branch}`);
+    process.exit(0);
+  }
+
+  if (sub === 'list') {
+    const result = listTaskWorktrees(process.cwd());
+    if (!result.worktrees.length) {
+      console.log('No swarm worktrees recorded.');
+      process.exit(0);
+    }
+    for (const wt of result.worktrees) console.log(`${wt.task_id} [${wt.status}] ${wt.branch} -> ${wt.path}`);
+    process.exit(0);
+  }
+
+  if (sub === 'integrate') {
+    const taskId = args[0];
+    const cleanup = args.includes('--cleanup');
+    const result = integrateTaskWorktree(process.cwd(), taskId, { cleanup });
+    if (!result.ok) {
+      console.log(`Worktree integrate halted: ${result.error}`);
+      if (result.stderr) console.log(result.stderr.trim());
+      if (result.stdout) console.log(result.stdout.trim());
+      process.exit(1);
+    }
+    console.log(`Worktree integrated: ${taskId}`);
+    process.exit(0);
+  }
+
+  if (sub === 'cleanup') {
+    const taskId = args[0];
+    const force = args.includes('--force');
+    const result = cleanupTaskWorktree(process.cwd(), taskId, { force });
+    if (!result.ok) {
+      console.log(`Worktree cleanup halted: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Worktree cleaned: ${taskId}`);
+    process.exit(0);
+  }
+
+  console.log('Usage: ijfw swarm worktree create <task-id> [--force] [--allow-dirty] | list | integrate <task-id> [--cleanup] | cleanup <task-id> [--force]');
+  process.exit(1);
+}
+
+function cmdMemoryCheckpoint(label) {
+  const result = createCheckpoint(process.cwd(), label || 'manual', {
+    actor: 'cli',
+    message: process.argv.slice(4).join(' ') || undefined,
+  });
+  if (!result.ok) {
+    console.log(`Checkpoint unavailable: ${result.error}`);
+    process.exit(1);
+  }
+  console.log(`Checkpoint created: ${result.id}`);
+  console.log(`Markdown: ${result.mdPath}`);
+  console.log(`JSON: ${result.jsonPath}`);
+  process.exit(0);
+}
+
+function cmdRecover(sub) {
+  if (sub === 'latest') {
+    const latest = latestCheckpoint(process.cwd());
+    if (!latest.ok) {
+      console.log('No checkpoint found. Run: ijfw memory checkpoint <label>');
+      process.exit(1);
+    }
+    console.log(latest.markdown || `Latest checkpoint: ${latest.id}`);
+    process.exit(0);
+  }
+
+  if (sub === 'status') {
+    const status = recoveryStatus(process.cwd());
+    console.log(`Recovery status`);
+    console.log(`Latest checkpoint: ${status.latest ? status.latest.id : 'none'}`);
+    console.log(`Team: ${status.team.ok ? status.team.name : 'not assembled'}`);
+    console.log(`Tasks: ${status.tasks.ready} ready, ${status.tasks.in_progress} in progress, ${status.tasks.blocked} blocked, ${status.tasks.done} done`);
+    console.log(`Active claims: ${status.claims.active}`);
+    console.log(`Next: ${status.next}`);
+    process.exit(0);
+  }
+
+  console.log('Usage: ijfw recover status | latest');
+  process.exit(1);
 }

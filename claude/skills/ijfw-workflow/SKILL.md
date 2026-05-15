@@ -1,458 +1,424 @@
 ---
 name: ijfw-workflow
-description: "IMPORTANT: When IJFW is installed, this skill handles ALL project-level work. Use INSTEAD of superpowers:brainstorming or gsd:discuss-phase. Universal project workflow -- Think, Build, Ship. Auto-picks Express/Quick/Deep by task size. Trigger: 'build', 'create', 'design', 'plan', 'new project', 'brainstorm', 'help me build', 'launch', 'landing page', 'app', 'website', 'dashboard', 'campaign', 'book', or any project-level task."
+description: "Universal project workflow with built-in quality auditing. Quick mode (fast brainstorm, ~5 min) or Deep mode (full plan with audits, ~30 min). Auto-picks based on task size. Trigger: 'build', 'create', 'plan', 'new project', 'brainstorm', 'design', 'UI', 'website', 'dashboard', 'app', 'help me build', or any project-level task."
+context: fork
 model: sonnet
 ---
 
-# IJFW Workflow v2
+# IJFW Workflow
 
-Your FIRST action must be tool calls, NOT text output. Follow these steps in exact order.
+Two modes, same principles, same invariants.
 
-## RESUME CHECK (run before Step 0)
+- **Quick** -- 5 moves, 3-5 minutes, locked brief. For features, fixes, ideas.
+- **Deep** -- 6 required modules + 3 optional, 20-45 minutes. For new projects, major refactors, launches.
 
-Check if an in-progress workflow exists: `Read(".ijfw/state/workflow.json")`. If it exists and `status` is `"in_progress"`:
-1. Read `.ijfw/state/workflow-context.md` for compressed state (brief, decisions, plan, team)
-2. Echo state to user: "Found an in-progress workflow at [phase]. [brief summary]. Continue or restart?"
-3. If continue: resume from the saved phase. If restart: proceed to Step 0.
-
-If the file doesn't exist or status is `"complete"`, proceed to Step 0.
-
-## STEP 0: SETUP (your very first response)
-
-### 0A. Ensure directories exist
-```bash
-mkdir -p .ijfw/memory .ijfw/state .planning/brainstorm
 ```
-Run this FIRST via `Bash` tool before any file writes.
-
-### 0B. Detect tier
-Count words in user's prompt:
-- Express: < 15 words + clear verb + object
-- Quick: 15-40 words, clear scope
-- Deep: > 40 words OR vague verbs OR "new project"/"brainstorm"/"launch" OR no `.ijfw/memory/`
-
-### 0C. Create TODO via TaskCreate
-If `TaskCreate` is available, call it for EACH workflow step. Deep mode tasks:
-- "Step 1: Clarify -- understand the project"
-- "Step 2: Research -- investigate domain and codebase"
-- "Step 3: Brainstorm -- shape decisions and lock brief"
-- "Step 4: Build team -- assemble specialists"
-- "Step 5: Plan -- execution strategy + task breakdown"
-- "Step 6: Execute -- build with live progress"
-- "Step 7: Verify -- tests, lint, review"
-- "Step 8: Ship -- PR, merge, or deploy"
-
-Quick: `Frame` / `Shape` / `Lock brief` / `Plan + Build` / `Verify + Ship`
-Express: `Confirm brief` / `Build` / `Ship`
-
-If `TaskCreate` is unavailable (non-Claude-Code platforms), print the TODO as a text checklist instead.
-
-### 0D. Offer interaction style
-If `AskUserQuestion` is available, use it. If not, ask as plain text with numbered options.
-
-Detect domain from the prompt. Set the recommended default:
-- **Creative domains** (book, story, novel, game, campaign, brand, music, art): default "Let's talk"
-- **Technical domains** (app, landing page, API, dashboard, tool, website): default "Guided questions"
-
-```json
-{ "questions": [{ "question": "How do you want to work through this?", "header": "Style", "multiSelect": false, "options": [
-  { "label": "Let's talk about it", "description": "Open conversation -- we'll riff on the idea together. I'll capture key points as we go." },
-  { "label": "Guided questions", "description": "Structured A/B/C choices to zero in fast. Good for technical decisions." }
-]}]}
+Donahoe Loop: BRAINSTORM -> PLAN -> EXECUTE -> VERIFY -> SHIP -> MEASURE
+              |<--- memory recall at every entry --->|
+              |<--- Trident cross-audit on request --->|
 ```
-Put "(Recommended)" on the domain-appropriate default with a reason.
 
-If `ijfw_memory_recall` returns a stored interaction style preference, use it as the default instead of domain detection. On first choice, store the preference: `ijfw_memory_store({ key: "interaction_style", value: "<guided|conversation>" })`.
+## RUNTIME BOOTSTRAP AND FALLBACKS
 
-### 0E. Print tier + policy (AFTER tool calls)
-```
-Reading this as [Deep (20-45 min)/Quick (3-5 min)/Express (<1 min)] -- [reason]. Say "go deeper" or "just quick" to switch.
-Second Opinions are on -- I'll check your brief, plan, and build automatically. Say "no reviews" to turn off.
-```
+Before the first workflow write or command invocation, inspect whether
+`.ijfw/memory/` exists so the auto-picker and empty-state opener can use that
+signal accurately. Then ensure `.ijfw/memory/` and `.planning/` exist before
+writing artifacts. If the `ijfw` CLI is unavailable in this session, continue
+with markdown files and visible chat checklists, then state the exact CLI
+command the user can run later. Optional commands such as `ijfw cross`,
+`ijfw design`, `ijfw recover`, `ijfw blackboard`, `ijfw team`, and `ijfw swarm`
+must degrade to explicit written artifacts instead of blocking the workflow.
 
 ---
 
-## INTERACTION MODES (applies to Steps 1-3)
+# AUTO-PICKER (runs first, every time)
 
-### Guided mode
-- Use `AskUserQuestion` for every decision. One question per turn.
-- Recommendations only when you have a basis (research, best practices). Fact questions (product name, what it does, asset classes) get no recommendation -- those are the user's domain.
-- Use `preview` field for visual comparisons.
-- Echo back understanding after every 2-3 answers.
+Deterministic signals, visible reasoning, no friction.
 
-### Conversation mode
-- **No `AskUserQuestion` calls.** Just talk. Back-and-forth, riffing, exploring ideas.
-- Contribute ideas, ask follow-ups conversationally, challenge assumptions, suggest "what ifs."
-- **Periodic capture:** After each of YOUR responses, check: have 3+ new substantive points emerged since the last capture? If yes, capture: "Noted -- [key points]. Adding to the working doc." Write/append to `.planning/brainstorm/notes.md`. This replaces the vague "~5 turns" with a concrete trigger: new substantive points, not turn count.
-- **Checkpoint on capture:** When capturing, also write a snapshot to `.ijfw/state/workflow-context.md` with current brief fields covered. This survives context compaction.
-- **Research at natural points:** When a specific topic comes up that needs grounding, offer targeted research. Not an upfront swarm.
-- **Readiness check:** After 3+ captures, check what brief fields are still missing. If most are covered, offer: "I think we've got a solid picture of [X, Y, Z]. Ready to capture this and move on, or keep exploring?" User controls when to move on.
-- **Context safety:** If you've done 8+ captures without the user moving on, flag it: "We've covered a lot of ground. Want me to write up everything so far as a draft brief? We can always add more." This prevents context exhaustion.
-- **The TODO list is always visible below.** User can say "next step" / "okay let's go" anytime.
+| Signal | Points towards |
+|---|---|
+| Prompt < 15 words | Quick |
+| Prompt has clear verb + object | Quick |
+| Vague verbs alone ("improve", "fix", "handle", "deal with") | Deep |
+| "New project", "major refactor", "launch", "design" | Deep |
+| Project dir has no `.ijfw/memory/` | Deep |
+| Explicit "brainstorm", "quick idea", "just sketch" | Quick |
 
-### Adaptive switching (both directions, no announcements)
-- **Guided -> Conversation:** User drops a paragraph with creative "what if" language, starts riffing. Follow naturally. Capture as points emerge. When the tangent resolves, summarize what settled and offer: "Want to keep talking, or go back to structured choices?"
-- **Conversation -> Guided:** User wants a specific decision. Offer `AskUserQuestion` for that one decision, then return to conversation.
-- **When switching from conversation to guided mid-brainstorm:** Read `.planning/brainstorm/notes.md` to see what's already covered. Skip modules whose topics are already captured. Tell the user: "Based on our conversation, FRAME and RECON are covered. Picking up at SHAPE."
+**Protocol:**
+1. Read signals silently.
+2. Say in one line: `Reading this as <Quick|Deep> -- <reason>. Say "go deeper" / "just quick" to switch.`
+3. If signals tie, ask once: `Quick or Deep?` Accept any affirmative shortcut ("q" / "d").
+4. Start immediately. The user should never wait on a modal.
+
+Mid-flow escalation: user can say `go deeper` at any Quick step; skill re-enters Deep at the equivalent module. Mid-flow de-escalation: `just quick` collapses the remaining Deep modules into a single LOCK.
 
 ---
 
-## STEP 1: CLARIFY (all tiers)
+# EMPTY-STATE OPENER
 
-**Guided mode:** `AskUserQuestion` one question at a time. See `references/think-phase.md` for examples.
+First session in a project (no `.ijfw/memory/` or zero entries in it) is the onboarding moment. Do not stay silent. Open with one line:
 
-**Conversation mode:** Open-ended: "Tell me about this project -- what are you building and why?"
+> `Clean slate here. Want me to run a 5-minute Quick brainstorm on what we're building, or jump straight in?`
 
-**Both modes:** Call `ijfw_memory_recall` with goal keywords (if available -- silent no-op if MCP server isn't running). Mark "Step 1: Clarify" completed when you have enough context.
+User replies `brainstorm` / `jump in` / custom intent. If they jump in, still offer memory hooks for the first 3 turns so decisions get captured. If they brainstorm, route into QUICK mode FRAME. Either way, `.ijfw/memory/` gets bootstrapped silently.
 
-**Rewrite vague asks into verifiable goals before locking the brief:**
-- "Add validation" -> "Write tests for invalid inputs (empty, malformed, oversized), then make them pass."
-- "Fix the bug" -> "Write a failing test that reproduces the reported symptom, then make it pass."
-- "Refactor X" -> "Existing test suite passes before and after. No public API changes."
-- "Make it faster" -> "Benchmark the current hot path, identify the bottleneck with profiling, change it, show the benchmark improved."
-- "Clean up the code" -> "Pick one specific smell. Fix only that. Diff fits in one commit message."
+If memory is populated but the last handoff is >7 days old, open with a softer beat: `Welcome back -- last handoff was <N> days ago. Quick recap?` User says `recap` / `new task` / actual intent.
 
-If the user gives a goal you can't reduce to a checkable outcome, surface that gap before proceeding rather than picking silently.
+---
 
-**Express:** Auto-generate 3-line brief (Goal / Approach / Done when). Print it and ask "Looks good? (yes / edit / go deeper)" as plain text -- no AskUserQuestion overhead for Express speed. On confirm: write `.ijfw/memory/brief.md`, skip Steps 2-5 (no research, no brainstorm, no team, no plan), go directly to Step 6 (Execute) with the brief as the task spec. Verify + Ship as normal.
+# BRAINSTORM DISCIPLINE (invariants)
 
-## STEP 2: RESEARCH (mandatory for Deep, scout for Quick, skip for Express)
+Hard rules. Violating any of these is a workflow failure worth auditing.
 
-**Guided mode:** Dispatch agents upfront in parallel via `Agent` tool with `run_in_background: true`:
-- Domain research, Technical research, Codebase scout, Design research (if UI)
-- When agents return: YOU synthesize findings into 3-5 bullets and present in chat. Then write the synthesis to `.ijfw/memory/research.md`. Do NOT let agents write to research.md directly (prevents race conditions).
+1. **One question at a time.** Never dump a numbered list and wait. Ask, get the answer, absorb, ask the next.
+2. **No offscreen research.** If you dispatch an Explore / scout agent, paste a synthesis (3-5 bullets + contradictions + plan implications) in-chat BEFORE using it for anything.
+3. **No skipping to the plan.** `plan.md` is written only after the user has explicitly confirmed the brief.
+4. **No auto-advance.** Audit gates are user-facing checklists, not silent passes.
+5. **Visible deliverables.** Every artifact (brief.md, research.md, plan.md) is summarized to the user in-chat when written.
+6. **Intermediate thinking is tight output, not monologue.** Thirty words, then the next question.
 
-**Conversation mode:** Research is targeted, not upfront. Offer when specific topics come up. Dispatch individual agents. Write findings to `.ijfw/memory/research.md` after synthesis.
-- At minimum, dispatch 1 scout agent to check the codebase for existing work.
+Failure signatures to catch in yourself: about to write `plan.md` without user confirming brief; about to dispatch a research agent whose output will not be paraphrased back; about to say "Phase N complete, ready to build" in a turn where the user has not seen the intermediate findings.
 
-**Both modes:** Mark completed when synthesis is shown (guided) or user is ready to move on (conversation).
+---
 
-## STEP 3: BRAINSTORM
+# MEMORY HOOK (every FRAME step)
 
-### Visual Companion (UI/design tasks, offer BEFORE brainstorm starts)
-If the project involves UI/design, offer via `AskUserQuestion` (or plain text if unavailable):
-```json
-{ "questions": [{ "question": "Some brainstorm decisions are easier to see visually. Want me to generate live HTML previews you can view in your browser as we go?", "header": "Visual", "multiSelect": false, "options": [
-  { "label": "Yes, open visual preview (Recommended)", "description": "I'll generate HTML mockups for design decisions -- you'll see them in your browser" },
-  { "label": "Text only", "description": "Keep everything in the terminal -- no browser needed" }
-]}]}
+At the start of every brainstorm or plan, call `ijfw_memory_recall` with the goal text when the memory tool is available. If it is unavailable, read the visible memory files under `.ijfw/memory/` when possible; if neither is available, continue and say `clean slate -- memory unavailable this turn`.
+
+> I remember: decision from <project> on <date> -- <1-line summary>. Pull full context?
+
+This is the single biggest superpower IJFW delivers. Never skip the attempt. If memory is empty, say so ("clean slate -- nothing recalled") so the silence is intentional, not absence of effort.
+
+---
+
+# QUICK MODE -- 5 moves, 3-5 min
+
+For focused work. Picks up from current context. Each move has ONE input slot.
+
+### Move 1 -- FRAME (45s)
+
+- AI parses the goal from the ask or asks: `Goal in one line.`
+- Memory hook fires. AI pastes up to 3 related recalls inline.
+- **Rewrite vague asks into verifiable goals before echoing back:**
+  - "Add validation" -> "Write tests for invalid inputs (empty, malformed, oversized), then make them pass."
+  - "Fix the bug" -> "Write a failing test that reproduces the reported symptom, then make it pass."
+  - "Refactor X" -> "Existing test suite passes before and after. No public API changes."
+  - "Make it faster" -> "Benchmark the hot path, identify the bottleneck with profiling, change it, show the benchmark improved."
+  - "Clean up the code" -> "Pick one specific smell. Fix only that. Diff fits in one commit message."
+- If the ask cannot be reduced to a checkable outcome, surface that gap before proceeding.
+- AI echoes: `So: <concise goal>. Yes?`
+- User confirms or edits.
+
+### Move 2 -- WHY (30s)
+
+- AI asks: `Why does this matter? What's broken if we don't ship it?`
+- Single 5-Whys drill -- one follow-up question if the answer stays surface.
+- AI surfaces the root motivation: `Root: <X>. That means we should <design implication>.`
+
+### Move 3 -- SHAPE (60s)
+
+- AI proposes **3 approaches**, each as 1 line + 1 tradeoff:
+  > A: <approach> -- tradeoff: <cost>
+  > B: <approach> -- tradeoff: <cost>
+  > C: <approach> -- tradeoff: <cost>
+- User picks, hybrids, or overrides. No blank page, ever.
+
+### Move 4 -- STRESS (30s)
+
+- AI runs a pre-mortem flash: `Top risk: <concrete scenario>. Mitigation: <concrete fix>.`
+- User confirms mitigation or swaps.
+- Sutherland wow: the risk the user hadn't thought of.
+
+### Move 5 -- LOCK (15s)
+
+- AI pastes the brief in-chat (max 6 lines: goal / root / approach / risk / mitigation / success).
+- User says one word: `lock` / `fix <X>` / `go deeper`.
+- On `lock`: write `.ijfw/memory/brief.md`. Route straight to PLAN.
+
+**Quick-mode closer:** `You went from <original-ask> to locked brief with <N> risks mitigated in <M> minutes.` Receipt for the work.
+
+---
+
+# DEEP MODE -- 6 required modules + 3 optional
+
+For substantial projects. Modules are a spine, not a checklist. Every module has a memory hook, a visible artifact, and a one-word commit.
+
+## Required spine
+
+### Module 1 -- FRAME (3 min)
+
+- Memory recall on the goal keywords.
+- Socratic arc: problem -> users -> constraints -> scope (in and out).
+- One question per turn. Echo back every 3 turns to confirm understanding.
+- Exit: `Brief draft ready to review. Paste now? (y/edit)`
+- Artifact: `.ijfw/memory/brief-draft.md` (30 lines max). Promote to `.ijfw/memory/brief.md` only after LOCK.
+
+### Module 2 -- RECON (5-10 min)
+
+- State the research questions in-chat first: `I want to answer X, Y, Z -- okay?`
+- Dispatch scout / Explore agents with those questions (parallel where independent). If the current runtime has no agent-dispatch capability, do the research locally in separate labeled passes and record the limitation in `.ijfw/memory/research.md`.
+- When agents return, paste synthesis in-chat: **ask** + **answer** + **contradictions** + **plan implications**.
+- User reacts. Follow up if they push back.
+- Artifact: `.ijfw/memory/research.md` (cleaned-up synthesis, not raw agent output).
+
+### Module 3 -- HMW (3 min)
+
+- AI proposes 2-3 "How Might We" reframings based on FRAME + RECON.
+- User picks one, rejects, or edits.
+- The chosen HMW anchors DIVERGE.
+
+### Module 4 -- DIVERGE (8 min)
+
+- AI sketches **4-5 approaches** as 2-line bullets (shape + key tradeoff).
+- User picks 2, rejects, or says `hybrid A + C`.
+- No blank page. If user wants a 6th sketch, AI generates it on demand.
+
+### Module 5 -- CONVERGE (5 min)
+
+- AI drafts success metrics / acceptance criteria from the chosen approach.
+- Pre-mortem pass: AI generates 4-5 plausible failure scenarios.
+- User picks top 2 risks. AI proposes mitigation for each.
+- Artifact: metrics + risks + mitigations appended to brief.md.
+
+### Module 6 -- LOCK (2 min)
+
+- AI pastes the full brief (goal / HMW / approach / metrics / risks / mitigations) in-chat.
+- Optional Trident cross-critique fires here if ENABLED (see below).
+- User says `lock` / `fix <X>` / `skip Trident` / `route to plan`.
+- On `lock`: promote `.ijfw/memory/brief-draft.md` to `.ijfw/memory/brief.md` or write the confirmed brief there, then route to PLAN phase.
+
+## Optional modules (auto-triggered)
+
+### EXTERNAL BRIEF (5 min) -- mini PR/FAQ
+Auto-triggers when: project has end-users, public launch, marketing surface, or user says "product".
+Writes a 2-paragraph press-release + 5-question FAQ. Forces customer-POV thinking.
+
+### ANTI-SCOPE (2 min) -- "what we won't do"
+Auto-triggers when: 5+ candidate features surfaced in DIVERGE, or domain is feature-heavy (CRM, dashboards, admin panels).
+AI lists 5 things we could build but won't. User confirms or pulls one back in.
+
+### TRIDENT CROSS-CRITIQUE (~2 min) -- external AI challenge
+Auto-triggers when: new project, major refactor, public launch, or LOCK on brief > 20 lines.
+Fires `ijfw cross critique <brief>` in background. Surfaces consensus + contested findings. User decides.
+User override: `skip Trident` or `force Trident` at any LOCK.
+
+---
+
+# POST-BRAINSTORM WORKFLOW
+
+After LOCK, the brief drives every downstream phase. Same discipline, same memory hooks, same positive framing.
+
+## PLAN (after LOCK)
+
+- Memory hook: recall past similar plans.
+- AI drafts `.ijfw/memory/plan.md` (max 15 tasks for Quick, 30 for Deep).
+- Each task: what / how-to-verify / file paths.
+- User reviews. One-word commit: `approve` / `trim` / `expand`.
+
+**Design auto-fire** -- if plan mentions UI, dashboard, component, page, layout, CSS, styles, content layout, brand system, document design, diagram, presentation, marketing surface, or another visual artifact:
+- Deep mode: dispatch `ijfw-design` automatically before writing tasks. Log observation via `bash scripts/design-pass.sh`.
+- Quick mode: offer `I'll run a design pass first. Say "show me" to open it, or "skip" to continue.` Wait for the user's next turn before starting visual companion work.
+- Use `ijfw design init` when no `DESIGN.md` exists or the existing contract is stale.
+- Use `ijfw design plan` before implementation tasks so the plan has durable visual scope, constraints, and success criteria.
+- Use `ijfw design audit` or `ijfw design critique` at LOCK or before EXECUTE when visual quality, accessibility, brand fit, hierarchy, or audience fit carries risk.
+- Use `ijfw design polish`, `ijfw design normalize`, `ijfw design bolder`, or `ijfw design quieter` during refinement, depending on whether the artifact needs quality pass, drift correction, stronger expression, or restraint.
+- Use `ijfw design handoff` before VERIFY/SHIP when visual decisions need to survive context loss or platform handoff.
+- Live companion commands (`ijfw design start/open/status/stop/push/clear`) are transient preview. `DESIGN.md` plus the durable design commands are the design memory.
+- On completion: write `.ijfw/design-pass.json` sentinel for preflight gate.
+
+**Plan audit** -- run `ijfw plan-check` or follow inline checklist, not silent:
+- Every task has a verify step.
+- No unstated assumptions.
+- Scope matches brief (nothing new).
+- Destructive ops flagged.
+- User confirms before EXECUTE.
+
+## EXECUTE
+
+**Phase banner** -- emit at every phase transition (Brainstorm, Plan, Execute, Verify, Ship):
+```
+IJFW > BRAINSTORM (Quick mode, step 2 of 5)
+IJFW > PLAN (Deep mode, module 3 of 6)
+IJFW > EXECUTE (Wave 2 of 4)
 ```
 
-**When visual companion is ON -- generate HTML mockups for SHAPE decisions:**
-1. Write standalone HTML files to `.planning/brainstorm/` (one per option, Tailwind CDN, production-quality, real content)
-2. Generate a `viewer.html` with tab navigation loading all options as iframes. See `references/think-phase.md` for template.
-3. Open viewer in browser (platform-aware -- see PLATFORM section below)
-4. Tell user: `Design viewer open -- click tabs to compare all options.`
-5. THEN ask preference via `AskUserQuestion`
-6. **You MUST generate HTML when visual is ON.** The user accepted visual previews -- deliver them.
-
-### Guided mode -- 6 modules (Deep), 3 moves (Quick):
-
-**Deep -- ALL mandatory:**
-- **FRAME:** Problem, users, constraints, scope. `AskUserQuestion` one per turn. `FRAME done.`
-- **RECON:** Present research synthesis. `AskUserQuestion`: which findings matter most. `RECON done.`
-- **SHAPE:** 3-5 approaches via `AskUserQuestion`. If visual ON: generate HTML mockups FIRST. `SHAPE done.`
-- **STRESS:** Pre-mortem. 4-5 failure scenarios, `AskUserQuestion` multiSelect for top 2 risks. `STRESS done.`
-- **CONVERGE:** Success metrics + acceptance criteria. User confirms. `CONVERGE done.`
-- **LOCK:** Paste brief in chat. User says `lock` / `fix <X>` / `go deeper`. On lock: Write `.ijfw/memory/brief.md`. Render as HTML and open in browser. `LOCK done.`
-
-**Quick:** Frame -> Shape -> Lock.
-
-### Conversation mode -- open brainstorm:
-
-Continue the conversation as a creative collaborator.
-- Periodic capture with checkpoint (see INTERACTION MODES above).
-- Visual mockups at natural decision points for design tasks.
-- **Lock:** When user is ready, synthesize conversation notes (`.planning/brainstorm/notes.md`) into a domain-appropriate brief using the templates below. Paste in chat. User says `lock`. Write `.ijfw/memory/brief.md`. Render as HTML and open.
-
-### Brief format adapts to domain:
-- **Software/technical:** Goal / audience / stack / architecture / acceptance criteria / constraints
-- **Book/creative writing:** Premise / world rules / characters / tone / themes / scope / structure
-- **Campaign/marketing:** Objective / audience / channels / messaging / success metrics
-- **Design:** Problem / users / aesthetic / constraints / deliverables
-
-### Second Opinion on brief (auto-fire if enabled):
-Check if codex/gemini CLIs are available (`command -v codex gemini`). Fire only those that exist. If neither is installed, skip silently.
-When clean: print `Second Opinion reviewed your brief -- all clear.` (one line, user sees the value).
-When findings: `Second Opinion surfaced [N] points to consider. Address now?`
-
-**GATE: Do NOT proceed until `.ijfw/memory/brief.md` exists.**
-
-## STEP 4: BUILD TEAM (skip for Express)
-
-Read brief. Pick domain template from `references/team-templates.md`. Present team with rationale.
-Use `AskUserQuestion` for approval (or plain text if unavailable).
-Mark completed after approval.
-
-**GATE: Do NOT plan until team is approved.**
-
-## STEP 5: PLAN + IMPLEMENTATION BREAKDOWN (see `references/build-phase.md`)
-
-**Check:** `.ijfw/memory/brief.md` must exist. If not, go back to Step 3.
-
-### S5 Contract generation (Deep mode only)
-
-In Deep mode, every task written into `.ijfw/memory/plan.md` must include a completion contract block. Write the contract inline with the task entry, immediately after the task's implementation steps:
-
-```yaml
-task_id: t1
-title: "<human-readable>"
-contract:
-  completion_criteria:
-    - id: c1
-      type: shell             # shell | model-verify | manual
-      description: "<what this proves>"
-      verify: "<command>"     # required for type:shell; passes through isSafeVerifyCommand
-  max_iterations: 3
-  halt_rule: "Emit ISSUE with failed criterion ids if any remain red after iter 3"
+**Team announcement** -- at plan→execute transition, emit before dispatching agents:
+```
+Assembling team: [Opus] Architect, 2x [Sonnet] Builders, [Haiku] Scout
+Dispatching Wave 1...
 ```
 
-**Criterion types:**
-- `type: shell` -- allowlisted shell verify (default). Command passes through `isSafeVerifyCommand()` from `mcp-server/src/ralph-allowlist.js` before execution.
-- `type: model-verify` -- semantic check by model ("agent confirms brief alignment"). Bounded scope; use sparingly.
-- `type: manual` -- user confirms. Task pauses at verify step; user responds "pass" or "fail <reason>".
+**Swarm preparation (Deep mode or 2+ parallel agents):**
+- Before using swarm commands, run `ijfw recover status` to surface any existing checkpoint and `ijfw blackboard init` when the project has no blackboard yet.
+- If no team exists, run `ijfw team init` first. Use `--archetype <type>` when the project type is known.
+- In Codex-heavy projects, run `ijfw codex doctor` after team setup to confirm plugin metadata, hooks, MCP config, skills, AGENTS.md memory, and custom-agent surfaces are ready.
+- Run `ijfw codex sync-agents` when `.codex/agents/*.toml` needs to be regenerated from the current Team Assembly charter.
+- Run `ijfw swarm plan` to explain artifact owners, parallel/review/blocked waves, and verification.
+- Run `ijfw swarm prepare` before dispatch, or `ijfw swarm prepare --reviews` when review tasks should be queued immediately. This writes `.ijfw/blackboard/tasks.json`.
+- Run `ijfw swarm tasks` to list prepared task IDs. Tasks may represent code, design, research, writing, business artifacts, or other project work.
+- Run `ijfw swarm status` and surface ready/blocked counts before assigning agents.
+- Dispatch only tasks marked `ready`. For each dispatched task, run `ijfw swarm start <task-id>` before work begins.
+- Generate a scoped dispatch brief before spawning a worker: `ijfw swarm prompt <task-id>`, or `ijfw swarm prompt <task-id> --codex` when the worker is a Codex subagent. Paste the generated prompt into the worker so artifact scope, allowed paths, dependencies, blackboard commands, verification, and non-revert rules travel with the task.
+- Codex runtime caveat: some tool-backed Codex sessions expose only a generic `spawn_agent` interface, without direct named custom-agent invocation. IJFW still generates `.codex/agents/*.toml`; when named agents are not callable, paste the `ijfw swarm prompt <task-id> --codex` output into the built-in worker or explorer agent.
+- On completion, run `ijfw swarm complete <task-id>`. If a task is blocked, run `ijfw swarm block <task-id> --message <why>` and escalate the blocker through claims, scope adjustment, or user decision.
+- At each transition, create a durable safety point with `ijfw memory checkpoint <label>`. Use labels like `after-team-init`, `after-swarm-prepare`, `after-wave-1`, `before-worktree-integrate`, and `before-ship`.
+- If context is lost, run `ijfw recover status` first, then `ijfw recover latest` for the last checkpoint body.
 
-Contracts are generated during this step, before execute begins. Every Deep-mode task gets one.
+- **Conservative worktree support (code-heavy tasks only by default):**
+  - Worktrees are optional execution isolation, not the coordination model. Use blackboard claims for writing, design, research, business, strategy, and other non-code artifacts.
+  - Create a task worktree only after `ijfw swarm start <task-id>` has succeeded: `ijfw swarm worktree create <task-id>`.
+  - Inspect active task worktrees with `ijfw swarm worktree list` before assigning or integrating parallel code work.
+  - Before integration, run task verification in the worktree and create `ijfw memory checkpoint before-worktree-integrate`.
+  - Integrate one completed task at a time with `ijfw swarm worktree integrate <task-id>`, then run wave-level verification in the main worktree.
+  - Clean up only successful, verified integrations with `ijfw swarm worktree cleanup <task-id>`.
+  - Preserve failed or blocked worktrees for inspection. Do not clean them up automatically.
+  - Never auto-resolve merge conflicts. On any conflict, stop, record `ijfw swarm block <task-id> --message <why>`, and escalate to the user or lead agent.
 
-### S5.0 Temporal Interrogation (Deep mode only)
+- Dispatch per workflow manifest and blackboard task records.
+- Use blackboard claims before parallel artifact edits: `ijfw blackboard claim --artifact <id> --owner <agent> --paths <globs>`.
+- When the platform has a native task tracker, create one visible task per prepared blackboard task and keep it synchronized with `start` / `complete` / `block`.
+- Mid-step pings for operations > 30s: `<agent> in progress (~<estimate>).`
+- After each task: task micro-audit (6 points).
+- Post-wave: update blackboard tasks/findings/blockers. Integrate worktrees only when worktrees were used. Conflicts halt + escalate without auto-resolution.
+- **No auto-advance to VERIFY.** User confirms all tasks done.
 
-Gate: fires only when tier === "deep". Skip for Quick and Express tiers.
+**Task micro-audit** -- one line per task:
+- Criteria met, scope clean, tests pass, no new assumptions.
 
-Before drafting the plan body, ask:
+**Phase audit** -- at wave/milestone boundaries:
+- Brief still accurate? Speed respectful? Security invisible? Memory updated?
+
+### LIVE VISUAL COMPANION (UI/design projects, opt-in)
+
+For visual software work -- HTML, app UI, dashboards, interfaces, landing
+pages, components, design systems -- offer a live preview before SHAPE:
+`This is visual. Want me to open a live preview while we brainstorm?`
+
+`yes` runs `ijfw design start`, writes/pushes real HTML mockups with
+`ijfw design push <file.html> [more.html ...]`, and keeps `http://localhost:<port>/design`
+open while options evolve. Use this for brainstorm variants, design choices,
+and implementation review. Durable visual identity still belongs in `DESIGN.md`;
+the live companion is the fast feedback loop.
+
+For architecture-only visuals, use Mermaid in `.ijfw/visual/<phase>.md`.
+Skip visual companion for non-visual work where the brief and plan carry enough
+structure.
+
+## VERIFY
+
+- Audit the result against the **brief**, not the plan. (Tasks can pass while brief goals miss.)
+- Functional + UX + Security + Quality checklists.
+- Optional Trident cross-audit on the diff: `ijfw cross audit <diff>`.
+- User confirms: `verified` / `gap: <X>` / `ship it`.
+
+## SHIP
+
+- Atomic commit with the brief's one-liner as the title, only after explicit user approval to commit.
+- Optional Trident final critique: `ijfw cross critique HEAD~1..HEAD` (background).
+- Before any tag, release, deploy, or publish action, read AGENTS.md/CLAUDE.md memory for release cautions and require explicit user approval.
+- Tag / release notes / CHANGELOG entry only when this is a public ship and the release gate is clear.
+- Memory write: decision + pattern + learning.
+- Announcement copy -- user owns the channels, IJFW provides talking points.
+
+**Ship gate** -- single pass:
+- Diff matches brief. Tests green. Changelog updated. Memory stored. Trident receipt logged.
+
+---
+
+# NARRATION (every transition)
+
+One sentence at every phase entry and mid-step ping. Format:
+
+> `Phase <name> -- Move <n> -- <what's happening>.`
+
+Examples:
+- `Brainstorm Quick -- Move 3 SHAPE -- proposing three approaches.`
+- `Brainstorm Deep -- RECON -- dispatching two research agents.`
+- `Plan -- drafting 12 tasks from brief.`
+- `Execute -- wave 1/3 in progress (~4 min).`
+- `Ship -- Trident critique running in background.`
+
+**Model routing (mandatory):** Before every agent dispatch, name the actual platform/model or role tier available in the current runtime, for example `Routing to builder for implementation` or `Routing to Sonnet for this build` when Claude tiers are available. Never dispatch silently.
+
+No hardcoded phase numbers. Narration tracks the current workflow step, not historical plan-doc coordinates.
+
+---
+
+# POSITIVE FRAMING (enforced everywhere)
+
+Replace negatives with reframes for brainstorming, planning, and ordinary user-facing progress. Do not rewrite exact failure terminology in audit, CI, preflight, security, exception, test, or log contexts where precise status words are required.
+
+| Never | Always |
+|---|---|
+| "found problems" | "surfaced X points" |
+| "failed" | "didn't complete -- try again?" |
+| "error" (as header) | "heads up" / "one thing" |
+| "missing" | "ready to add" |
+| "not supported" | "standing by" |
+| "broken" | "needs a sharpening pass" |
+
+End-of-phase closer is a receipt, not a report:
+
+> `You went from <input> to <outcome> in <time>.`
+
+---
+
+# USER OVERRIDES (one-word commits)
+
+The skill accepts these at any prompt:
+
+- `lock` -- commit current artifact, advance.
+- `go deeper` -- escalate Quick to Deep at the equivalent module.
+- `just quick` -- collapse remaining Deep modules into one LOCK.
+- `skip <module>` -- drop an optional module (Trident / External Brief / Anti-scope).
+- `force Trident` -- run Trident cross-critique even on low-stakes LOCK.
+- `rollback` -- revert to the prior module's artifact.
+- `help` -- where am I + what's next.
+
+---
+
+# TASK TRACKING USAGE (mandatory)
+
+When the platform exposes native task tracking, create one task per specialist or prepared swarm task before dispatch. Mark `in_progress` when work starts, then `completed` or `blocked` as soon as each worker reports back. If no native tracker exists, use `.ijfw/blackboard/tasks.json` plus concise progress updates.
+
+**[Model] prefix required** -- every task title includes the model tier:
+```
+[Haiku] Scout: explore auth module
+[Sonnet] Build: implement login flow
+[Opus] Audit: cross-audit Wave 1
+```
+
+The user must see real-time progress in the platform's native form. Use strikethrough task lists where supported; otherwise use concise status updates plus `.ijfw/blackboard/tasks.json`. Silent dispatch is a workflow violation.
+
+Quick-mode minimum: 5 tasks (one per move).
+Deep-mode minimum: one per module + one per specialist + one per audit gate + ship gate. ~12-18 tasks per full run.
+
+---
+
+# NAMING-GAP AUDIT (every turn)
+
+Before emitting any "next step" text, scan for foreign plugin prefixes -- any `<plugin>:` pattern where `<plugin>` is not `ijfw`. If found as an action verb, rewrite to the IJFW-native equivalent or halt with: `Rewrite needed -- foreign plugin verb detected.`
+
+Specialist swarm members (code-reviewer, silent-failure-hunter, pr-test-analyzer, type-design-analyzer) are allowed. Foreign plugin commands are not.
+
+---
+
+# STATE FILE (Deep Mode)
+
+Write `.ijfw/state/workflow.json` at every transition:
 
 ```json
 {
-  "questions": [{
-    "question": "How much time can you give this?",
-    "header": "Time budget",
-    "multiSelect": false,
-    "options": [
-      { "label": "HOUR 1", "description": "Smallest shippable slice -- one commit, one verify" },
-      { "label": "HOUR 2-3", "description": "One coherent feature -- small task set, no migration" },
-      { "label": "HOUR 4-5", "description": "Multi-task -- dependency ordering matters, real risk surface" },
-      { "label": "HOUR 6+", "description": "Phased -- rollback plan, incremental ship path" }
-    ]
-  }]
+  "mode": "deep",
+  "module": "HMW",
+  "last_commit": "lock",
+  "artifacts": ["brief.md", "research.md"],
+  "next": "DIVERGE"
 }
 ```
 
-No "(Recommended)" tag. Time budget is the user's fact, not a judgment call.
-
-Immediately after the user answers, write the choice to `.ijfw/memory/plan.md` frontmatter BEFORE the plan body is drafted:
-
-```yaml
----
-time_budget: HOUR_2_3
----
-```
-
-Values: `HOUR_1` / `HOUR_2_3` / `HOUR_4_5` / `HOUR_6_PLUS`.
-
-**Budget ceilings (advisory to planner; plan-check enforces via `budget_overrun` metric):**
-
-| Bucket | Max tasks | Max waves | Risk depth | Rollback required |
-|---|---|---|---|---|
-| HOUR_1 | 3 | 1 | none | no |
-| HOUR_2_3 | 7 | 2 | surface | no |
-| HOUR_4_5 | 12 | 3 | deep | recommended |
-| HOUR_6_PLUS | unlimited | unlimited | deep | yes |
-
-Three sub-steps:
-1. **High-level plan with dependency analysis:** Execution strategy with tasks assigned to team. For each task pair, run the dependency test: (a) do both write the same file? (b) does one read what the other writes? (c) does one need the other's output? Yes to any → sequential. All no → parallel. Organize into waves and write a **Wave Table** as the first section of `plan.md`:
-
-```
-| Wave | Tasks | Mode | Depends on | Reason |
-|------|-------|------|------------|--------|
-| W1   | t1, t2, t3 | PARALLEL | -- | independent files |
-| W2   | t4 | SEQUENTIAL | W1 | needs t2 output |
-| W3   | t5, t6 | PARALLEL | W2 | independent of each other |
-```
-
-This table is the execution contract. Step 6 reads it directly -- do not leave parallelism to inference from prose.
-
-2. **Implementation breakdown:** Each task broken into bite-sized steps (2-5 min each) with TDD where applicable and verifiable success criteria.
-
-User approves the combined plan. Write `.ijfw/memory/plan.md`. Render as HTML and open in browser. Mark completed.
-
-Second Opinion on plan: check CLI availability, fire if available. Print "all clear" or surface findings.
-
-**GATE: Do NOT execute until plan is approved and `.ijfw/memory/plan.md` exists.**
-
-## STEP 6: EXECUTE (see `references/build-phase.md`)
-
-Offer execution mode: Sequential (< 5 tasks) or Subagent swarm (5+ tasks).
-
-**Subagent swarm (parallel):** Read the Wave Table from `plan.md`. For each wave in order:
-- **PARALLEL wave:** emit ALL tasks as Agent tool calls in ONE response block -- they run concurrently. 3 tasks in wave = 3 Agent calls in your single response. Never emit one, wait, then emit the next.
-- **SEQUENTIAL wave:** emit ONE Agent call, wait for its result, then advance.
-- Never start Wave N until all Wave N-1 agents have returned.
-
-If plan.md has no Wave Table, build one now using the dependency test before dispatching anything: shared file writes → sequential; output dependencies → sequential; otherwise → parallel.
-
-**Sequential:** Execute tasks one at a time in the current session.
-
-Both modes: `TaskCreate` per build task before dispatching. Two-stage review per task (spec + quality). Mark completed when all done.
-
-### S6 Ralph completion loop (Deep mode only)
-
-In Deep mode, every task runs under its completion contract (written in S5). Loop protocol:
-
-```
-previous_results = null
-
-for iter in 1..contract.max_iterations:
-  if iter == 1:
-    dispatch task to agent (or execute inline)
-  else:
-    re-dispatch with feedback: "Iter {iter}: criterion_{x} failed. Output: {last_20_lines}"
-
-  results = []
-  for criterion in contract.completion_criteria:
-    if criterion.type == "shell":
-      safety = isSafeVerifyCommand(criterion.verify)
-      if not safety.safe:
-        emit ISSUE: unsafe-verify
-          task_id: <id>
-          criterion_id: <id>
-          command: "<original>"
-          reason: "<from checker>"
-          halt: true
-        persist to .ijfw/state/execute-issues.json (kind: unsafe-verify)
-        halt task; break outer
-      outcome = run(criterion.verify, timeout=60s, capture_output=true)
-      results.append({ id: criterion.id, pass: outcome.exit == 0, output: outcome.tail(20) })
-    elif criterion.type == "model-verify":
-      outcome = model_check(criterion.description, context=brief + task_body)
-      results.append({ id: criterion.id, pass: outcome.pass, reason: outcome.reason })
-    elif criterion.type == "manual":
-      ask user "Did criterion {id} pass? (yes/no <reason>)"
-      results.append({ id: criterion.id, pass: user.answered == "yes", reason: user.reason })
-
-  if all(r.pass for r in results):
-    emit VERIFIED tag
-    auto-resolve any ledger entries for this task_id
-    break
-
-  # Stagnation halt: if iter N results are byte-identical to iter N-1,
-  # no progress is being made -- halt early rather than burn tokens.
-  if previous_results is not null and results == previous_results:
-    emit ISSUE(task-stagnated) with last outputs + "iter {iter} identical to iter {iter-1}"
-    persist to .ijfw/state/execute-issues.json (kind: task-stagnated, status: unresolved)
-    halt task; break
-
-  previous_results = results
-
-  if iter < contract.max_iterations:
-    continue  # next iter with feedback
-  else:
-    emit ISSUE(task-incomplete) with failed criterion ids + last outputs
-    persist to .ijfw/state/execute-issues.json (kind: task-incomplete, status: unresolved)
-    halt task (do not advance to next task)
-```
-
-**Ledger schema** (`.ijfw/state/execute-issues.json`):
-```json
-{
-  "schema_version": 1,
-  "issues": [
-    {
-      "id": "iss_001",
-      "task_id": "t3",
-      "criterion_id": "c2",
-      "kind": "task-incomplete",
-      "message": "tsc --noEmit failed after 3 iterations",
-      "last_output": "...",
-      "iter_count": 3,
-      "status": "unresolved",
-      "rehearsal": false,
-      "created_at": "<ISO-8601>",
-      "resolved_at": null
-    }
-  ]
-}
-```
-
-Kinds: `task-incomplete`, `task-stagnated`, `unsafe-verify`, `plan-review` (Phase 2). All share this file.
-
-**Day-1 protection:** Every ledger consumer treats a missing file as zero issues. Never crash on missing ledger.
-
-**resolve sub-command:** When user says `/ijfw-execute resolve <iss_id> <note>` -- load ledger, find entry by id, set `status: resolved`, `resolution: accepted|deferred|reworked` per note, `resolved_at: <now>`, write back atomically, emit one-line receipt.
-
-## STEP 7: VERIFY (see `references/ship-phase.md`)
-
-Run tests/lint/build -- evidence before claims. Verify against the **brief**, not just the plan.
-Second Opinion on build (if enabled + available). Print "all clear" or findings.
-Mark completed.
-
-## STEP 8: SHIP (see `references/ship-phase.md`)
-
-Use `AskUserQuestion` for ship options: PR / merge / deploy / keep branch.
-Write `.ijfw/memory/handoff.md`. Mark completed.
-Session receipt: `You went from [problem] to [shipped solution] in [time].`
+On session resume: read this file, echo the current state, offer `continue` / `restart`. Memory recall also fires on resume so context is live.
 
 ---
 
-## PLATFORM-AWARE BROWSER OPEN
-
-Detect platform and use the right command:
-```bash
-# macOS
-open <file>
-# Linux
-xdg-open <file>
-# WSL
-wslview <file> || cmd.exe /c start <file>
-```
-Use this pattern: `Bash("open <file> 2>/dev/null || xdg-open <file> 2>/dev/null || echo 'Open manually: <file>'")`
-This works on macOS, Linux, and falls back to printing the path if neither works.
-
-## RENDERING ARTIFACTS
-
-When writing brief.md, plan.md, or research.md, also render as HTML and open in the browser. The user shouldn't have to open a file editor to read their own plan.
-
-After writing any major .md file:
-1. Generate an HTML file (same directory, .html extension) using marked.js CDN + github-markdown-dark CSS + DOMPurify for safe rendering
-2. Open with the platform-aware command above
-3. Tell user: `[Document name] open in your browser.`
-
-See `references/think-phase.md` for the HTML rendering template.
-
----
-
-## COMPACTION GATES (write state at every phase transition)
-
-**Think -> Build:** Write `.ijfw/state/workflow-context.md` (phase, brief summary, key decisions, team roster, risks) and `.ijfw/state/workflow.json` (`{ "status": "in_progress", "phase": "build", ... }`).
-
-**Build -> Ship:** Update both files with plan status, lessons captured, verification items.
-
-**Ship complete:** Update both with `"status": "complete"`, shipped summary, handoff pointer.
-
-These files enable resume after /clear or context compaction.
-
----
-
-## INVARIANTS
-
-- **AskUserQuestion scoring:** Options differ by degree (coverage %, risk level, time-to-ship, scope breadth) -> score prefix each description: "[Coverage: 80%]", "[Risk: LOW]". Options differ by kind (framework A vs B, style X vs Y) -> no score (gstack rule; see core SKILL.md for details).
-- **Canonical plan path is `.ijfw/memory/plan.md`; never write plan data elsewhere.**
-- **Every Deep-mode task has a completion contract. No contract = refuse to execute.**
-- **Interaction style respected.** Guided = AskUserQuestion. Conversation = open dialogue with periodic capture + checkpoints.
-- **Adaptive switching is natural.** No announcements. Read notes.md to avoid re-asking covered topics.
-- **TaskCreate for every workflow step** (or text checklist if unavailable).
-- **Brief before build.** `.ijfw/memory/brief.md` must exist before Step 5.
-- **Research before brainstorm** (guided: upfront swarm; conversation: targeted when topics arise).
-- **Team before plan.** Team approved before any planning.
-- **Positive framing always.** "Second Opinion" not "cross-audit". "heads up" not "error". "ready to add" not "missing". Never use "violation" or "non-negotiable" in user-facing output.
-- **Second Opinion is visible.** Always tell the user it ran, even when clean ("all clear").
-- **Recommendations only with basis.** Fact questions get no recommendation. Judgment questions cite why.
-- **Platform-aware.** Use the open fallback chain. Don't assume macOS.
-
-## PRE-RESPONSE CHECKLIST
-
-Before generating any response, verify:
-- [ ] Am I in the right interaction mode? (guided: tool call first; conversation: just talk)
-- [ ] Am I on the correct step? Check which tasks are completed.
-- [ ] In conversation mode: have 3+ new substantive points emerged since last capture?
-- [ ] In guided mode: am I asking ONE question, not dumping a list?
-- [ ] Does `.ijfw/memory/brief.md` exist before I try to plan or build?
-- [ ] Am I using positive framing? (no "violation", "non-negotiable", "error", "missing")
+**Invariant:** every move the user experiences should make them feel smarter and more in control -- memory recall surfaces forgotten context, AI proposes before the user has to, Trident challenges before they commit, one word advances. Anything that makes them feel stupid or stuck is a workflow bug.

@@ -230,12 +230,13 @@ Present via AskUserQuestion: "Looks good" / "Edit goal" / "Edit approach" / "Go 
 
 Offer via AskUserQuestion. If accepted, generate HTML mockups during SHAPE:
 
-1. `Bash("mkdir -p .planning/brainstorm")`
-2. Write standalone HTML files (one per option) with Tailwind CDN, research-informed design, real content
-3. **Generate a viewer.html** with tab navigation (see template below)
-4. Open viewer in browser (platform-aware): `Bash("open .planning/brainstorm/viewer.html 2>/dev/null || xdg-open .planning/brainstorm/viewer.html 2>/dev/null || echo 'Open manually: .planning/brainstorm/viewer.html'")`
-5. Tell user: `Design viewer open -- click tabs to compare all options.`
-6. Ask preference via AskUserQuestion
+1. `Bash("ijfw design start")`
+2. `Bash("mkdir -p .planning/brainstorm")`
+3. Write standalone HTML files (one per option) with research-informed design and real content
+4. **Generate a viewer.html** with tab navigation (see template below)
+5. `Bash("ijfw design push .planning/brainstorm/*.html")`
+6. Tell user: `Design preview live -- click tabs to compare all options.`
+7. Ask preference via AskUserQuestion
 
 **You MUST generate HTML when visual is ON.** The user accepted visual previews -- deliver them.
 
@@ -264,11 +265,11 @@ The viewer shows all options as tabs with iframe loading. Adapt the tab labels a
 <body>
 <div class="tabs">
   <!-- Adapt these tabs to match your actual options -->
-  <div class="tab active" onclick="show(this, 'option-a.html')">Option A<span class="rec">(Recommended)</span></div>
-  <div class="tab" onclick="show(this, 'option-b.html')">Option B</div>
-  <div class="tab" onclick="show(this, 'option-c.html')">Option C</div>
+  <div class="tab active" onclick="show(this, '/design/files/option-a.html')">Option A<span class="rec">(Recommended)</span></div>
+  <div class="tab" onclick="show(this, '/design/files/option-b.html')">Option B</div>
+  <div class="tab" onclick="show(this, '/design/files/option-c.html')">Option C</div>
 </div>
-<iframe id="preview" src="option-a.html"></iframe>
+<iframe id="preview" src="/design/files/option-a.html"></iframe>
 <script>
 function show(tab, file) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));

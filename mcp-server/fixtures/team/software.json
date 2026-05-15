@@ -1,0 +1,47 @@
+{
+  "charter": {
+    "schema_version": "team-charter/v1",
+    "team_name": "software-delivery-team",
+    "project_archetypes": ["software"],
+    "roles": [
+      {
+        "name": "implementation-engineer",
+        "role_type": "software",
+        "model": "sonnet",
+        "effort": "medium",
+        "phase_scope": ["plan", "execute", "verify"],
+        "owns": [{"artifact_type": "module", "paths": ["src/**/*.js"]}],
+        "reviews": [{"artifact_type": "test", "criteria": ["coverage", "regression"]}],
+        "handoff": {"format": "markdown", "required_sections": ["changed_artifacts", "tests", "risks"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": ["src/shared/**"]}
+      },
+      {
+        "name": "test-reviewer",
+        "role_type": "qa",
+        "model": "sonnet",
+        "effort": "low",
+        "phase_scope": ["review", "verify"],
+        "owns": [{"artifact_type": "test", "paths": ["test/**/*.js"]}],
+        "reviews": [{"artifact_type": "module", "criteria": ["behavior", "edge-cases"]}],
+        "handoff": {"format": "markdown", "required_sections": ["findings", "verification"]},
+        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+      }
+    ]
+  },
+  "workflow": {
+    "schema_version": "team-workflow/v1",
+    "project_archetypes": ["software"],
+    "artifacts": [
+      {"id": "runtime-module", "type": "module", "paths": ["src/**/*.js"], "owner": "implementation-engineer", "reviewers": ["test-reviewer"], "depends_on": [], "verification": ["npm test"]},
+      {"id": "regression-tests", "type": "test", "paths": ["test/**/*.js"], "owner": "test-reviewer", "reviewers": ["implementation-engineer"], "depends_on": ["runtime-module"], "verification": ["node --test test/**/*.js"]}
+    ],
+    "waves": [
+      {"id": "w1", "mode": "parallel", "artifact_ids": ["runtime-module"]},
+      {"id": "w2", "mode": "review", "artifact_ids": ["regression-tests"]}
+    ]
+  },
+  "blackboard": {
+    "tasks": [{"id": "task-runtime", "title": "Implement runtime module", "status": "ready", "artifact_ids": ["runtime-module"], "owner": "implementation-engineer", "depends_on": []}],
+    "claims": [{"id": "claim-runtime", "artifact_id": "runtime-module", "agent": "implementation-engineer", "status": "active", "paths": ["src/**/*.js"], "claimed_at": "2026-05-15T00:00:00Z"}]
+  }
+}

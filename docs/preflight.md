@@ -20,7 +20,7 @@ Options:
 | 1 | shellcheck | blocking | 2s |
 | 2 | oxlint | blocking | 3s |
 | 3 | eslint-security | blocking | 5s |
-| 4 | psscriptanalyzer | blocking (Windows) | 5s |
+| 4 | psscriptanalyzer | blocking | 5s |
 | 5 | publint | blocking | 2s |
 | 6 | gitleaks | blocking | 3s |
 | 7 | audit-ci | blocking | 5s |
@@ -57,7 +57,7 @@ False-positive patterns are listed in `.gitleaksignore`. The cross-audit stderr 
 
 ## PSScriptAnalyzer
 
-On macOS and Linux, this gate is WARN (not FAIL) because `pwsh` may not be installed. CI runs this gate on `windows-latest` where it is blocking. The check covers `installer/src/install.ps1`.
+When `pwsh` and PSScriptAnalyzer are available, this gate runs PSScriptAnalyzer. When they are unavailable, it runs a deterministic static fallback that checks PowerShell parser balance and high-risk execution patterns. The check covers `installer/src/install.ps1` and remains blocking on every platform.
 
 ## pack-smoke
 

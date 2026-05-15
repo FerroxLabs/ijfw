@@ -11,6 +11,55 @@ SKILL.md is the enforcer. This file is supplementary.
 - `.ijfw/memory/brief.md` -- if not found, go back to Think phase Step 3 (LOCK).
 - Team must be approved -- if not, go back to Step 4 (BUILD TEAM).
 
+For Deep mode or any execution with 2+ parallel agents, prepare the project
+swarm before dispatch:
+
+1. Run `ijfw team init` if `.ijfw/team/charter.json` or
+   `.ijfw/team/workflow.json` is missing.
+2. Run `ijfw swarm plan` to inspect artifact owners, dependencies, review
+   waves, verification, and active blackboard blockers.
+3. Run `ijfw swarm prepare` to materialize `.ijfw/blackboard/tasks.json`,
+   or `ijfw swarm prepare --reviews` when review tasks should be queued
+   immediately.
+4. Run `ijfw swarm tasks` to list prepared task IDs. Tasks may represent
+   code, design, research, writing, business artifacts, or other project work.
+5. Run `ijfw swarm status` and surface ready/blocked counts to the user.
+6. Dispatch only ready tasks. For each dispatched task, run
+   `ijfw swarm start <task-id>` before work begins.
+7. On completion, run `ijfw swarm complete <task-id>`. If blocked, run
+   `ijfw swarm block <task-id> --message <why>` and resolve by releasing
+   claims, narrowing scope, or escalating to the user.
+8. Create durable safety points with `ijfw memory checkpoint <label>` after
+   team assembly, swarm preparation, every wave, before worktree integration,
+   and before Ship. If context is lost, resume with `ijfw recover status` and
+   `ijfw recover latest`.
+
+Worktrees are an execution option after preparation, not the planning model.
+Use them for code-heavy parallel edits by default. For writing, design,
+research, strategy, and mixed non-code artifacts, use blackboard claims and
+scoped outputs.
+
+Conservative worktree lifecycle:
+
+1. Start the task first with `ijfw swarm start <task-id>`.
+2. Create isolation only after the task is active:
+   `ijfw swarm worktree create <task-id>`.
+3. Use `ijfw swarm worktree list` to inspect active task worktrees before
+   assigning or integrating parallel code work.
+4. Run task-specific verification inside the task worktree before integration.
+5. Create `ijfw memory checkpoint before-worktree-integrate` immediately before
+   integration.
+6. Integrate exactly one completed task at a time:
+   `ijfw swarm worktree integrate <task-id>`.
+7. Run wave-level verification in the main worktree after each integration.
+8. Clean up only successful, verified integrations:
+   `ijfw swarm worktree cleanup <task-id>`.
+
+Preserve failed or blocked worktrees for inspection. Never auto-clean them.
+Never auto-resolve merge conflicts. On conflict, stop, record
+`ijfw swarm block <task-id> --message <why>`, and escalate to the user or lead
+agent.
+
 ---
 
 ## Step 5: PLAN + IMPLEMENTATION BREAKDOWN
@@ -105,17 +154,17 @@ If < 5 tasks, recommend Sequential. If 5+, recommend Subagent swarm.
 - Two-stage review after each task (spec + quality)
 
 **Subagent swarm mode (PARALLEL -- this is the key):**
-- **Send ALL Agent tool calls for a wave in a SINGLE response.** This is what makes them parallel. If Wave A has 3 tasks, your response contains 3 `Agent` calls simultaneously with `run_in_background: true` on each.
+- **Send all platform-native subagent dispatches for a wave in a single response.** This is what makes them parallel. If Wave A has 3 tasks, dispatch all 3 simultaneously with the platform's background/parallel option.
 - Do NOT dispatch one agent, wait for completion, then dispatch the next. That is sequential execution disguised as swarm mode.
-- Use `isolation: "worktree"` if available, otherwise dispatch without isolation
+- Use task worktrees only for code-heavy tasks after `ijfw swarm start <task-id>` and `ijfw swarm worktree create <task-id>`; non-code tasks use blackboard claims and scoped output paths.
 - Fresh context per agent -- focused, no pollution from other tasks
 - Wait for ALL agents in the wave to complete before starting wave review
 
 Example (3 parallel agents in one response):
 ```
-Agent(description="[Task 1]", prompt="...", run_in_background=true)
-Agent(description="[Task 2]", prompt="...", run_in_background=true)
-Agent(description="[Task 3]", prompt="...", run_in_background=true)
+dispatch_agent(description="[Task 1]", prompt="...", background=true)
+dispatch_agent(description="[Task 2]", prompt="...", background=true)
+dispatch_agent(description="[Task 3]", prompt="...", background=true)
 ```
 All three launch simultaneously. You'll be notified as each completes.
 
@@ -132,7 +181,7 @@ Each task gets:
 
 ### Task tracking (mandatory)
 
-TaskCreate per task BEFORE dispatching (or text checklist if TaskCreate unavailable). Flip in real time.
+Create or update one visible task per task BEFORE dispatching. Use the platform's native task tracker where available, otherwise use a text checklist. Flip in real time.
 
 Mid-task pings for operations > 30s: `[Agent] in progress (~[estimate]).`
 
@@ -147,8 +196,10 @@ Both checks run before marking complete. If spec review fails: one retry with ex
 ### Wave completion: merge + verify + iterate
 
 **Subagent swarm mode:** After ALL agents in a wave complete:
-1. **Merge** in dependency order. Conflicts halt and escalate -- never auto-resolve.
-2. **Run verification** (pre-commit hooks, tests, lint) on the merged result.
+1. For task worktrees, checkpoint with `ijfw memory checkpoint before-worktree-integrate`, then integrate one completed task at a time with `ijfw swarm worktree integrate <task-id>`.
+2. Conflicts halt and escalate -- never auto-resolve. Preserve the failed worktree and record a blackboard blocker.
+3. Clean up only after successful verification with `ijfw swarm worktree cleanup <task-id>`.
+4. **Run verification** (pre-commit hooks, tests, lint) on the integrated result.
 
 **Sequential mode:** Review is inline after each task.
 

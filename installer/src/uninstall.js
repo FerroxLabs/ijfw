@@ -167,9 +167,11 @@ import os; os.replace(p + ".tmp", p)
   // Matches 2-space indented key plus its 4-space indented body until the next
   // same-indent sibling or end-of-file. Best-effort; ok for IJFW-shaped YAML.
   const stripped = raw.replace(
+    // eslint-disable-next-line security/detect-unsafe-regex -- raw is a small local YAML config file; pattern is line-anchored to the IJFW-owned block.
     /^  ijfw-memory:\n(?:    .*\n)*(?:# IJFW-MCP-END ijfw-memory\n)?/m,
     ''
   ).replace(
+    // eslint-disable-next-line security/detect-unsafe-regex -- raw is a small local YAML config file; pattern is bounded by exact IJFW sentinel markers.
     /# IJFW-MCP-BEGIN ijfw-memory\n(?:.*\n)*?# IJFW-MCP-END ijfw-memory\n/,
     ''
   );
@@ -192,6 +194,44 @@ function removeIjfwSkills(dir) {
   return count;
 }
 
+const CODEX_COMMAND_FILES = [
+  'compress.md',
+  'consolidate.md',
+  'cross-audit.md',
+  'cross-critique.md',
+  'cross-research.md',
+  'doctor.md',
+  'handoff.md',
+  'ijfw-audit.md',
+  'ijfw-execute.md',
+  'ijfw-help.md',
+  'ijfw-plan.md',
+  'ijfw-ship.md',
+  'ijfw-verify.md',
+  'ijfw.md',
+  'memory-audit.md',
+  'memory-consent.md',
+  'memory-why.md',
+  'metrics.md',
+  'mode.md',
+  'status.md',
+  'team.md',
+  'workflow.md',
+];
+
+function removeCodexCommands(dir) {
+  if (!existsSync(dir)) return 0;
+  let count = 0;
+  for (const name of CODEX_COMMAND_FILES) {
+    const path = join(dir, name);
+    if (existsSync(path)) {
+      rmSync(path, { force: true });
+      count++;
+    }
+  }
+  return count;
+}
+
 function cleanPlatforms() {
   const removed = [];
 
@@ -206,6 +246,10 @@ function cleanPlatforms() {
   // Codex: skill dirs
   const codexSkills = removeIjfwSkills(join(HOME, '.codex', 'skills'));
   if (codexSkills > 0) removed.push(`~/.codex/skills/ijfw-*  (removed ${codexSkills} skill dirs)`);
+  // Codex: command alias files. Remove only IJFW's exact command filenames
+  // because several are intentionally not ijfw-prefixed.
+  const codexCommands = removeCodexCommands(join(HOME, '.codex', 'commands'));
+  if (codexCommands > 0) removed.push(`~/.codex/commands  (removed ${codexCommands} IJFW command aliases)`);
   // Codex: IJFW.md context file
   const codexMd = join(HOME, '.codex', 'IJFW.md');
   if (existsSync(codexMd)) { rmSync(codexMd, { force: true }); removed.push('~/.codex/IJFW.md'); }

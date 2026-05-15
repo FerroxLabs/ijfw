@@ -54,6 +54,20 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hooks/permission-request.sh",
+            "timeout": 5,
+            "_ijfw": true,
+            "_description": "Deny high-risk permission requests before execution: release gates, destructive git/filesystem/database commands, and unsafe chmod."
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": ".*",

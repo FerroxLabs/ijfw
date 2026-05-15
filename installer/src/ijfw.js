@@ -1,5 +1,5 @@
 // ijfw -- single entry point with subcommand dispatch.
-// Subcommands: install, uninstall, preflight, dashboard (v1.1D), doctor, design, help
+// Subcommands: install, uninstall, preflight, dashboard (v1.1D), doctor, design, blackboard, team, swarm, recover, help
 
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,72 @@ function repoRoot() {
   return process.cwd();
 }
 
+function findInternalAsset(...rel) {
+  const root = repoRoot();
+  const ijfwHome = join(homedir(), '.ijfw');
+  const candidates = [join(root, ...rel), join(ijfwHome, ...rel)];
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- candidates are bounded internal IJFW install paths.
+  return candidates.find(p => existsSync(p)) || null;
+}
+
+function readDashboardPort() {
+  const portFile = join(homedir(), '.ijfw', 'dashboard.port');
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- portFile is fixed under $HOME/.ijfw and contains only the local dashboard port.
+    const port = Number.parseInt(readFileSync(portFile, 'utf8').trim(), 10);
+    return Number.isFinite(port) ? port : 37891;
+  } catch {
+    return 37891;
+  }
+}
+
+function openBrowser(url) {
+  if (process.env.CI || process.env.NO_OPEN) return;
+  const r = platform() === 'darwin'
+    ? spawnSync('open', [url], { stdio: 'ignore' })
+    : platform() === 'win32'
+      ? spawnSync('cmd', ['/c', 'start', '', url], { stdio: 'ignore', shell: false })
+      : spawnSync('xdg-open', [url], { stdio: 'ignore' });
+  return r.status ?? 0;
+}
+
+const ORCHESTRATOR_COMMANDS = new Set([
+  'update',
+  'statusline',
+  'config',
+  'insight',
+  'blackboard',
+  'team',
+  'swarm',
+  'codex',
+  'recover',
+  'memory',
+  'cross',
+  'status',
+  'demo',
+  'import',
+  'receipt',
+  '--purge-receipts',
+  'workflow',
+  'handoff',
+  'compress',
+  'consolidate',
+  'cross-audit',
+  'cross-critique',
+  'cross-research',
+  'ijfw-audit',
+  'ijfw-execute',
+  'ijfw-help',
+  'ijfw-plan',
+  'ijfw-ship',
+  'ijfw-verify',
+  'memory-audit',
+  'memory-consent',
+  'memory-why',
+  'metrics',
+  'mode',
+]);
+
 function printHelp() {
   console.log(`
 ijfw -- the AI efficiency layer
@@ -32,7 +98,13 @@ COMMANDS
   help        Open the full IJFW guide (terminal, or --browser for rendered)
   preflight   Run 11-gate quality pipeline before publishing
   dashboard   Start / stop / check the local observability dashboard
-  design      Manage the visual design companion
+  design      Manage live previews and durable design intelligence
+  blackboard  Coordinate project-local swarm state and artifact claims
+  codex       Check and sync Codex-native IJFW surfaces
+  team        Assemble project agents, charter, and workflow manifest
+  swarm       Plan, prepare, and track artifact-aware parallel work
+  recover     Show latest checkpoint and next recovery step
+  cross       Run Trident audit/research/critique, e.g. ijfw cross audit README.md
   doctor      Diagnose IJFW installation health
 
   --help, -h  Show this help
@@ -100,10 +172,14 @@ async function main() {
   // 1.1.6: terminal-side commands -- delegate to cross-orchestrator-cli.js
   // when the repo is present (post-install). For naked npx invocations
   // (no repo), print a helpful pointer instead of exploding.
-  if (sub === 'update' || sub === 'statusline' || sub === 'config' || sub === 'insight') {
+  if (ORCHESTRATOR_COMMANDS.has(sub)) {
     if (delegateToCli(argv.slice(2))) return;
     console.error(`'ijfw ${sub}' requires a completed IJFW install. Run: ijfw install`);
     process.exit(1);
+  }
+
+  if (sub === 'doctor' && findCli()) {
+    if (delegateToCli(argv.slice(2))) return;
   }
 
   switch (sub) {
@@ -127,27 +203,15 @@ async function main() {
     }
     case 'dashboard': {
       const dashSub = argv[3]; // start | stop | status | render
-      const root = repoRoot();
-      const ijfwHome = join(homedir(), '.ijfw');
-
-      // Resolve an internal asset against (repo clone) -> (~/.ijfw post-install).
-      // npm installs ship only the CLI shim; the dashboard bins live under
-      // ~/.ijfw/mcp-server/ once `ijfw-install` has run, so we must check both.
-      const findInTree = (...rel) => {
-        const candidates = [join(root, ...rel), join(ijfwHome, ...rel)];
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- candidates is a static 2-element list of internal install paths.
-        return candidates.find(p => existsSync(p)) || null;
-      };
-
       if (dashSub === 'start' || dashSub === 'stop' || dashSub === 'status') {
         // V1.1D: HTTP server subcommands via ijfw-dashboard bin
-        const dashBin = findInTree('mcp-server', 'bin', 'ijfw-dashboard');
+        const dashBin = findInternalAsset('mcp-server', 'bin', 'ijfw-dashboard');
         if (dashBin) {
           const r = spawnSync('node', [dashBin, dashSub, ...argv.slice(4)], { stdio: 'inherit' });
           process.exit(r.status ?? 0);
         } else {
           // Fallback: run dashboard-server.js directly for start
-          const serverJs = findInTree('mcp-server', 'src', 'dashboard-server.js');
+          const serverJs = findInternalAsset('mcp-server', 'src', 'dashboard-server.js');
           if (dashSub === 'start' && serverJs) {
             const { spawn } = await import('node:child_process');
             const child = spawn(process.execPath, [serverJs, 'start', '--daemon'], {
@@ -163,7 +227,7 @@ async function main() {
         }
       } else if (dashSub === 'render' || !dashSub) {
         // V1.1C: render terminal dashboard
-        const binJs = findInTree('scripts', 'dashboard', 'bin.js');
+        const binJs = findInternalAsset('scripts', 'dashboard', 'bin.js');
         if (binJs) {
           const r = spawnSync('node', [binJs, ...argv.slice(dashSub ? 4 : 3)], { stdio: 'inherit' });
           process.exit(r.status ?? 0);
@@ -179,34 +243,76 @@ async function main() {
     }
     case 'design': {
       const designSub = argv[3];
+      const durableDesign = ['init', 'plan', 'audit', 'critique', 'polish', 'normalize', 'bolder', 'quieter', 'handoff'];
+      if (durableDesign.includes(designSub)) {
+        if (delegateToCli(argv.slice(2))) return;
+        console.error(`'ijfw design ${designSub}' requires a completed IJFW install. Run: ijfw install`);
+        process.exit(1);
+      }
       const contentDir = join(homedir(), '.ijfw', 'design-companion', 'content');
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- contentDir is a constant under $HOME/.ijfw/; not user-controllable.
       mkdirSync(contentDir, { recursive: true });
 
-      if (designSub === 'push') {
-        const filePath = argv[4];
-        if (!filePath) {
-          console.error('Usage: ijfw design push <file.html>');
+      if (designSub === 'start' || designSub === 'open') {
+        const dashBin = findInternalAsset('mcp-server', 'bin', 'ijfw-dashboard');
+        if (!dashBin) {
+          console.error('[ijfw] Design companion server not found. Run `ijfw-install` to deploy ~/.ijfw/, or run from the IJFW repo root.');
           process.exit(1);
         }
-        const abs = resolve(filePath);
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- filePath is the user's own argv[4]; existsSync just checks readability, copy destination uses basename(abs) so writes are confined to contentDir.
-        if (!existsSync(abs)) {
-          console.error(`File not found: ${abs}`);
+        const noOpen = argv.slice(4).includes('--no-open');
+        const r = spawnSync('node', [dashBin, 'start', '--no-open'], { stdio: designSub === 'start' ? 'inherit' : 'ignore' });
+        if ((r.status ?? 1) !== 0) process.exit(r.status ?? 1);
+        const url = `http://localhost:${readDashboardPort()}/design`;
+        if (!noOpen) openBrowser(url);
+        console.log(`Design companion running at ${url}`);
+      } else if (designSub === 'status') {
+        const dashBin = findInternalAsset('mcp-server', 'bin', 'ijfw-dashboard');
+        if (!dashBin) {
+          console.error('[ijfw] Design companion server not found. Run `ijfw-install` to deploy ~/.ijfw/, or run from the IJFW repo root.');
           process.exit(1);
         }
-        const dest = join(contentDir, basename(abs));
-        copyFileSync(abs, dest);
-        console.log(`Design pushed: ${dest}`);
+        const r = spawnSync('node', [dashBin, 'status'], { stdio: 'inherit' });
+        if ((r.status ?? 1) === 0) console.log(`Design companion URL: http://localhost:${readDashboardPort()}/design`);
+        process.exit(r.status ?? 0);
+      } else if (designSub === 'stop') {
+        const dashBin = findInternalAsset('mcp-server', 'bin', 'ijfw-dashboard');
+        if (!dashBin) {
+          console.error('[ijfw] Design companion server not found. Run `ijfw-install` to deploy ~/.ijfw/, or run from the IJFW repo root.');
+          process.exit(1);
+        }
+        const r = spawnSync('node', [dashBin, 'stop'], { stdio: 'inherit' });
+        process.exit(r.status ?? 0);
+      } else if (designSub === 'push') {
+        const filePaths = argv.slice(4);
+        if (filePaths.length === 0) {
+          console.error('Usage: ijfw design push <file.html> [more.html ...]');
+          process.exit(1);
+        }
+        for (const filePath of filePaths) {
+          const abs = resolve(filePath);
+          if (!abs.toLowerCase().endsWith('.html')) {
+            console.error('Design companion accepts standalone .html files.');
+            process.exit(1);
+          }
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- filePath is the user's own argv; existsSync just checks readability, copy destination uses basename(abs) so writes are confined to contentDir.
+          if (!existsSync(abs)) {
+            console.error(`File not found: ${abs}`);
+            process.exit(1);
+          }
+          const dest = join(contentDir, basename(abs));
+          copyFileSync(abs, dest);
+          console.log(`Design pushed: ${dest}`);
+        }
+        console.log(`Preview: http://localhost:${readDashboardPort()}/design`);
       } else if (designSub === 'clear') {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- contentDir is the same internal constant from line 168; not user-controllable.
         const files = readdirSync(contentDir);
         for (const f of files) rmSync(join(contentDir, f), { force: true });
         console.log('Design companion content cleared.');
       } else {
-        console.log('ijfw design -- Manage the visual design companion. Push HTML mockups for live preview.');
+        console.log('ijfw design -- Manage live preview and durable design intelligence.');
         console.log('');
-        console.log('Usage: ijfw design push <file.html> | ijfw design clear');
+        console.log('Usage: ijfw design start [--no-open] | open | status | stop | push <file.html> [more.html ...] | clear | init|plan|audit|critique|polish|normalize|bolder|quieter|handoff');
         process.exit(1);
       }
       break;
@@ -229,12 +335,16 @@ async function main() {
         const { marked } = await import('marked');
         const assetsSrc = join(dirname(guidePath), 'guide', 'assets');
         const outDir = join(homedir(), '.ijfw', 'guide');
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- outDir is fixed under $HOME/.ijfw/guide for generated local docs.
         mkdirSync(join(outDir, 'assets'), { recursive: true });
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- assetsSrc is derived from the selected internal GUIDE.md path.
         if (existsSync(assetsSrc)) {
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- assetsSrc is an internal guide asset directory; entries are copied by basename into outDir.
           for (const f of readdirSync(assetsSrc)) {
             copyFileSync(join(assetsSrc, f), join(outDir, 'assets', f));
           }
         }
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- guidePath is selected from the bounded candidates list above.
         const md = readFileSync(guidePath, 'utf8').replace(/\(guide\/assets\//g, '(assets/');
         const rendered = marked.parse(md, { gfm: true, breaks: false });
         const html = `<!doctype html>
@@ -253,6 +363,7 @@ async function main() {
 </style>
 </head><body><div class="wrap markdown-body">${rendered}</div></body></html>`;
         const outHtml = join(outDir, 'index.html');
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- outHtml is fixed under $HOME/.ijfw/guide/index.html.
         writeFileSync(outHtml, html);
         const opener = platform() === 'darwin' ? 'open' : platform() === 'win32' ? 'start' : 'xdg-open';
         spawnSync(opener, [outHtml], { stdio: 'ignore', detached: true });
@@ -265,9 +376,11 @@ async function main() {
       if (hasLess) {
         const lessRes = spawnSync('less', ['-R', guidePath], { stdio: 'inherit' });
         if (lessRes.status !== 0 && lessRes.status !== null) {
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- guidePath is selected from the bounded candidates list above.
           process.stdout.write(readFileSync(guidePath, 'utf8'));
         }
       } else {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- guidePath is selected from the bounded candidates list above.
         process.stdout.write(readFileSync(guidePath, 'utf8'));
       }
       process.exit(0);

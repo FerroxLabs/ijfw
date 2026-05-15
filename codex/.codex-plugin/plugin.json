@@ -1,7 +1,7 @@
 {
   "name": "ijfw",
-  "version": "1.3.1",
-  "description": "IJFW -- AI efficiency layer for Codex. 19 workflow skills, 5 hook events, persistent project memory via MCP. One install layer across 13 AI coding platforms.",
+  "version": "1.3.2",
+  "description": "IJFW -- AI efficiency layer for Codex. 19 workflow skills, 22 command aliases, 6 hook events, persistent project memory via MCP, project teams, swarm orchestration, and design intelligence. One install layer across 13 AI coding platforms.",
   "author": "Sean Donahoe",
   "homepage": "https://gitlab.com/therealseandonahoe/ijfw",
   "license": "MIT",
@@ -9,6 +9,7 @@
   "keywords": ["workflow", "memory", "audit", "trident", "efficiency"],
   "min_codex_version": "0.99.0",
   "skills_dir": "skills",
+  "commands_dir": "commands",
   "hooks_config": ".codex/hooks.json",
   "mcp_config": ".codex/config.toml",
   "dependencies": {}

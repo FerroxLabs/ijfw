@@ -17,8 +17,8 @@ ijfw preflight
 
 1. shellcheck -- shell script correctness
 2. oxlint -- fast JS/TS linting
-3. eslint-security -- security-specific rules
-4. psscriptanalyzer -- PowerShell scripts (skipped gracefully on macOS/Linux if absent)
+3. eslint-security -- high-signal JS security rules
+4. psscriptanalyzer -- PowerShell scripts, with static fallback when pwsh is absent
 5. publint -- package.json publish hygiene
 6. gitleaks -- secret / credential scan
 7. audit-ci -- npm dependency vulnerability check

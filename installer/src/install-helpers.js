@@ -4,6 +4,11 @@
 // scripts/install.sh that originally shelled out to bash + node -e heredocs.
 // See .planning/1.3.0/PORT-SPEC.md for the porting contract.
 
+/* eslint-disable security/detect-non-literal-fs-filename -- Installer helper
+ * APIs intentionally accept validated install paths from higher-level target
+ * installers. They centralize filesystem writes, backups, checksums, hook
+ * installation, and platform-presence probes for IJFW-managed paths. */
+
 import {
   existsSync,
   readFileSync,
@@ -48,6 +53,7 @@ export function expandHome(p) {
   // Replace %USERPROFILE% (Windows) -- handle case-insensitively.
   out = out.replace(/%([^%]+)%/g, (m, name) => {
     if (name.toUpperCase() === 'USERPROFILE') return homedir();
+    // eslint-disable-next-line security/detect-object-injection -- name comes from an environment-variable token in a path string; reads only process.env and falls back unchanged.
     const v = process.env[name] ?? process.env[name.toUpperCase()];
     return v != null ? v : m;
   });
@@ -285,6 +291,7 @@ export function prettyName(targetId) {
     openclaw: 'OpenClaw',
     aider:    'Aider',
   };
+  // eslint-disable-next-line security/detect-object-injection -- targetId is a platform id; unknown ids fall back to String(targetId).
   return map[targetId] || String(targetId);
 }
 
@@ -412,6 +419,7 @@ function stripTomlSection(text, sectionName) {
   const lines = text.split('\n');
   const out = [];
   let skip = false;
+  // eslint-disable-next-line security/detect-non-literal-regexp -- sectionName is escaped before constructing the exact TOML section header matcher.
   const headerRe = new RegExp(`^\\[${safe}\\][\\s]*$`);
   for (const line of lines) {
     if (headerRe.test(line)) { skip = true; continue; }
@@ -510,9 +518,11 @@ export function mergeYamlPluginsEnabled(dst, pluginName, ts) {
   let inPluginsBlock = false;
   let alreadyListed = false;
   // Match `- pluginName` (any indent) within plugins.enabled.
+  // eslint-disable-next-line security/detect-non-literal-regexp -- pluginName is escaped before constructing the exact YAML list-item matcher.
   const itemRe = new RegExp(`^\\s+-\\s+${pluginName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
 
   for (let i = 0; i < lines.length; i++) {
+    // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric index in this function's own split() output.
     const line = lines[i];
     if (/^plugins:\s*$/.test(line)) {
       pluginsLineIdx = i;
@@ -523,7 +533,7 @@ export function mergeYamlPluginsEnabled(dst, pluginName, ts) {
       if (/^\S/.test(line) && line.trim() !== '') {
         // Hit a new top-level key -- end of plugins block.
         inPluginsBlock = false;
-      } else if (/^\s+enabled:\s*(\[\s*\])?\s*$/.test(line) || /^\s+enabled:\s*\[.*\]\s*$/.test(line)) {
+      } else if (isIndentedEnabledLine(line)) {
         enabledLineIdx = i;
       } else if (enabledLineIdx >= 0 && itemRe.test(line)) {
         alreadyListed = true;
@@ -552,13 +562,16 @@ export function mergeYamlPluginsEnabled(dst, pluginName, ts) {
 
   // Insert the plugin name into the list if not already present.
   if (!alreadyListed) {
+    // eslint-disable-next-line security/detect-object-injection -- enabledLineIdx is computed from cur, which is this function's own split() output.
     const enabledLine = cur[enabledLineIdx];
     if (/^\s+enabled:\s*\[\s*\]\s*$/.test(enabledLine)) {
       // Replace empty inline list with a multi-line list.
+      // eslint-disable-next-line security/detect-object-injection -- enabledLineIdx is computed from cur, which is this function's own split() output.
       cur[enabledLineIdx] = '  enabled:';
       cur.splice(enabledLineIdx + 1, 0, `    - ${pluginName}`);
     } else if (/^\s+enabled:\s*\[.+\]\s*$/.test(enabledLine)) {
       // Inline non-empty list -- append before the closing bracket.
+      // eslint-disable-next-line security/detect-object-injection -- enabledLineIdx is computed from cur, which is this function's own split() output.
       cur[enabledLineIdx] = enabledLine.replace(/\]\s*$/, `, ${pluginName}]`);
     } else {
       // Multi-line list form.
@@ -574,6 +587,12 @@ export function mergeYamlPluginsEnabled(dst, pluginName, ts) {
   outText += '# IJFW-PLUGINS-END\n';
 
   writeAtomic(dst, outText, { mode: 0o600 });
+}
+
+function isIndentedEnabledLine(line) {
+  if (!line || !/\s/.test(line[0])) return false;
+  const trimmed = line.trim();
+  return trimmed === 'enabled:' || trimmed === 'enabled: []' || (trimmed.startsWith('enabled: [') && trimmed.endsWith(']'));
 }
 
 // ============================================================================
