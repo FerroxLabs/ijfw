@@ -24,7 +24,17 @@ export LC_ALL=C
 
 PROJECT_ROOT="${1:-}"
 [ -z "$PROJECT_ROOT" ] && exit 0
+if [ ! -d "$PROJECT_ROOT" ] && command -v cygpath >/dev/null 2>&1; then
+  _IJFW_PROJECT_ROOT_UNIX="$(cygpath -u "$PROJECT_ROOT" 2>/dev/null || true)"
+  [ -n "$_IJFW_PROJECT_ROOT_UNIX" ] && PROJECT_ROOT="$_IJFW_PROJECT_ROOT_UNIX"
+fi
 [ -d "$PROJECT_ROOT" ] || exit 0
+
+IJFW_HOME_UNIX="${IJFW_HOME:-}"
+if [ -n "$IJFW_HOME_UNIX" ] && [ ! -d "$IJFW_HOME_UNIX" ] && command -v cygpath >/dev/null 2>&1; then
+  _IJFW_HOME_UNIX="$(cygpath -u "$IJFW_HOME_UNIX" 2>/dev/null || true)"
+  [ -n "$_IJFW_HOME_UNIX" ] && IJFW_HOME_UNIX="$_IJFW_HOME_UNIX"
+fi
 
 IJFW_DIR="$PROJECT_ROOT/.ijfw"
 PROJECT_TYPE_FILE="$IJFW_DIR/project.type"
@@ -58,7 +68,7 @@ fi
 RUNNER=""
 for cand in \
     "$HOME/.ijfw/mcp-server/src/cold-scan-runner.mjs" \
-    "${IJFW_HOME:-}/mcp-server/src/cold-scan-runner.mjs" \
+    "${IJFW_HOME_UNIX:-}/mcp-server/src/cold-scan-runner.mjs" \
     "$PROJECT_ROOT/mcp-server/src/cold-scan-runner.mjs" \
     "$(dirname "$0")/../../../../mcp-server/src/cold-scan-runner.mjs"; do
   [ -n "$cand" ] && [ -f "$cand" ] && { RUNNER="$cand"; break; }

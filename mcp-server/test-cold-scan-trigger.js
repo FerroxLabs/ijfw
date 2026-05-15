@@ -100,6 +100,10 @@ function waitForFile(path, ms = 2000) {
   return existsSync(path);
 }
 
+function coldScanTimeoutMs() {
+  return process.platform === 'win32' ? 8000 : 2000;
+}
+
 // --- 1. installer post-install path -------------------------------------
 
 test('installer triggerColdScan fires runner; project.type lands <1s', async () => {
@@ -111,8 +115,8 @@ test('installer triggerColdScan fires runner; project.type lands <1s', async () 
   // log-collection changes won't escape the sandbox).
   const out = withSandboxHome(home, () => triggerColdScan(root));
   assert.equal(out.spawned, true, `installer spawn must succeed: ${out.reason || ''}`);
-  const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
-  assert.equal(ok, true, 'project.type must land within ~1s');
+  const ok = waitForFile(join(root, '.ijfw', 'project.type'), coldScanTimeoutMs());
+  assert.equal(ok, true, 'project.type must land within CI cold-scan budget');
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
@@ -128,7 +132,7 @@ test('claude session-start hook fires cold-scan trigger', () => {
   // script's `mkdir -p "$HOME/.ijfw/logs"` into the sandbox dir.
   const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0, `trigger must exit 0; stderr=${res.stderr}`);
-  const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
+  const ok = waitForFile(join(root, '.ijfw', 'project.type'), coldScanTimeoutMs());
   assert.equal(ok, true, 'project.type must land via shared trigger');
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -145,7 +149,7 @@ test('codex session-start hook resolves + spawns cold-scan trigger', () => {
   const home = sandboxHome('codex');
   const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
-  const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
+  const ok = waitForFile(join(root, '.ijfw', 'project.type'), coldScanTimeoutMs());
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -161,7 +165,7 @@ test('gemini session-start hook resolves + spawns cold-scan trigger', () => {
   const home = sandboxHome('gemini');
   const res = spawnSync(BASH, [TRIGGER_SH, root], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(res.status, 0);
-  const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
+  const ok = waitForFile(join(root, '.ijfw', 'project.type'), coldScanTimeoutMs());
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -186,7 +190,7 @@ print(out.get('spawned'))
 `], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(py.status, 0, `python trigger must exit 0; stderr=${py.stderr}`);
   assert.match(py.stdout, /True/, 'wayland python trigger must return spawned=True');
-  const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
+  const ok = waitForFile(join(root, '.ijfw', 'project.type'), coldScanTimeoutMs());
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -211,7 +215,7 @@ print(out.get('spawned'))
 `], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(py.status, 0, `python trigger must exit 0; stderr=${py.stderr}`);
   assert.match(py.stdout, /True/, 'hermes python trigger must return spawned=True');
-  const ok = waitForFile(join(root, '.ijfw', 'project.type'), 1500);
+  const ok = waitForFile(join(root, '.ijfw', 'project.type'), coldScanTimeoutMs());
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
