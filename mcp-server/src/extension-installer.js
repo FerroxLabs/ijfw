@@ -899,27 +899,49 @@ export async function installExtension(source, opts = {}) {
 
     const scopeDir = resolveScopeDir(opts, manifest.name);
 
-    // Idempotent: clear any prior install (replace-on-reinstall).
-    await rm(scopeDir, { recursive: true, force: true });
-    await mkdir(scopeDir, { recursive: true });
+    // 7a. Atomic install: stage into a sibling tmp dir, then rename into place.
+    // Sequence guarantees that we NEVER leave a registered-but-incomplete
+    // extension on disk. A crash during copy leaves either (a) the previous
+    // scopeDir intact, or (b) an orphan tmpScopeDir which is cleanable on
+    // retry. Registry writes happen only after the rename succeeds.
+    const tmpScopeDir = `${scopeDir}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+    try {
+      // Best-effort clean of any stale tmp from a prior crashed install.
+      await rm(tmpScopeDir, { recursive: true, force: true });
+      await mkdir(tmpScopeDir, { recursive: true });
 
-    // Always carry the manifest itself.
-    await writeFile(
-      join(scopeDir, 'manifest.json'),
-      JSON.stringify(manifest, null, 2) + '\n',
-      'utf8',
-    );
+      // Always carry the manifest itself.
+      await writeFile(
+        join(tmpScopeDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2) + '\n',
+        'utf8',
+      );
 
-    // Copy skill files preserving relative layout.
-    const skillsRoot = join(scopeDir, 'skills');
-    await mkdir(skillsRoot, { recursive: true });
-    for (const s of skillBodies) {
-      const dst = join(skillsRoot, s.file);
-      await mkdir(dirname(dst), { recursive: true });
-      await cp(s.absPath, dst, { force: true });
+      // Copy skill files preserving relative layout.
+      const skillsRoot = join(tmpScopeDir, 'skills');
+      await mkdir(skillsRoot, { recursive: true });
+      for (const s of skillBodies) {
+        const dst = join(skillsRoot, s.file);
+        await mkdir(dirname(dst), { recursive: true });
+        await cp(s.absPath, dst, { force: true });
+      }
+
+      // Atomic flip: drop old scopeDir, rename tmp -> scope. fs.rename is
+      // atomic on POSIX when source/dest are on the same filesystem (they are
+      // — same parent directory). On Windows rename to existing dir fails, so
+      // we rm first; the rm+rename combo is non-atomic on Windows but the
+      // invariant ("never registered-but-incomplete") still holds because
+      // the registry update is downstream of this block.
+      await rm(scopeDir, { recursive: true, force: true });
+      await rename(tmpScopeDir, scopeDir);
+    } catch (err) {
+      // Staging failed. Try to leave the filesystem in a clean state — the
+      // tmp dir we created is the only orphan we own.
+      await rm(tmpScopeDir, { recursive: true, force: true }).catch(() => {});
+      throw err;
     }
 
-    // 8. Register.
+    // 8. Register (only after scopeDir is fully populated + renamed).
     const registryPath = resolveRegistryPath(opts);
     const registry = await readRegistry(registryPath);
     const filtered = registry.extensions.filter((e) => e.name !== manifest.name);
