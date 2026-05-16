@@ -201,8 +201,8 @@ function encodeNpmName(name) {
  * Returns once the process exits or the timeout fires.
  * @param {string} cmd
  * @param {string[]} args
- * @param {{cwd?: string, timeoutMs?: number}} [opts]
- * @returns {Promise<void>}
+ * @param {{cwd?: string, timeoutMs?: number, captureStdout?: boolean}} [opts]
+ * @returns {Promise<{stdout: string}>}
  */
 function spawnChecked(cmd, args, opts = {}) {
   return new Promise((resolveP, rejectP) => {
@@ -212,8 +212,12 @@ function spawnChecked(cmd, args, opts = {}) {
       shell: false,
     });
     let stderr = '';
+    let stdout = '';
     child.stderr?.on('data', (b) => { stderr += b.toString('utf8'); });
-    child.stdout?.on('data', () => { /* drain */ });
+    child.stdout?.on('data', (b) => {
+      if (opts.captureStdout) stdout += b.toString('utf8');
+      // else drain only
+    });
     let timedOut = false;
     const timeoutMs = opts.timeoutMs ?? GIT_CLONE_TIMEOUT_MS;
     const timer = setTimeout(() => {
@@ -234,9 +238,61 @@ function spawnChecked(cmd, args, opts = {}) {
         rejectP(new Error(`${cmd} exited with code ${code}: ${stderr.trim().slice(0, 500)}`));
         return;
       }
-      resolveP();
+      resolveP({ stdout });
     });
   });
+}
+
+/**
+ * Pre-scan a tarball for tar-slip / symlink / hardlink members before
+ * extraction. Approach 1 from the audit spec: list contents with
+ * `tar -tvzf`, reject any member that
+ *   - starts with `/` (absolute path)
+ *   - contains a `..` segment (escapes extract dir on join)
+ *   - is a symlink or hardlink (mode char `l` or `h` in the verbose listing)
+ *
+ * `tar -tvzf` output format starts with the file-mode field whose first
+ * char encodes the type: `-` file, `d` dir, `l` symlink, `h` hardlink.
+ * Filenames appear last on the line, with symlinks/hardlinks following the
+ * pattern `<name> -> <target>`.
+ *
+ * @param {string} tarballPath
+ * @returns {Promise<void>} resolves if clean, throws with reason if not
+ */
+async function preflightTarball(tarballPath) {
+  const { stdout } = await spawnChecked('tar', ['-tvzf', tarballPath], {
+    timeoutMs: GIT_CLONE_TIMEOUT_MS,
+    captureStdout: true,
+  });
+  // Independent name listing — `tar -tzf` prints one member name per line with
+  // no leading metadata. Used for path-traversal / absolute-path checks where
+  // robust field parsing across BSD vs GNU tar is otherwise brittle.
+  const { stdout: namesOut } = await spawnChecked('tar', ['-tzf', tarballPath], {
+    timeoutMs: GIT_CLONE_TIMEOUT_MS,
+    captureStdout: true,
+  });
+  const names = namesOut.split('\n').filter((l) => l.length > 0);
+  for (const name of names) {
+    if (name.startsWith('/')) {
+      throw new Error(`tar-slip: tarball contains absolute path member: ${name}`);
+    }
+    const segments = name.split(/[\\/]/);
+    if (segments.includes('..')) {
+      throw new Error(`tar-slip: tarball contains '..' segment in member: ${name}`);
+    }
+  }
+  // Verbose listing — used solely for type-char (symlink/hardlink) detection.
+  // The first character of the first whitespace-delimited field encodes type:
+  // `-` file, `d` dir, `l` symlink, `h` hardlink. Works the same on BSD + GNU.
+  const lines = stdout.split('\n').filter((l) => l.length > 0);
+  for (const line of lines) {
+    const modeMatch = line.match(/^(\S+)/);
+    if (!modeMatch) continue;
+    const typeChar = modeMatch[1][0];
+    if (typeChar === 'l' || typeChar === 'h') {
+      throw new Error(`tar-slip: tarball contains symlink/hardlink (refused): ${line.slice(0, 200)}`);
+    }
+  }
 }
 
 /**
@@ -261,6 +317,11 @@ async function fetchNpmExtension(pkgName) {
     await downloadHttps(tarballUrl, tarballPath);
     const extractDir = join(tmp, 'extract');
     await mkdir(extractDir, { recursive: true });
+    // R10/S10: pre-scan the tarball for tar-slip + symlink/hardlink members
+    // BEFORE extraction. A malicious npm tarball could otherwise drop files
+    // outside `extractDir` (absolute paths, `..` segments) or smuggle in a
+    // symlink that downstream readFile() would follow to /etc/passwd.
+    await preflightTarball(tarballPath);
     // `tar` accepts the tarball path via args — no shell interpolation.
     await spawnChecked('tar', ['-xzf', tarballPath, '-C', extractDir], {
       timeoutMs: GIT_CLONE_TIMEOUT_MS,
