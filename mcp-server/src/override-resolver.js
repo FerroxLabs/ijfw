@@ -38,6 +38,7 @@ import os from 'node:os';
 import {
   BUILTIN_PRESETS,
   MAX_EXTENDS_DEPTH,
+  SKILL_NAME_PATTERN,
   validateOverrideManifest,
   detectCircularExtends,
 } from './override-manifest-schema.js';
@@ -86,6 +87,30 @@ export function getPlatformSkillDirs(projectRoot) {
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Input validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Guard skill identifiers against path traversal and unexpected characters.
+ *
+ * `skill` flows directly into path.join for both base body reads under
+ * shared/skills/<skill>/SKILL.md and per-platform deploy targets. An attacker
+ * (or buggy dispatch arg) passing "../../../etc/passwd" would escape the
+ * shared/skills/ boundary. Reject anything that doesn't match the same
+ * kebab-case pattern the override manifest schema enforces.
+ *
+ * @param {string} skill
+ * @param {string} fnName  caller name for the error message
+ */
+function assertValidSkillName(skill, fnName) {
+  if (typeof skill !== 'string' || !SKILL_NAME_PATTERN.test(skill)) {
+    throw new Error(
+      `${fnName}: invalid skill name ${JSON.stringify(skill)} — must match ${SKILL_NAME_PATTERN}`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +271,7 @@ export function applyOverride(baseSkillBody, overrideFile) {
  * @returns {Promise<string>}
  */
 export async function resolveSkill(skill, projectRoot) {
+  assertValidSkillName(skill, 'resolveSkill');
   const basePath = path.join(projectRoot, 'shared', 'skills', skill, 'SKILL.md');
   let baseBody = '';
   try {
@@ -369,6 +395,7 @@ async function atomicWrite(targetPath, contents) {
  * @returns {Promise<{deployed: Array<{platform: string, path: string}>, failed: Array<{platform: string, path: string, error: string}>}>}
  */
 export async function deployResolvedSkill(skill, projectRoot, opts = {}) {
+  assertValidSkillName(skill, 'deployResolvedSkill');
   const merged = await resolveSkill(skill, projectRoot);
   const platformDirs = getPlatformSkillDirs(projectRoot);
   const deployed = [];
