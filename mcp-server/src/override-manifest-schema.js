@@ -47,7 +47,7 @@ export const BUILTIN_PRESETS = Object.freeze([
 export const MAX_EXTENDS_DEPTH = 5;
 
 export const SKILL_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
-const PRESET_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+export const PRESET_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 /** Section fence markers used by the resolver. */
 export const OVERRIDE_OPEN_FENCE = /<!--\s*ijfw-override:\s*([a-z][a-z0-9-]*)\s*-->/g;

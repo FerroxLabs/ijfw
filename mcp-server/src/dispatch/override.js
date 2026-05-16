@@ -27,11 +27,7 @@ import {
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { OVERRIDE_SCOPES, BUILTIN_PRESETS } from '../override-manifest-schema.js';
-
-// Mirror of override-manifest-schema.js PRESET_NAME_PATTERN (not exported there).
-// Keep the two in sync if the upstream regex tightens.
-const PRESET_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+import { OVERRIDE_SCOPES, BUILTIN_PRESETS, PRESET_NAME_PATTERN } from '../override-manifest-schema.js';
 
 // All built-in presets target ijfw-critique in v1.4.0. We hardcode the
 // affected-skills list for the add/remove paths; if a preset later targets

@@ -26,6 +26,8 @@ import {
   validateOverrideManifest,
   OVERRIDE_OPEN_FENCE,
   OVERRIDE_CLOSE_FENCE,
+  SKILL_NAME_PATTERN,
+  PRESET_NAME_PATTERN,
 } from './src/override-manifest-schema.js';
 import { loadOverrideFile } from './src/override-resolver.js';
 
@@ -154,4 +156,17 @@ test('forbidden-term detector trips on a synthetic positive', () => {
 test('readFileSync reads at least one preset', () => {
   const raw = readFileSync(join(PRESETS_DIR, `${PRESETS[0]}.md`), 'utf8');
   assert.ok(raw.length > 100, 'preset file should be substantial');
+});
+
+// B4: PRESET_NAME_PATTERN is a canonical named export from
+// override-manifest-schema.js. Its source must match SKILL_NAME_PATTERN
+// (same regex) and must reject traversal strings.
+test('B4: PRESET_NAME_PATTERN exported from schema has same source as SKILL_NAME_PATTERN', () => {
+  assert.ok(PRESET_NAME_PATTERN instanceof RegExp, 'PRESET_NAME_PATTERN must be a RegExp');
+  assert.equal(PRESET_NAME_PATTERN.source, SKILL_NAME_PATTERN.source,
+    'PRESET_NAME_PATTERN.source must equal SKILL_NAME_PATTERN.source');
+  assert.ok(PRESET_NAME_PATTERN.test('book'), 'valid preset name accepted');
+  assert.ok(!PRESET_NAME_PATTERN.test('../../evil/pwn'), 'traversal string rejected');
+  assert.ok(!PRESET_NAME_PATTERN.test('Book'), 'uppercase rejected');
+  assert.ok(!PRESET_NAME_PATTERN.test(''), 'empty string rejected');
 });

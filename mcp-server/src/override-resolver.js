@@ -46,6 +46,7 @@ import {
   BUILTIN_PRESETS,
   MAX_EXTENDS_DEPTH,
   SKILL_NAME_PATTERN,
+  PRESET_NAME_PATTERN,
   OVERRIDE_SCOPES,
   validateOverrideManifest,
   detectCircularExtends,
@@ -148,11 +149,6 @@ export function resolveOverridePaths(skill, projectRoot) {
     path.join(projectRoot, '.ijfw', 'skill-overrides', skill, 'override.md'),
   ];
 }
-
-// W6.4/C7-H-01: preset names share the same kebab-case shape as skill names
-// (^[a-z][a-z0-9-]*$). SKILL_NAME_PATTERN already imported above; alias for
-// readability at preset call sites.
-const PRESET_NAME_PATTERN = SKILL_NAME_PATTERN;
 
 /**
  * Guard a preset name before any path construction. Strings from
