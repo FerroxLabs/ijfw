@@ -20,8 +20,11 @@ import {
   realpathSync,
   statSync,
   lstatSync,
+  openSync,
+  closeSync,
+  constants as fsConstants,
 } from 'node:fs';
-import { dirname, basename, join, normalize, delimiter } from 'node:path';
+import { dirname, basename, join, normalize, delimiter, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -948,20 +951,38 @@ export async function deployExtensionSkillsToPlatforms(
     ? opts.sourceDir
     : join(projectRoot, '.ijfw', 'extensions', extensionName, 'skills');
 
-  // Hard-fail if any declared source skill is missing OR is a symlink.
-  // W6.1/R4-H-03: lstat each declared source before copy. Skill files in
-  // home-scope dirs (org/user) are user-controlled — a symlink there to
-  // /etc/passwd would otherwise be copied via copyFileSync (which follows
-  // links) into every platform's skill dir. Defense in depth even though
-  // installExtension already rejects symlinks at install time (S11).
+  // W6.2/R5-H-01: mirror readSkillBodies install-time containment checks for
+  // the deploy path. cmdDeployLazy walks home-scope dirs whose manifests are
+  // user-editable AND don't pass through installExtension's validation —
+  // without a `..` check + resolved-path containment, a hand-placed
+  // manifest with `skills[].file: "../../../.ssh/id_rsa.md"` can copy
+  // arbitrary local files into project platform skill dirs on every
+  // session-start. Reproduced in W6.1 audit round 5.
+  const sourceRootResolved = resolve(sourceRoot);
   for (const s of skillList) {
     if (!s || typeof s.file !== 'string' || typeof s.name !== 'string') {
       throw new Error(`deployExtensionSkillsToPlatforms: invalid skill entry: ${JSON.stringify(s)}`);
+    }
+    // Reject `..` segments outright (belt-and-braces with the resolved-path
+    // containment check below).
+    if (s.file.split(/[\\/]/).some((seg) => seg === '..')) {
+      throw new Error(`source skill path contains traversal segment: ${s.file}`);
     }
     const src = join(sourceRoot, s.file);
     if (!existsSync(src)) {
       throw new Error(`source skill missing: ${src}`);
     }
+    // R5-H-01 main check: canonical path must stay inside sourceRoot.
+    const srcResolved = resolve(src);
+    if (srcResolved !== sourceRootResolved &&
+        !srcResolved.startsWith(sourceRootResolved + sep)) {
+      throw new Error(`source skill resolves outside source dir: ${s.file}`);
+    }
+    // W6.1/R4-H-03: lstat each declared source before copy. Skill files in
+    // home-scope dirs (org/user) are user-controlled — a symlink there to
+    // /etc/passwd would otherwise be copied via copyFileSync (which follows
+    // links) into every platform's skill dir. Defense in depth even though
+    // installExtension already rejects symlinks at install time (S11).
     try {
       const st = lstatSync(src);
       if (st.isSymbolicLink()) {
@@ -1021,7 +1042,29 @@ export async function deployExtensionSkillsToPlatforms(
       let entry = receipt.platforms.find((row) => row.id === p.id && row.skill === s.name);
       try {
         mkdirSync(dstDir, { recursive: true });
-        copyFileSync(src, dst);
+        // W6.2/R5-M-02: close the lstat→copyFileSync TOCTOU window.
+        // copyFileSync follows symlinks at open time; if a local attacker
+        // swaps the regular file for a symlink between our lstat (above)
+        // and the copy, the symlink would be followed. Open with
+        // O_NOFOLLOW so a symlink at the source-file path causes ELOOP
+        // and is refused atomically. On Windows O_NOFOLLOW is a no-op
+        // (Windows reparse-point handling differs) — fall back to the
+        // pre-validated path the lstat above already established.
+        let fd;
+        try {
+          fd = openSync(src, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+        } catch (openErr) {
+          if (openErr && (openErr.code === 'ELOOP' || openErr.code === 'EMLINK')) {
+            throw new Error(`source skill became a symlink between lstat and open (refused): ${src}`);
+          }
+          throw openErr;
+        }
+        try {
+          const buf = readFileSync(fd);
+          writeFileSync(dst, buf, { mode: 0o644 });
+        } finally {
+          try { closeSync(fd); } catch { /* fd may already be invalid */ }
+        }
         deployed.push({ platform: p.id, skillName: s.name, path: dst });
         if (entry) { entry.status = 'ok'; entry.path = dst; entry.error = null; }
       } catch (err) {
