@@ -861,6 +861,13 @@ _IJFW_PROJECT_ROOT="$(pwd -P 2>/dev/null || echo .)"
 if [ -n "$_IJFW_CLI_RUN" ] && [ -n "$_NODE" ]; then
   ( "$_NODE" "$_IJFW_CLI_RUN" "domain-manifest:load" --project-root "$_IJFW_PROJECT_ROOT" </dev/null >/dev/null 2>&1 & )
   disown 2>/dev/null || true
+  # W6/S12: org/user-scoped extensions register to ~/.ijfw/extensions-{org,user}/
+  # but only project-scope installs deploy directly. This second detached call
+  # walks both home-scope dirs and deploys each registered extension's skills
+  # into the CURRENT project's platform skill dirs so they're loadable. Same
+  # subshell-and-disown shape — the t20 detachment verifier covers both lines.
+  ( "$_NODE" "$_IJFW_CLI_RUN" "extension:deploy-lazy" --project-root "$_IJFW_PROJECT_ROOT" </dev/null >/dev/null 2>&1 & )
+  disown 2>/dev/null || true
 else
   ( true </dev/null >/dev/null 2>&1 & )
   disown 2>/dev/null || true
