@@ -267,6 +267,27 @@ export function applyOverride(baseSkillBody, overrideFile) {
  * project) -> return merged body string. Missing base skill returns ''
  * (graceful — keeps deploy from crashing on a typo'd skill name).
  *
+ * ## Active-overrides wiring (S6)
+ *
+ * `ijfw override add <preset>` records the chosen preset in
+ * `~/.ijfw/state/active-overrides.json` for the current project but does NOT
+ * write an `extends: [<preset>]` line into any override file. resolveSkill
+ * therefore consults that state file on every resolution and treats the
+ * recorded presets as an IMPLICIT extends chain — programmatically
+ * equivalent to the user having written `extends: [book, academic, ...]` in
+ * a project-tier override.
+ *
+ * Algorithm:
+ *   1. Read active-overrides for projectRoot. Extract the preset list.
+ *   2. Append any presets explicitly named via `extends:` in user/org/project
+ *      override files (preserving the existing project-first ordering).
+ *   3. Recursively load every preset (and the presets they extend) under the
+ *      same MAX_EXTENDS_DEPTH and cycle guards.
+ *   4. Apply order: deepest-first preset DFS -> user -> org -> project.
+ *
+ * The implicit and explicit lists share the same downstream pipeline, so a
+ * preset that appears via both routes is only loaded/applied once.
+ *
  * @param {string} skill
  * @param {string} projectRoot
  * @returns {Promise<string>}
@@ -290,10 +311,20 @@ export async function resolveSkill(skill, projectRoot) {
   const orgFile = await loadOverrideFile(orgPath);
   const projectFile = await loadOverrideFile(projectPath);
 
-  // Collect referenced presets, project-first (project's extends list wins on
-  // ordering ambiguity). We still apply ALL referenced presets before any
-  // user/org/project overrides so later tiers can override preset content.
+  // Collect referenced presets in project-first order so the project's
+  // extends list wins on ordering ambiguity. We still apply ALL referenced
+  // presets before any user/org/project overrides so later tiers can override
+  // preset content.
   const presetOrder = [];
+
+  // S6: implicit extends from active-overrides state. This is what
+  // `ijfw override add book` records; consulting it here is what makes the
+  // command actually take effect at deploy time.
+  const activePresets = await readActiveOverridesForProject(projectRoot);
+  for (const p of activePresets) {
+    if (typeof p === 'string' && !presetOrder.includes(p)) presetOrder.push(p);
+  }
+
   for (const f of [projectFile, orgFile, userFile]) {
     if (!f || !f.manifest) continue;
     const ext = f.manifest.extends;
@@ -445,6 +476,36 @@ async function readActiveOverrides() {
     if (err instanceof SyntaxError) return { projects: {} };
     throw err;
   }
+}
+
+/**
+ * S6 wiring helper. Read the active-overrides state file and return the
+ * ordered list of preset names recorded for `projectRoot`. Order is the
+ * insertion order in active_overrides[] (which is the order the user ran
+ * `ijfw override add ...`). Resolver-visible failures are swallowed and
+ * mapped to []: a missing/corrupt state file must never block deploy.
+ *
+ * @param {string} projectRoot
+ * @returns {Promise<string[]>}
+ */
+async function readActiveOverridesForProject(projectRoot) {
+  let state;
+  try {
+    state = await readActiveOverrides();
+  } catch {
+    return [];
+  }
+  const proj = state && state.projects && state.projects[projectRoot];
+  if (!proj || !Array.isArray(proj.active_overrides)) return [];
+  const out = [];
+  for (const entry of proj.active_overrides) {
+    if (!entry || typeof entry !== 'object') continue;
+    const preset = entry.preset;
+    if (typeof preset !== 'string') continue;
+    if (out.includes(preset)) continue;
+    out.push(preset);
+  }
+  return out;
 }
 
 async function writeActiveOverrides(state) {
