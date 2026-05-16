@@ -42,10 +42,11 @@ import { dirname, join } from 'path';
 
 // Recognised namespaces -- gates dispatchRun against typos.
 // v1.4.0 (F7): added 'override', 'extension', 'domain-manifest' for the
-// Open Ecosystem dispatch surface. Note 'domain-manifest' is the only
-// hyphenated namespace -- parseColonCommand allows [a-z_][a-z0-9_]* so
-// dispatch by hyphen needs colon-prefixed normalisation in the parser
-// (we rewrite hyphens at the comparison site instead of changing the parser).
+// Open Ecosystem dispatch surface.
+// v1.4.0 (W6/S13): parser now accepts hyphens in namespace ([a-z_][a-z0-9_-]*)
+// so the user-facing spelling 'domain-manifest:<op>' (matching the error
+// message and CLI surface) parses + routes uniformly. The set entry is the
+// hyphenated form so copy-paste from the error string Just Works.
 const RUN_NAMESPACES = new Set([
   'compute',
   'index',
@@ -53,7 +54,7 @@ const RUN_NAMESPACES = new Set([
   'graph',
   'override',
   'extension',
-  'domain_manifest', // hyphen normalised
+  'domain-manifest',
 ]);
 const SEARCH_NAMESPACES = new Set(['compute', 'graph']);
 
@@ -82,7 +83,9 @@ export function parseColonCommand(input) {
   if (colon <= 0) return null;
 
   const namespace = s.slice(0, colon);
-  if (!/^[a-z_][a-z0-9_]*$/.test(namespace)) return null;
+  // v1.4.0 (W6/S13): allow hyphens so multi-word namespaces like
+  // 'domain-manifest' parse without forcing a separate normalisation step.
+  if (!/^[a-z_][a-z0-9_-]*$/.test(namespace)) return null;
 
   const remainder = s.slice(colon + 1);
   // Empty remainder -> command present but blank; treat as malformed.
@@ -159,7 +162,7 @@ export async function dispatchRun(parsed, ctx = {}) {
     const m = await import('./extension.js');
     return m.extensionDispatch({ command: parsed.command, args: parsed.args, projectRoot });
   }
-  if (parsed.namespace === 'domain_manifest') {
+  if (parsed.namespace === 'domain-manifest') {
     const m = await import('./domain-manifest.js');
     return m.domainManifestDispatch({ command: parsed.command, args: parsed.args, projectRoot });
   }
