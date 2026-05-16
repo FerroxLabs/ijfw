@@ -83,6 +83,8 @@ const ORCHESTRATOR_COMMANDS = new Set([
   'memory-why',
   'metrics',
   'mode',
+  'override',
+  'extension',
 ]);
 
 function printHelp() {

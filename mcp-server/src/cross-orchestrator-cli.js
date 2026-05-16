@@ -403,6 +403,12 @@ function parseArgsInner(args) {
   if (args[0] === 'team') {
     return { cmd: 'team', sub: args[1] || 'status' };
   }
+  if (args[0] === 'override') {
+    return { cmd: 'override', sub: args[1] || 'list', rest: args.slice(2) };
+  }
+  if (args[0] === 'extension') {
+    return { cmd: 'extension', sub: args[1] || 'list', rest: args.slice(2) };
+  }
 
   if (args[0] === 'swarm') {
     return { cmd: 'swarm', sub: args[1] || 'status' };
@@ -2057,6 +2063,10 @@ if (isMainModule) {
     cmdBlackboard(parsed.sub);
   } else if (parsed.cmd === 'team') {
     cmdTeam(parsed.sub);
+  } else if (parsed.cmd === 'override') {
+    cmdOverride(parsed.sub, parsed.rest || []);
+  } else if (parsed.cmd === 'extension') {
+    cmdExtension(parsed.sub, parsed.rest || []);
   } else if (parsed.cmd === 'swarm') {
     cmdSwarm(parsed.sub);
   } else if (parsed.cmd === 'codex') {
@@ -2530,6 +2540,45 @@ function readJsonFile(path) {
   } catch {
     return null;
   }
+}
+
+// IJFW v1.4.0 (W3/t16): override + extension CLI commands.
+// Delegate to the colon-syntax dispatch handlers for the actual logic;
+// this thin wrapper only handles argv parsing + result printing.
+function cmdOverride(sub, rest) {
+  const projectRoot = process.env.IJFW_PROJECT_DIR || process.cwd();
+  const args = (rest || []).join(' ');
+  import('./dispatch/override.js')
+    .then(m => m.overrideDispatch({ command: sub, args, projectRoot }))
+    .then(r => {
+      if (r && r.ok === false) {
+        console.error(`[ijfw override] ${r.command}: ${r.error}`);
+        process.exit(1);
+      }
+      console.log(JSON.stringify(r, null, 2));
+    })
+    .catch(err => {
+      console.error(`[ijfw override] ${err.message}`);
+      process.exit(1);
+    });
+}
+
+function cmdExtension(sub, rest) {
+  const projectRoot = process.env.IJFW_PROJECT_DIR || process.cwd();
+  const args = (rest || []).join(' ');
+  import('./dispatch/extension.js')
+    .then(m => m.extensionDispatch({ command: sub, args, projectRoot }))
+    .then(r => {
+      if (r && r.ok === false) {
+        console.error(`[ijfw extension] ${r.command}: ${r.error}`);
+        process.exit(1);
+      }
+      console.log(JSON.stringify(r, null, 2));
+    })
+    .catch(err => {
+      console.error(`[ijfw extension] ${err.message}`);
+      process.exit(1);
+    });
 }
 
 function cmdSwarm(sub) {

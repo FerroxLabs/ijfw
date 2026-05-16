@@ -220,3 +220,32 @@ export async function domainManifestStatus(projectRoot) {
 // ---------------------------------------------------------------------------
 
 export const __test = { TYPE_TO_PRESET, resolveProjectType, activePresetsForProject };
+
+/**
+ * domainManifestDispatch — colon-syntax dispatch entry point (W3/t16).
+ *
+ * Commands:
+ *   load    — run domainManifestLoad(projectRoot)
+ *   status  — return domainManifestStatus(projectRoot)
+ */
+export async function domainManifestDispatch({ command, projectRoot }) {
+  const root = String(projectRoot || process.cwd());
+  try {
+    if (command === 'load') {
+      const result = await domainManifestLoad(root);
+      return { ok: true, command, result };
+    }
+    if (command === 'status') {
+      const result = await domainManifestStatus(root);
+      return { ok: true, command, result };
+    }
+    return {
+      ok: false,
+      command,
+      error: `unknown domain-manifest command: ${command}. Supported: load | status`,
+    };
+  } catch (err) {
+    return { ok: false, command, error: err.message };
+  }
+}
+

@@ -41,7 +41,20 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 // Recognised namespaces -- gates dispatchRun against typos.
-const RUN_NAMESPACES = new Set(['compute', 'index', 'detect', 'graph']);
+// v1.4.0 (F7): added 'override', 'extension', 'domain-manifest' for the
+// Open Ecosystem dispatch surface. Note 'domain-manifest' is the only
+// hyphenated namespace -- parseColonCommand allows [a-z_][a-z0-9_]* so
+// dispatch by hyphen needs colon-prefixed normalisation in the parser
+// (we rewrite hyphens at the comparison site instead of changing the parser).
+const RUN_NAMESPACES = new Set([
+  'compute',
+  'index',
+  'detect',
+  'graph',
+  'override',
+  'extension',
+  'domain_manifest', // hyphen normalised
+]);
 const SEARCH_NAMESPACES = new Set(['compute', 'graph']);
 
 // --- Parser ----------------------------------------------------------------
@@ -138,10 +151,22 @@ export async function dispatchRun(parsed, ctx = {}) {
   if (parsed.namespace === 'graph') {
     return dispatchGraph(parsed, { projectRoot, sessionId });
   }
+  if (parsed.namespace === 'override') {
+    const m = await import('./override.js');
+    return m.overrideDispatch({ command: parsed.command, args: parsed.args, projectRoot });
+  }
+  if (parsed.namespace === 'extension') {
+    const m = await import('./extension.js');
+    return m.extensionDispatch({ command: parsed.command, args: parsed.args, projectRoot });
+  }
+  if (parsed.namespace === 'domain_manifest') {
+    const m = await import('./domain-manifest.js');
+    return m.domainManifestDispatch({ command: parsed.command, args: parsed.args, projectRoot });
+  }
 
   return {
     ok: false,
-    error: 'Unknown ijfw_run sub-command. Supported: compute:python, compute:js, index:<source>, detect:project_type, graph:traverse',
+    error: 'Unknown ijfw_run sub-command. Supported: compute:python, compute:js, index:<source>, detect:project_type, graph:traverse, override:<op>, extension:<op>, domain-manifest:<op>',
   };
 }
 
