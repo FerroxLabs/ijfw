@@ -19,6 +19,7 @@ import {
   mkdirSync,
   realpathSync,
   statSync,
+  lstatSync,
 } from 'node:fs';
 import { dirname, basename, join, normalize, delimiter } from 'node:path';
 import { homedir } from 'node:os';
@@ -916,7 +917,10 @@ function writeReceiptAtomic(receiptPath, doc) {
  * @param {string} extensionName
  * @param {Array<{name: string, file: string}>} skills
  * @param {string} projectRoot
- * @param {{atomicReceipt?: boolean}} [opts]
+ * @param {{atomicReceipt?: boolean, sourceDir?: string}} [opts]
+ *   - sourceDir: override the default project-scope source root. Used by
+ *     `cmdDeployLazy` to deploy from `~/.ijfw/extensions-{org,user}/<name>/skills`
+ *     (W6.1/R4-H-02). Defaults to `<projectRoot>/.ijfw/extensions/<name>/skills`.
  * @returns {Promise<{
  *   deployed: Array<{platform: string, skillName: string, path: string}>,
  *   failed:   Array<{platform: string, skillName: string, error: string}>,
@@ -938,9 +942,18 @@ export async function deployExtensionSkillsToPlatforms(
   const skillList = Array.isArray(skills) ? skills : [];
   const writeReceipt = opts.atomicReceipt !== false;
 
-  const sourceRoot = join(projectRoot, '.ijfw', 'extensions', extensionName, 'skills');
+  // W6.1/R4-H-02: caller can supply org/user-scope source dir. Default is
+  // project-scope path (preserves existing project-install behaviour).
+  const sourceRoot = typeof opts.sourceDir === 'string' && opts.sourceDir.length > 0
+    ? opts.sourceDir
+    : join(projectRoot, '.ijfw', 'extensions', extensionName, 'skills');
 
-  // Hard-fail if any declared source skill is missing.
+  // Hard-fail if any declared source skill is missing OR is a symlink.
+  // W6.1/R4-H-03: lstat each declared source before copy. Skill files in
+  // home-scope dirs (org/user) are user-controlled — a symlink there to
+  // /etc/passwd would otherwise be copied via copyFileSync (which follows
+  // links) into every platform's skill dir. Defense in depth even though
+  // installExtension already rejects symlinks at install time (S11).
   for (const s of skillList) {
     if (!s || typeof s.file !== 'string' || typeof s.name !== 'string') {
       throw new Error(`deployExtensionSkillsToPlatforms: invalid skill entry: ${JSON.stringify(s)}`);
@@ -948,6 +961,16 @@ export async function deployExtensionSkillsToPlatforms(
     const src = join(sourceRoot, s.file);
     if (!existsSync(src)) {
       throw new Error(`source skill missing: ${src}`);
+    }
+    try {
+      const st = lstatSync(src);
+      if (st.isSymbolicLink()) {
+        throw new Error(`source skill is a symlink (refused): ${src}`);
+      }
+    } catch (err) {
+      if (err && err.message && err.message.startsWith('source skill is a symlink')) throw err;
+      // lstat failure on something that existsSync said exists → bubble up
+      throw new Error(`source skill lstat failed: ${src}: ${err.message}`);
     }
   }
 

@@ -150,8 +150,15 @@ async function cmdAudit({ projectRoot }) {
  *
  * Errors per-extension are captured in `failed[]` and do NOT abort the rest.
  */
+// W6.1/C4-M-01: validate extension dir name at the readdir boundary.
+// readdir limits entries to single-segment names (no traversal possible)
+// but a hand-placed dir like `Weird Name With Spaces/` would still flow
+// through to deployExtensionSkillsToPlatforms which would create
+// `ext-Weird Name With Spaces` dirs across every platform.
+const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
+
 async function cmdDeployLazy({ projectRoot }) {
-  const result = { ok: true, command: 'deploy-lazy', result: { deployed: [], failed: [] } };
+  const result = { ok: true, command: 'deploy-lazy', result: { deployed: [], failed: [], skipped: [] } };
   const scopeRoots = [
     { scope: 'org',  root: path.join(os.homedir(), '.ijfw', 'extensions-org') },
     { scope: 'user', root: path.join(os.homedir(), '.ijfw', 'extensions-user') },
@@ -167,8 +174,19 @@ async function cmdDeployLazy({ projectRoot }) {
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      // W6.1/C4-M-02: non-directory entries (incl. symlinks-to-dirs which
+      // appear as non-directory in withFileTypes mode) are skipped with a
+      // record so misconfig is observable.
+      if (!entry.isDirectory()) {
+        result.result.skipped.push({ scope, name: entry.name, reason: 'not-a-directory' });
+        continue;
+      }
       const name = entry.name;
+      // W6.1/C4-M-01: validate entry name shape before flowing into deploy.
+      if (!EXTENSION_NAME_PATTERN.test(name)) {
+        result.result.skipped.push({ scope, name, reason: 'invalid-extension-name' });
+        continue;
+      }
       const extDir = path.join(root, name);
       const manifestPath = path.join(extDir, 'manifest.json');
       let manifest;
@@ -181,7 +199,12 @@ async function cmdDeployLazy({ projectRoot }) {
       }
       const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
       try {
-        const dep = await deployExtensionSkillsToPlatforms(name, skills, projectRoot, {});
+        // W6.1/R4-H-02: pass the org/user-scope source dir explicitly so the
+        // helper reads from `~/.ijfw/extensions-{org,user}/<name>/skills`
+        // instead of the default `<projectRoot>/.ijfw/extensions/<name>/skills`
+        // (which doesn't exist for home-scope installs).
+        const sourceDir = path.join(extDir, 'skills');
+        const dep = await deployExtensionSkillsToPlatforms(name, skills, projectRoot, { sourceDir });
         await deployExtensionToAgentsMd(name, skills, projectRoot);
         result.result.deployed.push({ scope, name, version: manifest.version, deployed: dep.deployed?.length ?? 0 });
       } catch (err) {
