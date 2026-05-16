@@ -30,7 +30,11 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
+
+// Path-separator-agnostic helper: normalises Windows backslash paths so
+// assertions like .endsWith('/claude/skills') work on both POSIX and Windows.
+const norm = (p) => (typeof p === 'string' ? p.split(sep).join('/') : p);
 
 import {
   deployResolvedSkill,
@@ -159,15 +163,15 @@ test('deployResolvedSkill: skips missing platform dirs without crashing', async 
     );
 
     // claude exists; shared/skills was also created by writeBaseSkill.
-    const claudeHit = result.deployed.find((d) => d.path.includes('/claude/skills/'));
+    const claudeHit = result.deployed.find((d) => norm(d.path).includes('/claude/skills/'));
     assert.ok(claudeHit, 'claude/skills deploy should be reported');
 
     // No codex deploy expected.
-    const codexHit = result.deployed.find((d) => d.path.includes('/codex/skills/'));
+    const codexHit = result.deployed.find((d) => norm(d.path).includes('/codex/skills/'));
     assert.equal(codexHit, undefined, 'codex/skills should not be deployed (dir missing)');
 
     // Failures array should not include codex either (we skip, not fail).
-    const codexFail = result.failed.find((d) => d.path.includes('/codex/skills/'));
+    const codexFail = result.failed.find((d) => norm(d.path).includes('/codex/skills/'));
     assert.equal(codexFail, undefined, 'codex/skills should not be in failed');
   } finally {
     cleanup(proj);
@@ -317,10 +321,10 @@ test('getPlatformSkillDirs: returns only existing platform skill dirs under proj
   try {
     mkPlatformDirs(proj, ['claude/skills', 'codex/skills']);
     const dirs = getPlatformSkillDirs(proj);
-    assert.ok(dirs.some((d) => d.endsWith('/claude/skills')));
-    assert.ok(dirs.some((d) => d.endsWith('/codex/skills')));
+    assert.ok(dirs.some((d) => norm(d).endsWith('/claude/skills')));
+    assert.ok(dirs.some((d) => norm(d).endsWith('/codex/skills')));
     assert.equal(
-      dirs.some((d) => d.endsWith('/gemini/extensions/ijfw/skills')),
+      dirs.some((d) => norm(d).endsWith('/gemini/extensions/ijfw/skills')),
       false,
       'gemini dir should not be reported when missing'
     );
