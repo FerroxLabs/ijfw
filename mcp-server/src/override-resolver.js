@@ -34,6 +34,7 @@ import fs from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 import {
   BUILTIN_PRESETS,
@@ -378,7 +379,11 @@ export async function resolveSkill(skill, projectRoot) {
 async function atomicWrite(targetPath, contents) {
   const dir = path.dirname(targetPath);
   await fs.mkdir(dir, { recursive: true });
-  const tmp = `${targetPath}.tmp`;
+  // Unique suffix per writer: two parallel deploys of the same skill would
+  // otherwise collide on a shared `${targetPath}.tmp` and one would clobber
+  // the other mid-write before the rename. pid + 4 bytes of randomness keeps
+  // the suffix unique across threads and processes.
+  const tmp = `${targetPath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   await fs.writeFile(tmp, contents, 'utf8');
   await fs.rename(tmp, targetPath);
 }
@@ -445,7 +450,9 @@ async function readActiveOverrides() {
 async function writeActiveOverrides(state) {
   const p = activeOverridesPath();
   await fs.mkdir(path.dirname(p), { recursive: true });
-  const tmp = `${p}.tmp`;
+  // Same collision concern as atomicWrite above — two concurrent
+  // recordActiveOverride calls could clobber each other's tmp file.
+  const tmp = `${p}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   await fs.writeFile(tmp, JSON.stringify(state, null, 2), 'utf8');
   await fs.rename(tmp, p);
 }
