@@ -3,6 +3,8 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
+import { emitGateResult } from '../../../../mcp-server/src/gate-result.js';
+
 function parseAuditReport(output) {
   const start = output.indexOf('{');
   if (start === -1) return null;
@@ -50,32 +52,64 @@ export async function run(ctx) {
   const durationMs = Date.now() - t0;
   const failed = runs.filter((r) => !r.report || r.highCritical > 0);
 
-  if (failed.length === 0) {
-    return {
-      name: 'audit-ci',
-      status: 'PASS',
-      message: 'audit-ci: no high/critical vulnerabilities in installer or mcp-server',
-      details: runs.map((r) => `${r.dir}: pass`),
-      durationMs,
-    };
+  const status = failed.length === 0 ? 'PASS' : 'FAIL';
+  const message =
+    status === 'PASS'
+      ? 'audit-ci: no high/critical vulnerabilities in installer or mcp-server'
+      : 'audit-ci: high or critical vulnerabilities found';
+
+  let details;
+  if (status === 'PASS') {
+    details = runs.map((r) => `${r.dir}: pass`);
+  } else {
+    const lines = [];
+    for (const r of failed) {
+      if (!r.report) {
+        lines.push(`${r.dir}: audit report unavailable`);
+        lines.push(...r.output.split('\n').filter(Boolean).slice(0, 10));
+        continue;
+      }
+      lines.push(`${r.dir}: ${r.highCritical} high/critical advisory item(s)`);
+      lines.push(...vulnerableNames(r.report).slice(0, 10));
+    }
+    details = lines.slice(0, 20);
   }
 
-  const lines = [];
-  for (const r of failed) {
-    if (!r.report) {
-      lines.push(`${r.dir}: audit report unavailable`);
-      lines.push(...r.output.split('\n').filter(Boolean).slice(0, 10));
-      continue;
+  // Emit canonical gate-result block. Non-fatal: any failure here must not
+  // affect the gate's pass/fail decision.
+  try {
+    const block = await emitGateResult(
+      {
+        gate: 'preflight:audit-ci',
+        status,
+        lenses: [],
+        affected_artifacts: [],
+        accounting: {
+          duration_ms: durationMs,
+          lenses_invoked: 0,
+          cost_usd: null,
+        },
+        remediation: [],
+      },
+      ctx && ctx.repoRoot ? { projectRoot: ctx.repoRoot } : {},
+    );
+    if (typeof block === 'string' && block.length > 0) {
+      details = [...details, block];
     }
-    lines.push(`${r.dir}: ${r.highCritical} high/critical advisory item(s)`);
-    lines.push(...vulnerableNames(r.report).slice(0, 10));
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    try {
+      process.stderr.write(`ijfw: preflight:audit-ci gate-result emit failed: ${msg}\n`);
+    } catch {
+      /* never crash the gate over a receipt issue */
+    }
   }
 
   return {
     name: 'audit-ci',
-    status: 'FAIL',
-    message: 'audit-ci: high or critical vulnerabilities found',
-    details: lines.slice(0, 20),
+    status,
+    message,
+    details,
     durationMs,
   };
 }

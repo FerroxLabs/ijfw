@@ -18,6 +18,7 @@
 //
 // Zero external deps. ESM. No emoji.
 
+import { emitGateResult } from '../gate-result.js';
 import { probeLenses } from './lens-health.js';
 
 // Custom error so callers can distinguish degraded-rejection from a normal
@@ -108,11 +109,14 @@ export async function runTrident(opts = {}) {
     executor = defaultExecutor,
     probeOpts = {},
     which = { codex: true, gemini: true, claude: true },
+    projectRoot = null,
   } = opts;
 
   if (!brief || typeof brief !== 'string') {
     throw new Error('runTrident: `brief` (string) is required');
   }
+
+  const _t0 = Date.now();
 
   // 1. Probe lens health.
   const lensHealth = await probeLenses(which, probeOpts);
@@ -191,6 +195,48 @@ export async function runTrident(opts = {}) {
   }
   const finalVerdict = coerceVerdict(aggregateVerdict, floor);
 
+  // 7. Emit canonical gate-result block (additive — does not alter verdict
+  //    semantics). FLAG passes through unchanged per W0/t1 schema.
+  const durationMs = Date.now() - _t0;
+  const lensesForGate = lensResults.map((r) => ({
+    model: String(r.lens || 'unknown'),
+    verdict: String(r.verdict || 'WARN').toUpperCase(),
+    confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
+    summary:
+      typeof r.summary === 'string' && r.summary.length > 0
+        ? r.summary
+        : (r.error || r.note || `${r.lens || 'lens'} verdict ${r.verdict || 'WARN'}`),
+  }));
+
+  const gateOpts = {
+    gate: 'trident',
+    status: finalVerdict,
+    lenses: lensesForGate,
+    affected_artifacts: [],
+    accounting: {
+      duration_ms: durationMs,
+      lenses_invoked: lensResults.length,
+      cost_usd: null,
+    },
+    remediation: [],
+  };
+
+  let gate_result_block = null;
+  try {
+    gate_result_block = await emitGateResult(
+      gateOpts,
+      projectRoot ? { projectRoot } : {},
+    );
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    try {
+      process.stderr.write(`ijfw: trident gate-result emit failed: ${msg}\n`);
+    } catch {
+      /* nothing we can do; never crash the gate */
+    }
+    gate_result_block = null;
+  }
+
   return {
     verdict: finalVerdict,
     mode,
@@ -200,6 +246,7 @@ export async function runTrident(opts = {}) {
     lens_health: lensHealth,
     accept_degraded: !!accept_degraded,
     gate: gate || null,
+    gate_result_block,
   };
 }
 
