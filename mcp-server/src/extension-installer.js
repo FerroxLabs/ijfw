@@ -15,6 +15,7 @@
 
 import {
   cp,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -409,6 +410,8 @@ async function readManifest(extensionDir) {
 
 /**
  * Read every declared skill body. Returns {name, file, body, absPath}[].
+ * Rejects symlinks and any path that resolves outside `extensionDir`.
+ *
  * @param {object} manifest
  * @param {string} extensionDir
  * @returns {Promise<Array<{name: string, file: string, body: string, absPath: string}>>}
@@ -416,6 +419,7 @@ async function readManifest(extensionDir) {
 async function readSkillBodies(manifest, extensionDir) {
   const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
   const out = [];
+  const extensionRoot = resolve(extensionDir);
   for (const s of skills) {
     if (!s || typeof s.file !== 'string') continue;
     // Guard against path traversal — the schema's FILE_PATH_PATTERN already
@@ -424,6 +428,24 @@ async function readSkillBodies(manifest, extensionDir) {
       throw new Error(`skill file path contains traversal segment: ${s.file}`);
     }
     const absPath = join(extensionDir, s.file);
+    // S11: lstat first so we detect symlinks BEFORE readFile() follows them.
+    // A malicious extension could declare a `.md` skill that's actually a
+    // symlink to /etc/passwd or ~/.ssh/id_rsa — readFile would silently
+    // follow the link and pipe local secrets into the audit brief.
+    const lst = await lstat(absPath).catch(() => null);
+    if (!lst) {
+      throw new Error(`skill file not readable: ${s.file}`);
+    }
+    if (lst.isSymbolicLink()) {
+      throw new Error(`skill file is a symlink (refused): ${s.file}`);
+    }
+    // Belt-and-braces: after resolve(), verify the canonical path still lives
+    // inside extensionRoot. Catches symlink-free traversal we missed above.
+    const resolvedAbs = resolve(absPath);
+    if (resolvedAbs !== extensionRoot &&
+        !resolvedAbs.startsWith(extensionRoot + sep)) {
+      throw new Error(`skill file resolves outside extension dir: ${s.file}`);
+    }
     const body = await readFile(absPath, 'utf8').catch(() => {
       throw new Error(`skill file not readable: ${s.file}`);
     });
