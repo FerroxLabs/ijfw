@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, mkdir, rm, utimes } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, utimes, symlink, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -110,6 +110,69 @@ test('readRecentReceipts: caps at limit param', async () => {
     }
     const r = await readRecentReceipts(proj, 4);
     assert.equal(r.length, 4);
+  } finally { await cleanup(proj); }
+});
+
+test('readRecentReceipts (W7.1/B3-H-01): files larger than MAX_FILE_BYTES are skipped pre-read', async () => {
+  const proj = await makeProj('oversized');
+  try {
+    const d = await makeReceiptsDir(proj);
+    // Create a 200 KB file (cap is 64 KB). With pre-stat enforcement this
+    // must not be read into memory; entry is skipped.
+    const big = join(d, 'huge.json');
+    await writeFile(big, JSON.stringify({ verdict: 'FAIL', affected_artifacts: [{ type: 'chapter' }] }), 'utf8');
+    await truncate(big, 200 * 1024);
+    // Also plant a small ok receipt to confirm the reader still works.
+    await writeReceipt(d, 'ok', receipt('FAIL', ['chapter'], 'ok-id'));
+    const r = await readRecentReceipts(proj);
+    assert.equal(r.length, 1, 'oversized file must be skipped, only ok-id remains');
+    assert.equal(r[0].gate_id, 'ok-id');
+  } finally { await cleanup(proj); }
+});
+
+test('readRecentReceipts (W7.1/B3-M-01): symlinked entries are rejected', async () => {
+  const proj = await makeProj('symlink');
+  const target = await makeProj('symlink-target');
+  try {
+    const d = await makeReceiptsDir(proj);
+    // Plant a real file outside projectRoot.
+    const targetFile = join(target, 'pwn.json');
+    await writeFile(targetFile, JSON.stringify({ verdict: 'FAIL', affected_artifacts: [{ type: 'EXFIL' }] }), 'utf8');
+    // Symlink from receipts dir into target.
+    try {
+      await symlink(targetFile, join(d, 'redir.json'));
+    } catch (err) {
+      // some CI envs disallow symlink; treat as inapplicable
+      if (err && (err.code === 'EPERM' || err.code === 'ENOSYS')) return;
+      throw err;
+    }
+    // Also plant a benign receipt.
+    await writeReceipt(d, 'ok', receipt('FAIL', ['chapter'], 'ok-id'));
+    const r = await readRecentReceipts(proj);
+    assert.equal(r.length, 1, 'symlinked entry must be rejected');
+    assert.equal(r[0].gate_id, 'ok-id');
+    // Pattern detection on this set must NOT include the exfiltrated type.
+    const types = r.flatMap((rr) => rr.affected_artifacts.map((a) => a.type));
+    assert.ok(!types.includes('EXFIL'), 'symlinked target body must not leak into results');
+  } finally { await cleanup(proj); await cleanup(target); }
+});
+
+test('getFeedbackSuggestions (W7.1/B3-N-01): negative/zero opts bound to defensible minimums', async () => {
+  const proj = await makeProj('bounds');
+  try {
+    const d = await makeReceiptsDir(proj);
+    for (let i = 0; i < 4; i++) {
+      await writeReceipt(d, `r-${i}`, receipt('FAIL', ['chapter'], `g-${i}`), i);
+    }
+    // window: 0 should be clamped to 1 -> 1 receipt in window -> count=1, threshold default 3 -> no pattern.
+    const sugg0 = await getFeedbackSuggestions(proj, { window: 0 });
+    assert.deepEqual(sugg0, []);
+    // window: -5 same as above
+    const suggN = await getFeedbackSuggestions(proj, { window: -5 });
+    assert.deepEqual(suggN, []);
+    // threshold: 0 clamped to 1; window default 10 -> 4 FAIL -> 1 pattern
+    const sugg1 = await getFeedbackSuggestions(proj, { threshold: 0 });
+    assert.equal(sugg1.length, 1);
   } finally { await cleanup(proj); }
 });
 

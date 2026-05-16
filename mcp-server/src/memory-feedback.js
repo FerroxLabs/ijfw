@@ -12,7 +12,7 @@
  * counts, never IDs or full receipt content.
  */
 
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const RECEIPTS_SUBPATH = join('.ijfw', 'memory', 'gate-receipts');
@@ -48,7 +48,13 @@ export async function readRecentReceipts(projectRoot, limit = 50) {
   for (const name of jsonFiles) {
     const filePath = join(receiptsDir, name);
     try {
-      const info = await stat(filePath);
+      // W7.1/B3-H-01 + B3-M-01: lstat (not stat) so symlinks are detected,
+      // pre-check size BEFORE readFile so a multi-GB attacker file cannot
+      // OOM the prelude on read.
+      const info = await lstat(filePath);
+      if (info.isSymbolicLink()) continue; // reject symlinks
+      if (!info.isFile()) continue; // only regular files
+      if (info.size > MAX_FILE_BYTES) continue; // size cap pre-read
       withMtime.push({ filePath, mtime: info.mtimeMs });
     } catch {
       // unreadable entry -- skip
@@ -62,6 +68,7 @@ export async function readRecentReceipts(projectRoot, limit = 50) {
   for (const { filePath } of candidates) {
     try {
       const raw = await readFile(filePath, { encoding: 'utf8', flag: 'r' });
+      // Already size-bounded by pre-check above; this is belt-and-braces.
       const bounded = raw.length > MAX_FILE_BYTES ? raw.slice(0, MAX_FILE_BYTES) : raw;
       const parsed = JSON.parse(bounded);
       if (
@@ -162,9 +169,11 @@ export function detectPatterns(receipts, opts = {}) {
  */
 export async function getFeedbackSuggestions(projectRoot, opts = {}) {
   try {
-    const limit = typeof opts.limit === 'number' ? opts.limit : 50;
-    const window = typeof opts.window === 'number' ? opts.window : 10;
-    const threshold = typeof opts.threshold === 'number' ? opts.threshold : 3;
+    // W7.1: bound caller-supplied opts to defensible minimums so misconfigured
+    // callers cannot disable the feature or pass negative values.
+    const limit = Math.max(1, typeof opts.limit === 'number' ? opts.limit : 50);
+    const window = Math.max(1, typeof opts.window === 'number' ? opts.window : 10);
+    const threshold = Math.max(1, typeof opts.threshold === 'number' ? opts.threshold : 3);
 
     const receipts = await readRecentReceipts(projectRoot, limit);
     const patterns = detectPatterns(receipts, { threshold, window });
