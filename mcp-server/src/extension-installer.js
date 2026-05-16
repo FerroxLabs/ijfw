@@ -609,13 +609,15 @@ export async function installExtension(source, opts = {}) {
           status: 'FAIL',
           lenses: [],
           affected_artifacts: [
-            { type: 'file', path: 'manifest.json', name: manifest.name },
+            { type: 'file', ref: 'manifest.json', role: 'extension-manifest' },
           ],
           accounting: { duration_ms: 0, lenses_invoked: 0, cost_usd: null },
           remediation: [
             {
               action: 'Trident audit could not run (degraded or offline).',
-              priority: 'high',
+              target: manifest.name || 'extension',
+              agent_recommended: 'human-review',
+              confidence: 0.5,
             },
           ],
         },
@@ -647,14 +649,23 @@ export async function installExtension(source, opts = {}) {
       acceptable = false;
     }
 
-    const lensesForGate = (tridentResult.lens_results || []).map((lr) => ({
-      lens: lr.lens,
-      verdict: ACCEPTABLE_VERDICTS.has(String(lr.verdict || '').toUpperCase()) ||
-        ['WARN', 'FLAG', 'FAIL'].includes(String(lr.verdict || '').toUpperCase())
-        ? String(lr.verdict).toUpperCase()
-        : 'WARN',
-      findings: Array.isArray(lr.findings) ? lr.findings : [],
-    }));
+    const lensesForGate = (tridentResult.lens_results || []).map((lr) => {
+      const rawVerdict = String(lr.verdict || '').toUpperCase();
+      const knownVerdict = ACCEPTABLE_VERDICTS.has(rawVerdict) ||
+        ['WARN', 'FLAG', 'FAIL'].includes(rawVerdict);
+      const findings = Array.isArray(lr.findings) ? lr.findings : [];
+      const summary = findings.length
+        ? findings.slice(0, 3).map((f) => (typeof f === 'string' ? f : (f?.message || JSON.stringify(f)))).join('; ')
+        : (lr.note || '(no findings)');
+      return {
+        model: String(lr.lens || 'unknown'),
+        verdict: knownVerdict ? rawVerdict : 'WARN',
+        confidence: typeof lr.confidence === 'number' && lr.confidence >= 0 && lr.confidence <= 1
+          ? lr.confidence
+          : 0.5,
+        summary: String(summary).slice(0, 500),
+      };
+    });
 
     gateResultBlock = await emitGateResult(
       {
@@ -662,7 +673,7 @@ export async function installExtension(source, opts = {}) {
         status: verdict,
         lenses: lensesForGate,
         affected_artifacts: [
-          { type: 'file', path: 'manifest.json', name: manifest.name },
+          { type: 'file', ref: 'manifest.json', role: 'extension-manifest' },
         ],
         accounting: {
           duration_ms: 0,
@@ -675,7 +686,9 @@ export async function installExtension(source, opts = {}) {
               {
                 action: `Trident verdict ${verdict} in mode ${mode}; install blocked. ` +
                   `Pass accept_degraded_trident:true after human review to override.`,
-                priority: 'high',
+                target: manifest.name || 'extension',
+                agent_recommended: 'human-review',
+                confidence: 0.5,
               },
             ],
       },

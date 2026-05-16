@@ -347,11 +347,18 @@ test('Trident FAIL verdict aborts install with gate_result_block surfaced', asyn
         `expected trident error, got: ${JSON.stringify(result.errors)}`,
       );
       // The installer should attach a gate_result_block describing the failure.
-      // We accept either string or undefined-but-errors-present (emitGateResult
-      // can fail silently per installer); minimum is the trident error surfaces.
+      // Trident ran (the executor returned a FAIL verdict) so the install reached
+      // the emit site and the block MUST be a string. Permissive fallback removed:
+      // a non-string here indicates emitGateResult silently swallowed a schema
+      // validation error (S1 audit finding).
+      assert.equal(
+        typeof result.gate_result_block,
+        'string',
+        'gate_result_block must be a string when Trident was reached',
+      );
       assert.ok(
-        typeof result.gate_result_block === 'string' || result.gate_result_block === undefined,
-        'gate_result_block must be a string or undefined',
+        result.gate_result_block.includes('```gate-result'),
+        'gate_result_block must be a fenced gate-result block',
       );
     } finally {
       await cleanup(extDir);
