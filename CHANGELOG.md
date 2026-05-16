@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+## [1.4.0] -- 2026-05-16
+
+**Open Ecosystem.** Third-party extensions with cryptographic publisher trust, runtime-enforced permission sandbox, project-overridable bundled skills, and memory-driven pattern feedback. Plugin model + trust chain land in a single ship rather than fragmented over multiple releases.
+
+Trust changes from "publisher's word + Trident content audit" to "Ed25519 publisher signature + Trident content audit + SHA256 integrity hash + declarative-permission runtime mediation." MCP tool count stays at 10. Zero new production dependencies.
+
+### Wave 0-5: Extension framework foundation
+
+- **Override resolution** is deployment-time, not run-time. Project-scope overrides at `<project>/.ijfw/overrides/<preset>.md` and user-scope at `~/.ijfw/overrides/<preset>.md` merge into bundled skills via the `<!-- ijfw-override-target -->` marker contract at install. Preset extends-chain support: an override can declare `extends: [parent-preset]` and inherit, with child-after-parent precedence.
+- **Extension manifest schema.** `manifest.json` declares `name`, `version`, `type: "skill-only"`, `skills[]`, `permissions` (reads + writes allowlist), and `integrity` (SHA256 over canonical JSON). Strict validator with kebab-case name pattern, semver version, and refusal to install scoped names that don't match `@org/pkg` shape.
+- **Install gate.** `installExtension()` runs five sequential checks before files land on disk: source classification (npm/local/git fetch), manifest schema validation, integrity hash verify, secret scan (`classify()` per file body), inline-command scan (`isSafeVerifyCommand()` per shell command in skill bodies), and 3-lens Trident audit. Failure at any stage rolls back atomically. Atomic stage-then-rename install layout closes the crash-during-install hole.
+- **Cross-platform deploy.** `deployExtensionSkillsToPlatforms` writes the extension's skill files to all 14 platform skill directories. Path-traversal hardening: every skill file path is rejected on `..` segments, lstat'd to reject symlinks, validated against a resolved-path containment check, and copied via `O_NOFOLLOW` open. Extension name validation runs at the deploy-loop level too — no path is built from an unvalidated extension or skill name.
+- **Org/user extensions.** Three install scopes: `project` (lands in `<projectRoot>/.ijfw/extensions/`), `org` (lands in `~/.ijfw/extensions-org/`), `user` (lands in `~/.ijfw/extensions-user/`). Org/user scopes get lazy deploy at session start — `cli-run.js` is a new shim invoked by `session-start.sh` detached background spawn that calls `extension deploy-lazy` so org/user extensions surface in the agent without blocking the SessionStart hook.
+- **Gate-result contract.** Every gate (Trident, preflight, plan-check, swarm-review, cross-audit, extension-install) emits the same shape via `gate-result.js`: `verdict`, `findings[]`, `affected_artifacts[]`, `remediation`, fenced as ` ```gate-result ` blocks in receipts. Strict `gate_id` format (`[a-z0-9-]+`, basename-only) collapses any `:` in namespaced gates to `-` for filesystem safety across all platforms.
+- **Cross-project override-use registry.** `~/.ijfw/state/override-use-registry.json` tracks which projects use which preset combinations. Prelude surfaces "N+ projects use this preset combination" suggestions on first use, capped at one-shot to avoid noise.
+- **CLI + colon-syntax dispatch.** New CLI commands ride existing `ijfw_run` and `ijfw_memory_search` MCP tools via colon-syntax subjects (`extension:add`, `extension:keygen`, `override:apply`, `graph:traverse`, etc.) — no MCP tool-count bump.
+
+### Wave 7: Trust chain + runtime enforcement (folded in late)
+
+The original v1.4.0 ship plan deferred publisher signing, runtime mediation, and memory feedback to v1.5.0 with a "schema-ready" handoff. Late in the cycle the decision was made to fold all three into the v1.4.0 release rather than ship a partial trust model. The result is a more honest milestone.
+
+- **Ed25519 publisher signing (W7/B1).** Optional `signature` + `publisher_key_id` fields on the manifest, signed with the publisher's Ed25519 private key (generated via `extension keygen <author>`) and verified at install against `~/.ijfw/trusted-publishers.json`. Unsigned manifests require explicit `--allow-unsigned`. Signed-but-untrusted manifests require explicit `--accept-untrusted`. New CLI: `extension keygen | trust | untrust | trusted`. Signature verification fires between integrity check and Trident audit, so a bad signature fails the install before any audit runs.
+- **Runtime sandbox mediation (W7/B2).** Two-tier enforcement on declared `permissions`. Tier-1 wraps every MCP tool handler with a permission gate that consults the active-extension state at `~/.ijfw/state/active-extension.json` — fail-closed on malformed state, transparent (allow-all) when no active extension. Tier-2 is a Claude Code `PreToolUse` hook (`pre-tool-use-extension-check.sh`) that gates platform-native tools (Edit, Write, Bash, Read, etc.) against the active extension's `tool:*` permission grants. Activation is via the new `extension activate <name>` / `extension deactivate` commands (or `install --activate`). Tier-2 is Claude-Code-only in v1.4.0; other platforms get tier-1 only.
+- **Permission vocabulary extension.** `PERMISSION_READS` and `PERMISSION_WRITES` gain `tool:*`, `tool:edit`, `tool:bash`, `tool:read`, `tool:write`, `tool:notebookedit`, `tool:notebookread`, `tool:glob`, `tool:grep`, `tool:ls`, `tool:webfetch`, `tool:websearch`. Open-ended `TOOL_PERMISSION_PATTERN` (`/^tool:(\*|[a-z][a-z0-9-]*)$/`) lets manifest authors declare new tool grants without schema bumps.
+- **Memory feedback auto-routing (W7/B3).** `mcp-server/src/memory-feedback.js` reads `.ijfw/memory/gate-receipts/` per-project, detects "N of last M receipts failed on the same `affected_artifacts[].type`" patterns, and surfaces one-liner hints in the `ijfw_memory_prelude` output. Pre-stat size cap + lstat symlink rejection prevents a multi-GB or symlinked receipt from OOMing or escaping projectRoot. Suggestion text contains only artifact type + count — never IDs, never receipt bodies.
+
+### Audit: 10 cross-audit rounds, 25 HIGH + 5 MEDIUM closed across 8 patch waves
+
+The v1.4.0 surface went through 8 cross-audit rounds (3-10) using a 3-lens Trident pattern (Codex CLI + Gemini CLI + Claude). Each round was followed by an atomic patch wave that closed every reproducible finding, with re-audit until consensus PASS. The convergence pattern: 13 HIGH → 3 HIGH → 2 HIGH + 2 MEDIUM → 1 HIGH → 1 HIGH → 0 (round 8 ship-ready on existing surface) → 3 HIGH + 1 MEDIUM (round 9 on the new W7 surface) → 0 (round 10 PASS).
+
+Notable findings closed across W6-W7.1:
+
+- **R5-H-01 / R6-H-01 / C7-H-01 path-traversal class.** Same pattern repeated in three places: a user-controlled manifest/state field flowed into a `path.join`/`readFile` without name validation. Closed via consistent defense (lstat reject + name regex assert + resolved-path containment), now applied uniformly across `deployExtensionSkillsToPlatforms`, `readSkillBodies`, `presetOverridePath`, `bundledPresetPath`, and `readRecentReceipts`.
+- **B2-H-01 (round 9).** The W7/B2 runtime mediator shipped without a writer for `~/.ijfw/state/active-extension.json`. With no state file, the gate short-circuited to allow-all — the entire runtime mediation surface was dead code in production. Closed by `extension activate <name>` / `deactivate` CLI commands + an installer auto-activate path.
+- **B2-H-02 (round 9).** The tier-2 Claude hook required `tool:*` permission grants the manifest schema's `PERMISSION_WRITES` allowlist couldn't accept. Closed by extending the allowlist + the open-ended `TOOL_PERMISSION_PATTERN`.
+- **B3-H-01 (round 9).** `readRecentReceipts` loaded the full file before applying the 64 KB cap — an attacker planting a multi-GB receipt would OOM the prelude. Closed by `lstat` + size check + symlink reject BEFORE `readFile`.
+
+### Test footprint
+
+177/177 mcp-server tests pass across 13 suites (was 107 in v1.3.x). New suites: `test-extension-signing.js` (19 tests), `test-runtime-mediator.js` (22 tests), `test-memory-feedback.js` (19 tests). Existing `test-extension-integrity.js` gained 7 W7.1/B2-H-02 vocabulary tests; `test-runtime-mediator.js` gained 6 W7.1/B2-H-01 round-trip tests; `test-memory-feedback.js` gained 3 W7.1/B3 oversized + symlink + bounds tests. Both prior closures (R5-H-01, R6-H-01, S6, S12, C7-H-01) retain their regression coverage and pass under W7 + W7.1.
+
+### Architectural locks lifted in v1.4.0
+
+- ~~Integrity hash != signing; signing deferred to v1.5.0~~ → **Ed25519 signing lands now.**
+- ~~Permissions are declarative + audit only; runtime mediation deferred to v1.5.0~~ → **Runtime mediation tier-1 + tier-2 land now.**
+- ~~Memory feedback schema-ready; auto-routing deferred to v1.5.0~~ → **Pattern-hint auto-routing lands now.**
+
+### v1.5.0 backlog
+
+Genuinely deferred items (no half-ship): hosted publisher key registry / discovery URL, tier-2 runtime mediation hooks for Codex/Gemini/Cursor/Windsurf/Copilot/Hermes/Wayland, key rotation + revocation list distribution, per-extension audit log surfacing in the dashboard UI, pattern detection beyond "repeated-fail-on-same-artifact" (time-series + cross-skill correlation), interactive 2-step `--accept-untrusted` confirmation prompt.
+
 ## [1.3.1] -- 2026-05-12
 
 **Codex hook cleanup + release cadence hardening.** Tightens IJFW's Codex integration for Codex 0.130+, reduces the default dependency footprint, and moves more release drift into automated gates before it reaches users.
