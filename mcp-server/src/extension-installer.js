@@ -56,6 +56,11 @@ const GIT_CLONE_TIMEOUT_MS = 30_000;
 const HTTPS_REQUEST_TIMEOUT_MS = 30_000;
 const REGISTRY_FILENAME = 'extension-registry.json';
 
+// Matches the schema's accepted shape for manifest.name. Kept local because
+// extension-manifest-schema.js does not export the pattern. Stays in sync
+// manually — the schema and this constant are co-located.
+const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
+
 // Verdicts considered acceptable for a normal install (3/3 lenses).
 const ACCEPTABLE_VERDICTS = new Set(['PASS', 'CONDITIONAL']);
 
@@ -842,6 +847,13 @@ export async function uninstallExtension(name, opts = {}) {
   if (!name || typeof name !== 'string') {
     return { ok: false, removed: false, errors: ['name is required'] };
   }
+  // Validate name shape BEFORE constructing any filesystem path. Without this,
+  // a name like '../../../etc/passwd' would join into resolveScopeDir() and
+  // become the target of rm({recursive:true}). Same shape as the manifest
+  // schema's name pattern: kebab, or @scope/kebab.
+  if (!EXTENSION_NAME_PATTERN.test(name)) {
+    return { ok: false, removed: false, errors: ['invalid extension name'] };
+  }
   if (opts.scope !== 'project' && opts.scope !== 'org' && opts.scope !== 'user') {
     return { ok: false, removed: false, errors: ['opts.scope must be project|org|user'] };
   }
@@ -852,6 +864,17 @@ export async function uninstallExtension(name, opts = {}) {
   try {
     const scopeDir = resolveScopeDir(opts, name);
     const registryPath = resolveRegistryPath(opts);
+
+    // Belt-and-braces: even with a validated name, confirm the resolved scope
+    // dir lives inside the expected scope root. resolveScopeDir always joins
+    // a known root with the name, but a future refactor could regress this.
+    const scopeRoot = dirname(scopeDir); // e.g. <projectRoot>/.ijfw/extensions
+    const resolvedScopeDir = resolve(scopeDir);
+    const resolvedScopeRoot = resolve(scopeRoot);
+    if (!resolvedScopeDir.startsWith(resolvedScopeRoot + sep) &&
+        resolvedScopeDir !== resolvedScopeRoot) {
+      return { ok: false, removed: false, errors: ['scope dir escapes scope root'] };
+    }
 
     // Order: AGENTS.md first (rebuilds from current registry — entry still
     // present at this point), then platform skills, then registry+scope dir.
