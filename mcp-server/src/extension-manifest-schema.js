@@ -10,9 +10,14 @@
  *
  * Trust model:
  *   - `integrity` is SHA256 over canonical JSON. It detects tamper, NOT
- *     publisher identity. Asymmetric publisher signing is deferred to v1.5.0.
- *   - `permissions` is declarative intent. NOT runtime-enforced in v1.4.0.
- *     Enforcement = Trident audit + sandbox FORBID_LIST + blackboard claims.
+ *     publisher identity.
+ *   - `signature` + `publisher_key_id` (W7/B1) provide Ed25519 asymmetric
+ *     publisher authentication against the ~/.ijfw/trusted-publishers.json
+ *     store. Unsigned manifests require opts.allowUnsigned at install time.
+ *   - `permissions` is declarative intent AND runtime-enforced by the W7/B2
+ *     runtime mediator (tier-1 MCP wrap cross-platform; tier-2 Claude Code
+ *     hook). Trident audit at install gates content; runtime mediator gates
+ *     calls when an extension is activated via `ijfw_run extension:activate`.
  *   - `type: "full"` is reserved for v1.5.0. v1.4.0 only supports
  *     `type: "skill-only"`.
  *

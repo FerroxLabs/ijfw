@@ -1,34 +1,28 @@
 /**
- * Extension integrity module — IJFW 1.4.0 Open Ecosystem.
+ * Extension integrity + signing module — IJFW 1.4.0 Open Ecosystem.
  *
- * IMPORTANT — read this before extending or consuming this module:
+ * Two layered defenses live here:
  *
- * This is a tamper-detection integrity hash, NOT a cryptographic signature.
- * Publisher authenticity is verified via Trident audit at install time, not
- * via this module. The SHA256 hash here detects in-transit corruption and
- * naive post-install edits — it does not authenticate the publisher and it
- * does not prevent a malicious publisher from publishing a malicious
- * extension that carries its own valid hash.
+ *   1. SHA256 integrity hash (computeIntegrity / verifyIntegrity)
+ *      Detects in-transit corruption and naive post-install edits. Does
+ *      NOT authenticate the publisher on its own.
  *
- * In v1.4.0 trust = Trident install-gate audit (3-lens consensus) + this
- * integrity hash + install-time static analysis (`scanExtensionForSecrets`
- * via `classify()` from redactor.js, and `scanInlineCommands` via
- * `isSafeVerifyCommand()` from ralph-allowlist.js).
+ *   2. Ed25519 asymmetric publisher signing (W7/B1: signManifest /
+ *      verifyManifestSignature, generatePublisherKeypair, trusted-publishers
+ *      store at ~/.ijfw/trusted-publishers.json). Authenticates the publisher
+ *      against a per-host trust store. Unsigned manifests require explicit
+ *      opts.allowUnsigned; signed-but-untrusted manifests require explicit
+ *      opts.acceptUntrusted.
  *
- * Asymmetric publisher signing (Ed25519 + publisher key registry) is
- * deferred to v1.5.0. At that point a separate `extension-signing.js`
- * module will handle signatures, and this module may be renamed to
- * `extension-integrity.js` (residual R13 — kept as `extension-signer.js`
- * for v1.4.0 to avoid mid-wave import churn).
+ * v1.4.0 trust = signature verify (publisher) + Trident install-gate audit
+ * (3-lens content audit) + integrity hash (tamper) + install-time static
+ * analysis (`scanExtensionForSecrets` via `classify()` from redactor.js,
+ * `scanInlineCommands` via `isSafeVerifyCommand()` from ralph-allowlist.js).
  *
  * Spec: .planning/1.4.0/security-spec.md
  *
- * This module performs purely static analysis. It uses node:crypto and
- * node:fs/promises only — no subprocess invocations.
+ * Uses node:crypto + node:fs/promises only — no subprocess invocations.
  */
-
-// TODO(v1.5.0): rename file to `extension-integrity.js` and add a separate
-// `extension-signing.js` for asymmetric publisher signatures (residual R13).
 
 import {
   createHash,
@@ -503,7 +497,10 @@ export async function generatePublisherKeypair(authorName) {
   const keyId = publicKeyFingerprint(publicKeyPem);
 
   const dir = join(keysRoot(), keyId);
-  await mkdir(dir, { recursive: true });
+  // W7.1/B1-L-01: mode 0700 so the per-key directory is not group/world
+  // listable. Private key file inside is 0600 separately.
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  try { await chmod(dir, 0o700); } catch { /* best-effort */ }
   const pubPath = join(dir, 'public.pem');
   const privPath = join(dir, 'private.pem');
   await writeFile(pubPath, publicKeyPem, 'utf8');
