@@ -21,6 +21,7 @@ import { listMemoryFiles, listKnownProjects } from './memory/reader.js';
 import { searchMemory } from './memory/search.js';
 import { buildRecallCounts, mergeRecallCounts, topRecalled } from './memory/recall-counter.js';
 import { PLACEHOLDER_HTML } from './design-companion.js';
+import { listExtensions } from './extension-installer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // REPO_ROOT: IJFW_PROJECT_ROOT override > user's interactive shell cwd (PWD) > process.cwd() fallback.
@@ -685,6 +686,35 @@ export async function startServer(options = {}) {
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(config));
+    }],
+
+    // ---------- extensions health (W3/t15) ----------
+    // Reads .ijfw/state/extension-registry.json (project) plus org/user via
+    // listExtensions(). Missing or malformed registry yields {extensions: []}
+    // (day-1 protection). ENOENT and JSON.parse errors are swallowed inside
+    // readRegistry(); this handler adds an outer try/catch as a final safety
+    // net so a malformed registry can never crash the dashboard.
+    ['/api/extensions/health', async (req, res) => {
+      try {
+        const extensions = await listExtensions(REPO_ROOT);
+        // Strip embedded manifest blobs -- the dashboard only needs the
+        // status summary fields, not the full manifest.
+        const out = (Array.isArray(extensions) ? extensions : []).map((e) => ({
+          name: e.name,
+          version: e.version,
+          scope: e.scope,
+          installed_at: e.installed_at || null,
+          status: e.status || 'stale',
+          last_trident_verdict: e.last_trident_verdict ?? null,
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ extensions: out }));
+      } catch (err) {
+        // ENOENT / missing / malformed -> 200 with empty list (day-1).
+        process.stderr.write(`[ijfw-mcp] /api/extensions/health: ${err && err.message ? err.message : err}\n`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ extensions: [], error: 'malformed registry' }));
+      }
     }],
 
     ['/api/value-delivered', (req, res, url) => {

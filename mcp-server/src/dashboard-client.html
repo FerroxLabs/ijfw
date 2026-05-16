@@ -228,6 +228,7 @@ tr:hover td{background:var(--surface)}
 
     <div class="sb-group-label"><span>Audits</span></div>
     <button class="sb-item" data-section="trident"><span class="sb-icon">&#9650;</span><span class="sb-label">Cross-AI Reviews</span></button>
+    <button class="sb-item" data-section="extensions"><span class="sb-icon">&#9881;</span><span class="sb-label">Extensions</span></button>
 
     <div class="sb-group-label"><span>Settings</span></div>
     <button class="sb-item" data-section="subs"><span class="sb-icon">&#9879;</span><span class="sb-label">Settings</span></button>
@@ -562,6 +563,19 @@ tr:hover td{background:var(--surface)}
       </div>
     </div>
 
+    <!-- ======== EXTENSIONS (W3/t15) ======== -->
+    <div class="section" data-section="extensions">
+      <div class="card">
+        <div class="ctitle"><span id="ext-count">Extensions</span></div>
+        <div id="extensions-content">
+          <div class="empty">
+            <div class="empty-icon">&#9881;</div>
+            <p>Loading extensions...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ======== SUBSCRIPTIONS ======== -->
     <div class="section" data-section="subs">
       <div class="sgrid">
@@ -626,7 +640,7 @@ tr:hover td{background:var(--surface)}
 // ====== LUCIDE ICONS (vendored, ISC license, https://lucide.dev) ======
 const ICONS = {"activity":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2\"/></svg>","bar-chart-2":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 21v-6\"/><path d=\"M12 21V3\"/><path d=\"M19 21V9\"/></svg>","clock":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/></svg>","credit-card":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"20\" height=\"14\" x=\"2\" y=\"5\" rx=\"2\"/><line x1=\"2\" x2=\"22\" y1=\"10\" y2=\"10\"/></svg>","dollar-sign":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"12\" x2=\"12\" y1=\"2\" y2=\"22\"/><path d=\"M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6\"/></svg>","file-text":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8l6 6v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v6h6\"/><path d=\"M10 9H8\"/><path d=\"M16 13H8\"/><path d=\"M16 17H8\"/></svg>","folder-open":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\"/></svg>","folder":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"/></svg>","home":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\"/><path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg>","layers":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z\"/><path d=\"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12\"/><path d=\"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17\"/></svg>","search":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m21 21-4.34-4.34\"/><circle cx=\"11\" cy=\"11\" r=\"8\"/></svg>","settings":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>","shield":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z\"/></svg>","trending-up":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M16 7h6v6\"/><path d=\"m22 7-8.5 8.5-5-5L2 17\"/></svg>","users":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"/><path d=\"M16 3.128a4 4 0 0 1 0 7.744\"/><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/></svg>","zap":"<svg class=\"icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z\"/></svg>"};
 
-var ICON_MAP = {today:'home',live:'activity',window:'clock',spend:'dollar-sign',models:'layers',activity:'bar-chart-2',trend:'trending-up',memsearch:'search',sessions:'clock',handoffs:'file-text',allprojects:'folder',trident:'shield',subs:'credit-card',accounts:'users',display:'settings'};
+var ICON_MAP = {today:'home',live:'activity',window:'clock',spend:'dollar-sign',models:'layers',activity:'bar-chart-2',trend:'trending-up',memsearch:'search',sessions:'clock',handoffs:'file-text',allprojects:'folder',trident:'shield',extensions:'package',subs:'credit-card',accounts:'users',display:'settings'};
 
 document.querySelectorAll('.sb-icon').forEach(function(el) {
   var sec = el.closest('.sb-item');
@@ -1161,6 +1175,134 @@ async function loadBlockUsage() {
   } catch(e) {}
 }
 
+// ====== EXTENSIONS (W3/t15) ======
+function _extScopeChipColor(scope) {
+  // project = accent, org = surface, user = dim
+  if (scope === 'project') return 'background:rgba(94,106,210,0.18);color:var(--accent)';
+  if (scope === 'org')     return 'background:var(--surface);color:var(--fg)';
+  return 'background:var(--surface);color:var(--fg-dim)';
+}
+function _extVerdictChipColor(v) {
+  var u = String(v || '').toUpperCase();
+  if (u === 'PASS')        return 'background:rgba(60,170,90,0.18);color:#3caa5a';
+  if (u === 'CONDITIONAL') return 'background:rgba(220,180,60,0.18);color:#caa030';
+  if (u === 'WARN')        return 'background:rgba(220,180,60,0.18);color:#caa030';
+  if (u === 'FLAG')        return 'background:rgba(220,120,60,0.18);color:#c87038';
+  if (u === 'FAIL')        return 'background:rgba(220,60,60,0.18);color:#c84040';
+  return 'background:var(--surface);color:var(--fg-dim)';
+}
+function _extChip(text, style) {
+  var span = document.createElement('span');
+  span.className = 'chip';
+  span.setAttribute('style', style);
+  span.textContent = text;
+  return span;
+}
+function _extEmpty(content, msg, subMsg) {
+  while (content.firstChild) content.removeChild(content.firstChild);
+  var wrap = document.createElement('div');
+  wrap.className = 'empty';
+  var icon = document.createElement('div');
+  icon.className = 'empty-icon';
+  icon.textContent = '⚙'; // gear
+  var p1 = document.createElement('p');
+  p1.textContent = msg;
+  var p2 = document.createElement('p');
+  p2.setAttribute('style', 'margin-top:8px;font-size:12px;color:var(--fg-dim)');
+  p2.textContent = subMsg;
+  wrap.appendChild(icon);
+  wrap.appendChild(p1);
+  wrap.appendChild(p2);
+  content.appendChild(wrap);
+}
+async function loadExtensions() {
+  var content = document.getElementById('extensions-content');
+  var countEl = document.getElementById('ext-count');
+  if (!content) return;
+  try {
+    var r = await fetch('/api/extensions/health');
+    var d = await r.json();
+    var exts = Array.isArray(d.extensions) ? d.extensions : [];
+    var staleCount = exts.filter(function(e) { return e.status === 'stale'; }).length;
+
+    if (countEl) {
+      countEl.textContent = exts.length === 0
+        ? 'Extensions'
+        : 'Extensions (' + exts.length + ' installed' + (staleCount ? ', ' + staleCount + ' stale' : '') + ')';
+    }
+
+    if (exts.length === 0) {
+      _extEmpty(content, 'No extensions installed.',
+        'Install with `ijfw extension install <source>`. Extensions ship overrides, skills, and integrations.');
+      return;
+    }
+
+    while (content.firstChild) content.removeChild(content.firstChild);
+
+    if (staleCount > 0) {
+      var banner = document.createElement('div');
+      banner.setAttribute('style', 'padding:8px 12px;margin-bottom:12px;background:rgba(220,120,60,0.08);border-left:3px solid #c87038;border-radius:4px;font-size:13px');
+      banner.textContent = '⚠ ' + staleCount + ' extension' + (staleCount === 1 ? '' : 's') +
+        ' marked stale -- scope dir is missing. Run `ijfw extension reinstall` or remove the entry.';
+      content.appendChild(banner);
+    }
+
+    var table = document.createElement('table');
+    table.setAttribute('aria-label', 'Installed extensions');
+    var thead = document.createElement('thead');
+    var trh = document.createElement('tr');
+    ['Name','Version','Scope','Last Trident','Status'].forEach(function(h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    exts.forEach(function(e) {
+      var tr = document.createElement('tr');
+      var tdName = document.createElement('td');
+      var strong = document.createElement('strong');
+      strong.textContent = e.name || '';
+      tdName.appendChild(strong);
+      tr.appendChild(tdName);
+
+      var tdVer = document.createElement('td');
+      tdVer.textContent = e.version || '';
+      tr.appendChild(tdVer);
+
+      var tdScope = document.createElement('td');
+      tdScope.appendChild(_extChip(e.scope || 'unknown', _extScopeChipColor(e.scope)));
+      tr.appendChild(tdScope);
+
+      var tdVerdict = document.createElement('td');
+      var verdict = e.last_trident_verdict;
+      tdVerdict.appendChild(_extChip(verdict == null ? '--' : String(verdict),
+        _extVerdictChipColor(verdict)));
+      tr.appendChild(tdVerdict);
+
+      var tdStatus = document.createElement('td');
+      if (e.status === 'stale') {
+        var staleChip = _extChip('stale', 'background:rgba(220,120,60,0.18);color:#c87038');
+        staleChip.title = 'scope dir missing';
+        tdStatus.appendChild(staleChip);
+      } else {
+        tdStatus.appendChild(_extChip('active', 'background:rgba(60,170,90,0.18);color:#3caa5a'));
+      }
+      tr.appendChild(tdStatus);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    content.appendChild(table);
+  } catch (err) {
+    if (countEl) countEl.textContent = 'Extensions';
+    _extEmpty(content, 'No extensions installed.',
+      'Registry unavailable -- this is normal before the first install.');
+  }
+}
+
 // ====== RUN ALL LOADERS ======
 document.addEventListener('DOMContentLoaded', function() {
   loadCostToday();
@@ -1174,6 +1316,7 @@ document.addEventListener('DOMContentLoaded', function() {
   loadConfig();
   loadTrendSparkline();
   loadBlockUsage();
+  loadExtensions();
 });
 </script>
 </body>
