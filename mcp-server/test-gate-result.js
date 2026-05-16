@@ -450,13 +450,38 @@ test('trident: runTrident attaches a gate_result_block when audit succeeds', asy
 // --------------------------------------------------------------------------
 // 20. preflight gate emits namespaced block
 // --------------------------------------------------------------------------
-test.skip('preflight: audit-ci gate emits a "preflight:audit-ci" gate-result block (no runner present yet)', async () => {
-  // SKIP: at the time of t17, no preflight runner module in mcp-server/src
-  // imports and emits a namespaced `preflight:audit-ci` gate-result block.
-  // The schema (gate-result-schema.js) is the only consumer of that gate
-  // name today. Once a preflight runner is wired (post-t17), unskip and
-  // assert the runner output contains both "```gate-result" and
-  // "preflight:audit-ci" via the same parseGateResultBlock helper above.
+// W2a/t8 wired `installer/src/preflight/gates/audit-ci.js` to emit a
+// `preflight:audit-ci` gate-result block. The runner spawns `npm audit`
+// against `installer/` and `mcp-server/` inside the repoRoot. Pointing at
+// the IJFW repo (which contains both as real npm projects) lets the gate
+// run end-to-end with no fixture scaffolding.
+test('preflight: audit-ci gate emits a "preflight:audit-ci" gate-result block', async () => {
+  const { run } = await import('../installer/src/preflight/gates/audit-ci.js');
+  // Repo root: this test file lives at <root>/mcp-server/test-gate-result.js.
+  const repoRoot = new URL('..', import.meta.url).pathname;
+  const result = await run({ repoRoot });
+
+  assert.equal(typeof result, 'object');
+  assert.equal(VALID_STATUSES.includes(result.status), true,
+    `expected a valid status; got ${result.status}`);
+
+  // The emitted gate-result block is appended to details[].
+  const block = result.details.find(
+    (d) => typeof d === 'string' && d.includes('```gate-result'),
+  );
+  assert.ok(block, 'expected a gate-result fence in details[]');
+
+  const parsed = parseGateResultBlock(block);
+  assert.equal(parsed.gate, 'preflight:audit-ci');
+  assert.equal(parsed.schema_version, SCHEMA_VERSION);
+  assert.equal(VALID_STATUSES.includes(parsed.status), true);
+  // gate_id is colon-collapsed for filesystem safety.
+  assert.equal(parsed.gate_id.includes(':'), false);
+  assert.equal(
+    parsed.gate_id.startsWith('preflight-audit-ci-'),
+    true,
+    `expected colon-collapsed gate_id; got ${parsed.gate_id}`,
+  );
 });
 
 // --------------------------------------------------------------------------
