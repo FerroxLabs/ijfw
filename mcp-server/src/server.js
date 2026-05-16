@@ -1044,6 +1044,21 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
     // Registry failures are non-fatal -- the prelude must always succeed.
   }
 
+  // B3 (1.4.0/W7): memory-feedback pattern hints. Reads gate-receipts and
+  // surfaces "N of last M flagged on artifact:type" hints. Wrapped in a
+  // single try/catch -- pattern detection failure must NEVER fail the prelude.
+  try {
+    const { getFeedbackSuggestions } = await import('./memory-feedback.js');
+    const suggestions = await getFeedbackSuggestions(PROJECT_DIR);
+    if (Array.isArray(suggestions) && suggestions.length > 0) {
+      parts.push('## Pattern hints');
+      for (const s of suggestions) parts.push(`- ${s}`);
+      parts.push('');
+    }
+  } catch {
+    // Best-effort; never fail the prelude on memory-feedback issues.
+  }
+
   parts.push('</ijfw-memory>');
 
   const text = parts.join('\n');
