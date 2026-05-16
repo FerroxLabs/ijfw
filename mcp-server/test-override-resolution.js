@@ -20,8 +20,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import os, { tmpdir } from 'node:os';
+import path, { join } from 'node:path';
 
 import {
   OVERRIDE_SCOPES,
@@ -33,7 +34,7 @@ import {
   OVERRIDE_CLOSE_FENCE,
 } from './src/override-manifest-schema.js';
 
-import { resolveSkill } from './src/override-resolver.js';
+import { resolveSkill, recordActiveOverride } from './src/override-resolver.js';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -324,5 +325,51 @@ test('resolveSkill: non-existent skill returns empty string, does not throw', as
   } finally {
     cleanup(proj);
     cleanup(home);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// B5 / C7-H-01 — preset traversal regression
+// ---------------------------------------------------------------------------
+
+test('C7-H-01: malformed preset in active-overrides.json is dropped by reader', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'c7h1-'));
+  const saved = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await mkdir(path.join(home, 'evil'), { recursive: true });
+    await writeFile(path.join(home, 'evil/pwn.md'),
+      '---\nscope: base\nskill: ijfw-critique\nextends: []\n---\n' +
+      '<!-- ijfw-override: pwn -->\nSTOLEN-OVERRIDE\n<!-- ijfw-override-end -->\n');
+    const proj = await mkdtemp(path.join(os.tmpdir(), 'c7h1-proj-'));
+    await mkdir(path.join(proj, 'shared/skills/ijfw-critique'), { recursive: true });
+    await writeFile(path.join(proj, 'shared/skills/ijfw-critique/SKILL.md'),
+      'BASE\n<!-- ijfw-override-target: pwn -->\nNORMAL\n<!-- ijfw-override-target-end -->\nEND');
+    await mkdir(path.join(home, '.ijfw/state'), { recursive: true });
+    await writeFile(path.join(home, '.ijfw/state/active-overrides.json'),
+      JSON.stringify({ schema_version: '1.0', projects: { [proj]: { active_overrides:
+        [{ preset: '../../evil/pwn', scope: 'project', applied_at: new Date().toISOString() }]
+      } } }));
+    const merged = await resolveSkill('ijfw-critique', proj);
+    assert.ok(!merged.includes('STOLEN-OVERRIDE'), 'preset traversal must not merge content');
+    assert.ok(merged.includes('NORMAL'), 'base marker should remain');
+  } finally {
+    if (saved === undefined) delete process.env.HOME;
+    else process.env.HOME = saved;
+  }
+});
+
+test('C7-H-01: recordActiveOverride rejects malformed preset', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'c7h1w-'));
+  const saved = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await assert.rejects(
+      recordActiveOverride('/tmp/proj', { preset: '../../evil', scope: 'project' }),
+      /invalid preset name/
+    );
+  } finally {
+    if (saved === undefined) delete process.env.HOME;
+    else process.env.HOME = saved;
   }
 });
