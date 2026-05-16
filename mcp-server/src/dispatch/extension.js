@@ -122,7 +122,11 @@ async function cmdAudit({ projectRoot }) {
       scope: e.scope,
       status: e.status ?? 'active',
       last_trident_verdict: e.last_trident_verdict ?? null,
-      permissions: e.manifest?.permissions ?? null,
+      // listExtensions now returns `permissions` and `description` directly
+      // on each entry (W6B-1). Reading them at the top level keeps the
+      // dispatch independent of the registry's internal manifest shape.
+      permissions: e.permissions ?? null,
+      description: e.description ?? null,
     }));
     return { ok: true, command: 'audit', result: { summary, count: summary.length } };
   } catch (err) {
