@@ -278,7 +278,9 @@ export async function resolveSkill(skill, projectRoot) {
   }
 
   // Build preset graph and load every preset (and any preset they extend).
-  const presetGraph = {};
+  // presetGraph is a Map<presetName, {extends: string[]}> so it satisfies
+  // detectCircularExtends's .get() contract.
+  const presetGraph = new Map();
   const loadedPresets = new Map();
 
   async function loadPresetRecursive(preset, depth) {
@@ -296,19 +298,19 @@ export async function resolveSkill(skill, projectRoot) {
       const list = Array.isArray(ext) ? ext : [ext];
       for (const p of list) if (typeof p === 'string') parents.push(p);
     }
-    presetGraph[preset] = parents;
+    presetGraph.set(preset, { extends: parents });
     for (const p of parents) {
       await loadPresetRecursive(p, depth + 1);
     }
   }
 
   for (const p of presetOrder) {
-    presetGraph[p] = presetGraph[p] || [];
+    if (!presetGraph.has(p)) presetGraph.set(p, { extends: [] });
     await loadPresetRecursive(p, 1);
   }
 
   // Cycle check.
-  for (const start of Object.keys(presetGraph)) {
+  for (const start of presetGraph.keys()) {
     const { circular, chain } = detectCircularExtends(presetGraph, start);
     if (circular) {
       throw new Error(
@@ -325,7 +327,8 @@ export async function resolveSkill(skill, projectRoot) {
   function dfs(p) {
     if (visited.has(p)) return;
     visited.add(p);
-    for (const parent of presetGraph[p] || []) dfs(parent);
+    const node = presetGraph.get(p);
+    for (const parent of (node && node.extends) || []) dfs(parent);
     applyOrder.push(p);
   }
   for (const p of presetOrder) dfs(p);
