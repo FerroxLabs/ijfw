@@ -26,7 +26,15 @@ export const EXTENSION_TYPES = Object.freeze(['skill-only', 'full']);
 /**
  * Declarative permission allowlists. Extensions list what they intend to
  * read/write — Trident audit at install time catches divergence between
- * intent and actual skill body behaviour.
+ * intent, and at runtime the W7/B2 mediation wrapper enforces against this
+ * surface.
+ *
+ * W7.1/B2-H-02: the `tool:*` namespace was added so manifests can declare
+ * platform-tool permissions (e.g. tool:edit, tool:bash) that the Claude tier-2
+ * hook checks. Specific entries are listed for IDE completion, but any
+ * `tool:<lowercase-kebab>` value (matching TOOL_PERMISSION_PATTERN below) is
+ * accepted by validatePermissionList so manifest authors can declare per-tool
+ * permissions without schema bumps.
  */
 export const PERMISSION_READS = Object.freeze([
   './README.md',
@@ -37,6 +45,15 @@ export const PERMISSION_READS = Object.freeze([
   'memory:read',
   'project:read',
   'blackboard:read',
+  // tool:<name> entries -- read-side
+  'tool:*',
+  'tool:read',
+  'tool:glob',
+  'tool:grep',
+  'tool:ls',
+  'tool:notebookread',
+  'tool:webfetch',
+  'tool:websearch',
 ]);
 
 export const PERMISSION_WRITES = Object.freeze([
@@ -45,7 +62,21 @@ export const PERMISSION_WRITES = Object.freeze([
   './dist/**',
   'memory:write',
   'blackboard:write',
+  // tool:<name> entries -- write-side
+  'tool:*',
+  'tool:edit',
+  'tool:write',
+  'tool:bash',
+  'tool:notebookedit',
 ]);
+
+/**
+ * Open-ended pattern accepted by validatePermissionList for the `tool:` namespace.
+ * Allows manifests to declare a tool not pre-enumerated above (forward compat).
+ * Validates shape only; runtime enforcement layer decides what the tool actually
+ * does. Wildcard `tool:*` matches separately as an exact allowlist entry.
+ */
+export const TOOL_PERMISSION_PATTERN = /^tool:(\*|[a-z][a-z0-9-]*)$/;
 
 export const REPLACE_MODES = Object.freeze(['override', 'extend', 'wrap']);
 
@@ -93,11 +124,13 @@ function validatePermissionList(list, allowlist, fieldName, errors) {
       errors.push(`${fieldName}[${i}]: must be a string`);
       return;
     }
-    if (!allowlist.includes(p)) {
-      errors.push(
-        `${fieldName}[${i}]: ${JSON.stringify(p)} not in allowlist`,
-      );
-    }
+    // Accept exact-allowlist matches first, then the open-ended `tool:<name>`
+    // shape so manifest authors can declare new tools without a schema bump.
+    if (allowlist.includes(p)) return;
+    if (TOOL_PERMISSION_PATTERN.test(p)) return;
+    errors.push(
+      `${fieldName}[${i}]: ${JSON.stringify(p)} not in allowlist`,
+    );
   });
 }
 

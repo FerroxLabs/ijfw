@@ -14,6 +14,10 @@ import {
   computeIntegrity,
   verifyIntegrity,
 } from './src/extension-signer.js';
+import {
+  validateExtensionManifest,
+  TOOL_PERMISSION_PATTERN,
+} from './src/extension-manifest-schema.js';
 
 const INTEGRITY_HEX_RE = /^sha256:[a-f0-9]{64}$/;
 
@@ -81,4 +85,68 @@ test('canonicalise is deterministic byte-for-byte across calls', () => {
   const s1 = canonicalise(obj);
   const s2 = canonicalise(obj);
   assert.equal(s1, s2);
+});
+
+// W7.1/B2-H-02: tool:* permission vocabulary tests --------------------------
+
+function manifestWithPermissions(reads, writes) {
+  return computeIntegrity({
+    schema_version: '1.0',
+    name: 'p-ext',
+    version: '1.0.0',
+    type: 'skill-only',
+    skills: [{ name: 'hello', file: 'skills/hello.md' }],
+    permissions: { reads, writes },
+  });
+}
+
+test('W7.1/B2-H-02: manifest declaring tool:bash in writes validates', () => {
+  const m = manifestWithPermissions([], ['tool:bash']);
+  const r = validateExtensionManifest(m);
+  assert.equal(r.valid, true, `expected valid, got errors: ${JSON.stringify(r.errors)}`);
+});
+
+test('W7.1/B2-H-02: manifest declaring tool:edit, tool:write, tool:read all validate', () => {
+  const m = manifestWithPermissions(['tool:read', 'tool:grep'], ['tool:edit', 'tool:write']);
+  const r = validateExtensionManifest(m);
+  assert.equal(r.valid, true, `expected valid, got errors: ${JSON.stringify(r.errors)}`);
+});
+
+test('W7.1/B2-H-02: manifest declaring tool:* wildcard validates', () => {
+  const m = manifestWithPermissions([], ['tool:*']);
+  const r = validateExtensionManifest(m);
+  assert.equal(r.valid, true, `expected valid, got errors: ${JSON.stringify(r.errors)}`);
+});
+
+test('W7.1/B2-H-02: manifest declaring forward-compat tool:custom-name validates', () => {
+  // open-ended pattern accepts new tool names without schema bumps
+  const m = manifestWithPermissions([], ['tool:future-tool-name']);
+  const r = validateExtensionManifest(m);
+  assert.equal(r.valid, true, `expected valid, got errors: ${JSON.stringify(r.errors)}`);
+});
+
+test('W7.1/B2-H-02: manifest declaring malformed tool:Invalid_Format rejects', () => {
+  // pattern requires lowercase-kebab; reject anything else
+  const m = manifestWithPermissions([], ['tool:Invalid_Format']);
+  const r = validateExtensionManifest(m);
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.some((e) => /not in allowlist/.test(e)), `expected allowlist rejection, got: ${JSON.stringify(r.errors)}`);
+});
+
+test('W7.1/B2-H-02: manifest declaring bare "tool:" (no name) rejects', () => {
+  const m = manifestWithPermissions([], ['tool:']);
+  const r = validateExtensionManifest(m);
+  assert.equal(r.valid, false);
+});
+
+test('W7.1/B2-H-02: TOOL_PERMISSION_PATTERN unit shape check', () => {
+  assert.ok(TOOL_PERMISSION_PATTERN.test('tool:*'));
+  assert.ok(TOOL_PERMISSION_PATTERN.test('tool:bash'));
+  assert.ok(TOOL_PERMISSION_PATTERN.test('tool:notebookedit'));
+  assert.ok(TOOL_PERMISSION_PATTERN.test('tool:custom-future'));
+  assert.ok(!TOOL_PERMISSION_PATTERN.test('tool:'));
+  assert.ok(!TOOL_PERMISSION_PATTERN.test('tool:Edit'));
+  assert.ok(!TOOL_PERMISSION_PATTERN.test('tool:bad_underscore'));
+  assert.ok(!TOOL_PERMISSION_PATTERN.test('not-tool:bash'));
+  assert.ok(!TOOL_PERMISSION_PATTERN.test('memory:write'));
 });
