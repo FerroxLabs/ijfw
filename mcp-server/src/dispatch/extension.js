@@ -72,17 +72,15 @@ function parseSourceAndScope(args) {
   const tokens = trimmed.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return { source: '', scope: undefined };
   const last = tokens[tokens.length - 1];
-  // W6.1/Gemini-med: if the leading tokens look like a path (start with
-  // '/', './', '../', or '~/'), don't strip a trailing scope-shaped token —
-  // a real local-install of `/my/project` would otherwise be parsed as
-  // source=`/my`, scope=`project`. The user should quote ambiguous paths;
-  // when they don't and the input clearly is a path, prefer treating the
-  // whole thing as the source.
-  const firstTok = tokens[0];
-  const looksLikePath = firstTok.startsWith('/') || firstTok.startsWith('./') ||
-    firstTok.startsWith('../') || firstTok.startsWith('~/');
-  if (!looksLikePath && tokens.length > 1 && VALID_SCOPES.has(last)) {
-    return { source: tokens.slice(0, -1).join(' '), scope: last };
+  // W6.2/R5-M-01: only strip a trailing scope token when the input is exactly
+  // 2 tokens (`<source> <scope>`). Paths with internal whitespace must be
+  // quoted (handled above); a single token is always pure source. This is
+  // narrower than W6.1's looksLikePath heuristic, which broke the common
+  // `ijfw extension add ./local-pkg user` case. The original Gemini-med
+  // case (`/my/project` → source/scope mishandle) is now covered by the
+  // single-token path falling through to "no scope".
+  if (tokens.length === 2 && VALID_SCOPES.has(last)) {
+    return { source: tokens[0], scope: last };
   }
   return { source: tokens.join(' '), scope: undefined };
 }
@@ -166,6 +164,55 @@ async function cmdAudit({ projectRoot }) {
 // `ext-Weird Name With Spaces` dirs across every platform.
 const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
 
+// W6.2/R5-H-02: scoped extensions live at `<root>/@scope/pkg/` (two-level).
+// Flat extensions live at `<root>/pkg/` (one-level). Enumerate both shapes
+// and yield canonical `[name, extDir]` pairs.
+async function* enumerateExtensions(root, scope, skipped) {
+  let entries;
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+  for (const entry of entries) {
+    // Non-directory entries are skipped at the top level (incl. symlinks).
+    if (!entry.isDirectory()) {
+      skipped.push({ scope, name: entry.name, reason: 'not-a-directory' });
+      continue;
+    }
+    if (entry.name.startsWith('@')) {
+      // Scoped: recurse one level. Combined name is `@scope/pkg`.
+      const scopedRoot = path.join(root, entry.name);
+      let inner;
+      try {
+        inner = await fs.readdir(scopedRoot, { withFileTypes: true });
+      } catch {
+        skipped.push({ scope, name: entry.name, reason: 'scoped-readdir-failed' });
+        continue;
+      }
+      for (const sub of inner) {
+        if (!sub.isDirectory()) {
+          skipped.push({ scope, name: `${entry.name}/${sub.name}`, reason: 'not-a-directory' });
+          continue;
+        }
+        const combined = `${entry.name}/${sub.name}`;
+        if (!EXTENSION_NAME_PATTERN.test(combined)) {
+          skipped.push({ scope, name: combined, reason: 'invalid-extension-name' });
+          continue;
+        }
+        yield [combined, path.join(scopedRoot, sub.name)];
+      }
+      continue;
+    }
+    if (!EXTENSION_NAME_PATTERN.test(entry.name)) {
+      skipped.push({ scope, name: entry.name, reason: 'invalid-extension-name' });
+      continue;
+    }
+    yield [entry.name, path.join(root, entry.name)];
+  }
+}
+
 async function cmdDeployLazy({ projectRoot }) {
   const result = { ok: true, command: 'deploy-lazy', result: { deployed: [], failed: [], skipped: [] } };
   const scopeRoots = [
@@ -174,54 +221,40 @@ async function cmdDeployLazy({ projectRoot }) {
   ];
 
   for (const { scope, root } of scopeRoots) {
-    let entries;
     try {
-      entries = await fs.readdir(root, { withFileTypes: true });
+      for await (const [name, extDir] of enumerateExtensions(root, scope, result.result.skipped)) {
+        await deployOneExtension({ scope, name, extDir, projectRoot, result });
+      }
     } catch (err) {
-      if (err.code === 'ENOENT') continue; // scope unused — fine
       result.result.failed.push({ scope, name: null, error: `readdir ${root}: ${err.message}` });
-      continue;
-    }
-    for (const entry of entries) {
-      // W6.1/C4-M-02: non-directory entries (incl. symlinks-to-dirs which
-      // appear as non-directory in withFileTypes mode) are skipped with a
-      // record so misconfig is observable.
-      if (!entry.isDirectory()) {
-        result.result.skipped.push({ scope, name: entry.name, reason: 'not-a-directory' });
-        continue;
-      }
-      const name = entry.name;
-      // W6.1/C4-M-01: validate entry name shape before flowing into deploy.
-      if (!EXTENSION_NAME_PATTERN.test(name)) {
-        result.result.skipped.push({ scope, name, reason: 'invalid-extension-name' });
-        continue;
-      }
-      const extDir = path.join(root, name);
-      const manifestPath = path.join(extDir, 'manifest.json');
-      let manifest;
-      try {
-        const raw = await fs.readFile(manifestPath, 'utf8');
-        manifest = JSON.parse(raw);
-      } catch (err) {
-        result.result.failed.push({ scope, name, error: `manifest read: ${err.message}` });
-        continue;
-      }
-      const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
-      try {
-        // W6.1/R4-H-02: pass the org/user-scope source dir explicitly so the
-        // helper reads from `~/.ijfw/extensions-{org,user}/<name>/skills`
-        // instead of the default `<projectRoot>/.ijfw/extensions/<name>/skills`
-        // (which doesn't exist for home-scope installs).
-        const sourceDir = path.join(extDir, 'skills');
-        const dep = await deployExtensionSkillsToPlatforms(name, skills, projectRoot, { sourceDir });
-        await deployExtensionToAgentsMd(name, skills, projectRoot);
-        result.result.deployed.push({ scope, name, version: manifest.version, deployed: dep.deployed?.length ?? 0 });
-      } catch (err) {
-        result.result.failed.push({ scope, name, error: `deploy: ${err.message}` });
-      }
     }
   }
   return result;
+}
+
+async function deployOneExtension({ scope, name, extDir, projectRoot, result }) {
+  const manifestPath = path.join(extDir, 'manifest.json');
+  let manifest;
+  try {
+    const raw = await fs.readFile(manifestPath, 'utf8');
+    manifest = JSON.parse(raw);
+  } catch (err) {
+    result.result.failed.push({ scope, name, error: `manifest read: ${err.message}` });
+    return;
+  }
+  const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
+  try {
+    // W6.1/R4-H-02: pass the org/user-scope source dir explicitly so the
+    // helper reads from `~/.ijfw/extensions-{org,user}/<name>/skills`
+    // (or `~/.ijfw/extensions-{org,user}/@scope/pkg/skills` for scoped
+    // extensions per W6.2/R5-H-02) instead of the default project path.
+    const sourceDir = path.join(extDir, 'skills');
+    const dep = await deployExtensionSkillsToPlatforms(name, skills, projectRoot, { sourceDir });
+    await deployExtensionToAgentsMd(name, skills, projectRoot);
+    result.result.deployed.push({ scope, name, version: manifest.version, deployed: dep.deployed?.length ?? 0 });
+  } catch (err) {
+    result.result.failed.push({ scope, name, error: `deploy: ${err.message}` });
+  }
 }
 
 export async function extensionDispatch({ command, args = '', projectRoot }) {
