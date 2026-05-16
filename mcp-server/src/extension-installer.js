@@ -1127,6 +1127,12 @@ export async function uninstallExtension(name, opts = {}) {
  * Aggregate installed extensions from project + org + user registries.
  * Dedupes on name+version (first occurrence wins; project > org > user).
  *
+ * Entries include a `permissions` slice and a `description` lifted from the
+ * persisted manifest so downstream consumers (override resolver / audit
+ * dispatch) can answer permission questions without re-reading every
+ * extension's manifest.json from disk. The full manifest is NOT returned
+ * — the response stays compact.
+ *
  * @param {string} projectRoot
  * @returns {Promise<Array<{
  *   name: string,
@@ -1135,6 +1141,8 @@ export async function uninstallExtension(name, opts = {}) {
  *   installed_at: string,
  *   status: 'active'|'stale',
  *   last_trident_verdict: string|null,
+ *   permissions: {reads?: string[], writes?: string[]} | null,
+ *   description: string | null,
  * }>>}
  */
 export async function listExtensions(projectRoot) {
@@ -1151,6 +1159,16 @@ export async function listExtensions(projectRoot) {
         e.name,
       );
       const dirExists = await stat(scopeDir).then(() => true, () => false);
+      // Lift audit-relevant manifest fields. `manifest` is persisted on each
+      // registry entry by installExtension; fall through to null when an
+      // older registry entry predates that field.
+      const manifest = (e.manifest && typeof e.manifest === 'object') ? e.manifest : null;
+      const permissions = manifest && manifest.permissions && typeof manifest.permissions === 'object'
+        ? manifest.permissions
+        : null;
+      const description = manifest && typeof manifest.description === 'string'
+        ? manifest.description
+        : null;
       seen.set(key, {
         name: e.name,
         version: e.version,
@@ -1158,6 +1176,8 @@ export async function listExtensions(projectRoot) {
         installed_at: e.installed_at || null,
         status: dirExists ? 'active' : 'stale',
         last_trident_verdict: e.last_trident_verdict ?? null,
+        permissions,
+        description,
       });
     }
   }
