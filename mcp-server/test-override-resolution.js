@@ -99,11 +99,14 @@ function presetPath(home, preset) {
 }
 
 function withHome(home, fn) {
-  const saved = process.env.HOME;
+  // Windows: os.homedir() reads USERPROFILE, not HOME. Swap both for true isolation.
+  const savedHome = process.env.HOME;
+  const savedUser = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   return Promise.resolve(fn()).finally(() => {
-    if (saved === undefined) delete process.env.HOME;
-    else process.env.HOME = saved;
+    if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+    if (savedUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = savedUser;
   });
 }
 
@@ -334,8 +337,10 @@ test('resolveSkill: non-existent skill returns empty string, does not throw', as
 
 test('C7-H-01: malformed preset in active-overrides.json is dropped by reader', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'c7h1-'));
-  const saved = process.env.HOME;
+  const savedHome = process.env.HOME;
+  const savedUser = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     await mkdir(path.join(home, 'evil'), { recursive: true });
     await writeFile(path.join(home, 'evil/pwn.md'),
@@ -354,22 +359,24 @@ test('C7-H-01: malformed preset in active-overrides.json is dropped by reader', 
     assert.ok(!merged.includes('STOLEN-OVERRIDE'), 'preset traversal must not merge content');
     assert.ok(merged.includes('NORMAL'), 'base marker should remain');
   } finally {
-    if (saved === undefined) delete process.env.HOME;
-    else process.env.HOME = saved;
+    if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+    if (savedUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = savedUser;
   }
 });
 
 test('C7-H-01: recordActiveOverride rejects malformed preset', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'c7h1w-'));
-  const saved = process.env.HOME;
+  const savedHome = process.env.HOME;
+  const savedUser = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     await assert.rejects(
       recordActiveOverride('/tmp/proj', { preset: '../../evil', scope: 'project' }),
       /invalid preset name/
     );
   } finally {
-    if (saved === undefined) delete process.env.HOME;
-    else process.env.HOME = saved;
+    if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+    if (savedUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = savedUser;
   }
 });

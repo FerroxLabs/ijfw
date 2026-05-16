@@ -39,13 +39,16 @@ import {
 
 async function withFreshHome(fn) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ijfw-reg-home-'));
-  const prev = process.env.HOME;
+  // Windows: os.homedir() reads USERPROFILE, not HOME. Swap both for true isolation.
+  const prevHome = process.env.HOME;
+  const prevUser = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     return await fn(home);
   } finally {
-    if (prev === undefined) delete process.env.HOME;
-    else process.env.HOME = prev;
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUser;
   }
 }
 

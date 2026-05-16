@@ -65,13 +65,16 @@ async function mkProjectRoot(type) {
 }
 
 function withHome(home, fn) {
-  const prev = process.env.HOME;
+  // Windows: os.homedir() reads USERPROFILE, not HOME. Swap both for true isolation.
+  const prevHome = process.env.HOME;
+  const prevUser = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   return Promise.resolve()
     .then(fn)
     .finally(() => {
-      if (prev === undefined) delete process.env.HOME;
-      else process.env.HOME = prev;
+      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+      if (prevUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUser;
     });
 }
 

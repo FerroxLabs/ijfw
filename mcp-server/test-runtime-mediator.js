@@ -41,13 +41,16 @@ async function withIsolatedHome(labelOrFn, maybeFn) {
   const label = typeof labelOrFn === 'string' ? labelOrFn : 'home';
   const fn = typeof labelOrFn === 'function' ? labelOrFn : maybeFn;
   const fakeHome = await makeTmp(label);
-  const prev = process.env.HOME;
+  // Windows: os.homedir() reads USERPROFILE, not HOME. Swap both for true isolation.
+  const prevHome = process.env.HOME;
+  const prevUser = process.env.USERPROFILE;
   process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
   try {
     return await fn(fakeHome);
   } finally {
-    if (prev === undefined) delete process.env.HOME;
-    else process.env.HOME = prev;
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUser;
     await cleanup(fakeHome);
   }
 }

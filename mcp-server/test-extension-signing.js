@@ -53,12 +53,16 @@ function baseManifest(overrides = {}) {
 
 async function withIsolatedHome(label, fn) {
   const home = await mkdtemp(join(tmpdir(), `ijfw-sig-${label}-`));
-  const prev = process.env.HOME;
+  // Windows: os.homedir() reads USERPROFILE, not HOME. Swap both for true isolation.
+  const prevHome = process.env.HOME;
+  const prevUser = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     await fn(home);
   } finally {
-    process.env.HOME = prev;
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUser;
     await rm(home, { recursive: true, force: true }).catch(() => {});
   }
 }

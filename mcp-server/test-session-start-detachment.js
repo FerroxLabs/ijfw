@@ -136,7 +136,7 @@ test('static shape: session-start.sh contains disown + subshell-ampersand-close'
   );
 });
 
-test('runtime: session-start.sh exits regardless of detached body duration', async () => {
+test('runtime: session-start.sh exits regardless of detached body duration', { skip: process.platform === 'win32' ? 'bash not on Windows runner PATH' : undefined }, async () => {
   const { home, cwd } = await withTmpHome();
   const tmpScripts = await fs.mkdtemp(path.join(os.tmpdir(), 'ijfw-det-scripts-'));
 

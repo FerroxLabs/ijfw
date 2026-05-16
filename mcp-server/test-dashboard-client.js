@@ -11,7 +11,7 @@ test('under 100KB', () => { assert.ok(sz < 102400); });
 test('DOCTYPE', () => { assert.ok(h.toLowerCase().trimStart().startsWith('<!doctype html')); });
 test('sidebar exists', () => { assert.ok(h.includes('id="sidebar"')); });
 test('nav sections exist', () => { assert.ok((h.match(/data-section="/g)||[]).length >= 10); });
-test('sidebar 9 items', () => { assert.strictEqual((h.match(/class="sb-item/g)||[]).length, 9); });
+test('sidebar 10 items', () => { assert.strictEqual((h.match(/class="sb-item/g)||[]).length, 10); });
 test('Lucide ICONS const', () => { assert.ok(h.includes('const ICONS')); });
 test('SVGs use currentColor', () => { assert.ok(h.includes('stroke="currentColor"')); });
 test('ICON_MAP for routing', () => { assert.ok(h.includes('ICON_MAP')); });
