@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import { dirname, basename, join, normalize, delimiter } from 'node:path';
 import { homedir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -887,7 +887,11 @@ function safeReceiptName(s) {
 
 function writeReceiptAtomic(receiptPath, doc) {
   mkdirSync(dirname(receiptPath), { recursive: true });
-  const tmp = `${receiptPath}.tmp.${process.pid}`;
+  // pid + 4-byte random suffix: pid alone is not unique under concurrent
+  // async calls within the same process (deployExtensionSkillsToPlatforms
+  // flushes the receipt after every platform/skill pair) or across two
+  // installer processes that happen to share a pid namespace (containers).
+  const tmp = `${receiptPath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', { mode: 0o644 });
   renameSync(tmp, receiptPath);
 }

@@ -19,6 +19,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -441,7 +442,19 @@ async function readRegistry(path) {
 
 async function writeRegistry(path, registry) {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(registry, null, 2) + '\n', 'utf8');
+  // Atomic write: tmp + rename. Use pid + 4-byte random suffix so concurrent
+  // writes (same pid, parallel async calls, or two installer processes) cannot
+  // collide on a single tmp filename and clobber each other's in-flight state.
+  const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+  const body = JSON.stringify(registry, null, 2) + '\n';
+  try {
+    await writeFile(tmp, body, 'utf8');
+    await rename(tmp, path);
+  } catch (err) {
+    // Best-effort cleanup of the tmp file if rename failed mid-flight.
+    try { await rm(tmp, { force: true }); } catch { /* swallow */ }
+    throw err;
+  }
 }
 
 // --- exported helpers -------------------------------------------------------
