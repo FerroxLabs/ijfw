@@ -27,7 +27,11 @@ import {
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { OVERRIDE_SCOPES } from '../override-manifest-schema.js';
+import { OVERRIDE_SCOPES, BUILTIN_PRESETS } from '../override-manifest-schema.js';
+
+// Mirror of override-manifest-schema.js PRESET_NAME_PATTERN (not exported there).
+// Keep the two in sync if the upstream regex tightens.
+const PRESET_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 // All built-in presets target ijfw-critique in v1.4.0. We hardcode the
 // affected-skills list for the add/remove paths; if a preset later targets
@@ -38,6 +42,40 @@ const PRESET_TARGET_SKILLS = {
   academic: ['ijfw-critique'],
   screenplay: ['ijfw-critique'],
 };
+
+/**
+ * Validate preset NAME shape at the dispatch boundary. Strings like
+ * `book; rm -rf $HOME` would otherwise round-trip into receipts and
+ * prelude suggestions.
+ */
+function validatePresetName(preset) {
+  if (typeof preset !== 'string' || !PRESET_NAME_PATTERN.test(preset)) {
+    return 'invalid preset name';
+  }
+  return null;
+}
+
+/**
+ * Confirm a preset name refers to a real preset file. Accepts built-ins,
+ * `~/.ijfw/overrides/presets/<preset>.md`, and `~/.ijfw/user-overrides/<preset>`.
+ */
+async function presetExists(preset) {
+  if (BUILTIN_PRESETS.includes(preset)) return true;
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, '.ijfw', 'overrides', 'presets', `${preset}.md`),
+    path.join(home, '.ijfw', 'user-overrides', preset),
+  ];
+  for (const p of candidates) {
+    try {
+      await fs.stat(p);
+      return true;
+    } catch {
+      /* try next */
+    }
+  }
+  return false;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -57,6 +95,11 @@ async function readActiveOverrides(projectRoot) {
 async function cmdAdd({ args, projectRoot }) {
   const [preset, rawScope] = args.split(/\s+/).filter(Boolean);
   if (!preset) return { ok: false, command: 'add', error: 'missing preset name' };
+  const shapeErr = validatePresetName(preset);
+  if (shapeErr) return { ok: false, command: 'add', error: shapeErr };
+  if (!(await presetExists(preset))) {
+    return { ok: false, command: 'add', error: `unknown preset: ${preset}` };
+  }
   const scope = OVERRIDE_SCOPES.includes(rawScope) ? rawScope : 'project';
   const override = { preset, scope, applied_at: nowIso() };
   try {
@@ -79,6 +122,8 @@ async function cmdAdd({ args, projectRoot }) {
 async function cmdRemove({ args, projectRoot }) {
   const [preset] = args.split(/\s+/).filter(Boolean);
   if (!preset) return { ok: false, command: 'remove', error: 'missing preset name' };
+  const shapeErr = validatePresetName(preset);
+  if (shapeErr) return { ok: false, command: 'remove', error: shapeErr };
   try {
     await removeActiveOverride(projectRoot, preset);
   } catch (err) {
@@ -126,6 +171,11 @@ async function cmdAudit({ projectRoot }) {
 async function cmdPromote({ args, projectRoot }) {
   const [preset] = args.split(/\s+/).filter(Boolean);
   if (!preset) return { ok: false, command: 'promote', error: 'missing preset name' };
+  const shapeErr = validatePresetName(preset);
+  if (shapeErr) return { ok: false, command: 'promote', error: shapeErr };
+  if (!(await presetExists(preset))) {
+    return { ok: false, command: 'promote', error: `unknown preset: ${preset}` };
+  }
   const affected = PRESET_TARGET_SKILLS[preset] ?? ['ijfw-critique'];
   const promoted = [];
   for (const skill of affected) {
