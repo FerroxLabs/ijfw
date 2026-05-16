@@ -15,7 +15,7 @@
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import {
   GATE_NAME_PATTERN,
@@ -110,6 +110,25 @@ export async function makeReceipt(gateResult, opts = {}) {
     const gateId = typeof gateResult.gate_id === 'string' ? gateResult.gate_id : null;
     if (!gateId) return;
 
+    // Defence-in-depth against path traversal via a poisoned gate_id.
+    // makeGateId() produces ids matching `<gate>-<ts>-<rand4>` where <gate>
+    // has colons collapsed to hyphens — i.e. lowercase alphanumerics + hyphen
+    // only, starting with a letter. Anything else (e.g. "../" segments,
+    // absolute paths, alternate separators) is rejected outright.
+    if (!RECEIPT_GATE_ID_PATTERN.test(gateId)) {
+      try {
+        process.stderr.write(
+          `ijfw: makeReceipt rejected unsafe gate_id "${gateId}"\n`,
+        );
+      } catch {
+        /* even stderr write can fail in odd environments; nothing to do */
+      }
+      return;
+    }
+    // Belt-and-braces: strip any directory component that slipped past the
+    // regex (e.g. odd Unicode tricks, alternate path separators on Windows).
+    const safeId = basename(gateId);
+
     const root = typeof opts.projectRoot === 'string' && opts.projectRoot.length > 0
       ? opts.projectRoot
       : process.cwd();
@@ -119,7 +138,7 @@ export async function makeReceipt(gateResult, opts = {}) {
       '.ijfw',
       'memory',
       'gate-receipts',
-      `${gateId}.json`,
+      `${safeId}.json`,
     );
 
     await mkdir(dirname(receiptPath), { recursive: true });
@@ -137,6 +156,12 @@ export async function makeReceipt(gateResult, opts = {}) {
 }
 
 // --- Internals -------------------------------------------------------------
+
+// Strict gate_id shape: lowercase alphanumerics + hyphen, must start with a
+// letter. Matches what makeGateId() produces after colon-collapse + ts/rand4
+// suffix. Used by makeReceipt() to refuse poisoned gate_id values before any
+// filesystem call.
+const RECEIPT_GATE_ID_PATTERN = /^[a-z][a-z0-9-]+$/;
 
 async function resolveProjectType(projectRoot) {
   try {
