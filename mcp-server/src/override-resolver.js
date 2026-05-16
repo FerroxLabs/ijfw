@@ -34,7 +34,13 @@ import fs from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+
+// Absolute path to this module's directory (mcp-server/src/), used to locate
+// the bundled built-in preset files shipped alongside the resolver.
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const BUNDLED_PRESETS_DIR = path.join(MODULE_DIR, 'overrides', 'presets');
 
 import {
   BUILTIN_PRESETS,
@@ -143,7 +149,33 @@ export function resolveOverridePaths(skill, projectRoot) {
 }
 
 function presetOverridePath(preset) {
+  // Primary location: per-user copy under ~/.ijfw/overrides/presets/ . The
+  // installer copies built-in presets here on install; users may edit them
+  // or drop their own custom presets alongside.
   return path.join(os.homedir(), '.ijfw', 'overrides', 'presets', `${preset}.md`);
+}
+
+function bundledPresetPath(preset) {
+  // Fallback: the built-in presets ship inside the npm package at
+  // mcp-server/src/overrides/presets/. On a fresh install where nothing has
+  // copied them to ~/.ijfw/overrides/presets/ yet, the resolver still needs
+  // them so `ijfw override add book` works the first time without
+  // bootstrapping. Per-user files always win when present.
+  return path.join(BUNDLED_PRESETS_DIR, `${preset}.md`);
+}
+
+/**
+ * Load a preset override file, trying the per-user path first and falling
+ * back to the bundled copy. Returns null if neither exists. Throws if a
+ * located file is structurally invalid.
+ *
+ * @param {string} preset
+ * @returns {Promise<{manifest: object, body: string} | null>}
+ */
+async function loadPresetByName(preset) {
+  const homed = await loadOverrideFile(presetOverridePath(preset));
+  if (homed) return homed;
+  return loadOverrideFile(bundledPresetPath(preset));
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +380,10 @@ export async function resolveSkill(skill, projectRoot) {
       );
     }
     if (loadedPresets.has(preset)) return;
-    const pf = await loadOverrideFile(presetOverridePath(preset));
+    // S7: try ~/.ijfw/overrides/presets/<preset>.md first, then fall back to
+    // the bundled copy at mcp-server/src/overrides/presets/<preset>.md so
+    // fresh installs (no per-user copy yet) still find the 4 built-ins.
+    const pf = await loadPresetByName(preset);
     loadedPresets.set(preset, pf); // may be null
     const parents = [];
     if (pf && pf.manifest && pf.manifest.extends) {
