@@ -693,3 +693,420 @@ export function clineMerge(serverJs, home, ts) {
   writeAtomic(dst, JSON.stringify(doc, null, 2), { mode: 0o600 });
   return dst;
 }
+
+// ============================================================================
+// Extension deploy — 1.4.0 / W2b / t11
+//
+// Cross-platform skill deploy + AGENTS.md injection for installed extensions.
+// Spec: .planning/1.4.0/extension-deploy-spec.md (R3+R8 contract).
+// ============================================================================
+
+const EXT_AGENTS_MARK_START = '<!-- IJFW-EXTENSIONS-START -->';
+const EXT_AGENTS_MARK_END = '<!-- IJFW-EXTENSIONS-END -->';
+const EXT_REGISTRY_FILENAME = 'extension-registry.json';
+
+// Canonical platform skill-dir list. Mirrors override-resolver.getPlatformSkillDirs
+// so deploy/resolve/uninstall use the same enumeration. Adding a new platform
+// here picks it up across the board.
+const EXTENSION_PLATFORM_SKILL_DIRS = Object.freeze([
+  { id: 'claude',    rel: 'claude/skills' },
+  { id: 'codex',     rel: 'codex/skills' },
+  { id: 'gemini',    rel: 'gemini/extensions/ijfw/skills' },
+  { id: 'cursor',    rel: 'cursor/skills' },
+  { id: 'windsurf',  rel: 'windsurf/skills' },
+  { id: 'copilot',   rel: 'copilot/skills' },
+  { id: 'hermes',    rel: 'hermes/skills' },
+  { id: 'wayland',   rel: 'wayland/skills' },
+  { id: 'shared',    rel: 'shared/skills' },
+  { id: 'universal', rel: 'universal/skills' },
+]);
+
+/**
+ * Return the platform skill-dir enumeration. Exported so override-resolver and
+ * other consumers can drop their hard-coded copies later (TODO in
+ * override-resolver.js line 54).
+ */
+export function getExtensionPlatformSkillDirs() {
+  return EXTENSION_PLATFORM_SKILL_DIRS.map((p) => ({ ...p }));
+}
+
+function readExtensionRegistrySync(projectRoot) {
+  const path = join(projectRoot, '.ijfw', 'state', EXT_REGISTRY_FILENAME);
+  if (!existsSync(path)) return { extensions: [] };
+  try {
+    const raw = readFileSync(path, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.extensions)) return parsed;
+    return { extensions: [] };
+  } catch {
+    return { extensions: [] };
+  }
+}
+
+function renderExtensionsBlock(entries) {
+  // entries: Array<{name: string, skills: Array<{name: string}>}>
+  const lines = [EXT_AGENTS_MARK_START, '## Extensions'];
+  for (const e of entries) {
+    const skillNames = Array.isArray(e.skills)
+      ? e.skills.map((s) => (s && s.name ? String(s.name) : '')).filter(Boolean)
+      : [];
+    const skillsText = skillNames.length ? skillNames.join(', ') : '(none)';
+    lines.push(`- **${e.name}**: ${skillsText}`);
+  }
+  lines.push(EXT_AGENTS_MARK_END);
+  return lines.join('\n');
+}
+
+function replaceOrAppendExtensionsBlock(text, blockBody) {
+  // Existing block? Replace in-place to preserve surrounding content.
+  const startIdx = text.indexOf(EXT_AGENTS_MARK_START);
+  const endIdx = text.indexOf(EXT_AGENTS_MARK_END);
+  if (startIdx >= 0 && endIdx > startIdx) {
+    const before = text.slice(0, startIdx);
+    const after = text.slice(endIdx + EXT_AGENTS_MARK_END.length);
+    return before + blockBody + after;
+  }
+  // Append fresh block.
+  let out = text;
+  if (out.length && !out.endsWith('\n')) out += '\n';
+  if (out.length && !out.endsWith('\n\n')) out += '\n';
+  out += blockBody + '\n';
+  return out;
+}
+
+/**
+ * Idempotently inject the IJFW-EXTENSIONS block into <projectRoot>/AGENTS.md.
+ * The block lists every active extension from extension-registry.json, plus
+ * the one currently being deployed (if it's not yet in the registry).
+ *
+ * @param {string} extensionName
+ * @param {Array<{name: string}>} skills — manifest.skills entries for this extension
+ * @param {string} projectRoot
+ * @returns {Promise<{path: string, action: 'replaced'|'appended'|'created'}>}
+ */
+export async function deployExtensionToAgentsMd(extensionName, skills, projectRoot) {
+  if (!extensionName || typeof extensionName !== 'string') {
+    throw new TypeError('deployExtensionToAgentsMd: extensionName required');
+  }
+  if (!projectRoot || typeof projectRoot !== 'string') {
+    throw new TypeError('deployExtensionToAgentsMd: projectRoot required');
+  }
+  const agentsPath = join(projectRoot, 'AGENTS.md');
+
+  const registry = readExtensionRegistrySync(projectRoot);
+  const byName = new Map();
+  for (const e of registry.extensions) {
+    if (!e || !e.name) continue;
+    const entrySkills = Array.isArray(e?.manifest?.skills) ? e.manifest.skills : [];
+    byName.set(e.name, { name: e.name, skills: entrySkills });
+  }
+  // Force-include the extension currently being deployed (registry write may
+  // have raced or this may be a re-injection pass).
+  byName.set(extensionName, {
+    name: extensionName,
+    skills: Array.isArray(skills) ? skills : [],
+  });
+
+  const entries = Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const blockBody = renderExtensionsBlock(entries);
+
+  let existing = '';
+  let action = 'created';
+  if (existsSync(agentsPath)) {
+    try { existing = readFileSync(agentsPath, 'utf8'); } catch { existing = ''; }
+    action = existing.indexOf(EXT_AGENTS_MARK_START) >= 0 ? 'replaced' : 'appended';
+  } else {
+    // File missing — create with ONLY the marker block per task contract.
+    existing = '';
+    action = 'created';
+  }
+
+  const next = replaceOrAppendExtensionsBlock(existing, blockBody);
+
+  // Atomic write (tmp + rename). Default mode 0o644 here — AGENTS.md is a
+  // project doc, not a secrets file like the MCP config writes elsewhere.
+  mkdirSync(dirname(agentsPath), { recursive: true });
+  const tmp = `${agentsPath}.tmp.${process.pid}`;
+  writeFileSync(tmp, next, { mode: 0o644 });
+  renameSync(tmp, agentsPath);
+  try { chmodSync(agentsPath, 0o644); } catch { /* best-effort */ }
+
+  return { path: agentsPath, action };
+}
+
+/**
+ * Rebuild the IJFW-EXTENSIONS block excluding the named extension.
+ * If no extensions remain, leaves an empty block (markers preserved).
+ *
+ * @param {string} extensionName
+ * @param {string} projectRoot
+ * @returns {Promise<{path: string, action: 'rewritten'|'noop'}>}
+ */
+export async function removeExtensionFromAgentsMd(extensionName, projectRoot) {
+  if (!extensionName || typeof extensionName !== 'string') {
+    throw new TypeError('removeExtensionFromAgentsMd: extensionName required');
+  }
+  if (!projectRoot || typeof projectRoot !== 'string') {
+    throw new TypeError('removeExtensionFromAgentsMd: projectRoot required');
+  }
+  const agentsPath = join(projectRoot, 'AGENTS.md');
+  if (!existsSync(agentsPath)) return { path: agentsPath, action: 'noop' };
+
+  let existing = '';
+  try { existing = readFileSync(agentsPath, 'utf8'); } catch { return { path: agentsPath, action: 'noop' }; }
+  if (existing.indexOf(EXT_AGENTS_MARK_START) < 0) {
+    return { path: agentsPath, action: 'noop' };
+  }
+
+  const registry = readExtensionRegistrySync(projectRoot);
+  const byName = new Map();
+  for (const e of registry.extensions) {
+    if (!e || !e.name) continue;
+    if (e.name === extensionName) continue;
+    const entrySkills = Array.isArray(e?.manifest?.skills) ? e.manifest.skills : [];
+    byName.set(e.name, { name: e.name, skills: entrySkills });
+  }
+  const entries = Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const blockBody = renderExtensionsBlock(entries);
+  const next = replaceOrAppendExtensionsBlock(existing, blockBody);
+
+  const tmp = `${agentsPath}.tmp.${process.pid}`;
+  writeFileSync(tmp, next, { mode: 0o644 });
+  renameSync(tmp, agentsPath);
+  try { chmodSync(agentsPath, 0o644); } catch { /* best-effort */ }
+  return { path: agentsPath, action: 'rewritten' };
+}
+
+function isoNow() {
+  return new Date().toISOString();
+}
+
+function safeReceiptName(s) {
+  return String(s).replace(/[^A-Za-z0-9._@/-]/g, '_').replace(/[/]/g, '__');
+}
+
+function writeReceiptAtomic(receiptPath, doc) {
+  mkdirSync(dirname(receiptPath), { recursive: true });
+  const tmp = `${receiptPath}.tmp.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', { mode: 0o644 });
+  renameSync(tmp, receiptPath);
+}
+
+/**
+ * Copy extension skill files to every present platform skill dir under
+ * projectRoot. Source layout: <projectRoot>/.ijfw/extensions/<extensionName>/skills/<file>
+ * (the location t10's installExtension copies them to). Destination layout:
+ * <platform-dir>/ext-<extensionName>/<skill.name>/SKILL.md.
+ *
+ * R8 atomic receipt: a per-deploy receipt is written under
+ * .ijfw/state/deploy-receipts/ and the latest-pointer
+ * .ijfw/state/deploy-receipt.json is updated at completion.
+ *
+ * @param {string} extensionName
+ * @param {Array<{name: string, file: string}>} skills
+ * @param {string} projectRoot
+ * @param {{atomicReceipt?: boolean}} [opts]
+ * @returns {Promise<{
+ *   deployed: Array<{platform: string, skillName: string, path: string}>,
+ *   failed:   Array<{platform: string, skillName: string, error: string}>,
+ *   receiptPath?: string
+ * }>}
+ */
+export async function deployExtensionSkillsToPlatforms(
+  extensionName,
+  skills,
+  projectRoot,
+  opts = {},
+) {
+  if (!extensionName || typeof extensionName !== 'string') {
+    throw new TypeError('deployExtensionSkillsToPlatforms: extensionName required');
+  }
+  if (!projectRoot || typeof projectRoot !== 'string') {
+    throw new TypeError('deployExtensionSkillsToPlatforms: projectRoot required');
+  }
+  const skillList = Array.isArray(skills) ? skills : [];
+  const writeReceipt = opts.atomicReceipt !== false;
+
+  const sourceRoot = join(projectRoot, '.ijfw', 'extensions', extensionName, 'skills');
+
+  // Hard-fail if any declared source skill is missing.
+  for (const s of skillList) {
+    if (!s || typeof s.file !== 'string' || typeof s.name !== 'string') {
+      throw new Error(`deployExtensionSkillsToPlatforms: invalid skill entry: ${JSON.stringify(s)}`);
+    }
+    const src = join(sourceRoot, s.file);
+    if (!existsSync(src)) {
+      throw new Error(`source skill missing: ${src}`);
+    }
+  }
+
+  // Discover present platforms.
+  const platformPresence = EXTENSION_PLATFORM_SKILL_DIRS.map((p) => {
+    const abs = join(projectRoot, p.rel);
+    let present = false;
+    try { present = statSync(abs).isDirectory(); } catch { present = false; }
+    return { id: p.id, rel: p.rel, abs, present };
+  });
+
+  // Bootstrap receipt with pending platforms.
+  const startedAt = isoNow();
+  const receiptDir = join(projectRoot, '.ijfw', 'state', 'deploy-receipts');
+  const receiptName = `extension-skill-deploy-${safeReceiptName(extensionName)}-${startedAt.replace(/[:.]/g, '-')}.json`;
+  const receiptPath = join(receiptDir, receiptName);
+  const latestPath = join(projectRoot, '.ijfw', 'state', 'deploy-receipt.json');
+
+  const receipt = {
+    schema_version: '1.0',
+    kind: 'extension-skill-deploy',
+    name: extensionName,
+    started_at: startedAt,
+    completed_at: null,
+    platforms: platformPresence.flatMap((p) =>
+      skillList.map((s) => ({
+        id: p.id,
+        skill: s.name,
+        status: p.present ? 'pending' : 'ok',
+        path: null,
+        error: p.present ? null : 'platform not installed',
+      })),
+    ),
+    complete: false,
+  };
+  if (writeReceipt) writeReceiptAtomic(receiptPath, receipt);
+
+  const deployed = [];
+  const failed = [];
+
+  // For each present platform, copy each skill.
+  for (const p of platformPresence) {
+    if (!p.present) continue;
+    for (const s of skillList) {
+      const src = join(sourceRoot, s.file);
+      const dstDir = join(p.abs, `ext-${extensionName}`, s.name);
+      const dst = join(dstDir, 'SKILL.md');
+      let entry = receipt.platforms.find((row) => row.id === p.id && row.skill === s.name);
+      try {
+        mkdirSync(dstDir, { recursive: true });
+        copyFileSync(src, dst);
+        deployed.push({ platform: p.id, skillName: s.name, path: dst });
+        if (entry) { entry.status = 'ok'; entry.path = dst; entry.error = null; }
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        failed.push({ platform: p.id, skillName: s.name, error: msg });
+        if (entry) { entry.status = 'fail'; entry.path = null; entry.error = msg; }
+      }
+      // Flush receipt after each platform/skill pair (R8 atomic).
+      if (writeReceipt) writeReceiptAtomic(receiptPath, receipt);
+    }
+  }
+
+  receipt.completed_at = isoNow();
+  receipt.complete = true;
+  if (writeReceipt) {
+    writeReceiptAtomic(receiptPath, receipt);
+    // Update latest pointer (small JSON with reference).
+    writeReceiptAtomic(latestPath, {
+      schema_version: '1.0',
+      kind: 'extension-skill-deploy',
+      name: extensionName,
+      latest_receipt: receiptPath,
+      completed_at: receipt.completed_at,
+      complete: true,
+    });
+  }
+
+  const result = { deployed, failed };
+  if (writeReceipt) result.receiptPath = receiptPath;
+  return result;
+}
+
+/**
+ * Reverse of deployExtensionSkillsToPlatforms: remove ext-<extensionName>/
+ * dirs from every platform skill dir. Idempotent (missing → ok). Writes a
+ * delete-kind receipt for forensic trail.
+ *
+ * @param {string} extensionName
+ * @param {string} projectRoot
+ * @param {{atomicReceipt?: boolean}} [opts]
+ * @returns {Promise<{
+ *   removed: Array<{platform: string, path: string}>,
+ *   failed:  Array<{platform: string, path: string, error: string}>,
+ *   receiptPath?: string
+ * }>}
+ */
+export async function uninstallExtensionSkillsFromPlatforms(extensionName, projectRoot, opts = {}) {
+  if (!extensionName || typeof extensionName !== 'string') {
+    throw new TypeError('uninstallExtensionSkillsFromPlatforms: extensionName required');
+  }
+  if (!projectRoot || typeof projectRoot !== 'string') {
+    throw new TypeError('uninstallExtensionSkillsFromPlatforms: projectRoot required');
+  }
+  const writeReceipt = opts.atomicReceipt !== false;
+  const { rmSync } = await import('node:fs');
+
+  const startedAt = isoNow();
+  const receiptDir = join(projectRoot, '.ijfw', 'state', 'deploy-receipts');
+  const receiptName = `extension-skill-delete-${safeReceiptName(extensionName)}-${startedAt.replace(/[:.]/g, '-')}.json`;
+  const receiptPath = join(receiptDir, receiptName);
+  const latestPath = join(projectRoot, '.ijfw', 'state', 'deploy-receipt.json');
+
+  const platformPresence = EXTENSION_PLATFORM_SKILL_DIRS.map((p) => {
+    const abs = join(projectRoot, p.rel);
+    const extDir = join(abs, `ext-${extensionName}`);
+    let present = false;
+    try { present = statSync(extDir).isDirectory(); } catch { present = false; }
+    return { id: p.id, rel: p.rel, extDir, present };
+  });
+
+  const receipt = {
+    schema_version: '1.0',
+    kind: 'extension-skill-delete',
+    name: extensionName,
+    started_at: startedAt,
+    completed_at: null,
+    platforms: platformPresence.map((p) => ({
+      id: p.id,
+      status: p.present ? 'pending' : 'ok',
+      path: p.extDir,
+      error: p.present ? null : 'nothing to delete',
+    })),
+    complete: false,
+  };
+  if (writeReceipt) writeReceiptAtomic(receiptPath, receipt);
+
+  const removed = [];
+  const failed = [];
+
+  for (const p of platformPresence) {
+    const entry = receipt.platforms.find((row) => row.id === p.id);
+    if (!p.present) continue;
+    try {
+      rmSync(p.extDir, { recursive: true, force: true });
+      removed.push({ platform: p.id, path: p.extDir });
+      if (entry) { entry.status = 'ok'; entry.error = null; }
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      failed.push({ platform: p.id, path: p.extDir, error: msg });
+      if (entry) { entry.status = 'fail'; entry.error = msg; }
+    }
+    if (writeReceipt) writeReceiptAtomic(receiptPath, receipt);
+  }
+
+  receipt.completed_at = isoNow();
+  receipt.complete = true;
+  if (writeReceipt) {
+    writeReceiptAtomic(receiptPath, receipt);
+    writeReceiptAtomic(latestPath, {
+      schema_version: '1.0',
+      kind: 'extension-skill-delete',
+      name: extensionName,
+      latest_receipt: receiptPath,
+      completed_at: receipt.completed_at,
+      complete: true,
+    });
+  }
+
+  const result = { removed, failed };
+  if (writeReceipt) result.receiptPath = receiptPath;
+  return result;
+}

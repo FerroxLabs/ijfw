@@ -42,6 +42,12 @@ import {
 } from './extension-signer.js';
 import { runTrident } from './trident/dispatch.js';
 import { emitGateResult } from './gate-result.js';
+import {
+  deployExtensionToAgentsMd,
+  deployExtensionSkillsToPlatforms,
+  removeExtensionFromAgentsMd,
+  uninstallExtensionSkillsFromPlatforms,
+} from '../../installer/src/install-helpers.js';
 
 // --- constants -------------------------------------------------------------
 
@@ -731,12 +737,58 @@ export async function installExtension(source, opts = {}) {
     });
     await writeRegistry(registryPath, { extensions: filtered });
 
+    // 9. Cross-platform skill deploy + AGENTS.md injection (W2b / t11).
+    //    Project scope only — org/user scopes deploy lazily at session start
+    //    via override-resolver. Failures here do NOT unwind the install (the
+    //    extension is already registered); they surface as deploy_partial.
+    let deployInfo;
+    let deployPartial = false;
+    if (opts.scope === 'project') {
+      try {
+        const skillList = Array.isArray(manifest.skills) ? manifest.skills : [];
+        const d = await deployExtensionSkillsToPlatforms(
+          manifest.name,
+          skillList,
+          opts.projectRoot,
+          {},
+        );
+        deployInfo = {
+          deployed: d.deployed,
+          failed: d.failed,
+          receiptPath: d.receiptPath,
+        };
+        if (Array.isArray(d.failed) && d.failed.length > 0) deployPartial = true;
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        process.stderr.write(
+          `[ijfw] extension-installer: skill deploy failed for ${manifest.name}: ${msg}\n`,
+        );
+        deployPartial = true;
+        deployInfo = { deployed: [], failed: [{ platform: '*', skillName: '*', error: msg }] };
+      }
+      try {
+        await deployExtensionToAgentsMd(
+          manifest.name,
+          Array.isArray(manifest.skills) ? manifest.skills : [],
+          opts.projectRoot,
+        );
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        process.stderr.write(
+          `[ijfw] extension-installer: AGENTS.md inject failed for ${manifest.name}: ${msg}\n`,
+        );
+        deployPartial = true;
+      }
+    }
+
     return {
       ok: true,
       name: manifest.name,
       version: manifest.version,
       scope: opts.scope,
       gate_result_block: gateResultBlock,
+      deploy: deployInfo,
+      deploy_partial: deployPartial,
     };
   } catch (err) {
     return {
@@ -775,6 +827,32 @@ export async function uninstallExtension(name, opts = {}) {
     const scopeDir = resolveScopeDir(opts, name);
     const registryPath = resolveRegistryPath(opts);
 
+    // Order: AGENTS.md first (rebuilds from current registry — entry still
+    // present at this point), then platform skills, then registry+scope dir.
+    // If anything mid-flight fails, the registry still references the
+    // extension so a retry of uninstall finishes the job cleanly.
+    let removePartial = false;
+    if (opts.scope === 'project') {
+      try {
+        await removeExtensionFromAgentsMd(name, opts.projectRoot);
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        process.stderr.write(
+          `[ijfw] extension-installer: AGENTS.md cleanup failed for ${name}: ${msg}\n`,
+        );
+        removePartial = true;
+      }
+      try {
+        await uninstallExtensionSkillsFromPlatforms(name, opts.projectRoot, {});
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        process.stderr.write(
+          `[ijfw] extension-installer: platform skill cleanup failed for ${name}: ${msg}\n`,
+        );
+        removePartial = true;
+      }
+    }
+
     const dirExisted = await stat(scopeDir).then(() => true, () => false);
     await rm(scopeDir, { recursive: true, force: true });
 
@@ -785,7 +863,19 @@ export async function uninstallExtension(name, opts = {}) {
       await writeRegistry(registryPath, { extensions: next });
     }
 
-    return { ok: true, removed: dirExisted || next.length !== before };
+    // Rebuild AGENTS.md once more after registry mutation so the post-state
+    // reflects the now-removed extension even if the earlier pass picked it up.
+    if (opts.scope === 'project') {
+      try {
+        await removeExtensionFromAgentsMd(name, opts.projectRoot);
+      } catch { /* already logged above if it failed first time */ }
+    }
+
+    return {
+      ok: true,
+      removed: dirExisted || next.length !== before,
+      remove_partial: removePartial,
+    };
   } catch (err) {
     return {
       ok: false,
