@@ -46,6 +46,7 @@ import {
   BUILTIN_PRESETS,
   MAX_EXTENDS_DEPTH,
   SKILL_NAME_PATTERN,
+  OVERRIDE_SCOPES,
   validateOverrideManifest,
   detectCircularExtends,
 } from './override-manifest-schema.js';
@@ -148,10 +149,30 @@ export function resolveOverridePaths(skill, projectRoot) {
   ];
 }
 
+// W6.4/C7-H-01: preset names share the same kebab-case shape as skill names
+// (^[a-z][a-z0-9-]*$). SKILL_NAME_PATTERN already imported above; alias for
+// readability at preset call sites.
+const PRESET_NAME_PATTERN = SKILL_NAME_PATTERN;
+
+/**
+ * Guard a preset name before any path construction. Strings from
+ * active-overrides.json / extends chains / dispatch input must pass here.
+ * Throws if the name doesn't match the kebab-case pattern.
+ */
+function assertValidPresetName(preset, fnName) {
+  if (typeof preset !== 'string' || !PRESET_NAME_PATTERN.test(preset)) {
+    throw new TypeError(
+      `${fnName}: invalid preset name ${JSON.stringify(preset)} — must match ${PRESET_NAME_PATTERN}`
+    );
+  }
+}
+
 function presetOverridePath(preset) {
   // Primary location: per-user copy under ~/.ijfw/overrides/presets/ . The
   // installer copies built-in presets here on install; users may edit them
   // or drop their own custom presets alongside.
+  // W6.4/C7-H-01 defense-in-depth: reject traversal at the path-builder.
+  assertValidPresetName(preset, 'presetOverridePath');
   return path.join(os.homedir(), '.ijfw', 'overrides', 'presets', `${preset}.md`);
 }
 
@@ -161,6 +182,7 @@ function bundledPresetPath(preset) {
   // copied them to ~/.ijfw/overrides/presets/ yet, the resolver still needs
   // them so `ijfw override add book` works the first time without
   // bootstrapping. Per-user files always win when present.
+  assertValidPresetName(preset, 'bundledPresetPath');
   return path.join(BUNDLED_PRESETS_DIR, `${preset}.md`);
 }
 
@@ -536,7 +558,13 @@ async function readActiveOverridesForProject(projectRoot) {
   for (const entry of proj.active_overrides) {
     if (!entry || typeof entry !== 'object') continue;
     const preset = entry.preset;
-    if (typeof preset !== 'string') continue;
+    // W6.4/C7-H-01: state file is user-editable (same threat model as
+    // R6-H-01's home-scope manifests). Reject any preset name that doesn't
+    // match the kebab-case pattern before it reaches presetOverridePath().
+    // A handwritten `"preset": "../../../evil/pwn"` would otherwise resolve
+    // outside ~/.ijfw/overrides/presets/ and inject arbitrary .md content
+    // into every deployed SKILL.md.
+    if (typeof preset !== 'string' || !PRESET_NAME_PATTERN.test(preset)) continue;
     if (out.includes(preset)) continue;
     out.push(preset);
   }
@@ -568,6 +596,19 @@ export async function recordActiveOverride(projectRoot, override) {
   }
   if (!override.preset || !override.scope) {
     throw new Error('recordActiveOverride: override must have preset and scope');
+  }
+  // W6.4/C7-H-01-N1: validate shape at the writer too so the state file can
+  // never persist a bad entry. Pairs with readActiveOverridesForProject's
+  // read-side filter — defense in depth across producer + consumer.
+  if (!PRESET_NAME_PATTERN.test(override.preset)) {
+    throw new Error(
+      `recordActiveOverride: invalid preset name ${JSON.stringify(override.preset)} — must match ${PRESET_NAME_PATTERN}`
+    );
+  }
+  if (!OVERRIDE_SCOPES.includes(override.scope)) {
+    throw new Error(
+      `recordActiveOverride: invalid scope ${JSON.stringify(override.scope)} — must be one of ${OVERRIDE_SCOPES.join('|')}`
+    );
   }
   const state = await readActiveOverrides();
   const proj = state.projects[projectRoot] || { active_overrides: [] };
