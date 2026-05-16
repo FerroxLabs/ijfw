@@ -4,13 +4,17 @@
  * IJFW v1.4.0 / t10 — Extension installer with Trident install gate.
  *
  * Security model (v1.4.0):
- *   - SHA256 integrity hash detects tamper, NOT publisher identity.
+ *   - SHA256 integrity hash detects tamper.
+ *   - Ed25519 publisher signature (W7/B1) authenticates the publisher against
+ *     the per-host trusted-publishers store (~/.ijfw/trusted-publishers.json).
+ *     Unsigned manifests require opts.allowUnsigned; signed-but-untrusted
+ *     manifests require opts.acceptUntrusted.
  *   - Install-time static analysis: classify() per file + isSafeVerifyCommand()
  *     per shell command.
- *   - Trident audit at install is the trust mechanism.
- *   - Runtime sandbox mediation is DEFERRED TO v1.5.0. At runtime, extension
- *     skill bodies execute through normal agent tool surfaces with the same
- *     security posture as bundled IJFW skills.
+ *   - Trident audit at install gates content (3-lens consensus).
+ *   - Runtime sandbox mediation (W7/B2): tier-1 MCP wrap + tier-2 Claude Code
+ *     hook enforce declared permissions when an extension is active. Activation
+ *     is via `extension activate <name>` (W7.1/B2-H-01).
  */
 
 import {

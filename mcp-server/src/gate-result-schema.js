@@ -15,9 +15,11 @@
  *     Artifact ref types include book/content concepts, not just `file`.
  *   - `lenses` is empty for single-model gates (preflight, audit-ci); only
  *     multi-model gates (Trident, swarm-review, cross-audit) populate it.
- *   - `remediation` is schema-ready but auto-routing is deferred to v1.5.0.
- *     v1.4.0 writes the field; downstream may surface it but MUST NOT
- *     auto-dispatch.
+ *   - `remediation` is schema-ready and partially auto-routed in v1.4.0 via
+ *     `memory-feedback.js` (W7/B3), which surfaces pattern hints in the
+ *     prelude when N+ recent gates fail on the same artifact type. Full
+ *     auto-dispatch beyond pattern hints (e.g. cross-skill correlation,
+ *     time-series detection) remains v1.5.0+.
  *   - `cost_usd` may be null (some gates run locally, free).
  *   - `gate_id` collapses any `:` in namespaced gates to `-` to keep ids
  *     filesystem-friendly across all 14 supported platforms.
