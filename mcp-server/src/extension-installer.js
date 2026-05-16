@@ -57,6 +57,13 @@ const GIT_CLONE_TIMEOUT_MS = 30_000;
 const HTTPS_REQUEST_TIMEOUT_MS = 30_000;
 const REGISTRY_FILENAME = 'extension-registry.json';
 
+// Maximum 3xx redirects to follow before giving up. A malicious mirror or a
+// misconfigured server can otherwise loop indefinitely; without a cap both
+// fetchJsonHttps and downloadHttps recurse without bound. 5 is the common
+// browser default and is comfortably above any legitimate registry redirect
+// chain (registry.npmjs.org typically lands in 0–1 hops).
+const MAX_HTTPS_REDIRECTS = 5;
+
 // Matches the schema's accepted shape for manifest.name. Kept local because
 // extension-manifest-schema.js does not export the pattern. Stays in sync
 // manually — the schema and this constant are co-located.
@@ -114,16 +121,48 @@ async function makeTempDir() {
 // --- helpers: npm registry --------------------------------------------------
 
 /**
- * Fetch JSON from https with timeout.
+ * Resolve a 3xx Location header against the request URL. Rejects (throws)
+ * if the resulting URL is not https:// — protocol-downgrade-via-redirect is
+ * a classic exfil vector. Returns the absolute https URL string.
+ *
+ * @param {string} requestUrl
+ * @param {string} location
+ * @returns {string}
+ */
+function resolveHttpsRedirect(requestUrl, location) {
+  const next = new URL(location, requestUrl);
+  if (next.protocol !== 'https:') {
+    throw new Error(`redirect to non-https url refused: ${next.protocol}//${next.host}`);
+  }
+  return next.toString();
+}
+
+/**
+ * Fetch JSON from https with timeout. Follows up to MAX_HTTPS_REDIRECTS
+ * 3xx redirects (default 5); rejects on cycles, exceeding the cap, or any
+ * cross-protocol redirect (https only).
+ *
  * @param {string} url
+ * @param {number} [redirectsRemaining]
  * @returns {Promise<any>}
  */
-function fetchJsonHttps(url) {
+function fetchJsonHttps(url, redirectsRemaining = MAX_HTTPS_REDIRECTS) {
   return new Promise((resolveP, rejectP) => {
     const req = httpsGet(url, { headers: { 'accept': 'application/json' } }, (res) => {
       if (res.statusCode && (res.statusCode >= 300 && res.statusCode < 400) && res.headers.location) {
         res.resume();
-        fetchJsonHttps(res.headers.location).then(resolveP, rejectP);
+        if (redirectsRemaining <= 0) {
+          rejectP(new Error(`too many redirects (>${MAX_HTTPS_REDIRECTS}) following ${url}`));
+          return;
+        }
+        let nextUrl;
+        try {
+          nextUrl = resolveHttpsRedirect(url, res.headers.location);
+        } catch (err) {
+          rejectP(err);
+          return;
+        }
+        fetchJsonHttps(nextUrl, redirectsRemaining - 1).then(resolveP, rejectP);
         return;
       }
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
@@ -152,16 +191,31 @@ function fetchJsonHttps(url) {
 
 /**
  * Download a binary file from https to a local path, with timeout + redirects.
+ * Follows up to MAX_HTTPS_REDIRECTS 3xx redirects (default 5); rejects on
+ * cycles, exceeding the cap, or any cross-protocol redirect (https only).
+ *
  * @param {string} url
  * @param {string} destPath
+ * @param {number} [redirectsRemaining]
  * @returns {Promise<void>}
  */
-function downloadHttps(url, destPath) {
+function downloadHttps(url, destPath, redirectsRemaining = MAX_HTTPS_REDIRECTS) {
   return new Promise((resolveP, rejectP) => {
     const req = httpsGet(url, (res) => {
       if (res.statusCode && (res.statusCode >= 300 && res.statusCode < 400) && res.headers.location) {
         res.resume();
-        downloadHttps(res.headers.location, destPath).then(resolveP, rejectP);
+        if (redirectsRemaining <= 0) {
+          rejectP(new Error(`too many redirects (>${MAX_HTTPS_REDIRECTS}) downloading ${url}`));
+          return;
+        }
+        let nextUrl;
+        try {
+          nextUrl = resolveHttpsRedirect(url, res.headers.location);
+        } catch (err) {
+          rejectP(err);
+          return;
+        }
+        downloadHttps(nextUrl, destPath, redirectsRemaining - 1).then(resolveP, rejectP);
         return;
       }
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
