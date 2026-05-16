@@ -88,6 +88,17 @@ export async function emitGateResult(gateOpts, context = {}) {
     );
   }
 
+  // Fire-and-forget receipt write. The gate's hot path must NOT block on
+  // disk I/O — makeReceipt swallows its own errors and resolves undefined
+  // on failure. The trailing .catch is belt-and-braces in case a future
+  // refactor lets something escape makeReceipt's try/catch.
+  makeReceipt(result, {
+    projectRoot:
+      typeof context.projectRoot === 'string' && context.projectRoot.length > 0
+        ? context.projectRoot
+        : process.cwd(),
+  }).catch(() => {});
+
   return formatGateResult(result);
 }
 
