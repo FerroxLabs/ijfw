@@ -52,3 +52,27 @@ Rework needed (BLOCK):
 - **BLOCK**: rework required. Do not execute until re-audited.
 
 Closer: `You have a <PASS|FLAG|BLOCK> -- <next action>.`
+
+## Output contract
+
+Emit a `gate-result` block as the **LAST** content of your output. Nothing
+after it. Use `gate="plan-check"`. Statuses: `PASS | CONDITIONAL | WARN | FLAG | FAIL`.
+
+Format:
+
+```gate-result
+{
+  "schema_version": "1.0",
+  "gate": "plan-check",
+  "status": "<STATUS>",
+  "project_type": "<from project-type-detector>",
+  "lenses": [],
+  "affected_artifacts": [],
+  "accounting": {"duration_ms": 0, "lenses_invoked": 0, "cost_usd": null},
+  "remediation": [],
+  "receipts_ref": null,
+  "supersedes": null,
+  "gate_id": "<gate-with-colons-replaced-by-dashes>-<ts>-<rand4>",
+  "emitted_at": "<ISO-8601>"
+}
+```
