@@ -836,6 +836,26 @@ if [ -n "$COLD_SCAN_TRIGGER" ]; then
   bash "$COLD_SCAN_TRIGGER" "$(pwd -P 2>/dev/null)" >/dev/null 2>&1 || true
 fi
 
+# 1.4.0 W3/t13 -- domain-manifest auto-load. Detects project type and
+# auto-loads the matching built-in preset (book / campaign) into the
+# project's active overrides on first sight. Fire-and-forget, DETACHED
+# in a subshell with `& disown` so session-start exits even if MCP
+# dispatch is slow (R11/F11). The CLI shim itself lands in t16 (`ijfw
+# run domain-manifest:load`); until then this is the contract marker:
+# the bash detachment shape must be correct so the t20 verifier
+# (which uses a sleep-injected stub, NOT live MCP) passes.
+#
+# TODO(t16): replace `true` body below with the real CLI invocation,
+#   e.g. `ijfw run domain-manifest:load "$(pwd -P 2>/dev/null)"` or
+#   `"$_NODE" "$IJFW_HOOK_DIR/../../../mcp-server/src/cli.js" run \
+#      domain-manifest:load --project-root "$(pwd -P 2>/dev/null)"`.
+#   The detachment pattern (subshell with trailing `&` immediately
+#   before the closing `)` plus `disown`) is load-bearing for the
+#   t20 detachment-verifier test and MUST be preserved across the
+#   t16 rewrite.
+( true </dev/null >/dev/null 2>&1 & )
+disown 2>/dev/null || true
+
 # Output strategy:
 #   SessionStart hooks CANNOT render to the user's terminal. All output channels
 #   (stdout, stderr, systemMessage) go to agent context only. The banner is
