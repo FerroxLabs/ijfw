@@ -1028,6 +1028,17 @@ export async function installExtension(source, opts = {}) {
       }
     }
 
+    // W7.1/B2-H-01: if opts.activate, write the active-extension state.
+    if (opts.activate === true && manifest.permissions) {
+      try {
+        const { writeActiveExtension } = await import('./active-extension-writer.js');
+        await writeActiveExtension(manifest, opts.scope);
+      } catch (err) {
+        // Non-fatal -- install succeeded; surface as a warning.
+        process.stderr.write(`[ijfw] extension-installer: install succeeded but auto-activate failed: ${err.message}\n`);
+      }
+    }
+
     return {
       ok: true,
       name: manifest.name,

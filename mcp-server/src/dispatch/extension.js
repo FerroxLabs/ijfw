@@ -97,14 +97,16 @@ function parseSourceAndScope(args) {
  *
  *   --allow-unsigned      -> opts.allowUnsigned = true
  *   --accept-untrusted    -> opts.acceptUntrusted = true
+ *   --activate            -> opts.activate = true
  */
 function extractAddFlags(args) {
   const tokens = String(args || '').split(/\s+/).filter(Boolean);
-  const flags = { allowUnsigned: false, acceptUntrusted: false };
+  const flags = { allowUnsigned: false, acceptUntrusted: false, activate: false };
   const keep = [];
   for (const t of tokens) {
     if (t === '--allow-unsigned') { flags.allowUnsigned = true; continue; }
     if (t === '--accept-untrusted') { flags.acceptUntrusted = true; continue; }
+    if (t === '--activate') { flags.activate = true; continue; }
     keep.push(t);
   }
   return { args: keep.join(' '), flags };
@@ -121,6 +123,7 @@ async function cmdAdd({ args, projectRoot }) {
       projectRoot,
       allowUnsigned: flags.allowUnsigned,
       acceptUntrusted: flags.acceptUntrusted,
+      activate: flags.activate,
     });
     return { ok: !!r.ok, command: 'add', result: r };
   } catch (err) {
@@ -351,6 +354,31 @@ async function deployOneExtension({ scope, name, extDir, projectRoot, result }) 
   }
 }
 
+async function cmdActivate({ args, projectRoot }) {
+  const name = args && args.trim();
+  if (!name) return { ok: false, command: 'activate', error: 'missing extension name; usage: activate <name>' };
+  try {
+    const { findInstalledManifest, writeActiveExtension } = await import('../active-extension-writer.js');
+    const lookup = await findInstalledManifest(name, projectRoot);
+    if (!lookup.ok) return { ok: false, command: 'activate', error: lookup.error };
+    const result = await writeActiveExtension(lookup.manifest, lookup.scope);
+    if (!result.ok) return { ok: false, command: 'activate', error: result.error };
+    return { ok: true, command: 'activate', result: { name, scope: lookup.scope, path: result.path } };
+  } catch (err) {
+    return { ok: false, command: 'activate', error: err.message };
+  }
+}
+
+async function cmdDeactivate() {
+  try {
+    const { clearActiveExtension } = await import('../active-extension-writer.js');
+    const r = await clearActiveExtension();
+    return { ok: r.ok, command: 'deactivate', result: { removed: r.removed } };
+  } catch (err) {
+    return { ok: false, command: 'deactivate', error: err.message };
+  }
+}
+
 export async function extensionDispatch({ command, args = '', projectRoot }) {
   const ctx = { command, args: String(args || ''), projectRoot: String(projectRoot || process.cwd()) };
   switch (command) {
@@ -363,11 +391,13 @@ export async function extensionDispatch({ command, args = '', projectRoot }) {
     case 'trust': return cmdTrust(ctx);
     case 'untrust': return cmdUntrust(ctx);
     case 'trusted': return cmdTrusted(ctx);
+    case 'activate': return cmdActivate(ctx);
+    case 'deactivate': return cmdDeactivate(ctx);
     default:
       return {
         ok: false,
         command,
-        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy | keygen | trust | untrust | trusted`,
+        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy | keygen | trust | untrust | trusted | activate | deactivate`,
       };
   }
 }

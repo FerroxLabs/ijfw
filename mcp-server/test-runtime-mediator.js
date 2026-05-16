@@ -37,8 +37,10 @@ async function cleanup(dir) {
   await rm(dir, { recursive: true, force: true }).catch(() => {});
 }
 
-async function withIsolatedHome(fn) {
-  const fakeHome = await makeTmp('home');
+async function withIsolatedHome(labelOrFn, maybeFn) {
+  const label = typeof labelOrFn === 'string' ? labelOrFn : 'home';
+  const fn = typeof labelOrFn === 'function' ? labelOrFn : maybeFn;
+  const fakeHome = await makeTmp(label);
   const prev = process.env.HOME;
   process.env.HOME = fakeHome;
   try {
@@ -287,5 +289,87 @@ test('logPermissionEvent never throws even if HOME is read-only', async () => {
     } finally {
       await chmod(home, 0o700);
     }
+  });
+});
+
+// -- active-extension-writer --------------------------------------------------
+
+import {
+  writeActiveExtension,
+  clearActiveExtension,
+  findInstalledManifest,
+} from './src/active-extension-writer.js';
+
+test('writeActiveExtension: writes state file with correct shape', async () => {
+  await withIsolatedHome('write-active', async (home) => {
+    const manifest = {
+      name: 'test-ext',
+      permissions: { reads: ['./README.md'], writes: ['memory:write'] },
+    };
+    const r = await writeActiveExtension(manifest, 'project', { homeDir: home });
+    assert.equal(r.ok, true);
+    const written = JSON.parse(await readFile(r.path, 'utf8'));
+    assert.equal(written.name, 'test-ext');
+    assert.equal(written.scope, 'project');
+    assert.deepEqual(written.permissions.writes, ['memory:write']);
+    assert.ok(typeof written.activated_at === 'string');
+  });
+});
+
+test('writeActiveExtension: rejects missing manifest fields', async () => {
+  await withIsolatedHome('write-bad', async (home) => {
+    const r1 = await writeActiveExtension(null, 'project', { homeDir: home });
+    assert.equal(r1.ok, false);
+    const r2 = await writeActiveExtension({ name: 'x' }, 'project', { homeDir: home });
+    assert.equal(r2.ok, false);
+    const r3 = await writeActiveExtension({ name: 'x', permissions: {} }, 'bad-scope', { homeDir: home });
+    assert.equal(r3.ok, false);
+  });
+});
+
+test('clearActiveExtension: removes the state file', async () => {
+  await withIsolatedHome('clear', async (home) => {
+    const manifest = { name: 'x', permissions: { reads: [], writes: [] } };
+    await writeActiveExtension(manifest, 'project', { homeDir: home });
+    const r = await clearActiveExtension({ homeDir: home });
+    assert.equal(r.ok, true);
+    assert.equal(r.removed, true);
+    // idempotent
+    const r2 = await clearActiveExtension({ homeDir: home });
+    assert.equal(r2.ok, true);
+    assert.equal(r2.removed, false);
+  });
+});
+
+test('round-trip: writeActiveExtension then getActiveExtension', async () => {
+  await withIsolatedHome('roundtrip-ae', async (home) => {
+    const manifest = { name: 'rt', permissions: { reads: ['memory:read'], writes: ['memory:write'] } };
+    await writeActiveExtension(manifest, 'user', { homeDir: home });
+    const active = await getActiveExtension({ homeDir: home });
+    assert.equal(active && active.name, 'rt');
+    assert.equal(active && active.scope, 'user');
+  });
+});
+
+test('findInstalledManifest: returns ok when manifest exists in user scope', async () => {
+  await withIsolatedHome('find', async (home) => {
+    const dir = join(home, '.ijfw', 'extensions-user', 'ext-a');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'manifest.json'),
+      JSON.stringify({ name: 'ext-a', permissions: { reads: [], writes: [] } }),
+      'utf8',
+    );
+    const r = await findInstalledManifest('ext-a', undefined, { homeDir: home });
+    assert.equal(r.ok, true);
+    assert.equal(r.scope, 'user');
+    assert.equal(r.manifest.name, 'ext-a');
+  });
+});
+
+test('findInstalledManifest: rejects bad names', async () => {
+  await withIsolatedHome('find-bad', async (home) => {
+    const r = await findInstalledManifest('../etc/passwd', undefined, { homeDir: home });
+    assert.equal(r.ok, false);
   });
 });
