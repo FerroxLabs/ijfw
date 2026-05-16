@@ -917,7 +917,7 @@ function cmpSemverPrelude(a, b) {
   return A.pre < B.pre ? -1 : 1;
 }
 
-function handlePrelude({ detail_level = 'summary' } = {}) {
+async function handlePrelude({ detail_level = 'summary' } = {}) {
   const KB_LINES = detail_level === 'full' ? 200 : detail_level === 'standard' ? 80 : 40;
   const HO_LINES = detail_level === 'full' ? 80  : detail_level === 'standard' ? 30 : 15;
   const JN_LINES = detail_level === 'full' ? 20  : detail_level === 'standard' ? 10 : 5;
@@ -997,6 +997,41 @@ function handlePrelude({ detail_level = 'summary' } = {}) {
   if (global) {
     const body = global.split('\n').slice(0, 10).join('\n').trim();
     if (body) parts.push('## Project preferences', body, '');
+  }
+
+  // t14: cross-project override-use intelligence. Reads the current project's
+  // active overrides from ~/.ijfw/state/active-overrides.json and asks the
+  // override-use-registry whether N+ other projects share the set. Wrapped
+  // in a single try/catch — a registry failure must NEVER fail the prelude.
+  try {
+    const activePath = join(homedir(), '.ijfw', 'state', 'active-overrides.json');
+    let currentOverrides = [];
+    if (existsSync(activePath)) {
+      try {
+        const parsed = JSON.parse(readFileSync(activePath, 'utf8'));
+        const entry = parsed && parsed.projects && parsed.projects[PROJECT_DIR];
+        if (entry && Array.isArray(entry.active_overrides)) {
+          currentOverrides = entry.active_overrides
+            .filter((o) => o && typeof o.preset === 'string')
+            .map((o) => o.preset);
+        }
+      } catch {
+        // malformed json -- treat as no overrides, fall through silently
+      }
+    }
+    if (currentOverrides.length > 0) {
+      const { getPromoteSuggestion } = await import('./override-use-registry.js');
+      const suggestion = await getPromoteSuggestion(PROJECT_DIR, currentOverrides, {});
+      if (suggestion) {
+        parts.push('## Cross-project intelligence');
+        parts.push(suggestion.message);
+        parts.push(`Projects: ${suggestion.projects.join(', ')}`);
+        parts.push('Run: `' + suggestion.suggestion + '`');
+        parts.push('');
+      }
+    }
+  } catch {
+    // Registry failures are non-fatal -- the prelude must always succeed.
   }
 
   parts.push('</ijfw-memory>');
@@ -1259,7 +1294,7 @@ function handleMessage(msg) {
             result = handleStatus();
             break;
           case 'ijfw_memory_prelude':
-            result = handlePrelude(args || {});
+            result = await handlePrelude(args || {});
             break;
           case 'ijfw_metrics':
             result = handleMetrics(args || {});

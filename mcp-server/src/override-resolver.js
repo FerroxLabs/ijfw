@@ -41,6 +41,10 @@ import {
   validateOverrideManifest,
   detectCircularExtends,
 } from './override-manifest-schema.js';
+import {
+  recordOverrideUse,
+  removeOverrideUse,
+} from './override-use-registry.js';
 
 // ---------------------------------------------------------------------------
 // Platform discovery
@@ -454,6 +458,30 @@ export async function recordActiveOverride(projectRoot, override) {
   }
   state.projects[projectRoot] = proj;
   await writeActiveOverrides(state);
+
+  // t14: mirror into the cross-project override-use registry so the prelude
+  // can suggest promote-to-user-defaults when the same set lights up across
+  // N+ projects. Lazy-import project-type-detector to dodge the cold-scan
+  // module weight when the resolver is only ever called for a single skill.
+  try {
+    let projectType = 'unknown';
+    try {
+      const detector = await import('./project-type-detector.js');
+      const r = await detector.detect(projectRoot);
+      if (r && typeof r.primary_type === 'string') projectType = r.primary_type;
+      else if (r && typeof r.type === 'string') projectType = r.type;
+    } catch {
+      // detect() may throw on cold-scan stalls or missing dirs; the registry
+      // accepts 'unknown' and we can backfill later.
+    }
+    await recordOverrideUse(projectRoot, override.preset, override.scope, projectType);
+  } catch (err) {
+    // A registry failure must NEVER fail the resolver write. Log to stderr so
+    // the dashboard's log tail surfaces it without breaking the deploy flow.
+    console.warn(
+      `[ijfw override-resolver] override-use-registry record failed (non-fatal): ${err && err.message ? err.message : err}`
+    );
+  }
 }
 
 /**
@@ -466,12 +494,32 @@ export async function recordActiveOverride(projectRoot, override) {
 export async function removeActiveOverride(projectRoot, preset) {
   const state = await readActiveOverrides();
   const proj = state.projects[projectRoot];
-  if (!proj || !Array.isArray(proj.active_overrides)) return;
+  if (!proj || !Array.isArray(proj.active_overrides)) {
+    // Still try the cross-project registry — it may have stale entries even
+    // when the per-project state file is missing.
+    try {
+      await removeOverrideUse(projectRoot, preset);
+    } catch (err) {
+      console.warn(
+        `[ijfw override-resolver] override-use-registry remove failed (non-fatal): ${err && err.message ? err.message : err}`
+      );
+    }
+    return;
+  }
   proj.active_overrides = proj.active_overrides.filter(
     (o) => !(o && o.preset === preset)
   );
   state.projects[projectRoot] = proj;
   await writeActiveOverrides(state);
+
+  // t14: keep the cross-project registry in sync.
+  try {
+    await removeOverrideUse(projectRoot, preset);
+  } catch (err) {
+    console.warn(
+      `[ijfw override-resolver] override-use-registry remove failed (non-fatal): ${err && err.message ? err.message : err}`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
