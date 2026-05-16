@@ -38,11 +38,50 @@ function parseScope(rawScope, fallback = 'project') {
   return VALID_SCOPES.has(rawScope) ? rawScope : fallback;
 }
 
+/**
+ * Parse `<source> [scope]` allowing the source to contain whitespace when
+ * wrapped in single or double quotes (paths with spaces, etc.).
+ *
+ * Rules:
+ *   - If args starts with `"` or `'`, source is the body between matching
+ *     quotes; whatever follows the close quote is candidate scope.
+ *   - Otherwise: if the LAST whitespace-separated token matches the scope
+ *     enum (project|org|user), source is the greedy join of everything
+ *     before it. Else source is the whole trimmed args (no scope).
+ *
+ * Returns { source, scope } where scope is the parsed raw token (caller
+ * still runs it through parseScope to coerce to default).
+ */
+function parseSourceAndScope(args) {
+  const raw = String(args || '');
+  const trimmed = raw.replace(/^\s+/, '');
+  if (!trimmed) return { source: '', scope: undefined };
+
+  const first = trimmed[0];
+  if (first === '"' || first === "'") {
+    const close = trimmed.indexOf(first, 1);
+    if (close > 0) {
+      const source = trimmed.slice(1, close);
+      const rest = trimmed.slice(close + 1).trim();
+      const scope = rest.split(/\s+/).filter(Boolean)[0];
+      return { source, scope };
+    }
+    // unmatched quote — fall through to non-quoted parse using the raw text
+  }
+
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return { source: '', scope: undefined };
+  const last = tokens[tokens.length - 1];
+  if (tokens.length > 1 && VALID_SCOPES.has(last)) {
+    return { source: tokens.slice(0, -1).join(' '), scope: last };
+  }
+  return { source: tokens.join(' '), scope: undefined };
+}
+
 async function cmdAdd({ args, projectRoot }) {
-  const parts = args.split(/\s+/).filter(Boolean);
-  const source = parts[0];
+  const { source, scope: rawScope } = parseSourceAndScope(args);
   if (!source) return { ok: false, command: 'add', error: 'missing source (npm name, path, or https:// git url)' };
-  const scope = parseScope(parts[1]);
+  const scope = parseScope(rawScope);
   try {
     const r = await installExtension(source, { scope, projectRoot });
     return { ok: !!r.ok, command: 'add', result: r };
@@ -52,10 +91,9 @@ async function cmdAdd({ args, projectRoot }) {
 }
 
 async function cmdRemove({ args, projectRoot }) {
-  const parts = args.split(/\s+/).filter(Boolean);
-  const name = parts[0];
+  const { source: name, scope: rawScope } = parseSourceAndScope(args);
   if (!name) return { ok: false, command: 'remove', error: 'missing extension name' };
-  const scope = parseScope(parts[1]);
+  const scope = parseScope(rawScope);
   try {
     const r = await uninstallExtension(name, { scope, projectRoot });
     return { ok: !!r.ok, command: 'remove', result: r };
