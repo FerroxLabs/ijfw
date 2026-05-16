@@ -41,6 +41,8 @@ import {
   scanExtensionForSecrets,
   scanInlineCommands,
   validatePermissions,
+  verifyManifestSignature,
+  readTrustedPublishers,
 } from './extension-signer.js';
 import { runTrident } from './trident/dispatch.js';
 import { emitGateResult } from './gate-result.js';
@@ -737,6 +739,33 @@ export async function installExtension(source, opts = {}) {
         errors: [
           `integrity: hash verification failed (expected ${integrity.expected ?? '(none)'}, got ${integrity.got ?? '(none)'})`,
         ],
+      };
+    }
+
+    // 3b. W7/B1: signature verification. Unsigned manifests are allowed only
+    // when opts.allowUnsigned is set. Signed manifests must verify against a
+    // trusted publisher unless opts.acceptUntrusted overrides.
+    if (manifest.signature) {
+      const trustedKeys = await readTrustedPublishers();
+      const sigCheck = verifyManifestSignature(manifest, trustedKeys);
+      if (!sigCheck.valid) {
+        if (!opts.acceptUntrusted) {
+          const kidHint = sigCheck.publisherKeyId
+            ? ` (publisher_key_id: ${sigCheck.publisherKeyId} — trust with "ijfw extension trust <keyId> <publicKey>" if you know this publisher)`
+            : '';
+          return {
+            ok: false,
+            errors: [`signature: verify failed: ${sigCheck.reason}${kidHint}`],
+          };
+        }
+        process.stderr.write(
+          `[ijfw] extension-installer: signature unverified for ${manifest.name}: ${sigCheck.reason}\n`,
+        );
+      }
+    } else if (!opts.allowUnsigned) {
+      return {
+        ok: false,
+        errors: ['signature: unsigned extension; pass --allow-unsigned to install anyway'],
       };
     }
 

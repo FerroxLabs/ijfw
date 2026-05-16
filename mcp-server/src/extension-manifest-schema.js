@@ -56,6 +56,19 @@ export const REPLACE_MODES = Object.freeze(['override', 'extend', 'wrap']);
  */
 export const INTEGRITY_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
+/**
+ * v1.4.0 W7/B1: Ed25519 publisher signature format.
+ *   ed25519:<base64 chars> -- 64 raw bytes -> 88 base64 chars (with `=` pad).
+ * Allow standard or URL-safe base64 alphabet; trailing `=` padding optional.
+ */
+export const SIGNATURE_PATTERN = /^ed25519:[A-Za-z0-9+/_-]{86,90}={0,2}$/;
+
+/**
+ * v1.4.0 W7/B1: publisher key id format. sha256 fingerprint of the public
+ * key (lowercase hex), no scheme prefix.
+ */
+export const PUBLISHER_KEY_ID_PATTERN = /^[a-f0-9]{64}$/;
+
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const IJFW_REQUIRES_PATTERN = /^(>=|>|=|<=|<)?\s*\d+\.\d+\.\d+/;
 const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
@@ -225,6 +238,23 @@ export function validateExtensionManifest(obj) {
     errors.push(
       `integrity: must match ${INTEGRITY_PATTERN} — full 64 hex char sha256 digest`,
     );
+  }
+
+  // signature (optional, W7/B1). When present, publisher_key_id is required
+  // and both must match their patterns. When absent, manifest is "unsigned".
+  if (obj.signature !== undefined) {
+    if (!isString(obj.signature) || !SIGNATURE_PATTERN.test(obj.signature)) {
+      errors.push(`signature: must match ${SIGNATURE_PATTERN}`);
+    }
+    if (obj.publisher_key_id === undefined) {
+      errors.push('publisher_key_id: required when signature present');
+    } else if (!isString(obj.publisher_key_id) || !PUBLISHER_KEY_ID_PATTERN.test(obj.publisher_key_id)) {
+      errors.push(`publisher_key_id: must match ${PUBLISHER_KEY_ID_PATTERN}`);
+    }
+  } else if (obj.publisher_key_id !== undefined) {
+    if (!isString(obj.publisher_key_id) || !PUBLISHER_KEY_ID_PATTERN.test(obj.publisher_key_id)) {
+      errors.push(`publisher_key_id: must match ${PUBLISHER_KEY_ID_PATTERN}`);
+    }
   }
 
   return { valid: errors.length === 0, errors };

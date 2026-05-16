@@ -25,6 +25,12 @@ import {
   listExtensions,
 } from '../extension-installer.js';
 import {
+  generatePublisherKeypair,
+  addTrustedPublisher,
+  removeTrustedPublisher,
+  readTrustedPublishers,
+} from '../extension-signer.js';
+import {
   deployExtensionSkillsToPlatforms,
   deployExtensionToAgentsMd,
 } from '../../../installer/src/install-helpers.js';
@@ -85,15 +91,103 @@ function parseSourceAndScope(args) {
   return { source: tokens.join(' '), scope: undefined };
 }
 
+/**
+ * Strip recognised flag tokens from an args string and return both the
+ * cleaned args and a flags object. Flags are positional-agnostic.
+ *
+ *   --allow-unsigned      -> opts.allowUnsigned = true
+ *   --accept-untrusted    -> opts.acceptUntrusted = true
+ */
+function extractAddFlags(args) {
+  const tokens = String(args || '').split(/\s+/).filter(Boolean);
+  const flags = { allowUnsigned: false, acceptUntrusted: false };
+  const keep = [];
+  for (const t of tokens) {
+    if (t === '--allow-unsigned') { flags.allowUnsigned = true; continue; }
+    if (t === '--accept-untrusted') { flags.acceptUntrusted = true; continue; }
+    keep.push(t);
+  }
+  return { args: keep.join(' '), flags };
+}
+
 async function cmdAdd({ args, projectRoot }) {
-  const { source, scope: rawScope } = parseSourceAndScope(args);
+  const { args: stripped, flags } = extractAddFlags(args);
+  const { source, scope: rawScope } = parseSourceAndScope(stripped);
   if (!source) return { ok: false, command: 'add', error: 'missing source (npm name, path, or https:// git url)' };
   const scope = parseScope(rawScope);
   try {
-    const r = await installExtension(source, { scope, projectRoot });
+    const r = await installExtension(source, {
+      scope,
+      projectRoot,
+      allowUnsigned: flags.allowUnsigned,
+      acceptUntrusted: flags.acceptUntrusted,
+    });
     return { ok: !!r.ok, command: 'add', result: r };
   } catch (err) {
     return { ok: false, command: 'add', error: err.message };
+  }
+}
+
+async function cmdKeygen({ args }) {
+  const authorName = String(args || '').trim();
+  if (!authorName) return { ok: false, command: 'keygen', error: 'missing author name' };
+  try {
+    const kp = await generatePublisherKeypair(authorName);
+    return {
+      ok: true,
+      command: 'keygen',
+      result: {
+        keyId: kp.keyId,
+        publicKey: kp.publicKey,
+        dir: kp.dir,
+        // private key is on disk at <dir>/private.pem; never echo to log.
+      },
+    };
+  } catch (err) {
+    return { ok: false, command: 'keygen', error: err.message };
+  }
+}
+
+async function cmdTrust({ args }) {
+  // Args shape: "<keyId> <publicKeyPemMultiline>"
+  // The PEM body almost certainly contains spaces and newlines — accept
+  // everything after the first whitespace as the public key.
+  const raw = String(args || '');
+  const idx = raw.search(/\s/);
+  if (idx < 0) return { ok: false, command: 'trust', error: 'usage: trust <keyId> <publicKeyPem>' };
+  const keyId = raw.slice(0, idx).trim();
+  const publicKey = raw.slice(idx + 1).trim();
+  if (!keyId || !publicKey) return { ok: false, command: 'trust', error: 'usage: trust <keyId> <publicKeyPem>' };
+  try {
+    const r = await addTrustedPublisher(keyId, publicKey);
+    return { ok: !!r.ok, command: 'trust', result: r };
+  } catch (err) {
+    return { ok: false, command: 'trust', error: err.message };
+  }
+}
+
+async function cmdUntrust({ args }) {
+  const keyId = String(args || '').trim();
+  if (!keyId) return { ok: false, command: 'untrust', error: 'missing keyId' };
+  try {
+    const r = await removeTrustedPublisher(keyId);
+    return { ok: !!r.ok, command: 'untrust', result: { removed: r.removed } };
+  } catch (err) {
+    return { ok: false, command: 'untrust', error: err.message };
+  }
+}
+
+async function cmdTrusted() {
+  try {
+    const store = await readTrustedPublishers();
+    const publishers = Object.entries(store.publishers || {}).map(([keyId, v]) => ({
+      keyId,
+      name: v.name ?? null,
+      added_at: v.added_at ?? null,
+    }));
+    return { ok: true, command: 'trusted', result: { publishers, count: publishers.length } };
+  } catch (err) {
+    return { ok: false, command: 'trusted', error: err.message };
   }
 }
 
@@ -265,11 +359,15 @@ export async function extensionDispatch({ command, args = '', projectRoot }) {
     case 'remove': return cmdRemove(ctx);
     case 'audit': return cmdAudit(ctx);
     case 'deploy-lazy': return cmdDeployLazy(ctx);
+    case 'keygen': return cmdKeygen(ctx);
+    case 'trust': return cmdTrust(ctx);
+    case 'untrust': return cmdUntrust(ctx);
+    case 'trusted': return cmdTrusted(ctx);
     default:
       return {
         ok: false,
         command,
-        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy`,
+        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy | keygen | trust | untrust | trusted`,
       };
   }
 }

@@ -23,11 +23,26 @@ import {
   listExtensions,
   extensionAuditBrief,
 } from './src/extension-installer.js';
-import { computeIntegrity } from './src/extension-signer.js';
+import {
+  computeIntegrity,
+  generatePublisherKeypair,
+  signManifest,
+  addTrustedPublisher,
+} from './src/extension-signer.js';
 import {
   _resetCache as resetLensCache,
   _setCache as setLensCache,
 } from './src/trident/lens-health.js';
+
+/**
+ * Sign a manifest under the active (isolated) HOME and trust the keypair.
+ * Returns the fully-signed manifest with integrity AFTER signing.
+ */
+async function signAndTrustHelper(manifestNoIntegrity) {
+  const kp = await generatePublisherKeypair('test-helper');
+  await addTrustedPublisher(kp.keyId, kp.publicKey, 'test-helper');
+  return signManifest(manifestNoIntegrity, kp.privateKey);
+}
 
 // --- helpers ---------------------------------------------------------------
 
@@ -83,7 +98,11 @@ async function writeValidExtension(dir, name = 'demo-ext', overrides = {}) {
     permissions: { reads: ['./README.md'], writes: ['memory:write'] },
     ...overrides,
   };
-  const signed = computeIntegrity(base);
+  // W7/B1: sign the manifest with an isolated-HOME publisher key and trust it
+  // so installExtension's signature gate is satisfied by default. Tests that
+  // need to exercise the unsigned path drop into installExtension directly with
+  // {allowUnsigned: true} or write their own manifest.
+  const signed = await signAndTrustHelper(base);
   await writeFile(
     join(dir, 'manifest.json'),
     JSON.stringify(signed, null, 2),
@@ -195,7 +214,7 @@ test('installExtension: secret in skill body is rejected', async () => {
         skills: [{ name: 'hello', file: 'skills/hello.md' }],
         permissions: { reads: [], writes: [] },
       };
-      const signed = computeIntegrity(base);
+      const signed = await signAndTrustHelper(base);
       await writeFile(join(extDir, 'manifest.json'), JSON.stringify(signed, null, 2), 'utf8');
       seedLensesLive();
 

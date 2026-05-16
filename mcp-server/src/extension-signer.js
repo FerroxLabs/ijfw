@@ -30,8 +30,16 @@
 // TODO(v1.5.0): rename file to `extension-integrity.js` and add a separate
 // `extension-signing.js` for asymmetric publisher signatures (residual R13).
 
-import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+} from 'node:crypto';
+import { readdir, readFile, stat, mkdir, writeFile, chmod } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 
 import { classify } from './redactor.js';
@@ -40,6 +48,8 @@ import {
   INTEGRITY_PATTERN,
   PERMISSION_READS,
   PERMISSION_WRITES,
+  SIGNATURE_PATTERN,
+  PUBLISHER_KEY_ID_PATTERN,
 } from './extension-manifest-schema.js';
 
 /**
@@ -422,4 +432,312 @@ export function validatePermissions(manifest) {
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+// === W7/B1: Asymmetric Ed25519 publisher signing =========================
+//
+// Trust model upgrade for v1.4.0:
+//   - integrity (sha256) detects tamper, independent of signing.
+//   - signature (ed25519) binds a manifest to a publisher keypair.
+//   - publisher_key_id = sha256 fingerprint (hex) of the PEM-encoded public key.
+//   - Trusted publishers store at ~/.ijfw/trusted-publishers.json.
+//   - Keypairs persist at ~/.ijfw/keys/<keyId>/ (private 0600, public 0644).
+//
+// Canonicalisation for signing: drop `signature` AND `integrity` fields, then
+// serialise with sortKeysDeep -> JSON.stringify. Verification re-creates the
+// same canonical form.
+
+function keysRoot() {
+  return join(homedir(), '.ijfw', 'keys');
+}
+
+function trustedPublishersPath() {
+  return join(homedir(), '.ijfw', 'trusted-publishers.json');
+}
+
+/**
+ * Canonical bytes for signing: drop signature + integrity, sort keys deep,
+ * UTF-8 encode. Shared by signManifest / verifyManifestSignature so both
+ * sides produce byte-identical input.
+ *
+ * @param {object} manifest
+ * @returns {Buffer}
+ */
+function canonicalSigningBytes(manifest) {
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return Buffer.from(JSON.stringify(sortKeysDeep(manifest)), 'utf8');
+  }
+  const shallow = {};
+  for (const k of Object.keys(manifest)) {
+    if (k === 'signature' || k === 'integrity') continue;
+    shallow[k] = manifest[k];
+  }
+  return Buffer.from(JSON.stringify(sortKeysDeep(shallow)), 'utf8');
+}
+
+/**
+ * Compute the sha256 hex fingerprint (lowercase) of a PEM-encoded public key.
+ * Uses the DER-encoded form so a re-encode of the same key still fingerprints
+ * to the same id.
+ *
+ * @param {string} publicKeyPem
+ * @returns {string}
+ */
+export function publicKeyFingerprint(publicKeyPem) {
+  const key = createPublicKey(publicKeyPem);
+  const der = key.export({ type: 'spki', format: 'der' });
+  return createHash('sha256').update(der).digest('hex');
+}
+
+/**
+ * Generate a new Ed25519 publisher keypair, persist it under ~/.ijfw/keys/<keyId>/,
+ * and return the in-memory PEM material + the derived keyId.
+ *
+ * @param {string} [authorName] informational only (recorded in the receipt)
+ * @returns {Promise<{ publicKey: string, privateKey: string, keyId: string, dir: string }>}
+ */
+export async function generatePublisherKeypair(authorName) {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const keyId = publicKeyFingerprint(publicKeyPem);
+
+  const dir = join(keysRoot(), keyId);
+  await mkdir(dir, { recursive: true });
+  const pubPath = join(dir, 'public.pem');
+  const privPath = join(dir, 'private.pem');
+  await writeFile(pubPath, publicKeyPem, 'utf8');
+  await writeFile(privPath, privateKeyPem, { encoding: 'utf8', mode: 0o600 });
+  // Re-chmod belt-and-braces; some platforms ignore the open-time mode arg.
+  try { await chmod(privPath, 0o600); } catch { /* best-effort */ }
+  try { await chmod(pubPath, 0o644); } catch { /* best-effort */ }
+
+  // Author receipt (informational; not authoritative).
+  if (typeof authorName === 'string' && authorName.length > 0) {
+    try {
+      await writeFile(
+        join(dir, 'author.txt'),
+        `${authorName}\n${new Date().toISOString()}\n`,
+        'utf8',
+      );
+    } catch { /* non-fatal */ }
+  }
+
+  return { publicKey: publicKeyPem, privateKey: privateKeyPem, keyId, dir };
+}
+
+/**
+ * Load a previously-generated keypair from ~/.ijfw/keys/<keyId>/. Returns null
+ * if either file is missing.
+ *
+ * @param {string} keyId
+ * @returns {Promise<{ publicKey: string, privateKey: string, keyId: string } | null>}
+ */
+export async function loadPublisherKeypair(keyId) {
+  if (typeof keyId !== 'string' || !PUBLISHER_KEY_ID_PATTERN.test(keyId)) return null;
+  const dir = join(keysRoot(), keyId);
+  try {
+    const [publicKey, privateKey] = await Promise.all([
+      readFile(join(dir, 'public.pem'), 'utf8'),
+      readFile(join(dir, 'private.pem'), 'utf8'),
+    ]);
+    return { publicKey, privateKey, keyId };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sign a manifest. Returns a NEW manifest with `signature` + `publisher_key_id`
+ * fields populated. Re-computes integrity AFTER signing so the integrity hash
+ * covers the signature payload too (signature is excluded from signing bytes
+ * but included in integrity bytes, so any post-sign edit is detected).
+ *
+ * @param {object} manifest
+ * @param {string} privateKeyPem
+ * @returns {object} manifest with signature, publisher_key_id, integrity
+ */
+export function signManifest(manifest, privateKeyPem) {
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new TypeError('signManifest: manifest must be an object');
+  }
+  const priv = createPrivateKey(privateKeyPem);
+  // Derive the matching public key + keyId so the publisher_key_id is
+  // self-consistent with the signing material.
+  const pub = createPublicKey(priv);
+  const publicKeyPem = pub.export({ type: 'spki', format: 'pem' }).toString();
+  const keyId = publicKeyFingerprint(publicKeyPem);
+
+  // Add publisher_key_id BEFORE computing signing bytes so verify-time canonical
+  // bytes (which include publisher_key_id) match sign-time canonical bytes.
+  const toSign = { ...manifest, publisher_key_id: keyId };
+  const bytes = canonicalSigningBytes(toSign);
+  const sigBuf = cryptoSign(null, bytes, priv);
+  const signature = `ed25519:${sigBuf.toString('base64')}`;
+
+  const signed = {
+    ...toSign,
+    signature,
+  };
+  // Recompute integrity to cover the signature + key id fields.
+  return computeIntegrity(signed);
+}
+
+/**
+ * Verify a manifest's signature against a map of trusted publishers.
+ *
+ * @param {object} manifest
+ * @param {{ publishers: Record<string, { publicKey: string, name?: string }> } | null} trustedKeys
+ * @returns {{ valid: boolean, publisherKeyId: string | null, reason: string }}
+ */
+export function verifyManifestSignature(manifest, trustedKeys) {
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return { valid: false, publisherKeyId: null, reason: 'manifest must be an object' };
+  }
+  const sig = typeof manifest.signature === 'string' ? manifest.signature : null;
+  const kid = typeof manifest.publisher_key_id === 'string' ? manifest.publisher_key_id : null;
+  if (!sig) return { valid: false, publisherKeyId: null, reason: 'manifest has no signature' };
+  if (!SIGNATURE_PATTERN.test(sig)) return { valid: false, publisherKeyId: null, reason: 'signature shape invalid' };
+  if (!kid) return { valid: false, publisherKeyId: null, reason: 'manifest missing publisher_key_id' };
+  if (!PUBLISHER_KEY_ID_PATTERN.test(kid)) return { valid: false, publisherKeyId: kid, reason: 'publisher_key_id shape invalid' };
+
+  const publishers = (trustedKeys && trustedKeys.publishers) || {};
+  const entry = publishers[kid];
+  if (!entry || typeof entry.publicKey !== 'string') {
+    return { valid: false, publisherKeyId: kid, reason: `publisher ${kid} not trusted` };
+  }
+
+  let pubKey;
+  try {
+    pubKey = createPublicKey(entry.publicKey);
+  } catch (err) {
+    return { valid: false, publisherKeyId: kid, reason: `trusted publisher key unparseable: ${err.message}` };
+  }
+  // Belt-and-braces: confirm the trusted key actually fingerprints to the
+  // declared keyId. Defends against a tampered trusted-publishers.json where
+  // someone swapped publicKey but kept the keyId.
+  try {
+    const fp = publicKeyFingerprint(entry.publicKey);
+    if (fp !== kid) {
+      return { valid: false, publisherKeyId: kid, reason: 'trusted publicKey does not match keyId' };
+    }
+  } catch {
+    return { valid: false, publisherKeyId: kid, reason: 'trusted publicKey fingerprint failed' };
+  }
+
+  const sigB64 = sig.slice('ed25519:'.length);
+  let sigBuf;
+  try {
+    sigBuf = Buffer.from(sigB64, 'base64');
+  } catch {
+    return { valid: false, publisherKeyId: kid, reason: 'signature base64 decode failed' };
+  }
+
+  const bytes = canonicalSigningBytes(manifest);
+  let ok;
+  try {
+    ok = cryptoVerify(null, bytes, pubKey, sigBuf);
+  } catch (err) {
+    return { valid: false, publisherKeyId: kid, reason: `verify failed: ${err.message}` };
+  }
+  if (!ok) return { valid: false, publisherKeyId: kid, reason: 'signature does not verify' };
+  return { valid: true, publisherKeyId: kid, reason: 'ok' };
+}
+
+/**
+ * Read the trusted publishers JSON. Returns `{publishers: {}}` when absent or
+ * malformed (fail-closed for verification: no trusted keys means nothing is
+ * trusted).
+ *
+ * @returns {Promise<{ publishers: Record<string, { name?: string, publicKey: string, added_at?: string }> }>}
+ */
+export async function readTrustedPublishers() {
+  const path = trustedPublishersPath();
+  let raw;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    return { publishers: {} };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { publishers: {} };
+  }
+  if (!parsed || typeof parsed !== 'object' || parsed.publishers === null || typeof parsed.publishers !== 'object') {
+    return { publishers: {} };
+  }
+  // Filter entries to well-formed records.
+  const out = { publishers: {} };
+  for (const [kid, val] of Object.entries(parsed.publishers)) {
+    if (!PUBLISHER_KEY_ID_PATTERN.test(kid)) continue;
+    if (!val || typeof val !== 'object' || typeof val.publicKey !== 'string') continue;
+    out.publishers[kid] = {
+      name: typeof val.name === 'string' ? val.name : undefined,
+      publicKey: val.publicKey,
+      added_at: typeof val.added_at === 'string' ? val.added_at : undefined,
+    };
+  }
+  return out;
+}
+
+async function writeTrustedPublishers(store) {
+  const path = trustedPublishersPath();
+  await mkdir(join(homedir(), '.ijfw'), { recursive: true });
+  await writeFile(path, JSON.stringify(store, null, 2) + '\n', 'utf8');
+}
+
+/**
+ * Add (or replace) a trusted publisher entry. Validates the publicKey
+ * fingerprint against the supplied keyId. Returns the updated store.
+ *
+ * @param {string} keyId
+ * @param {string} publicKey PEM-encoded
+ * @param {string} [name]
+ * @returns {Promise<{ ok: boolean, error?: string, store?: object }>}
+ */
+export async function addTrustedPublisher(keyId, publicKey, name) {
+  if (typeof keyId !== 'string' || !PUBLISHER_KEY_ID_PATTERN.test(keyId)) {
+    return { ok: false, error: 'invalid keyId' };
+  }
+  if (typeof publicKey !== 'string' || publicKey.indexOf('BEGIN PUBLIC KEY') === -1) {
+    return { ok: false, error: 'publicKey must be PEM-encoded' };
+  }
+  let fp;
+  try {
+    fp = publicKeyFingerprint(publicKey);
+  } catch (err) {
+    return { ok: false, error: `publicKey unparseable: ${err.message}` };
+  }
+  if (fp !== keyId) {
+    return { ok: false, error: 'publicKey fingerprint does not match keyId' };
+  }
+  const store = await readTrustedPublishers();
+  store.publishers[keyId] = {
+    name: typeof name === 'string' && name.length > 0 ? name : undefined,
+    publicKey,
+    added_at: new Date().toISOString(),
+  };
+  await writeTrustedPublishers(store);
+  return { ok: true, store };
+}
+
+/**
+ * Remove a trusted publisher entry by keyId. Idempotent.
+ *
+ * @param {string} keyId
+ * @returns {Promise<{ ok: boolean, removed: boolean, store?: object, error?: string }>}
+ */
+export async function removeTrustedPublisher(keyId) {
+  if (typeof keyId !== 'string' || !PUBLISHER_KEY_ID_PATTERN.test(keyId)) {
+    return { ok: false, removed: false, error: 'invalid keyId' };
+  }
+  const store = await readTrustedPublishers();
+  const had = Object.prototype.hasOwnProperty.call(store.publishers, keyId);
+  if (had) {
+    delete store.publishers[keyId];
+    await writeTrustedPublishers(store);
+  }
+  return { ok: true, removed: had, store };
 }
