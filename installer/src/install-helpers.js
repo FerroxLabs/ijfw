@@ -959,9 +959,23 @@ export async function deployExtensionSkillsToPlatforms(
   // arbitrary local files into project platform skill dirs on every
   // session-start. Reproduced in W6.1 audit round 5.
   const sourceRootResolved = resolve(sourceRoot);
+  // W6.3/R6-H-01: validate extensionName + each skill.name at the helper
+  // boundary too. A hand-placed home-scope manifest with
+  // `skills[].name: "../../outside"` would otherwise build a dstDir that
+  // escapes the platform's ext-<name>/ subtree at deploy time. Mirror the
+  // schema patterns locally (the schema doesn't export them).
+  const NAME_EXT_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
+  const NAME_SKILL_PATTERN = /^[a-z][a-z0-9-]*$/;
+  if (!NAME_EXT_PATTERN.test(extensionName)) {
+    throw new Error(`deployExtensionSkillsToPlatforms: invalid extensionName: ${extensionName}`);
+  }
   for (const s of skillList) {
     if (!s || typeof s.file !== 'string' || typeof s.name !== 'string') {
       throw new Error(`deployExtensionSkillsToPlatforms: invalid skill entry: ${JSON.stringify(s)}`);
+    }
+    // W6.3/R6-H-01: reject malformed skill names before they reach dstDir.
+    if (!NAME_SKILL_PATTERN.test(s.name)) {
+      throw new Error(`deployExtensionSkillsToPlatforms: invalid skill name: ${s.name}`);
     }
     // Reject `..` segments outright (belt-and-braces with the resolved-path
     // containment check below).
@@ -1035,9 +1049,25 @@ export async function deployExtensionSkillsToPlatforms(
   // For each present platform, copy each skill.
   for (const p of platformPresence) {
     if (!p.present) continue;
+    // W6.3/R6-H-01 defense in depth: even though we now validate both
+    // extensionName and s.name above, also enforce containment on the
+    // resolved dstDir. join() doesn't normalize `..` if the names were
+    // somehow bypassed (e.g. by a future caller using a different
+    // validation regime).
+    const extRootResolved = resolve(join(p.abs, `ext-${extensionName}`));
     for (const s of skillList) {
       const src = join(sourceRoot, s.file);
       const dstDir = join(p.abs, `ext-${extensionName}`, s.name);
+      const dstDirResolved = resolve(dstDir);
+      if (dstDirResolved !== extRootResolved &&
+          !dstDirResolved.startsWith(extRootResolved + sep)) {
+        const err = `dest dir resolves outside ext root: ${s.name}`;
+        failed.push({ platform: p.id, skillName: s.name, error: err });
+        let outEntry = receipt.platforms.find((row) => row.id === p.id && row.skill === s.name);
+        if (outEntry) { outEntry.status = 'fail'; outEntry.path = null; outEntry.error = err; }
+        if (writeReceipt) writeReceiptAtomic(receiptPath, receipt);
+        continue;
+      }
       const dst = join(dstDir, 'SKILL.md');
       let entry = receipt.platforms.find((row) => row.id === p.id && row.skill === s.name);
       try {
