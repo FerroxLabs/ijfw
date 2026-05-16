@@ -94,7 +94,10 @@ export function nativePath(p) {
 export function writeAtomic(path, contents, opts = {}) {
   const mode = opts.mode ?? 0o600;
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp.${process.pid}`;
+  // W6.1/R4-H-01: pid alone is not unique under concurrent calls in the same
+  // process (e.g. two ijfw operations from a parent shell sharing pid via fork
+  // semantics on some platforms) — append random suffix.
+  const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   writeFileSync(tmp, contents, { mode });
   renameSync(tmp, path);
   // renameSync preserves the tmp's mode but re-apply for clarity in case the
@@ -825,8 +828,10 @@ export async function deployExtensionToAgentsMd(extensionName, skills, projectRo
 
   // Atomic write (tmp + rename). Default mode 0o644 here — AGENTS.md is a
   // project doc, not a secrets file like the MCP config writes elsewhere.
+  // W6.1/R4-H-01: random suffix prevents tmp collision when install +
+  // deploy-lazy + uninstall race on the same project's AGENTS.md.
   mkdirSync(dirname(agentsPath), { recursive: true });
-  const tmp = `${agentsPath}.tmp.${process.pid}`;
+  const tmp = `${agentsPath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   writeFileSync(tmp, next, { mode: 0o644 });
   renameSync(tmp, agentsPath);
   try { chmodSync(agentsPath, 0o644); } catch { /* best-effort */ }
@@ -870,7 +875,9 @@ export async function removeExtensionFromAgentsMd(extensionName, projectRoot) {
   const blockBody = renderExtensionsBlock(entries);
   const next = replaceOrAppendExtensionsBlock(existing, blockBody);
 
-  const tmp = `${agentsPath}.tmp.${process.pid}`;
+  // W6.1/R4-H-01: random suffix prevents tmp collision when concurrent
+  // ijfw operations race on the same AGENTS.md (parallel install/uninstall).
+  const tmp = `${agentsPath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   writeFileSync(tmp, next, { mode: 0o644 });
   renameSync(tmp, agentsPath);
   try { chmodSync(agentsPath, 0o644); } catch { /* best-effort */ }
