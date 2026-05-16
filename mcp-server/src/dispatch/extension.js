@@ -72,7 +72,16 @@ function parseSourceAndScope(args) {
   const tokens = trimmed.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return { source: '', scope: undefined };
   const last = tokens[tokens.length - 1];
-  if (tokens.length > 1 && VALID_SCOPES.has(last)) {
+  // W6.1/Gemini-med: if the leading tokens look like a path (start with
+  // '/', './', '../', or '~/'), don't strip a trailing scope-shaped token —
+  // a real local-install of `/my/project` would otherwise be parsed as
+  // source=`/my`, scope=`project`. The user should quote ambiguous paths;
+  // when they don't and the input clearly is a path, prefer treating the
+  // whole thing as the source.
+  const firstTok = tokens[0];
+  const looksLikePath = firstTok.startsWith('/') || firstTok.startsWith('./') ||
+    firstTok.startsWith('../') || firstTok.startsWith('~/');
+  if (!looksLikePath && tokens.length > 1 && VALID_SCOPES.has(last)) {
     return { source: tokens.slice(0, -1).join(' '), scope: last };
   }
   return { source: tokens.join(' '), scope: undefined };
