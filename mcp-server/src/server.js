@@ -45,6 +45,16 @@ import { runCommand, detectDomain, summarize, writeToSandbox, readFromSandbox, p
 // W1B (1.3.0-alpha) -- colon-syntax dispatcher. Extends ijfw_run + ijfw_memory_search
 // with compute:/index:/detect: sub-commands without registering new MCP tools.
 import { parseColonCommand, dispatchRun, dispatchSearch } from './dispatch/colon-syntax.js';
+// W7/B2 -- runtime sandbox mediation. With no installed extension active,
+// getActiveExtension() returns null and checkPermission() allows everything
+// (backwards-compat invariant). With an active extension, each MCP tool call
+// is gated against its declared permissions before the handler runs.
+import {
+  getActiveExtension,
+  checkPermission,
+  logPermissionEvent,
+  toolNameToActionTarget,
+} from './runtime-mediator.js';
 const SANDBOX_DIR = join(process.env.HOME || homedir(), '.ijfw', 'session-sandbox');
 
 // --- Constants ---
@@ -1248,6 +1258,38 @@ function handleMessage(msg) {
       return (async () => {
       let result;
       try {
+        // W7/B2 -- tier-1 runtime mediation. If an extension is active,
+        // gate the call against its declared permissions before any handler
+        // runs. With no extension active (bundled IJFW context), activeExt
+        // is null and the gate is a no-op -- preserving the backwards-compat
+        // invariant. Malformed state is fail-closed (denied).
+        let activeExt = null;
+        try {
+          activeExt = await getActiveExtension();
+        } catch {
+          activeExt = { __malformed: true };
+        }
+        if (activeExt !== null) {
+          const mapping = toolNameToActionTarget(name, args || {});
+          if (mapping) {
+            const check = checkPermission(mapping.action, mapping.target, activeExt);
+            if (!check.allowed) {
+              await logPermissionEvent({
+                tool: name,
+                extension: activeExt && activeExt.name ? activeExt.name : null,
+                action: mapping.action,
+                target: mapping.target,
+                allowed: false,
+                reason: check.reason,
+                ts: new Date().toISOString(),
+              }).catch(() => {});
+              return createResponse(id, {
+                content: [{ type: 'text', text: `extension permission denied: ${check.reason}` }],
+                isError: true,
+              });
+            }
+          }
+        }
         switch (name) {
           case 'ijfw_update_check': {
             const r = await ijfwUpdateCheck(args || {});

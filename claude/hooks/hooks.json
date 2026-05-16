@@ -45,6 +45,11 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/sandbox-nudge.sh",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-tool-use-extension-check.sh",
+            "timeout": 2000
           }
         ]
       },
