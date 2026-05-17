@@ -45,6 +45,16 @@ import {
   SIGNATURE_PATTERN,
   PUBLISHER_KEY_ID_PATTERN,
 } from './extension-manifest-schema.js';
+import {
+  SOFTWARE_BACKEND,
+  SSH_AGENT_BACKEND,
+  resolveBackend,
+} from './hardware-signer.js';
+
+// B15: re-export backend primitives so callers can sign/verify via the
+// backend abstraction without a second import. Software backend remains
+// the default; ssh-agent backend is opt-in via manifest.publisher_key_backend.
+export { SOFTWARE_BACKEND, SSH_AGENT_BACKEND, resolveBackend };
 
 /**
  * Recursively sort object keys to produce a stable canonical representation.
@@ -581,6 +591,59 @@ export function signManifest(manifest, privateKeyPem) {
 }
 
 /**
+ * B15: Backend-aware async manifest signer. Dispatches to the backend
+ * named by `manifest.publisher_key_backend` (default: 'software').
+ *
+ * The software backend reads the on-disk private PEM at
+ * `<home>/.ijfw/keys/<keyId>/private.pem` and signs in-process. The
+ * ssh-agent backend forwards the signing op to the running SSH agent
+ * — the private key never enters the IJFW process.
+ *
+ * Identity selection at sign time:
+ *   - keyId is supplied via `opts.keyId`. The chosen backend uses keyId
+ *     to look up its key material (PEM on disk for software; pubkey blob
+ *     in backend.json for ssh-agent, then identity match in the agent).
+ *
+ * Returns a NEW manifest with `publisher_key_id`, `publisher_key_backend`
+ * (when explicitly non-software), `signature`, and re-computed `integrity`.
+ *
+ * @param {object} manifest
+ * @param {object} opts
+ * @param {string} opts.keyId required — the keyId to sign with
+ * @param {string} [opts.home] override for ~/.ijfw root (test isolation)
+ * @param {string} [opts.socketPath] override SSH_AUTH_SOCK (test isolation)
+ * @returns {Promise<object>}
+ */
+export async function signManifestWithBackend(manifest, opts = {}) {
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new TypeError('signManifestWithBackend: manifest must be an object');
+  }
+  if (typeof opts.keyId !== 'string' || !PUBLISHER_KEY_ID_PATTERN.test(opts.keyId)) {
+    throw new TypeError('signManifestWithBackend: opts.keyId required (sha256 hex)');
+  }
+  const backendName = manifest.publisher_key_backend; // undefined OK
+  const backend = resolveBackend(backendName);
+
+  const toSign = {
+    ...manifest,
+    publisher_key_id: opts.keyId,
+  };
+  // Only emit `publisher_key_backend` field when explicitly non-default to
+  // keep software-backend manifests byte-identical to the v1.4.0 shape.
+  if (backendName !== undefined && backendName !== 'software') {
+    toSign.publisher_key_backend = backendName;
+  }
+  const bytes = canonicalSigningBytes(toSign);
+  const sigBuf = await backend.sign(bytes, opts.keyId, {
+    home: opts.home,
+    socketPath: opts.socketPath,
+  });
+  const signature = `ed25519:${Buffer.from(sigBuf).toString('base64')}`;
+  const signed = { ...toSign, signature };
+  return computeIntegrity(signed);
+}
+
+/**
  * Verify a manifest's signature against a map of trusted publishers.
  *
  * @param {object} manifest
@@ -808,6 +871,48 @@ export function signRotationToken(oldPrivateKeyPem, newPublicKeyPem, opts = {}) 
   const bytes = Buffer.from(JSON.stringify(sortKeysDeep(token)), 'utf8');
   const sigBuf = cryptoSign(null, bytes, priv);
   return { ...token, signature: `ed25519:${sigBuf.toString('base64')}` };
+}
+
+/**
+ * B15: Backend-aware async rotation-token signer. Mirrors signRotationToken
+ * but dispatches the actual signing operation to the named backend.
+ *
+ * The token shape is identical to the software-backend version
+ * (`signRotationToken`); the only difference is WHO holds the private
+ * key. For ssh-agent backend, the OLD key's signing op is forwarded to
+ * the agent — the old private key never enters IJFW process memory.
+ *
+ * @param {object} opts
+ * @param {string} opts.oldKeyId required — keyId for the OLD key
+ * @param {string} opts.newPublicKeyPem required — PEM of the NEW key
+ * @param {string} [opts.backend] 'software' | 'ssh-agent' (default software)
+ * @param {string} [opts.rotated_at] ISO timestamp override
+ * @param {string} [opts.home] override for ~/.ijfw root (test isolation)
+ * @param {string} [opts.socketPath] override SSH_AUTH_SOCK (test isolation)
+ * @returns {Promise<{rotated_at, old_key_id, new_key_id, new_public_key, signature}>}
+ */
+export async function signRotationTokenWithBackend(opts = {}) {
+  if (typeof opts.oldKeyId !== 'string' || !PUBLISHER_KEY_ID_PATTERN.test(opts.oldKeyId)) {
+    throw new TypeError('signRotationTokenWithBackend: opts.oldKeyId required (sha256 hex)');
+  }
+  if (typeof opts.newPublicKeyPem !== 'string' || opts.newPublicKeyPem.indexOf('BEGIN PUBLIC KEY') === -1) {
+    throw new TypeError('signRotationTokenWithBackend: opts.newPublicKeyPem must be PEM');
+  }
+  const backend = resolveBackend(opts.backend);
+  const new_key_id = publicKeyFingerprint(opts.newPublicKeyPem);
+
+  const token = {
+    rotated_at: opts.rotated_at || new Date().toISOString(),
+    old_key_id: opts.oldKeyId,
+    new_key_id,
+    new_public_key: opts.newPublicKeyPem,
+  };
+  const bytes = Buffer.from(JSON.stringify(sortKeysDeep(token)), 'utf8');
+  const sigBuf = await backend.sign(bytes, opts.oldKeyId, {
+    home: opts.home,
+    socketPath: opts.socketPath,
+  });
+  return { ...token, signature: `ed25519:${Buffer.from(sigBuf).toString('base64')}` };
 }
 
 /**

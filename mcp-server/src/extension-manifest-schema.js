@@ -297,5 +297,30 @@ export function validateExtensionManifest(obj) {
     }
   }
 
+  // === B15: publisher_key_backend ===
+  if (obj.publisher_key_backend !== undefined) {
+    if (obj.publisher_key_backend !== 'software' && obj.publisher_key_backend !== 'ssh-agent') {
+      errors.push("publisher_key_backend: must be 'software' or 'ssh-agent'");
+    }
+  }
+
+  // === B16: quotas ===
+  if (obj.quotas !== undefined) {
+    if (obj.quotas === null || typeof obj.quotas !== 'object' || Array.isArray(obj.quotas)) {
+      errors.push('quotas: must be an object');
+    } else {
+      const ALLOWED_DIMS = ['max_files_written', 'max_bytes_written', 'max_wall_clock_ms'];
+      for (const [k, v] of Object.entries(obj.quotas)) {
+        if (!ALLOWED_DIMS.includes(k)) {
+          // forward-compat: unknown quota dimensions ignored with warning (no error push)
+          continue;
+        }
+        if (!Number.isInteger(v) || v <= 0) {
+          errors.push(`quotas.${k}: must be a positive integer`);
+        }
+      }
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
