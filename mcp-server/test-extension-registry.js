@@ -601,3 +601,82 @@ test('W8.1 verifyRegistry: null signature accepted with IJFW_ALLOW_SEED_REGISTRY
     else process.env.IJFW_ALLOW_SEED_REGISTRY = orig;
   }
 });
+
+// ---------------------------------------------------------------------------
+// R12-H-02 — cross-process trust-store race via child_process.fork
+//
+// Two children each call applyMultiRegistry() concurrently with DIFFERENT
+// revocation keyId sets. Without the trust-store lock the later writer
+// overwrites the earlier writer's revoked-publishers.json and drops the
+// other set's keyIds. The lock + atomic tmp+rename make the final state the
+// UNION of both children's revocations.
+//
+// This is the SEC-H-01-style proof for R12-H-02.
+// ---------------------------------------------------------------------------
+import { fork as forkProc } from 'node:child_process';
+import { fileURLToPath as ffPath } from 'node:url';
+import { dirname as ddName } from 'node:path';
+
+const __dirnameForRace = ddName(ffPath(import.meta.url));
+const RACE_CHILD = join(__dirnameForRace, 'test-fixtures', 'trust-store-race-child.mjs');
+
+test('R12-H-02: cross-process trust-store race -- union of revocations survives', async () => {
+  await withTmpHome(async (home) => {
+    const childKeyIds = [
+      ['aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
+       'bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222'],
+      ['cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333',
+       'dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444'],
+    ];
+
+    function spawnHandle(sourceName, keyIds) {
+      const child = forkProc(RACE_CHILD, [home, sourceName, ...keyIds], {
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        env: { ...process.env, HOME: home, USERPROFILE: home },
+      });
+      let stderr = '';
+      child.stderr?.on('data', (b) => { stderr += b.toString(); });
+      const ready = new Promise((resolve) => {
+        child.on('message', (msg) => { if (msg === 'ready') resolve(); });
+      });
+      const verdict = new Promise((resolve, reject) => {
+        child.on('message', (msg) => {
+          if (msg !== 'ready' && typeof msg === 'object') resolve(msg);
+        });
+        child.on('exit', (code) => {
+          if (code !== 0) reject(new Error(`child exited ${code}; stderr=${stderr}`));
+        });
+        child.on('error', reject);
+      });
+      return { child, ready, verdict, send: (m) => child.send(m) };
+    }
+
+    const a = spawnHandle('race-source-a', childKeyIds[0]);
+    const b = spawnHandle('race-source-b', childKeyIds[1]);
+    await Promise.all([a.ready, b.ready]);
+    a.send('go');
+    b.send('go');
+    const [va, vb] = await Promise.all([a.verdict, b.verdict]);
+    try { a.child.disconnect(); } catch { /* already gone */ }
+    try { b.child.disconnect(); } catch { /* already gone */ }
+    assert.equal(va.ok, true, `child a failed: ${va.error}`);
+    assert.equal(vb.ok, true, `child b failed: ${vb.error}`);
+
+    // Final union assertion: every keyId both children tried to revoke must
+    // be present in revoked-publishers.json. If the lock is missing the
+    // later writer wins and one set is lost.
+    const revokedPath = join(home, '.ijfw', 'state', 'revoked-publishers.json');
+    const raw = await readFile(revokedPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    assert.ok(parsed && Array.isArray(parsed.revoked), 'revoked-publishers.json has revoked array');
+    const persisted = new Set(parsed.revoked.map((r) => r.keyId));
+    const expected = [...childKeyIds[0], ...childKeyIds[1]];
+    for (const k of expected) {
+      assert.ok(
+        persisted.has(k),
+        `keyId ${k} missing from final revoked-publishers.json — trust-store lock did NOT serialise across processes. ` +
+          `Persisted: ${[...persisted].join(',')}`,
+      );
+    }
+  });
+});

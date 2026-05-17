@@ -23,7 +23,7 @@
 import { createPublicKey, createHash, verify as cryptoVerify } from 'node:crypto';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import https from 'node:https';
 
 import { withFsLock } from './fs-lock.js';
@@ -68,6 +68,14 @@ function revokedPublishersPath() {
 
 function registriesConfigPath() {
   return join(homedir(), '.ijfw', 'registries.json');
+}
+
+// R12-H-02: serialise trust-store reads/writes. trusted-publishers.json +
+// revoked-publishers.json are read, merged, then written; without a lock two
+// concurrent `trust-registry --emergency` invocations interleave and the later
+// writer drops the earlier writer's revocations.
+function trustStoreLockPath() {
+  return join(ijfwStateDir(), 'trust-store.lock');
 }
 
 function sanitizeSourceName(name) {
@@ -612,7 +620,9 @@ export async function readSourceCache(source) {
 }
 
 async function atomicWriteJson(filePath, payload) {
-  await mkdir(ijfwStateDir(), { recursive: true });
+  // R12-H-02: ensure the file's parent dir exists, not just ~/.ijfw/state —
+  // trusted-publishers.json lives at ~/.ijfw, not ~/.ijfw/state.
+  await mkdir(dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(tmp, JSON.stringify(payload, null, 2) + '\n', 'utf8');
   await rename(tmp, filePath);
@@ -684,99 +694,99 @@ export async function writeCachedRegistry(registry) {
  * @returns {Promise<{added: string[], removed: string[], unchanged: string[], rejected: string[]}>}
  */
 export async function applyRegistry(registry, _opts = {}) {
-  const added = [];
-  const removed = [];
-  const unchanged = [];
-  const rejected = [];
+  // R12-H-02: serialise the entire read-merge-write window with the
+  // trust-store lock so two concurrent callers cannot drop each other's
+  // revocations. Atomic tmp+rename inside the lock for both files.
+  await mkdir(ijfwStateDir(), { recursive: true });
+  return await withFsLock(trustStoreLockPath(), async () => {
+    const added = [];
+    const removed = [];
+    const unchanged = [];
+    const rejected = [];
 
-  // Read current trust store
-  const tpPath = join(homedir(), '.ijfw', 'trusted-publishers.json');
-  let store = { publishers: {} };
-  try {
-    const raw = await readFile(tpPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.publishers === 'object' && parsed.publishers !== null) {
-      store = parsed;
-    }
-  } catch { /* absent or malformed → start fresh */ }
-
-  // Read / update revoked list
-  let revokedStore = { revoked: [] };
-  try {
-    const raw = await readFile(revokedPublishersPath(), 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.revoked)) revokedStore = parsed;
-  } catch { /* absent → start fresh */ }
-
-  const revokedSet = new Set(revokedStore.revoked.map(r => r.keyId));
-
-  // Process revocations first
-  for (const entry of (registry.revoked || [])) {
-    const { keyId } = entry;
-    if (!keyId) continue;
-    if (Object.prototype.hasOwnProperty.call(store.publishers, keyId)) {
-      delete store.publishers[keyId];
-      removed.push(keyId);
-    }
-    if (!revokedSet.has(keyId)) {
-      revokedSet.add(keyId);
-      revokedStore.revoked.push({
-        keyId,
-        revoked_at: entry.revoked_at || new Date().toISOString(),
-        reason: entry.reason || '',
-        superseded_by: entry.superseded_by || null,
-      });
-    }
-  }
-
-  // Merge publishers
-  for (const [keyId, entry] of Object.entries(registry.publishers || {})) {
-    if (!entry || typeof entry.publicKey !== 'string') {
-      rejected.push(keyId);
-      continue;
-    }
-    if (revokedSet.has(keyId)) {
-      rejected.push(keyId);
-      continue;
-    }
+    // Read current trust store
+    const tpPath = join(homedir(), '.ijfw', 'trusted-publishers.json');
+    let store = { publishers: {} };
     try {
-      const key = createPublicKey(entry.publicKey);
-      const der = key.export({ type: 'spki', format: 'der' });
-      const fp = createHash('sha256').update(der).digest('hex');
-      if (fp !== keyId) {
+      const raw = await readFile(tpPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.publishers === 'object' && parsed.publishers !== null) {
+        store = parsed;
+      }
+    } catch { /* absent or malformed → start fresh */ }
+
+    // Read / update revoked list
+    let revokedStore = { revoked: [] };
+    try {
+      const raw = await readFile(revokedPublishersPath(), 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.revoked)) revokedStore = parsed;
+    } catch { /* absent → start fresh */ }
+
+    const revokedSet = new Set(revokedStore.revoked.map(r => r.keyId));
+
+    // Process revocations first
+    for (const entry of (registry.revoked || [])) {
+      const { keyId } = entry;
+      if (!keyId) continue;
+      if (Object.prototype.hasOwnProperty.call(store.publishers, keyId)) {
+        delete store.publishers[keyId];
+        removed.push(keyId);
+      }
+      if (!revokedSet.has(keyId)) {
+        revokedSet.add(keyId);
+        revokedStore.revoked.push({
+          keyId,
+          revoked_at: entry.revoked_at || new Date().toISOString(),
+          reason: entry.reason || '',
+          superseded_by: entry.superseded_by || null,
+        });
+      }
+    }
+
+    // Merge publishers
+    for (const [keyId, entry] of Object.entries(registry.publishers || {})) {
+      if (!entry || typeof entry.publicKey !== 'string') {
         rejected.push(keyId);
         continue;
       }
-    } catch {
-      rejected.push(keyId);
-      continue;
+      if (revokedSet.has(keyId)) {
+        rejected.push(keyId);
+        continue;
+      }
+      try {
+        const key = createPublicKey(entry.publicKey);
+        const der = key.export({ type: 'spki', format: 'der' });
+        const fp = createHash('sha256').update(der).digest('hex');
+        if (fp !== keyId) {
+          rejected.push(keyId);
+          continue;
+        }
+      } catch {
+        rejected.push(keyId);
+        continue;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(store.publishers, keyId)) {
+        unchanged.push(keyId);
+      } else {
+        store.publishers[keyId] = {
+          name: entry.name,
+          publicKey: entry.publicKey,
+          verified_at: entry.verified_at,
+          metadata: entry.metadata,
+          added_at: new Date().toISOString(),
+        };
+        added.push(keyId);
+      }
     }
 
-    if (Object.prototype.hasOwnProperty.call(store.publishers, keyId)) {
-      unchanged.push(keyId);
-    } else {
-      store.publishers[keyId] = {
-        name: entry.name,
-        publicKey: entry.publicKey,
-        verified_at: entry.verified_at,
-        metadata: entry.metadata,
-        added_at: new Date().toISOString(),
-      };
-      added.push(keyId);
-    }
-  }
+    await mkdir(join(homedir(), '.ijfw'), { recursive: true });
+    await atomicWriteJson(tpPath, store);
+    await atomicWriteJson(revokedPublishersPath(), revokedStore);
 
-  await mkdir(join(homedir(), '.ijfw'), { recursive: true });
-  await writeFile(tpPath, JSON.stringify(store, null, 2) + '\n', 'utf8');
-
-  await mkdir(ijfwStateDir(), { recursive: true });
-  await writeFile(
-    revokedPublishersPath(),
-    JSON.stringify(revokedStore, null, 2) + '\n',
-    'utf8',
-  );
-
-  return { added, removed, unchanged, rejected };
+    return { added, removed, unchanged, rejected };
+  }, { staleMs: 30_000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -793,133 +803,135 @@ export async function applyRegistry(registry, _opts = {}) {
  * @returns {Promise<{sources: Array, global_revocations: Array, conflicts: Array}>}
  */
 export async function applyMultiRegistry(appliedSources) {
-  const sources = [];
-  const conflicts = [];
-  const global_revocations = [];
+  // R12-H-02: serialise the entire read-merge-write window with the
+  // trust-store lock. Without this two concurrent `trust-registry --emergency`
+  // calls interleave their read+write phases and the later writer drops the
+  // earlier writer's revocations. Atomic tmp+rename inside the lock for both
+  // trust-store files. Stale-recovery defaults are sufficient (30s).
+  await mkdir(ijfwStateDir(), { recursive: true });
+  return await withFsLock(trustStoreLockPath(), async () => {
+    const sources = [];
+    const conflicts = [];
+    const global_revocations = [];
 
-  // Read current local trust + revoked stores.
-  const tpPath = join(homedir(), '.ijfw', 'trusted-publishers.json');
-  let store = { publishers: {} };
-  try {
-    const raw = await readFile(tpPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.publishers === 'object' && parsed.publishers !== null) {
-      store = parsed;
+    // Read current local trust + revoked stores.
+    const tpPath = join(homedir(), '.ijfw', 'trusted-publishers.json');
+    let store = { publishers: {} };
+    try {
+      const raw = await readFile(tpPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.publishers === 'object' && parsed.publishers !== null) {
+        store = parsed;
+      }
+    } catch { /* absent */ }
+
+    let revokedStore = { revoked: [] };
+    try {
+      const raw = await readFile(revokedPublishersPath(), 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.revoked)) revokedStore = parsed;
+    } catch { /* absent */ }
+
+    const revokedSet = new Set(revokedStore.revoked.map(r => r.keyId));
+
+    // PASS 1: revocations from ALL sources are global (defense-in-depth).
+    for (const { source, registry, rejected } of appliedSources) {
+      if (!registry) continue;
+      for (const entry of registry.revoked || []) {
+        const { keyId } = entry;
+        if (!keyId) continue;
+        if (Object.prototype.hasOwnProperty.call(store.publishers, keyId)) {
+          delete store.publishers[keyId];
+        }
+        if (!revokedSet.has(keyId)) {
+          revokedSet.add(keyId);
+          const rev = {
+            keyId,
+            revoked_at: entry.revoked_at || new Date().toISOString(),
+            reason: entry.reason || '',
+            superseded_by: entry.superseded_by || null,
+            source: source.name,
+          };
+          revokedStore.revoked.push(rev);
+          global_revocations.push({ keyId, source: source.name });
+        }
+      }
+      // Stash the source preamble for the per-source report.
+      sources.push({
+        name: source.name,
+        url: source.url,
+        added: [],
+        removed: [],
+        unchanged: [],
+        rejected: rejected ? [{ name: source.name, reason: rejected.reason, detail: rejected.detail }] : [],
+        skipped: !registry,
+      });
     }
-  } catch { /* absent */ }
 
-  let revokedStore = { revoked: [] };
-  try {
-    const raw = await readFile(revokedPublishersPath(), 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.revoked)) revokedStore = parsed;
-  } catch { /* absent */ }
+    // PASS 2: publishers in priority order (lowest .priority first).
+    const ordered = appliedSources
+      .filter((x) => x.registry)
+      .slice()
+      .sort((a, b) => a.source.priority - b.source.priority);
+    const claimedBy = new Map(); // keyId -> source name
 
-  const revokedSet = new Set(revokedStore.revoked.map(r => r.keyId));
-
-  // PASS 1: revocations from ALL sources are global (defense-in-depth).
-  for (const { source, registry, rejected } of appliedSources) {
-    if (!registry) continue;
-    for (const entry of registry.revoked || []) {
-      const { keyId } = entry;
-      if (!keyId) continue;
-      if (Object.prototype.hasOwnProperty.call(store.publishers, keyId)) {
-        delete store.publishers[keyId];
-      }
-      if (!revokedSet.has(keyId)) {
-        revokedSet.add(keyId);
-        const rev = {
-          keyId,
-          revoked_at: entry.revoked_at || new Date().toISOString(),
-          reason: entry.reason || '',
-          superseded_by: entry.superseded_by || null,
-          source: source.name,
-        };
-        revokedStore.revoked.push(rev);
-        global_revocations.push({ keyId, source: source.name });
-      }
-    }
-    // Stash the source preamble for the per-source report.
-    sources.push({
-      name: source.name,
-      url: source.url,
-      added: [],
-      removed: [],
-      unchanged: [],
-      rejected: rejected ? [{ name: source.name, reason: rejected.reason, detail: rejected.detail }] : [],
-      skipped: !registry,
-    });
-  }
-
-  // PASS 2: publishers in priority order (lowest .priority first).
-  const ordered = appliedSources
-    .filter((x) => x.registry)
-    .slice()
-    .sort((a, b) => a.source.priority - b.source.priority);
-  const claimedBy = new Map(); // keyId -> source name
-
-  for (const { source, registry } of ordered) {
-    const report = sources.find((s) => s.name === source.name);
-    for (const [keyId, entry] of Object.entries(registry.publishers || {})) {
-      if (!entry || typeof entry.publicKey !== 'string') {
-        report.rejected.push({ keyId, reason: 'malformed' });
-        continue;
-      }
-      if (revokedSet.has(keyId)) {
-        report.rejected.push({ keyId, reason: 'revoked' });
-        continue;
-      }
-      try {
-        const key = createPublicKey(entry.publicKey);
-        const der = key.export({ type: 'spki', format: 'der' });
-        const fp = createHash('sha256').update(der).digest('hex');
-        if (fp !== keyId) {
-          report.rejected.push({ keyId, reason: 'fingerprint_mismatch' });
+    for (const { source, registry } of ordered) {
+      const report = sources.find((s) => s.name === source.name);
+      for (const [keyId, entry] of Object.entries(registry.publishers || {})) {
+        if (!entry || typeof entry.publicKey !== 'string') {
+          report.rejected.push({ keyId, reason: 'malformed' });
           continue;
         }
-      } catch {
-        report.rejected.push({ keyId, reason: 'pubkey_parse_failed' });
-        continue;
-      }
-
-      if (claimedBy.has(keyId)) {
-        const winner = claimedBy.get(keyId);
-        if (winner !== source.name) {
-          conflicts.push({ keyId, winner, also_in: source.name });
-          report.rejected.push({ keyId, reason: 'priority_conflict', winner });
+        if (revokedSet.has(keyId)) {
+          report.rejected.push({ keyId, reason: 'revoked' });
+          continue;
         }
-        continue;
-      }
+        try {
+          const key = createPublicKey(entry.publicKey);
+          const der = key.export({ type: 'spki', format: 'der' });
+          const fp = createHash('sha256').update(der).digest('hex');
+          if (fp !== keyId) {
+            report.rejected.push({ keyId, reason: 'fingerprint_mismatch' });
+            continue;
+          }
+        } catch {
+          report.rejected.push({ keyId, reason: 'pubkey_parse_failed' });
+          continue;
+        }
 
-      claimedBy.set(keyId, source.name);
-      const existing = store.publishers[keyId];
-      if (existing && existing.publicKey === entry.publicKey) {
-        report.unchanged.push(keyId);
-      } else {
-        store.publishers[keyId] = {
-          name: entry.name,
-          publicKey: entry.publicKey,
-          verified_at: entry.verified_at,
-          metadata: entry.metadata,
-          source: source.name,
-          added_at: new Date().toISOString(),
-        };
-        if (existing) report.removed.push(keyId);
-        report.added.push(keyId);
+        if (claimedBy.has(keyId)) {
+          const winner = claimedBy.get(keyId);
+          if (winner !== source.name) {
+            conflicts.push({ keyId, winner, also_in: source.name });
+            report.rejected.push({ keyId, reason: 'priority_conflict', winner });
+          }
+          continue;
+        }
+
+        claimedBy.set(keyId, source.name);
+        const existing = store.publishers[keyId];
+        if (existing && existing.publicKey === entry.publicKey) {
+          report.unchanged.push(keyId);
+        } else {
+          store.publishers[keyId] = {
+            name: entry.name,
+            publicKey: entry.publicKey,
+            verified_at: entry.verified_at,
+            metadata: entry.metadata,
+            source: source.name,
+            added_at: new Date().toISOString(),
+          };
+          if (existing) report.removed.push(keyId);
+          report.added.push(keyId);
+        }
       }
     }
-  }
 
-  await mkdir(join(homedir(), '.ijfw'), { recursive: true });
-  await writeFile(tpPath, JSON.stringify(store, null, 2) + '\n', 'utf8');
-  await mkdir(ijfwStateDir(), { recursive: true });
-  await writeFile(
-    revokedPublishersPath(),
-    JSON.stringify(revokedStore, null, 2) + '\n',
-    'utf8',
-  );
+    await atomicWriteJson(tpPath, store);
+    await atomicWriteJson(revokedPublishersPath(), revokedStore);
 
-  return { sources, global_revocations, conflicts };
+    return { sources, global_revocations, conflicts };
+  }, { staleMs: 30_000 });
 }
 
 // ---------------------------------------------------------------------------
