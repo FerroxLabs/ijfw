@@ -12,6 +12,8 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 
+import { resetExtensionQuotas } from './extension-quota-tracker.js';
+
 const STATE_PATH_REL = ['.ijfw', 'state', 'active-extension.json'];
 
 function statePath(home) {
@@ -42,11 +44,12 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
   }
   const reads = Array.isArray(manifest.permissions.reads) ? manifest.permissions.reads : [];
   const writes = Array.isArray(manifest.permissions.writes) ? manifest.permissions.writes : [];
+  const activatedAt = new Date().toISOString();
   const out = {
     name: manifest.name,
     scope,
     permissions: { reads, writes },
-    activated_at: new Date().toISOString(),
+    activated_at: activatedAt,
   };
   const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
   const path = statePath(home);
@@ -55,6 +58,14 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
   await writeFile(tmp, JSON.stringify(out, null, 2) + '\n', 'utf8');
   const { rename } = await import('node:fs/promises');
   await rename(tmp, path);
+  // B16/SEC-M-02: reset quota counters on activate; stamp activated_at so
+  // wall_clock_ms can be computed against this activation window.
+  try {
+    await resetExtensionQuotas(manifest.name, { homeDir: home, activated_at: activatedAt });
+  } catch {
+    // Quota reset failure must not block activation. Counters will self-heal
+    // on next deactivate or the next activate of the same name.
+  }
   return { ok: true, path };
 }
 
@@ -66,11 +77,38 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
  */
 export async function clearActiveExtension(opts = {}) {
   const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
+  // B16/SEC-M-02: read the active extension name BEFORE unlinking so we can
+  // clear its quota counters. Best-effort: if the file is missing or
+  // malformed, deactivate still succeeds.
+  let extName = null;
+  try {
+    const raw = await readFile(statePath(home), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof parsed.name === 'string') {
+      extName = parsed.name;
+    }
+  } catch {
+    // ignore — extName stays null
+  }
   try {
     await unlink(statePath(home));
+    if (extName) {
+      try {
+        await resetExtensionQuotas(extName, { homeDir: home });
+      } catch {
+        // best-effort
+      }
+    }
     return { ok: true, removed: true };
   } catch (err) {
-    if (err && err.code === 'ENOENT') return { ok: true, removed: false };
+    if (err && err.code === 'ENOENT') {
+      if (extName) {
+        try {
+          await resetExtensionQuotas(extName, { homeDir: home });
+        } catch { /* best-effort */ }
+      }
+      return { ok: true, removed: false };
+    }
     return { ok: false, removed: false };
   }
 }

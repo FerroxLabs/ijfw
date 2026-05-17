@@ -55,6 +55,168 @@ import {
   logPermissionEvent,
   toolNameToActionTarget,
 } from './runtime-mediator.js';
+// B16/SEC-M-03 — quota tracker. The combined permission+quota gate lives
+// here in server.js (NOT runtime-mediator.js, which is primitives-only).
+import { checkAndIncrement as quotaCheckAndIncrement } from './extension-quota-tracker.js';
+import { findInstalledManifest } from './active-extension-writer.js';
+
+/**
+ * Combined permission + quota gate (SEC-M-03).
+ *
+ * Single enforcement site for the MCP tool dispatch. Replaces the inline
+ * `checkPermission` block. Exported so `test-server-quota-integration.js` can
+ * exercise the gate directly without spinning a full MCP server.
+ *
+ * Back-compat: when `activeExt === null` (no active extension), returns
+ * `{ allowed: true }` immediately — preserves bundled-IJFW behavior.
+ *
+ * Per-tool quota dimension mapping:
+ *   - ijfw_memory_store → bytes_written (sum of stored payload string lengths)
+ *   - ijfw_run with tool:write|edit|bash → files_written + bytes_written
+ *   - wall_clock_ms: checked-not-incremented on every tool call
+ *
+ * @returns {Promise<{ allowed: boolean, response?: object, dimension?: string, current?: number, limit?: number, reason?: string }>}
+ */
+export async function gatePermissionAndQuota({ toolName, args, activeExt, home, manifestQuotas }) {
+  if (activeExt === null || activeExt === undefined) {
+    return { allowed: true };
+  }
+  const mapping = toolNameToActionTarget(toolName, args || {});
+  if (!mapping) {
+    return { allowed: true };
+  }
+  const permCheck = checkPermission(mapping.action, mapping.target, activeExt);
+  if (!permCheck.allowed) {
+    // Log permission deny — preserves the v1.4.1 audit-trail behavior.
+    await logPermissionEvent({
+      tool: toolName,
+      extension: activeExt && activeExt.name ? activeExt.name : null,
+      action: mapping.action,
+      target: mapping.target,
+      allowed: false,
+      reason: permCheck.reason,
+      ts: new Date().toISOString(),
+    }).catch(() => {});
+    return {
+      allowed: false,
+      reason: permCheck.reason,
+      response: {
+        content: [{ type: 'text', text: `extension permission denied: ${permCheck.reason}` }],
+        isError: true,
+      },
+    };
+  }
+
+  // Quota enforcement only kicks in when the active extension declared quotas.
+  // Manifest quotas are passed in by the caller (resolved from the installed
+  // extension manifest). When manifestQuotas is missing/empty, this short-
+  // circuits — back-compat path.
+  const quotas = manifestQuotas && typeof manifestQuotas === 'object' ? manifestQuotas : {};
+  const limits = {
+    files_written: typeof quotas.max_files_written === 'number' ? quotas.max_files_written : null,
+    bytes_written: typeof quotas.max_bytes_written === 'number' ? quotas.max_bytes_written : null,
+    wall_clock_ms: typeof quotas.max_wall_clock_ms === 'number' ? quotas.max_wall_clock_ms : null,
+  };
+
+  // wall_clock_ms — always checked (no-op if limit is null).
+  if (limits.wall_clock_ms !== null) {
+    const wc = await quotaCheckAndIncrement(activeExt.name, 'wall_clock_ms', 0, limits.wall_clock_ms, { homeDir: home });
+    if (!wc.allowed) {
+      const reason = `quota:wall_clock_ms ${wc.current}/${wc.limit}`;
+      await logPermissionEvent({
+        tool: toolName, extension: activeExt.name, action: mapping.action, target: mapping.target,
+        allowed: false, reason, ts: new Date().toISOString(),
+      }).catch(() => {});
+      return {
+        allowed: false, dimension: 'wall_clock_ms', current: wc.current, limit: wc.limit, reason,
+        response: {
+          content: [{ type: 'text', text: `extension "${activeExt.name}" exceeded quota wall_clock_ms (${wc.current}/${wc.limit})` }],
+          isError: true,
+        },
+      };
+    }
+  }
+
+  // Per-tool counter mapping.
+  let inc = null;
+  if (toolName === 'ijfw_memory_store') {
+    let payloadBytes = 0;
+    try {
+      if (args && typeof args.content === 'string') payloadBytes += args.content.length;
+      if (args && typeof args.context === 'string') payloadBytes += args.context.length;
+    } catch { /* defensive */ }
+    inc = { dim: 'bytes_written', count: payloadBytes, limit: limits.bytes_written, path: null };
+  } else if (toolName === 'ijfw_run') {
+    // Only run-with-write-tools consume files/bytes quota. We sniff the
+    // command for a `tool:write|edit|bash|notebookedit` leading token and
+    // an inline path arg (best-effort; absolute path is used for dedupe).
+    const cmd = args && typeof args.command === 'string' ? args.command : '';
+    const m = cmd.match(/^\s*tool:(write|edit|bash|notebookedit)\b/i);
+    if (m) {
+      // Pull first absolute-looking path arg, if any.
+      const pm = cmd.match(/\b(\/[^\s'"]+|[A-Za-z]:\\[^\s'"]+)/);
+      const absPath = pm ? pm[1] : null;
+      const sizeArg = args && typeof args.input === 'string' ? args.input.length : 0;
+      inc = { dim: 'files_written', count: 1, limit: limits.files_written, path: absPath, bytesCount: sizeArg, bytesLimit: limits.bytes_written };
+    }
+  }
+
+  if (inc !== null) {
+    if (inc.limit !== null) {
+      const r = await quotaCheckAndIncrement(activeExt.name, inc.dim, inc.count, inc.limit, { homeDir: home, path: inc.path });
+      if (!r.allowed) {
+        const reason = `quota:${inc.dim} ${r.current + inc.count}/${r.limit}`;
+        await logPermissionEvent({
+          tool: toolName, extension: activeExt.name, action: mapping.action, target: mapping.target,
+          allowed: false, reason, ts: new Date().toISOString(),
+        }).catch(() => {});
+        return {
+          allowed: false, dimension: inc.dim, current: r.current, limit: r.limit, reason,
+          response: {
+            content: [{ type: 'text', text: `extension "${activeExt.name}" exceeded quota ${inc.dim} (${r.current + inc.count}/${r.limit})` }],
+            isError: true,
+          },
+        };
+      }
+    }
+    // Bytes side-counter (paired with files_written for ijfw_run write tools).
+    if (inc.bytesLimit !== null && typeof inc.bytesCount === 'number' && inc.bytesCount > 0) {
+      const r2 = await quotaCheckAndIncrement(activeExt.name, 'bytes_written', inc.bytesCount, inc.bytesLimit, { homeDir: home });
+      if (!r2.allowed) {
+        const reason = `quota:bytes_written ${r2.current + inc.bytesCount}/${r2.limit}`;
+        await logPermissionEvent({
+          tool: toolName, extension: activeExt.name, action: mapping.action, target: mapping.target,
+          allowed: false, reason, ts: new Date().toISOString(),
+        }).catch(() => {});
+        return {
+          allowed: false, dimension: 'bytes_written', current: r2.current, limit: r2.limit, reason,
+          response: {
+            content: [{ type: 'text', text: `extension "${activeExt.name}" exceeded quota bytes_written (${r2.current + inc.bytesCount}/${r2.limit})` }],
+            isError: true,
+          },
+        };
+      }
+    }
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Resolve `manifest.quotas` for the currently active extension by reading the
+ * installed manifest. Best-effort: returns {} if the installed manifest can't
+ * be found.
+ */
+async function resolveActiveManifestQuotas(activeExt, projectRoot, home) {
+  if (!activeExt || !activeExt.name) return {};
+  try {
+    const r = await findInstalledManifest(activeExt.name, projectRoot, { homeDir: home });
+    if (r && r.ok && r.manifest && r.manifest.quotas && typeof r.manifest.quotas === 'object') {
+      return r.manifest.quotas;
+    }
+  } catch { /* best-effort */ }
+  return {};
+}
 const SANDBOX_DIR = join(process.env.HOME || homedir(), '.ijfw', 'session-sandbox');
 
 // --- Constants ---
@@ -1285,24 +1447,22 @@ function handleMessage(msg) {
           activeExt = { __malformed: true };
         }
         if (activeExt !== null) {
-          const mapping = toolNameToActionTarget(name, args || {});
-          if (mapping) {
-            const check = checkPermission(mapping.action, mapping.target, activeExt);
-            if (!check.allowed) {
-              await logPermissionEvent({
-                tool: name,
-                extension: activeExt && activeExt.name ? activeExt.name : null,
-                action: mapping.action,
-                target: mapping.target,
-                allowed: false,
-                reason: check.reason,
-                ts: new Date().toISOString(),
-              }).catch(() => {});
-              return createResponse(id, {
-                content: [{ type: 'text', text: `extension permission denied: ${check.reason}` }],
-                isError: true,
-              });
-            }
+          // B16/SEC-M-03: combined permission + quota gate via exported helper.
+          const home = process.env.HOME || process.env.USERPROFILE || homedir();
+          const manifestQuotas = await resolveActiveManifestQuotas(
+            activeExt,
+            (args && typeof args.projectRoot === 'string') ? args.projectRoot : undefined,
+            home,
+          );
+          const gate = await gatePermissionAndQuota({
+            toolName: name,
+            args: args || {},
+            activeExt,
+            home,
+            manifestQuotas,
+          });
+          if (!gate.allowed && gate.response) {
+            return createResponse(id, gate.response);
           }
         }
         switch (name) {
@@ -1503,4 +1663,6 @@ process.on('unhandledRejection', (err) => {
 });
 
 // Export for tests (Node ESM allows this -- only consumed when imported, not on stdio run)
+// gatePermissionAndQuota is exported inline at its declaration above (B16/SEC-M-03)
+// so test-server-quota-integration.js can drive it without spinning a server.
 export { sanitizeContent, atomicWrite, readMarkdownFile, PROJECT_HASH };

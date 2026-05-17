@@ -14,6 +14,9 @@
 import { readFile, appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+// B16/SEC-H-01 — quota enforcement on tier-2 hook side. Mirrors the tier-1
+// gate in server.js so both paths converge on the same counters.
+import { checkAndIncrement as quotaCheckAndIncrement } from './extension-quota-tracker.js';
 
 async function emitEvent(home, extensionName, toolName, allowed, reason) {
   try {
@@ -75,5 +78,48 @@ if (readTools.has(tool) && !has(reads, `tool:${tool.toLowerCase()}`) && !has(rea
   await emitEvent(home, active.name, tool, false, reason);
   process.exit(1);
 }
+
+// B16: quota enforcement on tier-2 hook side. Permission has passed; if the
+// active extension declared quotas, check the relevant dimension.
+const quotas = (active && typeof active.quotas === 'object' && active.quotas) ? active.quotas : null;
+if (quotas && writeTools.has(tool)) {
+  const lc = tool.toLowerCase();
+  // files_written dimension for Edit/Write/NotebookEdit/Bash.
+  if (typeof quotas.max_files_written === 'number' && quotas.max_files_written > 0) {
+    const filePath = (req.tool_input && (req.tool_input.file_path || req.tool_input.path || req.tool_input.notebook_path)) || null;
+    const r = await quotaCheckAndIncrement(active.name, 'files_written', 1, quotas.max_files_written, { homeDir: home, path: typeof filePath === 'string' ? filePath : null });
+    if (!r.allowed) {
+      process.stderr.write(`[ijfw] extension '${active.name}' exceeded quota files_written (${r.current + 1}/${r.limit})\n`);
+      await emitEvent(home, active.name, tool, false, `quota:files_written ${r.current + 1}/${r.limit}`);
+      process.exit(1);
+    }
+  }
+  if (typeof quotas.max_bytes_written === 'number' && quotas.max_bytes_written > 0) {
+    let bytes = 0;
+    try {
+      const ti = req.tool_input || {};
+      if (typeof ti.content === 'string') bytes += ti.content.length;
+      if (typeof ti.new_string === 'string') bytes += ti.new_string.length;
+      if (typeof ti.command === 'string' && lc === 'bash') bytes += ti.command.length;
+    } catch { /* defensive */ }
+    if (bytes > 0) {
+      const r = await quotaCheckAndIncrement(active.name, 'bytes_written', bytes, quotas.max_bytes_written, { homeDir: home });
+      if (!r.allowed) {
+        process.stderr.write(`[ijfw] extension '${active.name}' exceeded quota bytes_written (${r.current + bytes}/${r.limit})\n`);
+        await emitEvent(home, active.name, tool, false, `quota:bytes_written ${r.current + bytes}/${r.limit}`);
+        process.exit(1);
+      }
+    }
+  }
+}
+if (quotas && typeof quotas.max_wall_clock_ms === 'number' && quotas.max_wall_clock_ms > 0) {
+  const r = await quotaCheckAndIncrement(active.name, 'wall_clock_ms', 0, quotas.max_wall_clock_ms, { homeDir: home });
+  if (!r.allowed) {
+    process.stderr.write(`[ijfw] extension '${active.name}' exceeded quota wall_clock_ms (${r.current}/${r.limit})\n`);
+    await emitEvent(home, active.name, tool, false, `quota:wall_clock_ms ${r.current}/${r.limit}`);
+    process.exit(1);
+  }
+}
+
 await emitEvent(home, active.name, tool, true);
 process.exit(0);
