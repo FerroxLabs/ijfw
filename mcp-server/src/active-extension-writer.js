@@ -90,6 +90,7 @@ export async function clearActiveExtension(opts = {}) {
  * @returns {Promise<{ ok: boolean, manifest?: object, scope?: string, path?: string, error?: string }>}
  */
 export async function findInstalledManifest(name, projectRoot, opts = {}) {
+  // eslint-disable-next-line security/detect-unsafe-regex -- anchored, bounded npm name shape; no nested ambiguous repetition
   if (typeof name !== 'string' || !/^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/.test(name)) {
     return { ok: false, error: 'invalid extension name' };
   }

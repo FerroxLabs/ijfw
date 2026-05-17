@@ -42,6 +42,7 @@ export const SCHEMA_VERSION = '1.0';
  *   - optional single `:`-delimited namespace (e.g. `preflight:audit-ci`)
  *   - must start with an alpha char in each segment
  */
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored kebab + optional `:`-namespaced kebab; non-overlapping branches
 export const GATE_NAME_PATTERN = /^[a-z][a-z0-9-]*(:[a-z][a-z0-9-]*)?$/;
 
 export const VALID_STATUSES = Object.freeze([
@@ -73,6 +74,7 @@ export const VALID_ARTIFACT_TYPES = Object.freeze([
 ]);
 
 const ISO8601_PATTERN =
+  // eslint-disable-next-line security/detect-unsafe-regex -- fixed-length anchored ISO 8601 shape; optional fractional + tz are non-overlapping
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 /**
@@ -98,16 +100,6 @@ export function makeGateId(gate) {
   return `${safe}-${ts}-${rand4}`;
 }
 
-function isPlainObject(v) {
-  return (
-    v !== null &&
-    typeof v === 'object' &&
-    !Array.isArray(v) &&
-    Object.getPrototypeOf(v) !== null
-      ? Object.getPrototypeOf(v) === Object.prototype
-      : false
-  );
-}
 
 function isString(v) {
   return typeof v === 'string';

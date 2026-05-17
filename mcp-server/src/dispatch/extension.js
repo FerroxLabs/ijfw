@@ -259,6 +259,7 @@ async function cmdAudit({ projectRoot }) {
 // but a hand-placed dir like `Weird Name With Spaces/` would still flow
 // through to deployExtensionSkillsToPlatforms which would create
 // `ext-Weird Name With Spaces` dirs across every platform.
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored, bounded npm name shape; no nested ambiguous repetition
 const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
 
 // W6.2/R5-H-02: scoped extensions live at `<root>/@scope/pkg/` (two-level).

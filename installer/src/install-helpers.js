@@ -964,6 +964,7 @@ export async function deployExtensionSkillsToPlatforms(
   // `skills[].name: "../../outside"` would otherwise build a dstDir that
   // escapes the platform's ext-<name>/ subtree at deploy time. Mirror the
   // schema patterns locally (the schema doesn't export them).
+  // eslint-disable-next-line security/detect-unsafe-regex -- anchored, bounded npm name shape; no nested ambiguous repetition
   const NAME_EXT_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
   const NAME_SKILL_PATTERN = /^[a-z][a-z0-9-]*$/;
   if (!NAME_EXT_PATTERN.test(extensionName)) {

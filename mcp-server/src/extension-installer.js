@@ -73,6 +73,7 @@ const MAX_HTTPS_REDIRECTS = 5;
 // Matches the schema's accepted shape for manifest.name. Kept local because
 // extension-manifest-schema.js does not export the pattern. Stays in sync
 // manually — the schema and this constant are co-located.
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored, bounded npm name shape; no nested ambiguous repetition
 const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
 
 // Verdicts considered acceptable for a normal install (3/3 lenses).

@@ -483,7 +483,7 @@ async function atomicWrite(targetPath, contents) {
  *                         explicit platform list, etc.)
  * @returns {Promise<{deployed: Array<{platform: string, path: string}>, failed: Array<{platform: string, path: string, error: string}>}>}
  */
-export async function deployResolvedSkill(skill, projectRoot, opts = {}) {
+export async function deployResolvedSkill(skill, projectRoot, _opts = {}) {
   assertValidSkillName(skill, 'deployResolvedSkill');
   const merged = await resolveSkill(skill, projectRoot);
   const platformDirs = getPlatformSkillDirs(projectRoot);

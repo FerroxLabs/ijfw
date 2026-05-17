@@ -105,8 +105,10 @@ export const SIGNATURE_PATTERN = /^ed25519:[A-Za-z0-9+/_-]{86,90}={0,2}$/;
  */
 export const PUBLISHER_KEY_ID_PATTERN = /^[a-f0-9]{64}$/;
 
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored semver shape; non-overlapping optional suffixes
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const IJFW_REQUIRES_PATTERN = /^(>=|>|=|<=|<)?\s*\d+\.\d+\.\d+/;
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored, bounded npm name shape; no nested ambiguous repetition
 const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
 const SKILL_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const FILE_PATH_PATTERN = /^[a-zA-Z0-9_./-]+\.md$/;
