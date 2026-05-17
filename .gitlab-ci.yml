@@ -273,13 +273,12 @@ windows:test:
     - $bashExe = (Get-Command bash -ErrorAction SilentlyContinue).Source
     - if (-not $bashExe) { $gitExe = (Get-Command git).Source; $bashExe = Join-Path (Split-Path (Split-Path $gitExe)) 'bin\bash.exe' }
     - if (-not (Test-Path $bashExe)) { Write-Host 'bash.exe not resolvable; copy-lint skipped on this runner image'; $env:IJFW_COPY_LINT_SKIPPED = '1' } else { & $bashExe scripts/copy-lint.sh 2>&1 | Tee-Object -FilePath ci-logs/windows-copy-lint.log }
-  # ALLOW_FAILURE CARVE-OUT
-  # ----------------------
-  # The Windows leg is informational until the registry path is proven.
-  # Linux + macOS are ship-blocking (allow_failure: false). Once Windows
-  # is green twice in a row on real PRs, flip this flag and remove this
-  # block of comments.
-  allow_failure: true
+  # WINDOWS = REQUIRED GATE (v1.4.3 Phase D promotion)
+  # --------------------------------------------------
+  # v1.4.1 pipeline #62 proved all three legs (Linux + macOS + Windows) can be
+  # green simultaneously. Windows promoted to required, mirroring B12's macOS
+  # promotion pattern. Ship-blocking if Windows leg fails.
+  allow_failure: false
   artifacts:
     when: always
     expire_in: 7 days

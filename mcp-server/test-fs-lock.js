@@ -115,12 +115,14 @@ test('withFsLock: Promise.all serializes (second waits for first)', async () => 
 
     await Promise.all([taskA, taskB]);
 
-    // The two critical sections must not interleave.
-    assert.deepEqual(
-      events,
+    // The two critical sections must not interleave. Either A or B wins the
+    // mkdir race; the contract is contiguity, not strict order.
+    const validOrderings = [
       ['A:in', 'A:out', 'B:in', 'B:out'],
-      'expected strict serial ordering, got: ' + JSON.stringify(events),
-    );
+      ['B:in', 'B:out', 'A:in', 'A:out'],
+    ];
+    const ok = validOrderings.some((o) => o.length === events.length && o.every((v, i) => events[i] === v));
+    assert.equal(ok, true, 'expected non-interleaved serial ordering, got: ' + JSON.stringify(events));
     assert.equal(await exists(lockPath), false);
   } finally {
     await rm(tmp, { recursive: true, force: true });

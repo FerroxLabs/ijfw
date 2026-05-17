@@ -606,8 +606,46 @@ async function cmdDeactivate() {
   }
 }
 
+// v1.4.3 Phase D — CLI module registry. Each module exports the frozen
+// { handlers, subcommandHelp } shape; we union their handlers into a single
+// lookup and consult it BEFORE the legacy switch, so new --ide / --backend /
+// quota / federation subcommands take precedence.
+let _v143Handlers = null;
+async function loadV143Handlers() {
+  if (_v143Handlers !== null) return _v143Handlers;
+  const [registry, signer, quota, active] = await Promise.all([
+    import('./registry-cli.js'),
+    import('./signer-cli.js'),
+    import('./quota-cli.js'),
+    import('./active-cli.js'),
+  ]);
+  _v143Handlers = Object.assign(
+    Object.create(null),
+    registry.handlers || {},
+    signer.handlers || {},
+    quota.handlers || {},
+    active.handlers || {},
+  );
+  return _v143Handlers;
+}
+
 export async function extensionDispatch({ command, args = '', projectRoot }) {
   const ctx = { command, args: String(args || ''), projectRoot: String(projectRoot || process.cwd()) };
+
+  // v1.4.3 Phase D — CLI modules take precedence over legacy switch.
+  const handlers = await loadV143Handlers();
+  if (typeof handlers[command] === 'function') {
+    try {
+      const r = await handlers[command](ctx.args, ctx);
+      if (r && r.ok === false) {
+        return { ok: false, command, error: r.error || 'unknown error' };
+      }
+      return { ok: true, command, result: r };
+    } catch (err) {
+      return { ok: false, command, error: err && err.message ? err.message : String(err) };
+    }
+  }
+
   switch (command) {
     case 'add': return cmdAdd(ctx);
     case 'list': return cmdList(ctx);
