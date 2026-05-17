@@ -88,12 +88,12 @@ test('resolveWsSource: IJFW_REGISTRY_WS_SOURCE matches by name', () => {
   assert.equal(r.source.name, 'alpha');
 });
 
-test('resolveWsSource: origin + path match returns the source', () => {
-  // resolveWsSource matches on URL.origin (scheme+host+port). The bound
-  // source's URL must therefore share scheme with IJFW_REGISTRY_WS_URL. In
-  // production a WS-enabled source publishes both, with the registry source
-  // URL describing the WS endpoint family.
-  const a = makeSource({ name: 'alpha', url: 'wss://reg.example/publishers/v1.json' });
+test('resolveWsSource: host + path match returns the source (wss↔https pairing)', () => {
+  // resolveWsSource matches on URL.host + path-prefix with TLS pairing
+  // (wss↔https, ws↔http). Source registries publish over HTTPS; WS push
+  // endpoints publish over WSS at the same host + path family. Cross-tier
+  // (ws↔https) is refused to prevent downgrade attacks.
+  const a = makeSource({ name: 'alpha', url: 'https://reg.example/publishers/v1.json' });
   const r = resolveWsSource(
     { IJFW_REGISTRY_WS_URL: 'wss://reg.example/publishers/live' },
     [a],
@@ -103,9 +103,9 @@ test('resolveWsSource: origin + path match returns the source', () => {
 });
 
 test('resolveWsSource: refuses host-only match when paths differ', () => {
-  // Same origin, DIFFERENT path-prefix → must NOT match (host-only is
+  // Same host, DIFFERENT path-prefix → must NOT match (host-only is
   // explicitly forbidden per SEC-H-02).
-  const a = makeSource({ name: 'alpha', url: 'wss://reg.example/publishers/v1.json' });
+  const a = makeSource({ name: 'alpha', url: 'https://reg.example/publishers/v1.json' });
   const r = resolveWsSource(
     { IJFW_REGISTRY_WS_URL: 'wss://reg.example/different-path/live' },
     [a],
@@ -114,9 +114,9 @@ test('resolveWsSource: refuses host-only match when paths differ', () => {
   assert.ok(/no source binding/.test(r.error), `expected "no source binding", got: ${r.error}`);
 });
 
-test('resolveWsSource: refuses ambiguous origin+path match', () => {
-  const a = makeSource({ name: 'alpha', url: 'wss://reg.example/publishers/v1.json' });
-  const b = makeSource({ name: 'beta', url: 'wss://reg.example/publishers/v2.json' });
+test('resolveWsSource: refuses ambiguous host+path match', () => {
+  const a = makeSource({ name: 'alpha', url: 'https://reg.example/publishers/v1.json' });
+  const b = makeSource({ name: 'beta', url: 'https://reg.example/publishers/v2.json' });
   const r = resolveWsSource(
     { IJFW_REGISTRY_WS_URL: 'wss://reg.example/publishers/live' },
     [a, b],
@@ -126,6 +126,15 @@ test('resolveWsSource: refuses ambiguous origin+path match', () => {
     /[Aa]mbiguous/.test(r.error),
     `expected "Ambiguous WS source binding", got: ${r.error}`,
   );
+});
+
+test('resolveWsSource: refuses cross-tier downgrade (ws → https)', () => {
+  const a = makeSource({ name: 'alpha', url: 'https://reg.example/publishers/v1.json' });
+  const r = resolveWsSource(
+    { IJFW_REGISTRY_WS_URL: 'ws://reg.example/publishers/live' },  // plaintext WS against TLS registry
+    [a],
+  );
+  assert.ok('error' in r, `expected error, got: ${JSON.stringify(r)}`);
 });
 
 // ---------------------------------------------------------------------------

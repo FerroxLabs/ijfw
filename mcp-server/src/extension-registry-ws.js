@@ -73,15 +73,29 @@ export function resolveWsSource(env, sources) {
     return { error: `[ijfw] IJFW_REGISTRY_WS_URL '${wsUrl}' is not a valid URL` };
   }
 
-  const wsOrigin = parsed.origin;
+  // The WS scheme and the source's HTTPS scheme differ by protocol, so we
+  // match on host + path-prefix (NOT origin — origin includes scheme). We do
+  // however enforce TLS pairing: wss ↔ https, ws ↔ http. Cross-tier (e.g.
+  // ws:// WS endpoint paired to an https:// registry) is refused to prevent
+  // downgrade attacks where an attacker proxies plaintext push traffic for
+  // an otherwise-TLS registry.
+  const SCHEME_PAIRS = { 'wss:': 'https:', 'ws:': 'http:' };
+  const requiredSourceProto = SCHEME_PAIRS[parsed.protocol];
+  if (!requiredSourceProto) {
+    return {
+      error: `[ijfw] IJFW_REGISTRY_WS_URL '${wsUrl}' must use ws:// or wss:// scheme`,
+    };
+  }
+  const wsHost = parsed.host;
   const wsPathPrefix = parsed.pathname.split('/').slice(0, -1).join('/');
 
   const matches = [];
   for (const source of sources) {
     try {
       const su = new URL(source.url);
+      if (su.protocol !== requiredSourceProto) continue;  // refuse cross-tier
       const sourcePathPrefix = su.pathname.split('/').slice(0, -1).join('/');
-      if (su.origin === wsOrigin && sourcePathPrefix === wsPathPrefix) {
+      if (su.host === wsHost && sourcePathPrefix === wsPathPrefix) {
         matches.push(source);
       }
     } catch {
