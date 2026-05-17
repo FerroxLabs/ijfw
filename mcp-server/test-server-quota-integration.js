@@ -134,8 +134,10 @@ test('gatePermissionAndQuota: permission deny short-circuits before quota', asyn
 // ---------------------------------------------------------------------------
 test('gatePermissionAndQuota: quota deny emits permission event with quota reason', async () => {
   await withTmpHome(async (home) => {
-    // Drive over limit:
-    await checkAndIncrement('test-ext', 'bytes_written', 200, 100, { homeDir: home });
+    // Drive AT limit so any further increment exceeds (tracker rejects increments that
+    // would put nextCurrent > limit without persisting them — pre-drive must land
+    // current exactly at limit, then the gate's own increment causes denial).
+    await checkAndIncrement('test-ext', 'bytes_written', 100, 100, { homeDir: home });
     const r = await gatePermissionAndQuota({
       toolName: 'ijfw_memory_store',
       args: { content: 'a'.repeat(50) },
@@ -212,6 +214,9 @@ test('cross-process race: quota tracker serializes across forked children (SEC-H
     a.send('go');
     b.send('go');
     const [va, vb] = await Promise.all([a.verdict, b.verdict]);
+    // Explicitly disconnect IPC + kill so the test runner can exit.
+    try { a.child.disconnect(); } catch { /* may already be disconnected */ }
+    try { b.child.disconnect(); } catch { /* may already be disconnected */ }
 
     const allowedCount = [va, vb].filter((v) => v.allowed === true).length;
     const deniedCount = [va, vb].filter((v) => v.allowed === false).length;
