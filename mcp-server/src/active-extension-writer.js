@@ -76,6 +76,30 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
     out.activated_by_ide = ideId;
     out.activated_by_pid = process.pid;
   }
+  // R12-H-01: persist manifest.quotas so the tier-2 hook
+  // (extension-permission-check.mjs) can enforce quotas on Edit/Write/Bash
+  // dispatch. Without this the tier-2 hook reads `active.quotas` as undefined
+  // and silently bypasses the v1.4.3 quota gate that the server-side
+  // gatePermissionAndQuota path enforces. Schema (extension-manifest-schema.js):
+  // optional object whose values are positive integers — currently
+  // max_files_written / max_bytes_written / max_wall_clock_ms (forward-compat:
+  // unknown dimensions are kept as-is — schema rejects unknowns at install).
+  if (
+    manifest.quotas !== undefined &&
+    manifest.quotas !== null &&
+    typeof manifest.quotas === 'object' &&
+    !Array.isArray(manifest.quotas)
+  ) {
+    const cleanQuotas = {};
+    let copied = 0;
+    for (const [k, v] of Object.entries(manifest.quotas)) {
+      if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0) {
+        cleanQuotas[k] = v;
+        copied++;
+      }
+    }
+    if (copied > 0) out.quotas = cleanQuotas;
+  }
   const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
   const path = statePath(home);
   await mkdir(dirname(path), { recursive: true });

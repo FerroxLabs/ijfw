@@ -385,3 +385,78 @@ test('Gemini hook: deny emits event to permission-events.jsonl', { skip: skipBas
     await cleanup(home);
   }
 });
+
+// ---------------------------------------------------------------------------
+// R12-H-01 — tier-2 quota enforcement integration test
+//
+// Drives writeActiveExtension() from a manifest that declares
+// `quotas.max_files_written: 1`, then runs the shared module twice. First
+// tool:write must be allowed; second tool:write must be DENIED with stderr
+// matching "exceeded quota files_written". This proves R12-H-01 is closed:
+// active-extension.json now carries `quotas` and the tier-2 hook reads it.
+// ---------------------------------------------------------------------------
+test('R12-H-01: tier-2 hook enforces files_written quota from manifest', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ijfw-r12h01-'));
+  try {
+    const { writeActiveExtension } = await import('./src/active-extension-writer.js');
+    const manifest = {
+      name: 'quota-test-ext',
+      permissions: {
+        writes: ['tool:edit', 'tool:write'],
+        reads: ['tool:read'],
+      },
+      quotas: {
+        max_files_written: 1,
+      },
+    };
+    const w = await writeActiveExtension(manifest, 'user', { homeDir: home });
+    assert.equal(w.ok, true, `writeActiveExtension failed: ${w.error}`);
+
+    // Sanity: confirm active-extension.json contains the quotas block.
+    const activePath = path.join(home, '.ijfw', 'state', 'active-extension.json');
+    const active = JSON.parse(await fs.readFile(activePath, 'utf8'));
+    assert.deepEqual(
+      active.quotas,
+      { max_files_written: 1 },
+      'active-extension.json must persist manifest.quotas',
+    );
+
+    const checkerPath = path.join(REPO_ROOT, 'mcp-server', 'src', 'extension-permission-check.mjs');
+
+    // First Edit → allowed.
+    const r1 = spawnSync('node', [checkerPath], {
+      input: JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Edit',
+        tool_input: { file_path: '/tmp/quota-fixture-a.txt' },
+      }),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    assert.equal(r1.status, 0, `first Edit should be allowed: stderr=${r1.stderr}`);
+
+    // Second Edit (different file) → denied by files_written quota.
+    const r2 = spawnSync('node', [checkerPath], {
+      input: JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Edit',
+        tool_input: { file_path: '/tmp/quota-fixture-b.txt' },
+      }),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    assert.notEqual(r2.status, 0, 'second Edit must be denied (quota exceeded)');
+    assert.ok(
+      r2.stderr.includes('exceeded quota files_written'),
+      `expected stderr to mention files_written quota, got: ${r2.stderr}`,
+    );
+    assert.ok(
+      r2.stderr.includes('quota-test-ext'),
+      `expected stderr to name the extension, got: ${r2.stderr}`,
+    );
+  } finally {
+    await cleanup(home);
+  }
+});
