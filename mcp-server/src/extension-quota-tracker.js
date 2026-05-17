@@ -159,7 +159,7 @@ export async function checkAndIncrement(extName, dimension, increment, limit, op
         };
       }
       return { allowed: true, current: elapsed, limit: limitIsNull ? null : limit };
-    }, { staleMs: 30_000 });
+    }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
   }
 
   return await withFsLock(lockPath(home), async () => {
@@ -205,7 +205,7 @@ export async function checkAndIncrement(extName, dimension, increment, limit, op
 
     await writeQuotaState(home, state);
     return { allowed: true, current: nextCurrent, limit: limitIsNull ? null : limit };
-  }, { staleMs: 30_000 });
+  }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
 }
 
 /**
@@ -228,7 +228,7 @@ export async function resetExtensionQuotas(extName, opts = {}) {
       delete state[extName];
     }
     await writeQuotaState(home, state);
-  }, { staleMs: 30_000 });
+  }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
 }
 
 /**
@@ -281,5 +281,5 @@ export async function getQuotaUsage(extName, opts = {}) {
         wall_clock_ms: { current: wallCurrent, limit: limitOrNull('max_wall_clock_ms') },
       },
     };
-  }, { staleMs: 30_000 });
+  }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
 }
