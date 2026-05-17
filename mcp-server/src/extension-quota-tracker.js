@@ -29,6 +29,26 @@ import { withFsLock } from './fs-lock.js';
 
 const STATE_REL = ['.ijfw', 'state', 'extension-quotas.json'];
 
+// R12-L-02 — acquireTimeoutMs sizing rationale.
+//
+// Default fs-lock timeout is 5s. That ceiling is wrong for THIS lock for a
+// specific, measured reason: the quota tracker is the single chokepoint for
+// every concurrent tool dispatch on a session. With BACKOFF_MAX_MS=250ms in
+// fs-lock.js and ~100 contending Promise.all callers, the worst-case wait
+// approaches `100 * 250ms = 25s`. The 100-parallel correctness test in
+// test-extension-quota-tracker.js exercises exactly this; we pin
+// QUOTA_LOCK_TIMEOUT_MS=30_000 with one second of margin.
+//
+// staleMs stays at 30_000 (crash recovery, unrelated to acquisition latency).
+//
+// Audit history: codex+gemini R12 flagged the literal 30_000 as "too long for
+// hot path". The audit was treating the timeout as the *typical* wait when in
+// reality it's the worst-case ceiling under a workload the test suite
+// explicitly covers. Lowering it broke that test (see commits 45389ff +
+// a996abd in the R12-fix branch).
+const QUOTA_LOCK_TIMEOUT_MS = 30_000;
+const QUOTA_LOCK_STALE_MS = 30_000;
+
 /** Public dimensions. Manifest-side names are `max_<dim>`. */
 export const QUOTA_DIMENSIONS = Object.freeze([
   'files_written',
@@ -159,7 +179,7 @@ export async function checkAndIncrement(extName, dimension, increment, limit, op
         };
       }
       return { allowed: true, current: elapsed, limit: limitIsNull ? null : limit };
-    }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
+    }, { staleMs: QUOTA_LOCK_STALE_MS, acquireTimeoutMs: QUOTA_LOCK_TIMEOUT_MS });
   }
 
   return await withFsLock(lockPath(home), async () => {
@@ -205,7 +225,7 @@ export async function checkAndIncrement(extName, dimension, increment, limit, op
 
     await writeQuotaState(home, state);
     return { allowed: true, current: nextCurrent, limit: limitIsNull ? null : limit };
-  }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
+  }, { staleMs: QUOTA_LOCK_STALE_MS, acquireTimeoutMs: QUOTA_LOCK_TIMEOUT_MS });
 }
 
 /**
@@ -228,7 +248,7 @@ export async function resetExtensionQuotas(extName, opts = {}) {
       delete state[extName];
     }
     await writeQuotaState(home, state);
-  }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
+  }, { staleMs: QUOTA_LOCK_STALE_MS, acquireTimeoutMs: QUOTA_LOCK_TIMEOUT_MS });
 }
 
 /**
@@ -281,5 +301,5 @@ export async function getQuotaUsage(extName, opts = {}) {
         wall_clock_ms: { current: wallCurrent, limit: limitOrNull('max_wall_clock_ms') },
       },
     };
-  }, { staleMs: 30_000, acquireTimeoutMs: 30_000 });
+  }, { staleMs: QUOTA_LOCK_STALE_MS, acquireTimeoutMs: QUOTA_LOCK_TIMEOUT_MS });
 }
