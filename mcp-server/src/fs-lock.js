@@ -13,7 +13,7 @@
  * Closes SEC-H-01 (cross-process race) from v1.4.3 cross-audit round 1.
  */
 
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 5000;
@@ -117,8 +117,25 @@ export async function withFsLock(lockPath, fn, opts = {}) {
         throw err;
       }
 
+      // R12-M-01: when holder.json is missing or unparseable (crash between
+      // mkdir and the holder write, OR an attacker pre-creating an empty lock
+      // dir to starve callers), fall back to the lock directory's own mtime so
+      // stale-recovery can still fire. Without this fallback the local-DoS
+      // surface is "mkdir <lockPath> && walk away".
       const holder = await readHolder(lockPath);
-      const age = holder ? Date.now() - holder.acquired_at : null;
+      let age = null;
+      if (holder) {
+        age = Date.now() - holder.acquired_at;
+      } else {
+        try {
+          const st = await stat(lockPath);
+          age = Date.now() - st.mtimeMs;
+        } catch {
+          // The lock dir vanished between EEXIST and stat — fall through to
+          // the deadline check; the next loop iteration will try mkdir again.
+          age = null;
+        }
+      }
       const isStale = age != null && age > staleMs;
 
       if (isStale && !staleRecoveryUsed) {

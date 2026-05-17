@@ -294,3 +294,43 @@ test('withFsLock: releases lock when fn throws and re-throws the error', async (
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// R12-M-01 — empty lock dir + old mtime is recoverable via stat fallback.
+//
+// Pre-create lockPath as an empty directory (NO holder.json) with a mtime
+// older than staleMs. Before R12-M-01 the acquire loop would see EEXIST,
+// readHolder() returns null, isStale stays false (age was null), and the
+// deadline times out → local DoS. After the fix the stat-mtime fallback
+// reports the dir as stale and acquire succeeds.
+// ---------------------------------------------------------------------------
+import { utimes } from 'node:fs/promises';
+
+test('R12-M-01: stale-recovers an empty lock dir using mtime fallback', async () => {
+  const tmp = await makeTmp();
+  try {
+    const lockPath = join(tmp, 'lock');
+    // Pre-create the lock dir with NO holder.json (simulates a crash between
+    // mkdir and the holder write).
+    await mkdir(lockPath, { recursive: false });
+    // Backdate the directory's mtime so it counts as stale relative to
+    // staleMs=1000 below.
+    const oldTime = new Date(Date.now() - 10_000);
+    await utimes(lockPath, oldTime, oldTime);
+
+    let ran = false;
+    const result = await withFsLock(
+      lockPath,
+      async () => {
+        ran = true;
+        return 'empty-dir-recovered';
+      },
+      { staleMs: 1000, acquireTimeoutMs: 500 },
+    );
+    assert.equal(ran, true, 'fn must execute after stale-recovery via mtime');
+    assert.equal(result, 'empty-dir-recovered');
+    assert.equal(await exists(lockPath), false, 'lock dir released after fn');
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
