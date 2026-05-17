@@ -47,6 +47,21 @@ try {
   process.exit(1);
 }
 
+// B18 — surface cross-IDE divergence as a non-blocking stderr warning.
+// Mirrors runtime-mediator.maybeWarnDivergence on the tier-2 hook side.
+try {
+  const { detectCrossIdeDivergence } = await import('./active-extension-writer.js');
+  const verdict = await detectCrossIdeDivergence({ homeDir: home });
+  if (verdict && verdict.divergent) {
+    const age = typeof verdict.age_seconds === 'number' ? `${verdict.age_seconds}s ago` : 'unknown time ago';
+    process.stderr.write(
+      `[ijfw] active extension last activated by '${verdict.last_writer}' ${age}; this IDE is '${verdict.current_ide}'\n`,
+    );
+  }
+} catch {
+  // Best-effort: divergence detection never blocks the hook.
+}
+
 const chunks = [];
 for await (const c of process.stdin) chunks.push(c);
 const payload_str = chunks.join('');

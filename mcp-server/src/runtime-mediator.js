@@ -21,6 +21,10 @@ import { readFile, mkdir, appendFile, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
+// B18 — divergence helper imported lazily inside maybeWarnDivergence to keep
+// the module side-effect-light. detectCrossIdeDivergence has its own internal
+// stale-file cleanup + last-seen writer; we just consume the verdict.
+
 // Log rotation: when permission-events.jsonl exceeds this many lines, rename
 // to .0 (overwriting any prior .0) and start fresh. Total on disk = 2 * cap.
 const ROTATION_LINE_CAP = 10_000;
@@ -164,6 +168,33 @@ export async function logPermissionEvent(event, opts = {}) {
     await appendFile(eventLogPath(home), line, 'utf8');
   } catch {
     // Swallow: logging must never break tool dispatch.
+  }
+}
+
+/**
+ * B18 — surface a cross-IDE divergence warning on stderr (does NOT block).
+ * Called by permission-check call sites once per dispatch. Returns the
+ * divergence verdict so callers can attach `divergent_ide: true` to event
+ * log entries.
+ *
+ * Best-effort: any error returns `{ divergent: false }` and never throws.
+ *
+ * @param {{ homeDir?: string }} [opts]
+ * @returns {Promise<{ divergent: boolean, last_writer?: string|null, current_ide?: string, age_seconds?: number|null }>}
+ */
+export async function maybeWarnDivergence(opts = {}) {
+  try {
+    const { detectCrossIdeDivergence } = await import('./active-extension-writer.js');
+    const verdict = await detectCrossIdeDivergence({ homeDir: opts.homeDir });
+    if (verdict && verdict.divergent) {
+      const age = typeof verdict.age_seconds === 'number' ? `${verdict.age_seconds}s ago` : 'unknown time ago';
+      process.stderr.write(
+        `[ijfw] active extension last activated by '${verdict.last_writer}' ${age}; this IDE is '${verdict.current_ide}'\n`,
+      );
+    }
+    return verdict || { divergent: false };
+  } catch {
+    return { divergent: false };
   }
 }
 
