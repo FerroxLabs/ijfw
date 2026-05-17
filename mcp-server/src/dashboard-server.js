@@ -22,6 +22,8 @@ import { searchMemory } from './memory/search.js';
 import { buildRecallCounts, mergeRecallCounts, topRecalled } from './memory/recall-counter.js';
 import { PLACEHOLDER_HTML } from './design-companion.js';
 import { listExtensions } from './extension-installer.js';
+import { aggregateEvents, computeWarnBashBypass, readActiveManifest } from './dashboard-aggregator.js';
+import { getQuotaUsage } from './extension-quota-tracker.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // REPO_ROOT: IJFW_PROJECT_ROOT override > user's interactive shell cwd (PWD) > process.cwd() fallback.
@@ -929,6 +931,111 @@ export async function startServer(options = {}) {
       const events = tailEvents();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(events));
+    }],
+
+    // ---------- extensions: aggregates (B19) ----------
+    // Server-side aggregation of permission-events.jsonl for the per-tool
+    // audit charts. Filters are strictly allowlisted.
+    //   ?window=24h|30m|7d   (regex: \d+[hmd])
+    //   ?kind=hourly|by_ext|by_tool|quotas
+    ['/api/extensions/aggregates', async (req, res, url) => {
+      const ALLOWED_KINDS = new Set(['hourly', 'by_ext', 'by_tool', 'quotas']);
+      const WINDOW_RE = /^\d+(h|m|d)$/;
+      const ALLOWED_KEYS = new Set(['window', 'kind']);
+      try {
+        for (const key of url.searchParams.keys()) {
+          if (!ALLOWED_KEYS.has(key)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `unknown filter parameter: ${key}` }));
+            return;
+          }
+        }
+        const kind = url.searchParams.get('kind') || 'hourly';
+        if (!ALLOWED_KINDS.has(kind)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `invalid kind: ${kind}` }));
+          return;
+        }
+        const rawWindow = url.searchParams.get('window') || '24h';
+        if (!WINDOW_RE.test(rawWindow)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `invalid window: ${rawWindow}` }));
+          return;
+        }
+        // Parse window into ms.
+        const num = parseInt(rawWindow.slice(0, -1), 10);
+        const unit = rawWindow.slice(-1);
+        const mult = unit === 'h' ? 3600_000 : unit === 'm' ? 60_000 : 86_400_000;
+        const windowMs = num * mult;
+
+        const home = homedir();
+        const eventsPath = join(home, '.ijfw', 'state', 'permission-events.jsonl');
+
+        if (kind === 'quotas') {
+          // Walk the active extension state and compute per-extension usage.
+          let active = null;
+          try {
+            const activePath = join(home, '.ijfw', 'state', 'active-extension.json');
+            if (existsSync(activePath)) {
+              active = JSON.parse(readFileSync(activePath, 'utf8'));
+            }
+          } catch { active = null; }
+          const rows = [];
+          if (active && typeof active === 'object') {
+            // active may be a single record or a map keyed by name.
+            const entries = Array.isArray(active.extensions)
+              ? active.extensions
+              : (active.name ? [active] : []);
+            for (const ent of entries) {
+              if (!ent || !ent.name) continue;
+              const scope = ent.scope || 'user';
+              const manifest = readActiveManifest({ scope, name: ent.name, home, projectRoot: REPO_ROOT });
+              const quotas = (manifest && manifest.quotas) || {};
+              const usage = await getQuotaUsage(ent.name, { homeDir: home, limits: quotas });
+              rows.push({
+                ...usage,
+                scope,
+                warn_bash_bypass: computeWarnBashBypass(manifest),
+              });
+            }
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ rows }));
+          return;
+        }
+
+        const agg = await aggregateEvents(eventsPath, { windowMs });
+
+        if (kind === 'hourly') {
+          const buckets = Object.entries(agg.hourly)
+            .map(([hour, count]) => ({ hour, count }))
+            .sort((a, b) => a.hour.localeCompare(b.hour));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ buckets }));
+          return;
+        }
+
+        if (kind === 'by_ext') {
+          const rows = Object.entries(agg.by_extension)
+            .map(([ext, v]) => ({ ext, allowed: v.allowed, denied: v.denied }))
+            .sort((a, b) => b.denied - a.denied);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ rows }));
+          return;
+        }
+
+        // kind === 'by_tool'
+        const rows = Object.entries(agg.by_tool_denied)
+          .map(([tool, count]) => ({ tool, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ rows }));
+      } catch (err) {
+        process.stderr.write(`[ijfw-mcp] /api/extensions/aggregates: ${err && err.message ? err.message : err}\n`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ buckets: [], rows: [], error: 'aggregation failed' }));
+      }
     }],
 
     // ---------- extensions health (W3/t15) ----------

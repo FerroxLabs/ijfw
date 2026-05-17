@@ -593,6 +593,31 @@ tr:hover td{background:var(--surface)}
         </div>
       </div>
 
+      <!-- Sub-section: Charts (B19) -->
+      <div class="card">
+        <div class="ctitle">Audit Charts</div>
+        <div id="ext-charts-content">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12px">
+            <div>
+              <div style="color:var(--fg-dim);margin-bottom:4px">Events / hour (24h)</div>
+              <canvas id="ext-chart-hourly" width="320" height="80" style="width:100%;height:80px;display:block"></canvas>
+            </div>
+            <div>
+              <div style="color:var(--fg-dim);margin-bottom:4px">Deny rate by extension</div>
+              <canvas id="ext-chart-byext" width="320" height="80" style="width:100%;height:80px;display:block"></canvas>
+            </div>
+            <div>
+              <div style="color:var(--fg-dim);margin-bottom:4px">Top denied tools</div>
+              <canvas id="ext-chart-bytool" width="320" height="120" style="width:100%;height:120px;display:block"></canvas>
+            </div>
+            <div>
+              <div style="color:var(--fg-dim);margin-bottom:4px">Quota usage</div>
+              <div id="ext-chart-quotas" style="display:flex;flex-direction:column;gap:6px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Sub-section: Permission events -->
       <div class="card">
         <div class="ctitle" style="justify-content:space-between">
@@ -1526,7 +1551,183 @@ document.addEventListener('DOMContentLoaded', function() {
   loadExtensions();
   loadExtensionActive();
   loadExtensionEvents();
+  loadExtensionCharts();
 });
+
+// ====== AUDIT CHARTS (B19) ======
+// Inlined to keep dashboard a single self-contained HTML file.
+
+function _ijfwChartTheme(el) {
+  var fg = '#9ad2ff', bg = 'rgba(154,210,255,0.18)', warn = '#ff9b3a', txt = '#cfd6dd';
+  try {
+    var cs = getComputedStyle(el);
+    fg   = (cs.getPropertyValue('--ijfw-chart-fg')      || '').trim() || fg;
+    bg   = (cs.getPropertyValue('--ijfw-chart-bg')      || '').trim() || bg;
+    warn = (cs.getPropertyValue('--ijfw-chart-warning') || '').trim() || warn;
+    txt  = (cs.getPropertyValue('--ijfw-chart-text')    || '').trim() || txt;
+  } catch (e) {}
+  return { fg: fg, bg: bg, warn: warn, text: txt };
+}
+
+function _ijfwLineChart(canvas, points) {
+  if (!canvas || !canvas.getContext) return;
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+  var theme = _ijfwChartTheme(canvas);
+  ctx.clearRect(0, 0, W, H);
+  if (!points || !points.length) return;
+  var xs = points.map(function(p){ return p.x; });
+  var ys = points.map(function(p){ return Math.max(0, p.y); });
+  var xMin = Math.min.apply(null, xs), xMax = Math.max.apply(null, xs);
+  if (xMax === xMin) xMax = xMin + 1;
+  var yMax = Math.max(1, Math.max.apply(null, ys));
+  var pad = 4, innerW = W - pad*2, innerH = H - pad*2;
+  function px(x){ return pad + ((x - xMin)/(xMax - xMin)) * innerW; }
+  function py(y){ return pad + (1 - (y / yMax)) * innerH; }
+  ctx.beginPath(); ctx.moveTo(px(points[0].x), H - pad);
+  for (var i = 0; i < points.length; i++) ctx.lineTo(px(points[i].x), py(points[i].y));
+  ctx.lineTo(px(points[points.length-1].x), H - pad);
+  ctx.closePath(); ctx.fillStyle = theme.bg; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(px(points[0].x), py(points[0].y));
+  for (var j = 1; j < points.length; j++) ctx.lineTo(px(points[j].x), py(points[j].y));
+  ctx.strokeStyle = theme.fg; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+function _ijfwBarChart(canvas, bars, horizontal) {
+  if (!canvas || !canvas.getContext) return;
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+  var theme = _ijfwChartTheme(canvas);
+  ctx.clearRect(0, 0, W, H);
+  if (!bars || !bars.length) return;
+  var values = bars.map(function(b){ return Math.max(0, b.value || 0); });
+  var maxVal = Math.max(1, Math.max.apply(null, values));
+  var pad = 4;
+  var labelGutter = horizontal ? 80 : 14;
+  var innerW = W - pad*2 - (horizontal ? labelGutter : 0);
+  var innerH = H - pad*2 - (horizontal ? 0 : labelGutter);
+  var slot = (horizontal ? innerH : innerW) / bars.length;
+  var barW = Math.max(1, slot * 0.7);
+  for (var i = 0; i < bars.length; i++) {
+    var v = values[i];
+    var color = bars[i].color || theme.fg;
+    if (horizontal) {
+      var y = pad + i*slot + (slot-barW)/2;
+      var len = (v/maxVal) * innerW;
+      ctx.fillStyle = theme.bg; ctx.fillRect(pad + labelGutter, y, innerW, barW);
+      ctx.fillStyle = color;    ctx.fillRect(pad + labelGutter, y, len,    barW);
+      ctx.fillStyle = theme.text; ctx.fillText(String(bars[i].label || ''), pad, y + barW*0.75);
+    } else {
+      var x = pad + i*slot + (slot-barW)/2;
+      var len2 = (v/maxVal) * innerH;
+      ctx.fillStyle = theme.bg; ctx.fillRect(x, pad, barW, innerH);
+      ctx.fillStyle = color;    ctx.fillRect(x, pad + (innerH - len2), barW, len2);
+      ctx.fillStyle = theme.text; ctx.fillText(String(bars[i].label || '').slice(0, 8), x, H - pad);
+    }
+  }
+}
+
+function _ijfwProgressBar(parent, data) {
+  if (!parent) return;
+  var theme = _ijfwChartTheme(parent);
+  var cur = Math.max(0, data.current || 0);
+  var lim = (data.limit === null || data.limit === undefined) ? null : data.limit;
+  var label = data.label || '';
+  var warn = Boolean(data.warning);
+  var row = document.createElement('div');
+  row.className = 'ijfw-progress' + (warn ? ' ijfw-progress--warn' : '');
+  row.setAttribute('style', 'display:flex;align-items:center;gap:6px;font-size:11px');
+  var lbl = document.createElement('span'); lbl.textContent = label; lbl.setAttribute('style','min-width:88px;color:var(--fg-dim)');
+  row.appendChild(lbl);
+  if (lim === null) {
+    var val = document.createElement('span'); val.textContent = cur + ' / unlimited';
+    val.setAttribute('style','color:var(--fg-dim)');
+    row.appendChild(val);
+  } else {
+    var rail = document.createElement('span');
+    rail.setAttribute('style', 'background:' + theme.bg + ';display:inline-block;height:6px;width:120px;border-radius:3px;overflow:hidden;vertical-align:middle');
+    var fill = document.createElement('span');
+    var pct = lim > 0 ? Math.min(100, (cur/lim)*100) : 0;
+    fill.setAttribute('style', 'display:block;height:100%;width:' + pct.toFixed(1) + '%;background:' + (warn ? theme.warn : theme.fg));
+    rail.appendChild(fill);
+    row.appendChild(rail);
+    var val2 = document.createElement('span'); val2.textContent = cur + ' / ' + lim;
+    row.appendChild(val2);
+  }
+  parent.appendChild(row);
+}
+
+function loadExtensionCharts() {
+  // Hourly line chart.
+  fetch('/api/extensions/aggregates?window=24h&kind=hourly')
+    .then(function(r){ return r.json(); })
+    .then(function(o){
+      var canvas = document.getElementById('ext-chart-hourly');
+      if (!canvas) return;
+      var buckets = (o && o.buckets) || [];
+      var points = buckets.map(function(b, i){ return { x: i, y: b.count }; });
+      _ijfwLineChart(canvas, points);
+    }).catch(function(){});
+
+  // Deny rate per extension (horizontal bar).
+  fetch('/api/extensions/aggregates?window=24h&kind=by_ext')
+    .then(function(r){ return r.json(); })
+    .then(function(o){
+      var canvas = document.getElementById('ext-chart-byext');
+      if (!canvas) return;
+      var rows = (o && o.rows) || [];
+      var bars = rows.slice(0, 8).map(function(r){
+        var total = (r.allowed||0) + (r.denied||0);
+        return { label: r.ext, value: total > 0 ? (r.denied/total) * 100 : 0 };
+      });
+      _ijfwBarChart(canvas, bars, true);
+    }).catch(function(){});
+
+  // Top denied tools.
+  fetch('/api/extensions/aggregates?window=24h&kind=by_tool')
+    .then(function(r){ return r.json(); })
+    .then(function(o){
+      var canvas = document.getElementById('ext-chart-bytool');
+      if (!canvas) return;
+      var rows = (o && o.rows) || [];
+      var bars = rows.map(function(r){ return { label: r.tool, value: r.count }; });
+      _ijfwBarChart(canvas, bars, true);
+    }).catch(function(){});
+
+  // Quotas: per-extension progress bars + bash-bypass warning chip.
+  fetch('/api/extensions/aggregates?window=24h&kind=quotas')
+    .then(function(r){ return r.json(); })
+    .then(function(o){
+      var parent = document.getElementById('ext-chart-quotas');
+      if (!parent) return;
+      while (parent.firstChild) parent.removeChild(parent.firstChild);
+      var rows = (o && o.rows) || [];
+      if (rows.length === 0) {
+        var empty = document.createElement('div');
+        empty.setAttribute('style','color:var(--fg-dim);font-size:12px');
+        empty.textContent = 'No active extension.';
+        parent.appendChild(empty);
+        return;
+      }
+      rows.forEach(function(row){
+        var header = document.createElement('div');
+        header.setAttribute('style','font-weight:600;font-size:12px;margin-top:4px');
+        header.textContent = row.ext_name + ' (' + (row.scope || 'user') + ')';
+        parent.appendChild(header);
+        if (row.warn_bash_bypass) {
+          var chip = document.createElement('div');
+          chip.className = 'ijfw-warn-chip';
+          chip.setAttribute('style','background:rgba(255,155,58,0.12);color:var(--ijfw-chart-warning,#ff9b3a);font-size:11px;padding:4px 8px;border-radius:4px;margin:4px 0');
+          chip.textContent = '⚠ This extension has tool:bash and a strict files_written quota. Bash content bypasses per-file accounting.';
+          parent.appendChild(chip);
+        }
+        var dims = row.dimensions || {};
+        _ijfwProgressBar(parent, { current: (dims.files_written||{}).current||0, limit: (dims.files_written||{}).limit, label: 'files_written', warning: row.warn_bash_bypass });
+        _ijfwProgressBar(parent, { current: (dims.bytes_written||{}).current||0, limit: (dims.bytes_written||{}).limit, label: 'bytes_written', warning: row.warn_bash_bypass });
+        _ijfwProgressBar(parent, { current: (dims.wall_clock_ms||{}).current||0, limit: (dims.wall_clock_ms||{}).limit, label: 'wall_clock_ms' });
+      });
+    }).catch(function(){});
+}
 </script>
 </body>
 </html>
