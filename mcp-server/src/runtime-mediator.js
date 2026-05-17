@@ -17,9 +17,13 @@
  * pass -- that would defeat the sandbox.
  */
 
-import { readFile, mkdir, appendFile } from 'node:fs/promises';
+import { readFile, mkdir, appendFile, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+
+// Log rotation: when permission-events.jsonl exceeds this many lines, rename
+// to .0 (overwriting any prior .0) and start fresh. Total on disk = 2 * cap.
+const ROTATION_LINE_CAP = 10_000;
 
 // Sentinel returned from getActiveExtension when the file exists but is
 // invalid. Callers compare with === to distinguish from null (no file).
@@ -124,13 +128,38 @@ export function checkPermission(action, target, activeExt) {
 }
 
 /**
+ * Rotate permission-events.jsonl if it exceeds ROTATION_LINE_CAP lines.
+ * Renames current file to .0 (overwriting any prior .0) then the caller
+ * appends to the fresh empty file. Best effort -- never throws.
+ */
+async function maybeRotateEventLog(logPath) {
+  try {
+    let st;
+    try { st = await stat(logPath); } catch { return; } // ENOENT = no rotation needed
+    if (st.size === 0) return;
+    // Count newlines in a single Buffer read. This is the amortised cost.
+    const buf = await readFile(logPath);
+    let count = 0;
+    for (let i = 0; i < buf.length; i++) {
+      if (buf[i] === 0x0a) count++; // '\n'
+    }
+    if (count < ROTATION_LINE_CAP) return;
+    await rename(logPath, logPath + '.0');
+  } catch {
+    // Rotation failure is non-fatal.
+  }
+}
+
+/**
  * Append one JSON line to ~/.ijfw/state/permission-events.jsonl. Best effort:
  * never throws. The forensic trail is a nice-to-have, not a critical path.
+ * Rotation check runs on each append (cost amortised).
  */
 export async function logPermissionEvent(event, opts = {}) {
   try {
     const home = opts.homeDir || process.env.HOME || homedir();
     await mkdir(stateDir(home), { recursive: true });
+    await maybeRotateEventLog(eventLogPath(home));
     const line = JSON.stringify(event) + '\n';
     await appendFile(eventLogPath(home), line, 'utf8');
   } catch {

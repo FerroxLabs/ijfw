@@ -143,6 +143,15 @@ tr:hover td{background:var(--surface)}
 .empty{text-align:center;padding:40px 20px;color:var(--fg-dim)}
 .empty-icon{font-size:32px;margin-bottom:10px;opacity:.4}
 
+/* Extension events */
+.evt-row{display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);align-items:flex-start}
+.evt-row:last-child{border-bottom:none}
+.evt-ts{color:var(--fg-dim);white-space:nowrap;font-size:11px;min-width:80px}
+.evt-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap}
+.evt-allow{background:rgba(46,204,113,0.15);color:var(--success)}
+.evt-deny{background:rgba(239,68,68,0.15);color:var(--danger)}
+.evt-body{flex:1;color:var(--fg);font-size:11px;word-break:break-all}
+
 /* Memory tree */
 .mem-layout{display:flex;gap:0;height:calc(100vh - 180px);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .mem-l{width:300px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg-elevated)}
@@ -563,8 +572,9 @@ tr:hover td{background:var(--surface)}
       </div>
     </div>
 
-    <!-- ======== EXTENSIONS (W3/t15) ======== -->
+    <!-- ======== EXTENSIONS (W3/t15 + B9) ======== -->
     <div class="section" data-section="extensions">
+      <!-- Sub-section: Installed -->
       <div class="card">
         <div class="ctitle"><span id="ext-count">Extensions</span></div>
         <div id="extensions-content">
@@ -572,6 +582,35 @@ tr:hover td{background:var(--surface)}
             <div class="empty-icon">&#9881;</div>
             <p>Loading extensions...</p>
           </div>
+        </div>
+      </div>
+
+      <!-- Sub-section: Active extension -->
+      <div class="card">
+        <div class="ctitle">Active Extension</div>
+        <div id="ext-active-content">
+          <div class="empty"><p style="font-size:13px">Loading...</p></div>
+        </div>
+      </div>
+
+      <!-- Sub-section: Permission events -->
+      <div class="card">
+        <div class="ctitle" style="justify-content:space-between">
+          <span>Permission Events <span id="ext-events-live" style="display:none"><span class="pulse"></span></span></span>
+          <span style="display:flex;gap:8px;align-items:center">
+            <select id="ext-evt-filter-ext" class="btn-g" style="padding:3px 8px;font-size:11px" aria-label="Filter by extension">
+              <option value="">All extensions</option>
+            </select>
+            <select id="ext-evt-filter-denied" class="btn-g" style="padding:3px 8px;font-size:11px" aria-label="Filter by outcome">
+              <option value="">All outcomes</option>
+              <option value="true">Denied only</option>
+              <option value="false">Allowed only</option>
+            </select>
+            <button class="btn-g" id="ext-evt-clear" style="font-size:11px" aria-label="Clear events">Clear</button>
+          </span>
+        </div>
+        <div id="ext-events-content" style="max-height:320px;overflow-y:auto;font-size:12px;font-family:ui-monospace,monospace">
+          <div class="empty"><p>No permission events yet.</p></div>
         </div>
       </div>
     </div>
@@ -1303,6 +1342,174 @@ async function loadExtensions() {
   }
 }
 
+// ====== ACTIVE EXTENSION LOADER (B9) ======
+async function loadExtensionActive() {
+  var el = document.getElementById('ext-active-content');
+  if (!el) return;
+  try {
+    var r = await fetch('/api/extensions/active');
+    var d = await r.json();
+    while (el.firstChild) el.removeChild(el.firstChild);
+    if (!d.active) {
+      var p = document.createElement('p');
+      p.setAttribute('style', 'font-size:13px;color:var(--fg-dim);padding:4px 0');
+      p.textContent = 'None — bundled IJFW context active';
+      el.appendChild(p);
+      return;
+    }
+    var a = d.active;
+    var wrap = document.createElement('div');
+    wrap.setAttribute('style', 'font-size:13px');
+    var nameRow = document.createElement('div');
+    nameRow.setAttribute('style', 'margin-bottom:6px');
+    var strong = document.createElement('strong');
+    strong.textContent = a.name || 'unknown';
+    nameRow.appendChild(strong);
+    if (a.scope) {
+      var sc = document.createElement('span');
+      sc.setAttribute('style', 'margin-left:8px;font-size:11px;color:var(--fg-dim)');
+      sc.textContent = '(' + a.scope + ')';
+      nameRow.appendChild(sc);
+    }
+    wrap.appendChild(nameRow);
+    if (a.permissions) {
+      var permsEl = document.createElement('div');
+      permsEl.setAttribute('style', 'font-size:12px;color:var(--fg-dim)');
+      var reads = (a.permissions.reads || []).join(', ') || 'none';
+      var writes = (a.permissions.writes || []).join(', ') || 'none';
+      permsEl.innerHTML = '<b style="color:var(--fg)">reads:</b> ' + reads + ' &nbsp; <b style="color:var(--fg)">writes:</b> ' + writes;
+      wrap.appendChild(permsEl);
+    }
+    el.appendChild(wrap);
+  } catch (err) {
+    if (el) { while (el.firstChild) el.removeChild(el.firstChild); }
+    var errP = document.createElement('p');
+    errP.setAttribute('style', 'font-size:12px;color:var(--fg-dim)');
+    errP.textContent = 'Could not load active extension state.';
+    if (el) el.appendChild(errP);
+  }
+}
+
+// ====== PERMISSION EVENTS LOADER (B9) ======
+var _evtSource = null;
+var _evtRows = [];
+var _evtExtensions = new Set();
+
+function _renderEvtRows() {
+  var el = document.getElementById('ext-events-content');
+  if (!el) return;
+  var filterExt = (document.getElementById('ext-evt-filter-ext') || {}).value || '';
+  var filterDenied = (document.getElementById('ext-evt-filter-denied') || {}).value || '';
+  var visible = _evtRows.filter(function(e) {
+    if (filterExt && e.extension !== filterExt) return false;
+    if (filterDenied === 'true' && e.allowed !== false) return false;
+    if (filterDenied === 'false' && e.allowed === false) return false;
+    return true;
+  });
+  while (el.firstChild) el.removeChild(el.firstChild);
+  if (visible.length === 0) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    var ep = document.createElement('p');
+    ep.textContent = 'No permission events match the current filters.';
+    empty.appendChild(ep);
+    el.appendChild(empty);
+    return;
+  }
+  var frag = document.createDocumentFragment();
+  visible.slice(-200).forEach(function(e) {
+    var row = document.createElement('div');
+    row.className = 'evt-row';
+    var ts = document.createElement('span');
+    ts.className = 'evt-ts';
+    ts.textContent = e.ts ? new Date(e.ts).toLocaleTimeString() : '';
+    row.appendChild(ts);
+    var badge = document.createElement('span');
+    badge.className = 'evt-badge ' + (e.allowed === false ? 'evt-deny' : 'evt-allow');
+    badge.textContent = e.allowed === false ? 'DENY' : 'ALLOW';
+    row.appendChild(badge);
+    var body = document.createElement('span');
+    body.className = 'evt-body';
+    body.textContent = (e.extension || '') + ' → ' + (e.tool || e.action || '') + (e.target ? ':' + e.target : '');
+    row.appendChild(body);
+    frag.appendChild(row);
+  });
+  el.appendChild(frag);
+  el.scrollTop = el.scrollHeight;
+}
+
+function _addEvtRow(obj) {
+  _evtRows.push(obj);
+  if (obj.extension) {
+    _evtExtensions.add(obj.extension);
+    // Rebuild extension filter options
+    var sel = document.getElementById('ext-evt-filter-ext');
+    if (sel) {
+      var existing = new Set(Array.from(sel.options).map(function(o) { return o.value; }));
+      _evtExtensions.forEach(function(name) {
+        if (!existing.has(name)) {
+          var opt = document.createElement('option');
+          opt.value = name; opt.textContent = name;
+          sel.appendChild(opt);
+        }
+      });
+    }
+  }
+}
+
+function loadExtensionEvents() {
+  var liveEl = document.getElementById('ext-events-live');
+
+  // Close any previous SSE connection.
+  if (_evtSource) { try { _evtSource.close(); } catch {} _evtSource = null; }
+  if (liveEl) liveEl.style.display = 'none';
+
+  // Pre-load current tail via JSON (no SSE until section is active).
+  fetch('/api/extensions/events?limit=200')
+    .then(function(r) { return r.json(); })
+    .then(function(arr) {
+      if (!Array.isArray(arr)) return;
+      _evtRows = [];
+      arr.forEach(_addEvtRow);
+      _renderEvtRows();
+      // Open SSE for live updates.
+      try {
+        _evtSource = new EventSource('/api/extensions/events?limit=1');
+        _evtSource.onopen = function() { if (liveEl) liveEl.style.display = ''; };
+        _evtSource.onmessage = function(e) {
+          try {
+            var obj = JSON.parse(e.data);
+            if (obj && typeof obj === 'object' && !obj.showing) {
+              _addEvtRow(obj);
+              _renderEvtRows();
+            }
+          } catch {}
+        };
+        _evtSource.onerror = function() { if (liveEl) liveEl.style.display = 'none'; };
+      } catch {}
+    })
+    .catch(function() {
+      var el = document.getElementById('ext-events-content');
+      if (!el) return;
+      while (el.firstChild) el.removeChild(el.firstChild);
+      var p = document.createElement('p');
+      p.setAttribute('style', 'font-size:12px;color:var(--fg-dim);padding:8px 0');
+      p.textContent = 'Permission events unavailable.';
+      el.appendChild(p);
+    });
+
+  // Wire filter controls.
+  var filterExt = document.getElementById('ext-evt-filter-ext');
+  var filterDenied = document.getElementById('ext-evt-filter-denied');
+  var clearBtn = document.getElementById('ext-evt-clear');
+  if (filterExt) filterExt.onchange = _renderEvtRows;
+  if (filterDenied) filterDenied.onchange = _renderEvtRows;
+  if (clearBtn) clearBtn.onclick = function() {
+    _evtRows = [];
+    _renderEvtRows();
+  };
+}
+
 // ====== RUN ALL LOADERS ======
 document.addEventListener('DOMContentLoaded', function() {
   loadCostToday();
@@ -1317,6 +1524,8 @@ document.addEventListener('DOMContentLoaded', function() {
   loadTrendSparkline();
   loadBlockUsage();
   loadExtensions();
+  loadExtensionActive();
+  loadExtensionEvents();
 });
 </script>
 </body>

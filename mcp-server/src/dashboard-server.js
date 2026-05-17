@@ -688,6 +688,217 @@ export async function startServer(options = {}) {
       res.end(JSON.stringify(config));
     }],
 
+    // ---------- extensions: installed (B9) ----------
+    // Enumerate ~/.ijfw/state-org/extension-registry.json,
+    // ~/.ijfw/state-user/extension-registry.json, and project-scope registry.
+    // Returns JSON list with name, scope, version, publisher_keyId, permissions,
+    // last_activated_time. Path-traversal defence: resolve + assert under HOME.
+    ['/api/extensions/installed', async (req, res) => {
+      try {
+        const home = homedir();
+        // realpath both sides — on macOS /var/folders -> /private/var/folders is a symlink,
+        // so the registry's realpathed path won't show as under un-realpathed HOME.
+        let homeCanon;
+        try { homeCanon = realpathSync(home); } catch { homeCanon = home; }
+        function isUnderHome(p) {
+          try {
+            const canon = realpathSync(p);
+            const rel = relative(homeCanon, canon);
+            return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+          } catch { return false; }
+        }
+
+        const REGISTRY_FILENAME = 'extension-registry.json';
+        const registryPaths = [
+          { scope: 'org',  path: join(home, '.ijfw', 'state-org',  REGISTRY_FILENAME) },
+          { scope: 'user', path: join(home, '.ijfw', 'state-user', REGISTRY_FILENAME) },
+          { scope: 'project', path: join(REPO_ROOT, '.ijfw', 'state', REGISTRY_FILENAME) },
+        ];
+
+        const seen = new Map();
+        for (const { scope, path: regPath } of registryPaths) {
+          // Path-traversal check on each registry path.
+          const resolvedReg = resolve(regPath);
+          const underHome = isUnderHome(resolvedReg) ||
+            resolvedReg.startsWith(resolve(REPO_ROOT));
+          if (!underHome) continue;
+          if (!existsSync(resolvedReg)) continue;
+          let registry;
+          try {
+            const raw = readFileSync(resolvedReg, 'utf8');
+            const parsed = JSON.parse(raw);
+            registry = Array.isArray(parsed.extensions) ? parsed.extensions : [];
+          } catch { continue; }
+
+          for (const e of registry) {
+            if (!e || !e.name || !e.version) continue;
+            const key = `${e.name}@${e.version}`;
+            if (seen.has(key)) continue;
+            const manifest = (e.manifest && typeof e.manifest === 'object') ? e.manifest : null;
+            seen.set(key, {
+              name: e.name,
+              scope,
+              version: e.version,
+              publisher_keyId: manifest ? (manifest.publisher_keyId || null) : null,
+              permissions: manifest ? (manifest.permissions || null) : null,
+              last_activated_time: e.last_activated_time || null,
+            });
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ extensions: Array.from(seen.values()) }));
+      } catch (err) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ extensions: [], error: err.message }));
+      }
+    }],
+
+    // ---------- extensions: active (B9) ----------
+    ['/api/extensions/active', async (req, res) => {
+      try {
+        const home = homedir();
+        const activePath = join(home, '.ijfw', 'state', 'active-extension.json');
+        const resolvedActive = resolve(activePath);
+        // Path-traversal: must be under HOME
+        const rel = relative(home, resolvedActive);
+        if (rel.startsWith('..') || isAbsolute(rel)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'path traversal rejected' }));
+          return;
+        }
+        if (!existsSync(resolvedActive)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ active: null }));
+          return;
+        }
+        const raw = readFileSync(resolvedActive, 'utf8');
+        const parsed = JSON.parse(raw);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ active: parsed }));
+      } catch (err) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ active: null, error: err.message }));
+      }
+    }],
+
+    // ---------- extensions: events (B9) ----------
+    // Tail-streams ~/.ijfw/state/permission-events.jsonl with optional filters.
+    // Allowlisted query params: limit, extension, tool, denied.
+    // SSE mode: Accept: text/event-stream. JSON array otherwise.
+    // Never reads full file into memory: streams line-by-line.
+    ['/api/extensions/events', async (req, res, url) => {
+      const ALLOWED_FILTER_KEYS = new Set(['limit', 'extension', 'tool', 'denied']);
+      // Reject any non-allowlisted filter key.
+      for (const key of url.searchParams.keys()) {
+        if (!ALLOWED_FILTER_KEYS.has(key)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `unknown filter parameter: ${key}` }));
+          return;
+        }
+      }
+
+      const home = homedir();
+      const eventsPath = join(home, '.ijfw', 'state', 'permission-events.jsonl');
+
+      const rawLimit = url.searchParams.get('limit');
+      let limit = 200;
+      if (rawLimit !== null) {
+        const n = safeIntegerParam(rawLimit, 10_000);
+        if (n === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid limit' }));
+          return;
+        }
+        limit = n;
+      }
+      const filterExtension = url.searchParams.get('extension') || null;
+      const filterTool      = url.searchParams.get('tool') || null;
+      const filterDenied    = url.searchParams.has('denied')
+        ? (url.searchParams.get('denied') !== 'false')
+        : null;
+
+      // Stream-tail: read only the last TAIL_CHUNK bytes, never slurp the full file.
+      // For permission-events.jsonl which rotates at 10_000 lines, 2MB covers
+      // many thousands of events without loading the entire file into memory.
+      const TAIL_CHUNK = 2 * 1024 * 1024; // 2MB
+      function tailEvents() {
+        if (!existsSync(eventsPath)) return [];
+        let st;
+        try { st = statSync(eventsPath); } catch { return []; }
+        if (st.size === 0) return [];
+        let lines = [];
+        try {
+          const fullBuf = readFileSync(eventsPath);
+          const slice = fullBuf.subarray(Math.max(0, fullBuf.length - TAIL_CHUNK));
+          const text = slice.toString('utf8');
+          lines = text.split('\n').filter(Boolean);
+          // If we sliced mid-line, the first element may be truncated — drop it.
+          if (fullBuf.length > TAIL_CHUNK) lines = lines.slice(1);
+        } catch { return []; }
+
+        const results = [];
+        for (let i = lines.length - 1; i >= 0 && results.length < limit; i--) {
+          let obj;
+          try { obj = JSON.parse(lines[i]); } catch { continue; }
+          if (filterExtension !== null && obj.extension !== filterExtension) continue;
+          if (filterTool !== null && obj.tool !== filterTool) continue;
+          if (filterDenied !== null && Boolean(!obj.allowed) !== filterDenied) continue;
+          results.unshift(obj);
+        }
+        return results;
+      }
+
+      const isSSE = (req.headers['accept'] || '').includes('text/event-stream');
+      if (isSSE) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        res.write(': connected\n\n');
+        // Send current tail as initial batch.
+        const initial = tailEvents();
+        for (const evt of initial) {
+          try { res.write(`data: ${JSON.stringify(evt)}\n\n`); } catch { break; }
+        }
+        // Watch for new events.
+        let evtWatcher = null;
+        let lastLineCount = initial.length;
+        try {
+          evtWatcher = watch(existsSync(eventsPath) ? eventsPath : join(home, '.ijfw', 'state'), () => {
+            if (!existsSync(eventsPath)) return;
+            try {
+              const fullBuf = readFileSync(eventsPath);
+              const text = fullBuf.toString('utf8');
+              const lines = text.split('\n').filter(Boolean);
+              if (lines.length > lastLineCount) {
+                const newLines = lines.slice(lastLineCount);
+                lastLineCount = lines.length;
+                for (const line of newLines) {
+                  let obj; try { obj = JSON.parse(line); } catch { continue; }
+                  if (filterExtension !== null && obj.extension !== filterExtension) continue;
+                  if (filterTool !== null && obj.tool !== filterTool) continue;
+                  if (filterDenied !== null && Boolean(!obj.allowed) !== filterDenied) continue;
+                  try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {}
+                }
+              }
+            } catch {}
+          });
+          if (evtWatcher) evtWatcher.on('error', () => {});
+        } catch {}
+        req.on('close', () => {
+          if (evtWatcher) { try { evtWatcher.close(); } catch {} }
+        });
+        return;
+      }
+
+      // JSON array response.
+      const events = tailEvents();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(events));
+    }],
+
     // ---------- extensions health (W3/t15) ----------
     // Reads .ijfw/state/extension-registry.json (project) plus org/user via
     // listExtensions(). Missing or malformed registry yields {extensions: []}
