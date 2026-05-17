@@ -72,3 +72,9 @@ AGENTS.md.bak.*
 mcp-server/test/fixtures/longmemeval-s/longmemeval_s_cleaned.json
 mcp-server/test/fixtures/longmemeval-s/longmemeval_m_cleaned.json
 mcp-server/test/fixtures/longmemeval-s/longmemeval_oracle.json
+
+# v1.4.1 W8-A1 / B6 registry meta-key sentinel.
+# Public PEM only; gitignored to prevent confusion with committed v1.x trust roots.
+# The corresponding constant is inlined into mcp-server/src/extension-registry.js by W8-A1.
+# Private key lives at ~/.ijfw/meta-keypair/<fp>.priv.pem (mode 0600).
+mcp-server/src/.registry-meta-key.pem
