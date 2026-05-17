@@ -759,19 +759,32 @@ export async function startServer(options = {}) {
         const home = homedir();
         const activePath = join(home, '.ijfw', 'state', 'active-extension.json');
         const resolvedActive = resolve(activePath);
-        // Path-traversal: must be under HOME
-        const rel = relative(home, resolvedActive);
-        if (rel.startsWith('..') || isAbsolute(rel)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'path traversal rejected' }));
-          return;
-        }
+        // Return {active:null} BEFORE realpath — realpathSync throws on non-existent paths.
         if (!existsSync(resolvedActive)) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ active: null }));
           return;
         }
-        const raw = readFileSync(resolvedActive, 'utf8');
+        // Path-traversal: realpath BOTH home and target so macOS /private symlinks
+        // (e.g. /var/folders -> /private/var/folders) resolve correctly AND symlinks
+        // pointing outside HOME are rejected.
+        let homeCanon;
+        try { homeCanon = realpathSync(home); } catch { homeCanon = home; }
+        let activeCanon;
+        try {
+          activeCanon = realpathSync(resolvedActive);
+        } catch {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'path traversal rejected' }));
+          return;
+        }
+        const rel = relative(homeCanon, activeCanon);
+        if (rel.startsWith('..') || isAbsolute(rel)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'path traversal rejected' }));
+          return;
+        }
+        const raw = readFileSync(activeCanon, 'utf8');
         const parsed = JSON.parse(raw);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ active: parsed }));
@@ -862,16 +875,35 @@ export async function startServer(options = {}) {
         for (const evt of initial) {
           try { res.write(`data: ${JSON.stringify(evt)}\n\n`); } catch { break; }
         }
-        // Watch for new events.
+        // Watch for new events. lastLineCount must match what the watcher
+        // measures (tail-chunk lines), NOT the limited initial batch length —
+        // mismatching them causes a replay storm when the file is bigger than
+        // the limit.
         let evtWatcher = null;
-        let lastLineCount = initial.length;
+        let lastLineCount = 0;
+        try {
+          const buf0 = readFileSync(eventsPath);
+          const slice0 = buf0.subarray(Math.max(0, buf0.length - TAIL_CHUNK));
+          let lines0 = slice0.toString('utf8').split('\n').filter(Boolean);
+          if (buf0.length > TAIL_CHUNK) lines0 = lines0.slice(1);
+          lastLineCount = lines0.length;
+        } catch { /* eventsPath missing or unreadable — start from 0 */ }
         try {
           evtWatcher = watch(existsSync(eventsPath) ? eventsPath : join(home, '.ijfw', 'state'), () => {
             if (!existsSync(eventsPath)) return;
             try {
-              const fullBuf = readFileSync(eventsPath);
-              const text = fullBuf.toString('utf8');
-              const lines = text.split('\n').filter(Boolean);
+              // Use the tail-chunk reader (bounded read) rather than slurping the
+              // full file. At 10K lines × ~1-2KB each = 10-20MB sync read per watch
+              // event, which is unacceptable for a long-lived SSE connection.
+              try { statSync(eventsPath); } catch { return; }
+              const buf = (() => {
+                try { return readFileSync(eventsPath); } catch { return null; }
+              })();
+              if (!buf) return;
+              const slice = buf.subarray(Math.max(0, buf.length - TAIL_CHUNK));
+              const text = slice.toString('utf8');
+              let lines = text.split('\n').filter(Boolean);
+              if (buf.length > TAIL_CHUNK) lines = lines.slice(1);
               if (lines.length > lastLineCount) {
                 const newLines = lines.slice(lastLineCount);
                 lastLineCount = lines.length;

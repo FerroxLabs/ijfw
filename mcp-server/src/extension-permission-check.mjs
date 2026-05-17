@@ -7,10 +7,25 @@
 //
 // Exit 0 = allow. Exit 1 = deny (stderr message emitted).
 // With no active-extension.json: always exit 0 (backwards-compat invariant).
+//
+// Also appends one JSON line per check to ~/.ijfw/state/permission-events.jsonl
+// (best-effort: failures are swallowed so logging never breaks tool dispatch).
 
-import { readFile } from 'node:fs/promises';
+import { readFile, appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+async function emitEvent(home, extensionName, toolName, allowed, reason) {
+  try {
+    const stateDir = join(home, '.ijfw', 'state');
+    await mkdir(stateDir, { recursive: true });
+    const event = { ts: new Date().toISOString(), extension: extensionName, tool: toolName, allowed };
+    if (reason) event.reason = reason;
+    await appendFile(join(stateDir, 'permission-events.jsonl'), JSON.stringify(event) + '\n', 'utf8');
+  } catch {
+    // Best-effort: swallow all errors.
+  }
+}
 
 const home = process.env.HOME || process.env.USERPROFILE || homedir();
 const stateFile = join(home, '.ijfw', 'state', 'active-extension.json');
@@ -49,11 +64,16 @@ const has = (set, want) =>
   [...set].some((p) => p.endsWith(':*') && want.startsWith(p.slice(0, -1)));
 
 if (writeTools.has(tool) && !has(writes, `tool:${tool.toLowerCase()}`) && !has(writes, 'tool:*')) {
+  const reason = `not in permissions.writes`;
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.writes)\n`);
+  await emitEvent(home, active.name, tool, false, reason);
   process.exit(1);
 }
 if (readTools.has(tool) && !has(reads, `tool:${tool.toLowerCase()}`) && !has(reads, 'tool:*')) {
+  const reason = `not in permissions.reads`;
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.reads)\n`);
+  await emitEvent(home, active.name, tool, false, reason);
   process.exit(1);
 }
+await emitEvent(home, active.name, tool, true);
 process.exit(0);

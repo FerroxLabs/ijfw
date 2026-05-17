@@ -576,3 +576,59 @@ test('B11: non-TTY install with --accept-untrusted proceeds without prompt (regr
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// W8.1/Fix5 — promptUntrustedConfirmation uses rl.question (no double prompt)
+// ---------------------------------------------------------------------------
+test('W8.1 B11: promptUntrustedConfirmation includes "(lowercase hex)" and no double-write', async () => {
+  // We can't monkey-patch ES module exports (read-only). Instead verify by:
+  //   1. Capturing all stdout writes during the call to check for duplicate prompt output.
+  //   2. Piping a fake answer into stdin via a PassThrough stream.
+  //   3. Reading the readline interface's output (which goes to stdout) to check prompt text.
+  //
+  // The promptUntrustedConfirmation function uses rl.question(prompt, cb) internally.
+  // rl.question writes the prompt to the rl's output (process.stdout) exactly once.
+  // The old code also called process.stdout.write() separately, causing duplication.
+  // We verify: prompt text appears exactly once in stdout output, contains "(lowercase hex)".
+
+  const { promptUntrustedConfirmation } = await import('./src/extension-installer.js');
+  const { PassThrough } = await import('node:stream');
+
+  const fakeKeyId = 'a'.repeat(56) + 'b1c2d3e4'; // last 8 chars = 'b1c2d3e4'
+  const expected = 'b1c2d3e4';
+
+  // Capture all stdout output during the call.
+  let stdoutOutput = '';
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...rest) => {
+    stdoutOutput += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    return origWrite(chunk, ...rest);
+  };
+
+  // Provide a fake stdin that emits the answer after a tick.
+  const fakeStdin = new PassThrough();
+  const origStdin = process.stdin;
+  Object.defineProperty(process, 'stdin', { value: fakeStdin, writable: true, configurable: true });
+  Object.defineProperty(fakeStdin, 'isTTY', { value: true, configurable: true });
+
+  try {
+    // Schedule the answer to arrive after readline attaches.
+    setImmediate(() => fakeStdin.write(expected + '\n'));
+    const result = await promptUntrustedConfirmation(fakeKeyId);
+    assert.equal(result, true, 'correct last-8 answer should return true');
+
+    // Prompt text must contain "(lowercase hex)".
+    assert.ok(
+      stdoutOutput.includes('(lowercase hex)'),
+      `prompt must contain "(lowercase hex)", stdout was: ${JSON.stringify(stdoutOutput)}`,
+    );
+
+    // The phrase "Type the LAST 8 CHARS" must appear exactly once (no duplication).
+    const phrase = 'Type the LAST 8 CHARS';
+    const occurrences = stdoutOutput.split(phrase).length - 1;
+    assert.equal(occurrences, 1, `prompt phrase must appear exactly once, found ${occurrences} times`);
+  } finally {
+    process.stdout.write = origWrite;
+    Object.defineProperty(process, 'stdin', { value: origStdin, writable: true, configurable: true });
+  }
+});

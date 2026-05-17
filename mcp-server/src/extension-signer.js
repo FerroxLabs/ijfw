@@ -815,12 +815,15 @@ export function signRotationToken(oldPrivateKeyPem, newPublicKeyPem, opts = {}) 
  * Checks:
  *   1. Signature is valid Ed25519 over canonical bytes (signature field excluded).
  *   2. fingerprint(oldPublicKey) === token.old_key_id.
+ *   3. token.rotated_at is within opts.max_age_ms (default 90 days).
  *
  * @param {object} token
  * @param {string} oldPublicKeyPem
+ * @param {object} [opts]
+ * @param {number} [opts.max_age_ms] Maximum token age in ms (default 90 days)
  * @returns {{ valid: boolean, reason: string }}
  */
-export function verifyRotationToken(token, oldPublicKeyPem) {
+export function verifyRotationToken(token, oldPublicKeyPem, opts = {}) {
   if (!token || typeof token !== 'object') {
     return { valid: false, reason: 'token must be an object' };
   }
@@ -830,6 +833,16 @@ export function verifyRotationToken(token, oldPublicKeyPem) {
   }
   if (typeof signature !== 'string' || !signature.startsWith('ed25519:')) {
     return { valid: false, reason: 'signature must be "ed25519:<base64>"' };
+  }
+
+  // Expiry check: reject tokens older than max_age_ms (default 90 days).
+  const MAX_AGE_MS = opts.max_age_ms ?? (90 * 24 * 60 * 60 * 1000);
+  const rotatedAtMs = new Date(rotated_at).getTime();
+  if (isNaN(rotatedAtMs)) {
+    return { valid: false, reason: 'rotated_at is not a valid date' };
+  }
+  if (Date.now() - rotatedAtMs > MAX_AGE_MS) {
+    return { valid: false, reason: 'rotation token expired' };
   }
 
   // Check old_key_id matches the supplied public key fingerprint.

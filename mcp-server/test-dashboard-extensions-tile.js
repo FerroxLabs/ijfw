@@ -316,6 +316,111 @@ test('SSE /api/extensions/events — live stream delivers event', { skip: proces
   assert.equal(received.extension, 'sse-test-ext');
 });
 
+// ---------- W8.1/Fix2: /api/extensions/active realpath ----------
+test('/api/extensions/active — returns {active:null} when file missing', async () => {
+  // Ensure no active-extension.json exists.
+  const activePath = join(TEST_HOME, '.ijfw', 'state', 'active-extension.json');
+  try { rmSync(activePath); } catch {}
+
+  const { status, data } = await fetchJSON(port, '/api/extensions/active');
+  assert.equal(status, 200);
+  assert.equal(data.active, null);
+});
+
+test('/api/extensions/active — returns parsed JSON when file present', async () => {
+  const activePath = join(TEST_HOME, '.ijfw', 'state', 'active-extension.json');
+  const payload = { name: 'my-ext', version: '1.0.0', activated_at: '2026-05-17T00:00:00.000Z' };
+  writeFileSync(activePath, JSON.stringify(payload), 'utf8');
+
+  const { status, data } = await fetchJSON(port, '/api/extensions/active');
+  assert.equal(status, 200);
+  assert.equal(data.active.name, 'my-ext');
+  rmSync(activePath);
+});
+
+test('/api/extensions/active — symlink outside HOME is rejected (path-traversal)', { skip: process.platform === 'win32' ? 'symlinks require admin on win32' : undefined }, async () => {
+  const { symlinkSync, mkdirSync: mkdirSyncFn, writeFileSync: wfSync, rmSync: rmSyncFn } = await import('node:fs');
+
+  // Create a target file OUTSIDE tmp HOME.
+  const outsideDir = join(tmpdir(), 'ijfw-traverse-target-' + Date.now());
+  mkdirSyncFn(outsideDir, { recursive: true });
+  const outsideFile = join(outsideDir, 'secret.json');
+  wfSync(outsideFile, JSON.stringify({ secret: 'oops' }), 'utf8');
+
+  // Place a symlink inside HOME/.ijfw/state/active-extension.json → outside file.
+  const activePath = join(TEST_HOME, '.ijfw', 'state', 'active-extension.json');
+  try { rmSyncFn(activePath); } catch {}
+  try {
+    symlinkSync(outsideFile, activePath);
+    const { status, data } = await fetchJSON(port, '/api/extensions/active');
+    // Should be either 403 (traversal rejected) or {active:null} — NOT the outside file contents.
+    if (status === 403) {
+      assert.ok(data.error.includes('path traversal'), `unexpected 403 body: ${JSON.stringify(data)}`);
+    } else {
+      assert.equal(status, 200);
+      assert.equal(data.active, null, 'symlink to outside HOME must not leak contents');
+    }
+  } finally {
+    try { rmSyncFn(activePath); } catch {}
+    try { rmSyncFn(outsideDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+// ---------- W8.1/Fix3: SSE tail-chunk (no full-file slurp) ----------
+test('SSE watch callback uses tail-chunk: lastLineCount tracks tail-sliced lines', { skip: process.platform === 'win32' ? 'SSE hangup detection differs on win32' : undefined }, async () => {
+  // This test verifies the SSE watcher does not deliver duplicate events when
+  // the file is much larger than TAIL_CHUNK (2MB). We write a file large enough
+  // to exceed the chunk, then append one event and confirm only the new event
+  // is delivered — not a re-delivery of historical lines.
+  const TAIL_CHUNK = 2 * 1024 * 1024;
+  const eventsPath = join(TEST_HOME, '.ijfw', 'state', 'permission-events.jsonl');
+
+  // Build a file just over TAIL_CHUNK using padded lines.
+  const padding = ' '.repeat(900); // ~1KB per line
+  const oldEvent = { ts: '2026-01-01T00:00:00.000Z', extension: 'old-ext', tool: 'old_tool', allowed: true };
+  const oldLine = JSON.stringify({ ...oldEvent, _pad: padding }) + '\n';
+  const lineCount = Math.ceil((TAIL_CHUNK + 1024) / oldLine.length);
+  writeFileSync(eventsPath, oldLine.repeat(lineCount), 'utf8');
+
+  const uniqueExt = 'sse-tailchunk-' + Date.now();
+
+  const received = await new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, path: '/api/extensions/events?limit=5', headers: { accept: 'text/event-stream' } },
+      (res) => {
+        let buf = '';
+        const timer = setTimeout(() => { req.destroy(); reject(new Error('SSE tail-chunk timeout')); }, 4000);
+        res.on('data', (chunk) => {
+          buf += chunk.toString();
+          for (const line of buf.split('\n')) {
+            if (line.startsWith('data: ')) {
+              try {
+                const obj = JSON.parse(line.slice(6));
+                if (obj && obj.extension === uniqueExt) {
+                  clearTimeout(timer);
+                  req.destroy();
+                  resolve(obj);
+                }
+              } catch {}
+            }
+          }
+        });
+        res.on('error', () => {});
+      },
+    );
+    req.on('error', () => {});
+    req.end();
+
+    // Wait for SSE to connect, then append a new distinct event.
+    setTimeout(() => {
+      const newEvent = { ts: new Date().toISOString(), extension: uniqueExt, tool: 'ijfw_run', allowed: true };
+      writeFileSync(eventsPath, oldLine.repeat(lineCount) + JSON.stringify(newEvent) + '\n', 'utf8');
+    }, 150);
+  });
+
+  assert.equal(received.extension, uniqueExt, 'tail-chunk SSE must deliver the new event');
+});
+
 // ---------- cleanup ----------
 // Server pollTimer keeps the event loop alive; close() explicitly so the test
 // process can exit cleanly instead of hanging.

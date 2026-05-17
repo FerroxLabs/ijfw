@@ -176,9 +176,11 @@ function _httpsGet(url, redirectCount) {
 /**
  * Verify a registry JSON body string.
  * @param {string} body
- * @returns {{ valid: boolean, registry: object|null, reason: string }}
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowSeed] Accept unsigned (null-signature) registries (bootstrap mode)
+ * @returns {{ valid: boolean, registry: object|null, reason: string, warnings?: string[] }}
  */
-export function verifyRegistry(body) {
+export function verifyRegistry(body, opts = {}) {
   let parsed;
   try {
     parsed = JSON.parse(body);
@@ -204,9 +206,20 @@ export function verifyRegistry(body) {
     return { valid: false, registry: null, reason: 'revoked must be an array' };
   }
 
-  // Signature verification — null signature is accepted (unsigned seed)
+  // Signature verification — null signature is only accepted in seed/bootstrap mode.
+  // In production (default), a null signature is rejected to prevent MITM serving
+  // an unsigned registry that bypasses all publisher trust decisions.
   if (parsed.signature === null) {
-    return { valid: true, registry: parsed, reason: 'unsigned (seed)' };
+    const allowSeed = opts.allowSeed === true || process.env.IJFW_ALLOW_SEED_REGISTRY === '1';
+    if (!allowSeed) {
+      return { valid: false, registry: null, reason: 'signature missing — production clients require signed registry' };
+    }
+    return {
+      valid: true,
+      registry: parsed,
+      reason: 'unsigned (seed)',
+      warnings: ['registry has no signature — running in seed/bootstrap mode only'],
+    };
   }
 
   if (typeof parsed.signature !== 'string' || !parsed.signature.startsWith('ed25519:')) {
@@ -419,9 +432,16 @@ export async function refreshTrustFromRegistry(url = DEFAULT_REGISTRY_URL, opts 
     return { ok: true, diff: null, fromCache: false, warnings, error: null };
   }
 
-  const verified = verifyRegistry(fetched.body);
+  const verified = verifyRegistry(fetched.body, opts);
   if (!verified.valid) {
     return { ok: false, diff: null, fromCache: false, warnings, error: `registry verify failed: ${verified.reason}` };
+  }
+  // Seed-mode: surface warnings loudly on stderr so bootstrap operators notice.
+  if (verified.warnings && verified.warnings.length > 0) {
+    for (const w of verified.warnings) {
+      process.stderr.write(`[ijfw] WARNING: ${w}\n`);
+      warnings.push(w);
+    }
   }
 
   const diff = await applyRegistry(verified.registry, opts);

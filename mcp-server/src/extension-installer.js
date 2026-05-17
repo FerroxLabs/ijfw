@@ -94,12 +94,11 @@ export async function promptUntrustedConfirmation(keyId) {
   const expected = keyId.slice(-8);
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    process.stdout.write(
+    const prompt =
       `⚠️  Extension is signed by publisher keyId ${keyId} but ${keyId} is not in your trusted publishers store.\n` +
-      `   Type the LAST 8 CHARS of the keyId to confirm: `,
-    );
+      `   Type the LAST 8 CHARS of the keyId (lowercase hex) to confirm: `;
     let answered = false;
-    rl.once('line', (line) => {
+    rl.question(prompt, (line) => {
       answered = true;
       rl.close();
       resolve(line.trim() === expected);

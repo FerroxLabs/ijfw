@@ -18,21 +18,41 @@ STATE="${HOME:-$USERPROFILE}/.ijfw/state/active-extension.json"
 [ ! -f "$STATE" ] && exit 0
 
 # Reshape Gemini payload to Claude-compat shape.
+# Fail-closed: parse error or missing required fields → exit 1 (deny).
 RESHAPED=$(node -e "
-const p = JSON.parse(process.argv[1] || '{}');
+let p;
+try { p = JSON.parse(process.argv[1]); } catch (e) {
+  process.stderr.write('[ijfw] gemini hook: malformed payload -- denying\n');
+  process.exit(1);
+}
+if (!p || typeof p !== 'object' || !p.tool || typeof p.tool.name !== 'string') {
+  process.stderr.write('[ijfw] gemini hook: malformed payload -- denying\n');
+  process.exit(1);
+}
 process.stdout.write(JSON.stringify({
   hook_event_name: p.event === 'pre_tool_use' ? 'PreToolUse' : (p.event || ''),
-  tool_name: (p.tool && p.tool.name) || '',
-  tool_input: (p.tool && p.tool.input) || {}
+  tool_name: p.tool.name,
+  tool_input: p.tool.input || {}
 }));
 " "$INPUT")
+RC=$?
+[ "$RC" -ne 0 ] && exit "$RC"
 
 node --input-type=module -e '
-import { readFile } from "node:fs/promises";
+import { readFile, appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 const home = process.env.HOME || process.env.USERPROFILE || homedir();
 const stateFile = join(home, ".ijfw", "state", "active-extension.json");
+async function emitEvent(name, tool, allowed, reason) {
+  try {
+    const dir = join(home, ".ijfw", "state");
+    await mkdir(dir, { recursive: true });
+    const ev = { ts: new Date().toISOString(), extension: name, tool, allowed };
+    if (reason) ev.reason = reason;
+    await appendFile(join(dir, "permission-events.jsonl"), JSON.stringify(ev) + "\n", "utf8");
+  } catch {}
+}
 let active;
 try {
   active = JSON.parse(await readFile(stateFile, "utf8"));
@@ -62,12 +82,15 @@ const has = (set, want) =>
   [...set].some((p) => p.endsWith(":*") && want.startsWith(p.slice(0, -1)));
 if (writeTools.has(tool) && !has(writes, `tool:${tool.toLowerCase()}`) && !has(writes, "tool:*")) {
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.writes)\n`);
+  await emitEvent(active.name, tool, false, "not in permissions.writes");
   process.exit(1);
 }
 if (readTools.has(tool) && !has(reads, `tool:${tool.toLowerCase()}`) && !has(reads, "tool:*")) {
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.reads)\n`);
+  await emitEvent(active.name, tool, false, "not in permissions.reads");
   process.exit(1);
 }
+await emitEvent(active.name, tool, true);
 process.exit(0);
 ' <<<"$RESHAPED"
 RC=$?

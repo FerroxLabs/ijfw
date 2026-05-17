@@ -320,3 +320,68 @@ test('Wayland hook: no active-extension.json → exit 0', { skip: skipPython }, 
     await cleanup(home);
   }
 });
+
+// ---------------------------------------------------------------------------
+// W8.1 -- Gemini reshape fail-closed + permission-events.jsonl emission
+// ---------------------------------------------------------------------------
+
+test('Gemini hook: corrupt payload (raw string) → exit non-zero (deny)', { skip: skipBash }, async () => {
+  const home = await makeTmpHome();
+  try {
+    const result = spawnSync('bash', [geminiScript], {
+      input: 'not-json',
+      env: {
+        PATH: process.env.PATH || '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin',
+        HOME: home,
+        USERPROFILE: home,
+        IJFW_DISABLE: '',
+      },
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    assert.notEqual(result.status, 0, 'corrupt payload must be denied (exit non-zero)');
+    assert.ok(result.stderr.includes('malformed payload'), 'stderr should mention malformed payload');
+  } finally {
+    await cleanup(home);
+  }
+});
+
+test('Codex hook: allow emits event to permission-events.jsonl', { skip: skipBash }, async () => {
+  const home = await makeTmpHome();
+  try {
+    const payload = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: {} };
+    const { status } = runShellHook(codexScript, payload, home);
+    assert.equal(status, 0, 'Edit allowed → exit 0');
+    const logPath = path.join(home, '.ijfw', 'state', 'permission-events.jsonl');
+    const raw = await fs.readFile(logPath, 'utf8');
+    const lines = raw.trim().split('\n').filter(Boolean);
+    assert.ok(lines.length >= 1, 'at least one event line emitted');
+    const evt = JSON.parse(lines[lines.length - 1]);
+    assert.equal(evt.extension, 'test-ext', 'event names the extension');
+    assert.equal(evt.tool, 'Edit', 'event names the tool');
+    assert.equal(evt.allowed, true, 'event marks allowed=true');
+    assert.ok(evt.ts, 'event has a timestamp');
+  } finally {
+    await cleanup(home);
+  }
+});
+
+test('Gemini hook: deny emits event to permission-events.jsonl', { skip: skipBash }, async () => {
+  const home = await makeTmpHome();
+  try {
+    const payload = { event: 'pre_tool_use', tool: { name: 'Bash', input: {} } };
+    const { status } = runShellHook(geminiScript, payload, home);
+    assert.notEqual(status, 0, 'Bash denied → exit non-zero');
+    const logPath = path.join(home, '.ijfw', 'state', 'permission-events.jsonl');
+    const raw = await fs.readFile(logPath, 'utf8');
+    const lines = raw.trim().split('\n').filter(Boolean);
+    assert.ok(lines.length >= 1, 'at least one event line emitted');
+    const evt = JSON.parse(lines[lines.length - 1]);
+    assert.equal(evt.extension, 'test-ext', 'event names the extension');
+    assert.equal(evt.tool, 'Bash', 'event names the tool');
+    assert.equal(evt.allowed, false, 'event marks allowed=false');
+    assert.ok(evt.ts, 'event has a timestamp');
+  } finally {
+    await cleanup(home);
+  }
+});

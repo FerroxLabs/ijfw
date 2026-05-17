@@ -114,7 +114,7 @@ test('happy path: fetch → verify → apply round-trip (unsigned seed)', async 
   const fetchImpl = async () => ({ ok: true, body, error: null });
 
   await withTmpHome(async () => {
-    const r = await refreshTrustFromRegistry('https://test.example/v1.json', { fetchImpl });
+    const r = await refreshTrustFromRegistry('https://test.example/v1.json', { fetchImpl, allowSeed: true });
     assert.equal(r.ok, true, `expected ok=true, got: ${r.error}`);
     assert.equal(r.fromCache, false);
     assert.ok(Array.isArray(r.warnings));
@@ -208,7 +208,7 @@ test('revocation: registry lists keyId → removed from local trust store', asyn
     const body = JSON.stringify(registry);
     const fetchImpl = async () => ({ ok: true, body, error: null });
 
-    const r = await refreshTrustFromRegistry('https://test.example/v1.json', { fetchImpl });
+    const r = await refreshTrustFromRegistry('https://test.example/v1.json', { fetchImpl, allowSeed: true });
     assert.equal(r.ok, true);
     assert.ok(r.diff, 'should have diff');
     assert.ok(r.diff.removed.includes(pub.keyId), `expected ${pub.keyId} in removed`);
@@ -417,6 +417,47 @@ test('B8 mismatched old keyId: verifyRotationToken returns valid=false with help
 });
 
 // ---------------------------------------------------------------------------
+// W8.1/Fix4 — B8 rotation token expiry check
+// ---------------------------------------------------------------------------
+test('W8.1 B8 rotation token expired (100 days old) → verifyRotationToken rejects', () => {
+  const kpA = makeKeypair();
+  const kpB = makeKeypair();
+
+  // Create a token backdated 100 days (beyond the 90-day default window).
+  const rotated_at = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
+  const token = signRotationToken(kpA.privPem, kpB.pubPem, { rotated_at });
+
+  const verdict = verifyRotationToken(token, kpA.pubPem);
+  assert.equal(verdict.valid, false, 'expired token must be rejected');
+  assert.ok(verdict.reason.includes('rotation token expired'), `expected expiry reason, got: ${verdict.reason}`);
+});
+
+test('W8.1 B8 rotation token within 90-day window → verifyRotationToken accepts', () => {
+  const kpA = makeKeypair();
+  const kpB = makeKeypair();
+
+  // Create a token backdated 30 days — within the default 90-day window.
+  const rotated_at = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const token = signRotationToken(kpA.privPem, kpB.pubPem, { rotated_at });
+
+  const verdict = verifyRotationToken(token, kpA.pubPem);
+  assert.equal(verdict.valid, true, `30-day-old token should be accepted, got: ${verdict.reason}`);
+});
+
+test('W8.1 B8 rotation token respects custom max_age_ms opt', () => {
+  const kpA = makeKeypair();
+  const kpB = makeKeypair();
+
+  // Token 2 days old; custom max_age of 1 day → reject.
+  const rotated_at = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const token = signRotationToken(kpA.privPem, kpB.pubPem, { rotated_at });
+
+  const verdict = verifyRotationToken(token, kpA.pubPem, { max_age_ms: 24 * 60 * 60 * 1000 });
+  assert.equal(verdict.valid, false, 'token older than custom max_age_ms must be rejected');
+  assert.ok(verdict.reason.includes('rotation token expired'), `expected expiry reason, got: ${verdict.reason}`);
+});
+
+// ---------------------------------------------------------------------------
 // Test B8-4 — applyRegistry with revoked entry: removes key from trust + records in revoked-publishers.json
 // ---------------------------------------------------------------------------
 test('B8 applyRegistry consumes revocation: removes key from local trust + writes revoked-publishers.json', async () => {
@@ -499,4 +540,54 @@ test('B8 revoked key install attempt: addTrustedPublisher refuses with "publishe
   });
   // Reset cache after test so subsequent tests start clean.
   _resetRevokedCacheForTest();
+});
+
+// ---------------------------------------------------------------------------
+// W8.1/Fix1 — verifyRegistry null-signature gate
+// ---------------------------------------------------------------------------
+test('W8.1 verifyRegistry: null signature rejected in production mode (default)', () => {
+  const registry = {
+    registry_version: '1.0',
+    updated_at: new Date().toISOString(),
+    signature: null,
+    publishers: {},
+    revoked: [],
+  };
+  const result = verifyRegistry(JSON.stringify(registry));
+  assert.equal(result.valid, false, 'null signature must be rejected in production mode');
+  assert.ok(result.reason.includes('signature missing'), `unexpected reason: ${result.reason}`);
+});
+
+test('W8.1 verifyRegistry: null signature accepted with allowSeed=true, returns warning', () => {
+  const registry = {
+    registry_version: '1.0',
+    updated_at: new Date().toISOString(),
+    signature: null,
+    publishers: {},
+    revoked: [],
+  };
+  const result = verifyRegistry(JSON.stringify(registry), { allowSeed: true });
+  assert.equal(result.valid, true, 'null signature should be accepted with allowSeed:true');
+  assert.equal(result.reason, 'unsigned (seed)');
+  assert.ok(Array.isArray(result.warnings) && result.warnings.length > 0, 'warnings array must be populated');
+});
+
+test('W8.1 verifyRegistry: null signature accepted with IJFW_ALLOW_SEED_REGISTRY=1 env var', () => {
+  const orig = process.env.IJFW_ALLOW_SEED_REGISTRY;
+  process.env.IJFW_ALLOW_SEED_REGISTRY = '1';
+  try {
+    const registry = {
+      registry_version: '1.0',
+      updated_at: new Date().toISOString(),
+      signature: null,
+      publishers: {},
+      revoked: [],
+    };
+    const result = verifyRegistry(JSON.stringify(registry));
+    assert.equal(result.valid, true, 'null signature accepted via env var');
+    assert.ok(Array.isArray(result.warnings) && result.warnings.length > 0, 'warnings must be set');
+  } finally {
+    if (orig === undefined) delete process.env.IJFW_ALLOW_SEED_REGISTRY;
+    else process.env.IJFW_ALLOW_SEED_REGISTRY = orig;
+  }
 });
