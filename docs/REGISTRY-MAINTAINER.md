@@ -217,3 +217,137 @@ Verify deployment after pushing:
 ```bash
 curl https://therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json | jq .signature
 ```
+
+---
+
+# v1.4.3 — Federation + Live Revocation (B14 + B17)
+
+v1.4.1 shipped a single hosted publisher registry. v1.4.3 generalizes this into **federated registries**: a priority-ordered list of independently signed sources, each with its own meta-key, configured per-machine via `~/.ijfw/registries.json`. Corporate operators can layer an internal registry on top of the public one without forking IJFW.
+
+## `~/.ijfw/registries.json` schema
+
+```json
+{
+  "schema_version": "1.0",
+  "registries": [
+    {
+      "name": "corporate",
+      "url": "https://registry.corp.example.com/publishers/v1.json",
+      "meta_key_pem": "-----BEGIN PUBLIC KEY-----\n<corp meta pubkey>\n-----END PUBLIC KEY-----",
+      "priority": 0,
+      "publisher_ttl_ms": 86400000,
+      "revocation_ttl_ms": 300000
+    },
+    {
+      "name": "public",
+      "url": "https://therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json",
+      "meta_key_pem": "<embedded>",
+      "priority": 1,
+      "publisher_ttl_ms": 86400000,
+      "revocation_ttl_ms": 300000
+    }
+  ]
+}
+```
+
+- `name` — must match `/^[a-z0-9_-]+$/` (filesystem-safe; used in per-source cache paths).
+- `meta_key_pem` — accepts the literal sentinel `"<embedded>"` OR field-absent to resolve to the compiled-in `IJFW_REGISTRY_META_KEY_PEM`. Any other value MUST parse as a valid Ed25519 SPKI PEM.
+- `priority` — lower number = higher priority. Same-keyId publishers from a higher-priority source win.
+- `publisher_ttl_ms` / `revocation_ttl_ms` — split TTLs for live revocation. Revocation refreshes every 5 minutes; publisher refreshes every 24 hours by default.
+
+If `~/.ijfw/registries.json` is missing, IJFW falls back to the single-public-registry behavior (back-compat with v1.4.1).
+
+## Precedence + conflict resolution
+
+- **Publishers:** higher-priority source wins. Conflicts are reported (not silenced) in `applyMultiRegistry().sources[].rejected`.
+- **Revocations:** ANY trusted source's `revoked[]` entry revokes globally (defense-in-depth — no "trust the lower-priority less" semantics for revocation).
+- **Malformed container** (parse error, missing required keys, schema violation): throws `RegistrySourcesError` with `{line, column, reason}`. The `trust-registry` CLI catches and exits 1. NEVER silently falls back when a malformed file exists.
+- **Source-level failure** (network timeout, signature invalid, meta-key mismatch): that source is skipped with a stderr warning and reported in `applyMultiRegistry().sources[].rejected`. Other sources continue. Per-source cache is used as a fallback if available.
+- **Cache corruption** (per-source cache file unparseable / wrong source_name): treated as cache-absent for refresh; emits `[ijfw] WARNING: cache for source '<name>' corrupt — ignored`; existing in-memory trust state for that source is preserved.
+
+## Per-source cache files
+
+Located at `~/.ijfw/state/registry-cache-<sanitized-name>.json`:
+
+```json
+{
+  "publishers":            { /* keyId → publisher entry */ },
+  "publishers_fetched_at": "<ISO>",
+  "revoked":               [ /* RevokedEntry */ ],
+  "revocation_fetched_at": "<ISO>",
+  "source_name":           "<name>",
+  "source_url":            "<url>"
+}
+```
+
+The two `_fetched_at` fields enable split-TTL refresh: revocation re-fetched every 5 min, publishers every 24 h, both written back to the same file. All read-modify-write paths over these files run inside `withFsLock` (see `EXTENSION-SECURITY.md::Concurrency`).
+
+## Emergency revocation
+
+```bash
+ijfw extension trust-registry --emergency
+```
+
+Bypasses every cache and forces a fresh fetch of both publishers and revocation from every configured source. Use after a known key compromise to invalidate the stale revocation TTL.
+
+## CLI subcommands (v1.4.3)
+
+- `ijfw extension registry-list` — prints sources in priority order with name/url/last-fetch
+- `ijfw extension registry-add <name> <url> [<meta-key-path>]` — appends to `registries.json`; validates meta-key PEM
+- `ijfw extension registry-remove <name>` — removes by name
+- `ijfw extension registry-prioritize <name> <position>` — moves source to new priority slot
+- `ijfw extension registry-status` — reports per-source state (publishers_last_fetched_at, revocation_last_fetched_at, rejected[])
+- `ijfw extension trust-registry --emergency [<url>]` — bypass-cache forced refresh
+
+## WebSocket revocation protocol (v1.5.0 server infrastructure)
+
+v1.4.3 ships the **WebSocket CLIENT** (gated by `IJFW_REGISTRY_WS_URL` or `IJFW_REGISTRY_WS_SOURCE`). The SERVER infrastructure (always-on push) is deferred to v1.5.0. With the 5-min TTL fallback, this is acceptable: clients miss the push but pick up revocations within 5 minutes of CDN propagation.
+
+### Client source binding
+
+Clients map their WS endpoint to a configured source via EITHER:
+- `IJFW_REGISTRY_WS_SOURCE=<name>` (PREFERRED) — exact `name` match in `registries.json`. Reject if no match.
+- `IJFW_REGISTRY_WS_URL=<ws://...>` (legacy short form) — mapped by `origin + pathname-prefix` match (NEVER host-only). Zero matches → refuse. Multiple matches → refuse with "set IJFW_REGISTRY_WS_SOURCE=<name>".
+
+The client verifies each push message against the bound source's `meta_key_pem`. A different source MAY share a host (e.g., enterprise proxy fronting multiple registries) — explicit binding eliminates ambiguity.
+
+### Server-to-client signed-payload schema
+
+```json
+{
+  "registry_version": "1.0",
+  "source_name":      "<name>",
+  "source_url":       "<url>",
+  "updated_at":       "<ISO>",
+  "revoked":          [ /* RevokedEntry, same shape as registry.revoked */ ],
+  "sequence_number":  42,
+  "signature":        "ed25519:<base64>"
+}
+```
+
+Canonical signing bytes = JSON-stringify with sorted keys, EXCLUDING the `signature` field (same algorithm as `registryCanonicalBytes`).
+
+### Client verification rules
+
+1. Verify `signature` against the bound source's `meta_key_pem` (Ed25519, raw 64-byte sig).
+2. Verify `source_name` and `source_url` match the bound source.
+3. Verify `sequence_number > last_seen_sequence_for_source` (replay defense). Maintained in-memory per source for the WS session lifetime.
+4. On all valid: merge `revoked[]` entries into the source's cache file inside `withFsLock` and update `revocation_fetched_at`.
+5. On disconnect: silently fall back to TTL polling (no behavior change).
+
+### Handshake (`node:net` fallback path)
+
+For Node versions before `globalThis.WebSocket` is native (or environments where it's unavailable), the client falls back to a raw `node:net` TCP socket performing the RFC 6455 handshake inline:
+
+- Client generates a random 16-byte `Sec-WebSocket-Key` (base64-encoded) in the HTTP Upgrade request.
+- Client expects the response to contain `Sec-WebSocket-Accept: <base64(sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))>`.
+- On absent or mismatched Accept header, the client refuses upgrade with `[ijfw] WS handshake verification failed for source '<name>' — refusing connection`.
+
+This is a basic anti-hijack measure for the opt-in WS path.
+
+## Out of scope for v1.4.3 (deferred to v1.5.0)
+
+- WebSocket SERVER infrastructure (always-on push origin)
+- Hosted publisher KEY DISCOVERY (clients still need to install per-source meta-keys manually)
+- Key rotation revocation-list distribution federation (in v1.4.3 each source is independently rotated by its own meta-key)
+
