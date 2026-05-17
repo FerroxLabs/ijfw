@@ -341,7 +341,15 @@ export async function detectCrossIdeDivergence(opts = {}) {
   const activatedAtMs = typeof active.activated_at === 'string' ? Date.parse(active.activated_at) : NaN;
   const ageSeconds = Number.isFinite(activatedAtMs) ? Math.max(0, Math.floor((now - activatedAtMs) / 1000)) : null;
 
-  // Write our own last-seen marker (best-effort; we ARE the current IDE).
+  // CRITICAL ORDERING: read prior last-seen BEFORE overwriting it. Otherwise
+  // the divergence comparison degrades to "now vs activated_at" which is
+  // always non-divergent.
+  let priorSeen = null;
+  if (lastWriter !== currentIde && currentIde !== 'unknown') {
+    priorSeen = await readLastSeen(currentIde, { homeDir: home });
+  }
+
+  // Now write our own last-seen marker (best-effort; we ARE the current IDE).
   if (currentIde !== 'unknown') {
     await writeLastSeen(currentIde, { homeDir: home });
   }
@@ -355,25 +363,30 @@ export async function detectCrossIdeDivergence(opts = {}) {
     return { divergent: false, last_writer: lastWriter, current_ide: currentIde, age_seconds: ageSeconds, reason: 'detection disabled' };
   }
 
-  // Look up the current IDE's previous last-seen, if any.
-  const seen = await readLastSeen(currentIde, { homeDir: home });
-  if (!seen) {
+  if (!priorSeen) {
     // Current IDE has no prior history → legitimate first-time hand-off.
     return { divergent: false, last_writer: lastWriter, current_ide: currentIde, age_seconds: ageSeconds, reason: 'first-time current ide' };
   }
-  const seenMs = Date.parse(seen.last_seen_at);
+  const seenMs = Date.parse(priorSeen.last_seen_at);
   if (!Number.isFinite(seenMs) || !Number.isFinite(activatedAtMs)) {
     return { divergent: false, last_writer: lastWriter, current_ide: currentIde, age_seconds: ageSeconds, reason: 'unparseable timestamps' };
   }
 
-  // Divergent when: this IDE was here BEFORE another IDE took over the slot.
-  if (activatedAtMs > seenMs) {
-    return { divergent: true, last_writer: lastWriter, current_ide: currentIde, age_seconds: ageSeconds, reason: 'foreign ide took over after current ide was here' };
+  // Design rule (per B18 spec):
+  //   divergent iff active.activated_by_ide != currentIde
+  //                AND active.activated_at < currentIde.last_seen
+  //
+  // Reading: the slot says some other IDE wrote it, but the current IDE has
+  // a more recent last-seen — i.e., the current IDE has been touching state
+  // more recently than the write, yet a different IDE's name is on it. Stale
+  // cross-IDE state divergence.
+  if (activatedAtMs < seenMs) {
+    return { divergent: true, last_writer: lastWriter, current_ide: currentIde, age_seconds: ageSeconds, reason: 'stale active.json: current ide last-seen is more recent than active.activated_at' };
   }
 
-  // active was written BEFORE current ide's last_seen — current ide already
-  // saw a different writer earlier; treat as non-divergent (already observed).
-  return { divergent: false, last_writer: lastWriter, current_ide: currentIde, age_seconds: ageSeconds, reason: 'current ide observed handoff already' };
+  // active was written AFTER current ide's last_seen — legitimate hand-off
+  // (another IDE took over while current was away).
+  return { divergent: false, last_writer: lastWriter, current_ide: currentIde, age_seconds: ageSeconds, reason: 'legitimate handoff: foreign ide wrote after current ide was last here' };
 }
 
 // Internal helpers exported for tests only.
