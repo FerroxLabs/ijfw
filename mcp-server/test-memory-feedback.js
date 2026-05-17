@@ -15,6 +15,9 @@ import { join } from 'node:path';
 import {
   readRecentReceipts,
   detectPatterns,
+  detectRisingFailRate,
+  detectCrossSkillCorrelation,
+  detectRegression,
   getFeedbackSuggestions,
 } from './src/memory-feedback.js';
 
@@ -315,4 +318,306 @@ test('getFeedbackSuggestions: text leaks NO artifact IDs or full receipt content
     assert.ok(!sugg[0].includes('CONFIDENTIAL_RECEIPT_BODY'), `suggestion must not contain receipt notes`);
     assert.ok(!sugg[0].includes('secret-gate'), `suggestion must not contain gate IDs`);
   } finally { await cleanup(proj); }
+});
+
+// --- detectRisingFailRate ---------------------------------------------------
+
+test('detectRisingFailRate: empty / small receipts returns no pattern', () => {
+  assert.deepEqual(detectRisingFailRate([]), []);
+  assert.deepEqual(detectRisingFailRate(null), []);
+  assert.deepEqual(detectRisingFailRate([receipt('FAIL', ['chapter'])]), []);
+});
+
+test('detectRisingFailRate: triggers when fail rate rises by >= minRise', () => {
+  // prior window (20..39): all PASS (0% fail)
+  // recent window (0..19): all FAIL (100% fail)
+  const recent = Array.from({ length: 20 }, (_, i) => receipt('FAIL', ['chapter'], `g-${i}`));
+  const prior = Array.from({ length: 20 }, (_, i) => receipt('PASS', ['chapter'], `h-${i}`));
+  const receipts = [...recent, ...prior];
+  const patterns = detectRisingFailRate(receipts, { window: 20, minRise: 0.2 });
+  assert.equal(patterns.length, 1);
+  assert.equal(patterns[0].kind, 'rising-fail-rate');
+  assert.ok(patterns[0].to_rate > patterns[0].from_rate);
+  assert.ok(patterns[0].suggestion.includes('rose from'));
+  assert.ok(patterns[0].suggestion.includes('rolling back'));
+});
+
+test('detectRisingFailRate: does NOT trigger when rate rise is below minRise', () => {
+  // prior: 10% fail (2/20), recent: 20% fail (4/20) -- rise of 0.10, below 0.20 threshold
+  const recent = [
+    ...Array.from({ length: 4 }, () => receipt('FAIL', ['chapter'])),
+    ...Array.from({ length: 16 }, () => receipt('PASS', ['chapter'])),
+  ];
+  const prior = [
+    ...Array.from({ length: 2 }, () => receipt('FAIL', ['chapter'])),
+    ...Array.from({ length: 18 }, () => receipt('PASS', ['chapter'])),
+  ];
+  const patterns = detectRisingFailRate([...recent, ...prior], { window: 20, minRise: 0.2 });
+  assert.deepEqual(patterns, []);
+});
+
+test('detectRisingFailRate: does NOT trigger when no prior window exists', () => {
+  // Only 15 receipts, window=20 → prior slice is empty → no pattern
+  const receipts = Array.from({ length: 15 }, () => receipt('FAIL', ['chapter']));
+  const patterns = detectRisingFailRate(receipts, { window: 20, minRise: 0.2 });
+  assert.deepEqual(patterns, []);
+});
+
+test('detectRisingFailRate: suggestion text contains no IDs', () => {
+  const recent = Array.from({ length: 10 }, () => {
+    const r = receipt('FAIL', ['chapter'], 'SECRET-GATE-ID');
+    r.affected_artifacts[0].id = 'SECRET-ARTIFACT-ID';
+    return r;
+  });
+  const prior = Array.from({ length: 10 }, () => receipt('PASS', ['chapter']));
+  const patterns = detectRisingFailRate([...recent, ...prior], { window: 10, minRise: 0.2 });
+  assert.equal(patterns.length, 1);
+  assert.ok(!patterns[0].suggestion.includes('SECRET'), 'suggestion must not contain IDs');
+});
+
+test('detectRisingFailRate: handles malformed receipts without crash', () => {
+  const junk = [null, undefined, 42, { verdict: 123 }, {}, { verdict: 'FAIL' }];
+  assert.doesNotThrow(() => detectRisingFailRate(junk));
+});
+
+// --- detectCrossSkillCorrelation -------------------------------------------
+
+test('detectCrossSkillCorrelation: empty receipts returns no pattern', () => {
+  assert.deepEqual(detectCrossSkillCorrelation([]), []);
+  assert.deepEqual(detectCrossSkillCorrelation(null), []);
+});
+
+test('detectCrossSkillCorrelation: triggers when >= minDistinctGates prefixes fail', () => {
+  const receipts = [
+    receipt('FAIL', ['chapter'], 'plan-check-001'),
+    receipt('FAIL', ['chapter'], 'trident-scan-002'),
+    receipt('FAIL', ['chapter'], 'preflight-run-003'),
+  ];
+  const patterns = detectCrossSkillCorrelation(receipts, { window: 10, minDistinctGates: 3 });
+  assert.equal(patterns.length, 1);
+  assert.equal(patterns[0].kind, 'cross-skill-correlation');
+  assert.equal(patterns[0].distinct_gates, 3);
+  assert.ok(patterns[0].suggestion.includes('3 different gates'));
+  assert.ok(patterns[0].suggestion.includes('review project state'));
+});
+
+test('detectCrossSkillCorrelation: does NOT trigger when fewer than minDistinctGates prefixes', () => {
+  // Only 2 distinct prefixes (plan, trident) — below default minDistinctGates=3
+  const receipts = [
+    receipt('FAIL', ['chapter'], 'plan-check-001'),
+    receipt('FAIL', ['chapter'], 'plan-check-002'),
+    receipt('FAIL', ['chapter'], 'trident-scan-003'),
+  ];
+  const patterns = detectCrossSkillCorrelation(receipts, { window: 10, minDistinctGates: 3 });
+  assert.deepEqual(patterns, []);
+});
+
+test('detectCrossSkillCorrelation: PASS receipts do not count toward distinct gates', () => {
+  const receipts = [
+    receipt('PASS', ['chapter'], 'plan-check-001'),
+    receipt('PASS', ['chapter'], 'trident-scan-002'),
+    receipt('FAIL', ['chapter'], 'preflight-run-003'),  // only 1 FAIL prefix
+  ];
+  const patterns = detectCrossSkillCorrelation(receipts, { window: 10, minDistinctGates: 3 });
+  assert.deepEqual(patterns, []);
+});
+
+test('detectCrossSkillCorrelation: colon separator also splits prefix', () => {
+  const receipts = [
+    receipt('FAIL', ['chapter'], 'plan:check'),
+    receipt('FAIL', ['chapter'], 'trident:scan'),
+    receipt('FAIL', ['chapter'], 'preflight:run'),
+  ];
+  const patterns = detectCrossSkillCorrelation(receipts, { window: 10, minDistinctGates: 3 });
+  assert.equal(patterns.length, 1);
+  assert.equal(patterns[0].distinct_gates, 3);
+});
+
+test('detectCrossSkillCorrelation: handles malformed receipts without crash', () => {
+  const junk = [null, {}, { verdict: 'FAIL' }, { verdict: 'FAIL', gate_id: 42 }];
+  assert.doesNotThrow(() => detectCrossSkillCorrelation(junk));
+});
+
+// --- detectRegression -------------------------------------------------------
+
+test('detectRegression: empty receipts returns no pattern', () => {
+  assert.deepEqual(detectRegression([]), []);
+  assert.deepEqual(detectRegression(null), []);
+});
+
+test('detectRegression: 5×PASS then 2×FAIL on same (gate_id, artifact_type) triggers', () => {
+  // receipts[0] = most recent (newest-first order)
+  const fail1 = receipt('FAIL', ['chapter'], 'plan-check');
+  const fail2 = receipt('FAIL', ['chapter'], 'plan-check');
+  const pass1 = receipt('PASS', ['chapter'], 'plan-check');
+  const pass2 = receipt('PASS', ['chapter'], 'plan-check');
+  const pass3 = receipt('PASS', ['chapter'], 'plan-check');
+  const pass4 = receipt('PASS', ['chapter'], 'plan-check');
+  const pass5 = receipt('PASS', ['chapter'], 'plan-check');
+  const receipts = [fail1, fail2, pass1, pass2, pass3, pass4, pass5];
+  const patterns = detectRegression(receipts, { passWindow: 5, failWindow: 2 });
+  assert.equal(patterns.length, 1);
+  assert.equal(patterns[0].kind, 'regression');
+  assert.equal(patterns[0].gate_id, 'plan-check');
+  assert.equal(patterns[0].artifact_type, 'chapter');
+  assert.ok(patterns[0].suggestion.includes('plan-check'));
+  assert.ok(patterns[0].suggestion.includes('chapter'));
+  assert.ok(patterns[0].suggestion.includes('likely regression'));
+});
+
+test('detectRegression: does NOT trigger when prior window has a FAIL mixed in', () => {
+  const fail1 = receipt('FAIL', ['chapter'], 'plan-check');
+  const fail2 = receipt('FAIL', ['chapter'], 'plan-check');
+  // prior window: 4×PASS + 1×FAIL → not "all PASS" → no regression
+  const pass1 = receipt('PASS', ['chapter'], 'plan-check');
+  const pass2 = receipt('PASS', ['chapter'], 'plan-check');
+  const pass3 = receipt('PASS', ['chapter'], 'plan-check');
+  const pass4 = receipt('PASS', ['chapter'], 'plan-check');
+  const failMix = receipt('FAIL', ['chapter'], 'plan-check');
+  const receipts = [fail1, fail2, pass1, pass2, pass3, pass4, failMix];
+  const patterns = detectRegression(receipts, { passWindow: 5, failWindow: 2 });
+  assert.deepEqual(patterns, []);
+});
+
+test('detectRegression: does NOT trigger when not enough receipts for both windows', () => {
+  // Need passWindow=5 + failWindow=2 = 7 receipts; only 6 available
+  const receipts = [
+    receipt('FAIL', ['chapter'], 'plan-check'),
+    receipt('FAIL', ['chapter'], 'plan-check'),
+    receipt('PASS', ['chapter'], 'plan-check'),
+    receipt('PASS', ['chapter'], 'plan-check'),
+    receipt('PASS', ['chapter'], 'plan-check'),
+    receipt('PASS', ['chapter'], 'plan-check'),
+  ];
+  const patterns = detectRegression(receipts, { passWindow: 5, failWindow: 2 });
+  assert.deepEqual(patterns, []);
+});
+
+test('detectRegression: suggestion text does not contain artifact IDs', () => {
+  const makeRegReceipt = (verdict) => {
+    const r = receipt(verdict, ['chapter'], 'plan-check');
+    r.affected_artifacts[0].id = 'SECRET-ID-999';
+    return r;
+  };
+  const receipts = [
+    makeRegReceipt('FAIL'),
+    makeRegReceipt('FAIL'),
+    makeRegReceipt('PASS'),
+    makeRegReceipt('PASS'),
+    makeRegReceipt('PASS'),
+    makeRegReceipt('PASS'),
+    makeRegReceipt('PASS'),
+  ];
+  const patterns = detectRegression(receipts, { passWindow: 5, failWindow: 2 });
+  assert.equal(patterns.length, 1);
+  assert.ok(!patterns[0].suggestion.includes('SECRET-ID'), 'must not leak artifact ID');
+});
+
+test('detectRegression: handles malformed receipts without crash', () => {
+  const junk = [null, {}, { verdict: 'FAIL' }, { verdict: 'FAIL', gate_id: 'g', affected_artifacts: null }];
+  assert.doesNotThrow(() => detectRegression(junk));
+});
+
+// --- composition: all four detectors fire ----------------------------------
+
+test('detectPatterns: receipt stream triggering all 4 detectors returns 4 distinct kinds', () => {
+  // Build a stream (newest-first) that satisfies all four detectors at once.
+  // We call detectPatterns with explicit opts so window=10 for repeated-fail and
+  // cross-skill, while rising-fail and regression use their own defaults passed
+  // through opts where needed.
+  //
+  // Strategy:
+  //   positions 0-1  : plan-check FAIL chapter  → regression "fail" window (2)
+  //   positions 2-6  : plan-check PASS chapter  → regression "pass" window (5)
+  //   positions 7-9  : preflight-run + trident FAIL chapter → cross-skill gets 3 prefixes
+  //                    (plan-check from 0, preflight from 7, trident from 8 = within window=10)
+  //                    also gives repeated-fail: chapter FAIL at 0,1,7,8,9 → 5 hits
+  //   positions 10-29: all FAIL chapter         → rising-fail "recent" window (20, 100% fail)
+  //   positions 30-49: all PASS chapter         → rising-fail "prior" window (20, 0% fail)
+
+  const mk = (verdict, gateId) => ({
+    schema_version: '1.0', gate_id: gateId, verdict,
+    affected_artifacts: [{ type: 'chapter', id: 'cx' }], ts: new Date().toISOString(),
+  });
+
+  const stream = [
+    mk('FAIL', 'plan-check'),      // 0 — regression fail 1; cross-skill prefix 1
+    mk('FAIL', 'plan-check'),      // 1 — regression fail 2
+    mk('PASS', 'plan-check'),      // 2 — regression pass 1
+    mk('PASS', 'plan-check'),      // 3 — regression pass 2
+    mk('PASS', 'plan-check'),      // 4 — regression pass 3
+    mk('PASS', 'plan-check'),      // 5 — regression pass 4
+    mk('PASS', 'plan-check'),      // 6 — regression pass 5
+    mk('FAIL', 'preflight-run'),   // 7 — cross-skill prefix 2; repeated-fail 3rd chapter
+    mk('FAIL', 'trident-scan'),    // 8 — cross-skill prefix 3; repeated-fail 4th chapter
+    mk('FAIL', 'plan-check'),      // 9 — repeated-fail 5th chapter (still in window=10)
+    // prior rising-fail window [10..19]: all PASS → 0% fail rate
+    ...Array.from({ length: 10 }, () => mk('PASS', 'plan-check')),
+  ];
+
+  // Verify expected rates for rising-fail with window=10 (inherited from opts):
+  //   recent [0..9]: FAILs at 0,1,7,8,9 = 5/10 = 50%
+  //   prior  [10..19]: 0 FAILs = 0%
+  //   rise = 50% - 0% = 50% >= minRise 20% ✓
+  // repeated-fail: window=10 → positions 0-9 → 5 chapter FAILs ≥ threshold 3 ✓
+  // cross-skill: window=10 → positions 0-9 → prefixes: plan(0,1,9), preflight(7), trident(8) → 3 ✓
+  // regression: plan-check+chapter: positions 0,1 FAIL then 2,3,4,5,6 PASS (failWindow=2, passWindow=5) ✓
+
+  const patterns = detectPatterns(stream, { threshold: 3, window: 10 });
+  const kinds = patterns.map((p) => p.kind);
+  assert.ok(kinds.includes('repeated-fail-on-same-artifact'), `expected repeated-fail, got: ${JSON.stringify(kinds)}`);
+  assert.ok(kinds.includes('rising-fail-rate'), `expected rising-fail-rate, got: ${JSON.stringify(kinds)}`);
+  assert.ok(kinds.includes('cross-skill-correlation'), `expected cross-skill-correlation, got: ${JSON.stringify(kinds)}`);
+  assert.ok(kinds.includes('regression'), `expected regression, got: ${JSON.stringify(kinds)}`);
+  assert.equal(new Set(kinds).size, kinds.length, 'all returned kinds must be distinct');
+});
+
+// --- leak guard: no suggestion contains ID/UUID patterns -------------------
+
+test('leak guard: no suggestion text from any detector contains ID/UUID patterns', () => {
+  const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const NUMERIC_ID_RE = /SECRET|artifact-\d+|chapter-\d+/;
+
+  const mkR = (verdict, gateId) => {
+    const r = receipt(verdict, ['chapter'], gateId);
+    r.affected_artifacts[0].id = `chapter-${Math.floor(Math.random() * 999999)}`;
+    return r;
+  };
+
+  // Build a stream that fires all detectors
+  const stream = [
+    mkR('FAIL', 'plan-check-aaa'),
+    mkR('FAIL', 'preflight-bbb'),
+    mkR('FAIL', 'trident-ccc'),
+    ...Array.from({ length: 5 }, () => mkR('PASS', 'plan-check-aaa')),
+    ...Array.from({ length: 20 }, () => mkR('FAIL', 'plan-check-aaa')),
+    ...Array.from({ length: 20 }, () => mkR('PASS', 'plan-check-aaa')),
+  ];
+
+  const patterns = detectPatterns(stream, { threshold: 3, window: 10 });
+  assert.ok(patterns.length > 0, 'at least one pattern should fire for leak guard to be meaningful');
+
+  for (const p of patterns) {
+    const s = p.suggestion ?? '';
+    assert.ok(!UUID_RE.test(s), `suggestion contains UUID-like string: ${s}`);
+    assert.ok(!NUMERIC_ID_RE.test(s), `suggestion contains numeric ID pattern: ${s}`);
+  }
+});
+
+// --- pathological / empty / malformed inputs do not crash ------------------
+
+test('all detectors handle null / undefined / empty without crash', () => {
+  for (const fn of [detectRisingFailRate, detectCrossSkillCorrelation, detectRegression]) {
+    assert.doesNotThrow(() => fn(null));
+    assert.doesNotThrow(() => fn(undefined));
+    assert.doesNotThrow(() => fn([]));
+    assert.doesNotThrow(() => fn([null, undefined, 42, {}, { verdict: 'FAIL' }]));
+  }
+});
+
+test('all detectors return [] on malformed input, not error', () => {
+  const junk = [null, {}, { verdict: 123, gate_id: null }, { verdict: 'FAIL', affected_artifacts: 'oops' }];
+  assert.deepEqual(detectRisingFailRate(junk), []);
+  assert.deepEqual(detectCrossSkillCorrelation(junk), []);
+  assert.deepEqual(detectRegression(junk), []);
 });
