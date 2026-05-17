@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [1.4.1] -- 2026-05-17
+
+**Open Ecosystem Completion.** Eight items (B6-B13) folded back into v1.4.1 instead of deferring to v1.5.0 — same "no half-shipping" discipline as v1.4.0. The trust-model promise made in v1.4.0 (signing + runtime mediation + memory feedback) becomes operationally honest: signing now scales via a hosted registry, runtime mediation extends to 5 platforms instead of 1, and memory feedback graduates from one signal to four. MCP tool count stays at 10. Zero new production dependencies.
+
+### Wave 8: Open Ecosystem completion (B6-B13)
+
+- **B6 — Hosted publisher key registry** with embedded Ed25519 meta-key as compile-time trust root. `ijfw extension trust-registry [<url>]` pulls a signed registry from `https://registry.ijfw.dev/publishers/v1.json` (GitLab Pages fallback at `therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json`); 24-hour TTL cache; HTTPS-only with 10s timeout, 3-redirect cap, 1 MiB body cap. Trust now scales O(publishers), not O(users × publishers). Admin subcommands: `keygen-meta` / `sign-registry` / `verify-registry` / `registry-status`. New `pages:` deploy job in `.gitlab-ci.yml` ships the registry on push to main. Meta-key rotation = new tagged v1.4.x release with new constant inlined (source-controlled trust root).
+- **B7 — Tier-2 hooks for 4 more platforms.** Codex / Gemini get bash scripts; Hermes / Wayland get Python ports — all wrap the new shared `mcp-server/src/extension-permission-check.mjs` for one source of truth. Codex's stdin shape matches Claude verbatim; Gemini's adapter reshapes `{event, tool:{name,input}}` → `{hook_event_name, tool_name, tool_input}` before delegating. Cursor / Windsurf / Copilot are rules-only platforms with an explicit "tier-1 only" notice block added to their rules files. All five tier-2 platforms emit to `~/.ijfw/state/permission-events.jsonl` for the dashboard tile (closed in W8.1).
+- **B8 — Key rotation + revocation distribution.** `signRotationToken(oldPriv, newPub)` produces a JSON token signed by the OLD private key (proof of control); `verifyRotationToken` confirms `fingerprint(oldPub) === token.old_key_id` AND token age ≤ 90 days. `rotate-keys <oldKeyId> <newKeyId>` and `verify-rotation-token` CLI surface. Registry maintainer signs the revocation list; clients auto-remove on next `trust-registry` fetch and record in `~/.ijfw/state/revoked-publishers.json`. A compromised new key cannot forge a rotation backward without the old key. Lost-old-key flow documented in REGISTRY-MAINTAINER.md.
+- **B9 — Dashboard "Extension permissions" tile expansion** with three sub-views: Installed (enumerates `~/.ijfw/state-{org,user}/extension-registry.json` plus project scope), Active (current `~/.ijfw/state/active-extension.json`), Events stream (SSE-friendly tail with allowlist-enforced filters by extension/tool/denied). Sidebar item count stays at 10. Log rotation triggers at 10K lines (rename to `.0`, start fresh; cap at 1 rotation file). Path-traversal defence uses `realpathSync` on both `home` and target (macOS `/var/folders` symlink case). SSE handler uses 2 MB tail-chunk slice instead of full-file slurp.
+- **B10 — Pattern detection: three new detectors.** `detectRisingFailRate` (time-series), `detectCrossSkillCorrelation`, `detectRegression`. `detectPatterns` becomes a dispatcher unioning all four detectors (deterministic order). All detectors are pure; dispatcher is the only consumer of `readRecentReceipts`. Suggestion text leaks no IDs.
+- **B11 — Interactive `--accept-untrusted` 2-step confirmation when TTY.** Last 8 chars of the publisher keyId must be typed to confirm; non-TTY keeps the v1.4.0 silent-stderr-warn behaviour exactly. `process.stdin.isTTY === true` strict; `undefined` / `false` / `null` treated as non-TTY. Prompt uses `rl.question()` and includes "(lowercase hex)".
+- **B12 — macOS CI is now a required gate.** Existing `macos:test` job on `saas-macos-medium-m1` (paid GitLab M1 runner) promoted from `allow_failure: true` to `allow_failure: false`. No GitHub mirror — GitLab is canonical. Fallback to `saas-macos-medium` (intel) documented in `.planning/release-runbook.md`.
+- **B13 — Three round-10 NOTE remediations.** Project-scope shadow stderr warning when shadowing a user/org manifest of the same name; new `opts.strictShadow === true` refuses activation instead. `writeActiveExtension` tmp suffix uses `randomBytes(4)` (parity with installer/src/install-helpers.js). Both READMEs document the full v1.4.0+v1.4.1 CLI surface.
+
+### W8.1 — Trident round 11 hardening patch wave
+
+Round 11 cross-audit returned CONDITIONAL across all three lenses. No CRITICAL or FAIL. Seven findings closed in a single atomic patch:
+
+- **HIGH** — Hermes and Wayland Python hooks fail-open on malformed `active-extension.json` (direct sandbox bypass). Split into FileNotFoundError → allow vs all other parse/IO errors → deny (fail-closed, matching Node hook invariant).
+- **HIGH** — Gemini reshape fail-open on malformed payload. Parse error → exit 1 with stderr; downstream never runs on bad input.
+- **MEDIUM** — `verifyRegistry` accepted `signature: null` without gating. Now requires `opts.allowSeed === true` or env `IJFW_ALLOW_SEED_REGISTRY=1`.
+- **MEDIUM** — `/api/extensions/active` path-traversal used lexical `resolve()`. Now realpaths both sides matching `/installed`.
+- **MEDIUM** — SSE handler slurped full event log on every watch event. Now uses TAIL_CHUNK (2 MB) tail-slice; `lastLineCount` initialised from the same slice.
+- **NOTE** — B8 rotation tokens had no expiry; default 90-day window enforced.
+- **NOTE** — B11 prompt double-write + case-sensitivity unflagged; uses `rl.question()` and "(lowercase hex)".
+- **GAP** — Multi-platform hooks didn't emit to `permission-events.jsonl`. All five tier-2 platforms now emit via `emit_event()` helper.
+
+### Quality
+
+- **1155/1155** mcp-server tests (+87 over v1.4.0)
+- **22** new pytest cases for Hermes + Wayland Python hooks (zero coverage at v1.4.0)
+- **Preflight 11/11**
+- **Trident round 11**: 3/3 CONDITIONAL → PASS after W8.1 patch wave
+
+### Locked architectural decisions (new for v1.4.1)
+
+1. Registry meta-key compiled into source as trust root; rotation requires a tagged v1.4.x release
+2. Tier-2 enforcement on 5 platforms (Claude, Codex, Gemini, Hermes, Wayland); 3 rules-only platforms with explicit tier-1-only notices
+3. Pattern detection extends from 1 detector to 4 (dispatcher pattern)
+4. TTY-conditional confirmation for untrusted installs (non-TTY behaviour preserved bit-for-bit)
+5. macOS CI is a required gate (paid GitLab M1 runner; user enables runner at project settings before push)
+
 ## [1.4.0] -- 2026-05-16
 
 **Open Ecosystem.** Third-party extensions with cryptographic publisher trust, runtime-enforced permission sandbox, project-overridable bundled skills, and memory-driven pattern feedback. Plugin model + trust chain land in a single ship rather than fragmented over multiple releases.
