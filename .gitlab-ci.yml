@@ -163,6 +163,10 @@ macos:test:
     - brew update --quiet || true
     - brew install --quiet node@22 python@3.12 sqlite || true
     - brew link --overwrite --force node@22 || true
+    # Force brew node@22 ahead of the system Node on PATH. `brew link` only
+    # updates symlinks; the active PATH for this shell still points at the
+    # baked-in macOS image Node (which doesn't have --experimental-sqlite).
+    - export PATH="$(brew --prefix node@22)/bin:$PATH"
     - python3 -m pip install --break-system-packages --quiet pytest
     - node --version
     - python3 --version
