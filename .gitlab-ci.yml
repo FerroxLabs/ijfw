@@ -7,8 +7,8 @@
 #
 # Cost discipline:
 #   - Linux: free shared runner (Debian-based; native modules build cleanly).
-#   - macOS: free monthly minutes on Apple-silicon shared runner. Drops to
-#     intel-shared if budget tightens (toggle the tag).
+#   - macOS: paid Apple-silicon shared runner (saas-macos-medium-m1).
+#     Drops to saas-macos-medium (intel) if budget tightens.
 #   - Windows: free monthly minutes on shared Windows runner; allow_failure
 #     is ON until the Windows path is proven on the registry.
 #
@@ -181,11 +181,11 @@ macos:test:
     - python3 -m pytest wayland/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/macos-pytest-wayland.log
     - python3 -m pytest hermes/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/macos-pytest-hermes.log
     - bash scripts/copy-lint.sh 2>&1 | tee ci-logs/macos-copy-lint.log
-  # macOS shared runner is paid-tier (50 free min/month, requires explicit
-  # enablement). Until paid minutes are enabled on this project, allow this
-  # job to "not start" without failing the pipeline. Sean ships from a real
-  # Mac dev box every release; macOS CI is a redundancy, not a primary gate.
-  allow_failure: true
+  # macOS shared runner is paid-tier (saas-macos-medium-m1, Apple Silicon).
+  # Paid minutes are attached to this project — required gate from v1.4.1.
+  # On runner unavailability (rare), fall back tag to saas-macos-medium for
+  # the intel-shared runner; same image catalogue, slightly cheaper.
+  allow_failure: false
   artifacts:
     when: always
     expire_in: 7 days

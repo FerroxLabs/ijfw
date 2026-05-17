@@ -10,6 +10,7 @@
 import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 const STATE_PATH_REL = ['.ijfw', 'state', 'active-extension.json'];
 
@@ -50,7 +51,7 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
   const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
   const path = statePath(home);
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
+  const tmp = `${path}.tmp.${randomBytes(4).toString('hex')}`;
   await writeFile(tmp, JSON.stringify(out, null, 2) + '\n', 'utf8');
   const { rename } = await import('node:fs/promises');
   await rename(tmp, path);
@@ -86,7 +87,7 @@ export async function clearActiveExtension(opts = {}) {
  *
  * @param {string} name
  * @param {string} [projectRoot]
- * @param {{ homeDir?: string }} [opts]
+ * @param {{ homeDir?: string, strictShadow?: boolean }} [opts]
  * @returns {Promise<{ ok: boolean, manifest?: object, scope?: string, path?: string, error?: string }>}
  */
 export async function findInstalledManifest(name, projectRoot, opts = {}) {
@@ -102,15 +103,40 @@ export async function findInstalledManifest(name, projectRoot, opts = {}) {
   candidates.push({ scope: 'org', path: join(home, '.ijfw', 'extensions-org', name, 'manifest.json') });
   candidates.push({ scope: 'user', path: join(home, '.ijfw', 'extensions-user', name, 'manifest.json') });
 
+  // Collect all found manifests to detect project-scope shadowing.
+  const found = [];
   for (const c of candidates) {
     try {
       const raw = await readFile(c.path, 'utf8');
       const manifest = JSON.parse(raw);
-      return { ok: true, manifest, scope: c.scope, path: c.path };
+      found.push({ scope: c.scope, path: c.path, manifest });
     } catch (err) {
       if (err && err.code === 'ENOENT') continue;
       if (err instanceof SyntaxError) continue;
     }
   }
-  return { ok: false, error: `extension "${name}" not found in project/org/user scope` };
+
+  if (found.length === 0) {
+    return { ok: false, error: `extension "${name}" not found in project/org/user scope` };
+  }
+
+  const winner = found[0];
+
+  // B13.1: warn when project-scope shadows a lower-priority scope entry.
+  if (winner.scope === 'project' && found.length > 1) {
+    const shadowed = found[1];
+    const winnerKeyId = winner.manifest.signature?.keyId ?? '(unsigned)';
+    const shadowedKeyId = shadowed.manifest.signature?.keyId ?? '(unsigned)';
+    if (opts && opts.strictShadow) {
+      return {
+        ok: false,
+        error: `extension activate: project-scope "${name}" shadows ${shadowed.scope}-scope "${name}" (keyId ${winnerKeyId} vs ${shadowedKeyId}) — refused by strictShadow`,
+      };
+    }
+    process.stderr.write(
+      `[ijfw] extension activate: project-scope "${name}" shadows ${shadowed.scope}-scope "${name}" (keyId ${winnerKeyId} vs ${shadowedKeyId}) — using project\n`,
+    );
+  }
+
+  return { ok: true, manifest: winner.manifest, scope: winner.scope, path: winner.path };
 }

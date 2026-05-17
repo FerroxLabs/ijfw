@@ -1,52 +1,15 @@
-# @ijfw/install
+# @ijfw/memory-server
 
-One-command installer for [IJFW](https://gitlab.com/therealseandonahoe/ijfw) -- the AI
-efficiency layer for 14 AI coding agents: Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Cline, Kimi Code, OpenClaw, and Aider.
+IJFW MCP memory server — the runtime backend that powers memory, metrics,
+update checks, and the extension sandbox for all supported AI coding agents.
 
 ## Install
 
-```bash
-npm install -g @ijfw/install
-ijfw demo
-```
-
-IJFW configures every agent on your machine. The options below let you customize the install location, branch, or skip specific steps -- all are optional.
-
-### Options
-
-| Flag | Default | Notes |
-|------|---------|-------|
-| `--dir <path>` | `$IJFW_HOME` or `~/.ijfw` | Install location |
-| `--branch <name>` | latest released tag | Git branch or tag |
-| `--no-marketplace` | off | Skip settings.json edits |
-| `--yes` | off | Non-interactive |
-
-### Uninstall
+This package is installed automatically by `@ijfw/install`. You generally
+do not need to install it manually.
 
 ```bash
-ijfw uninstall          # preserves ~/.ijfw/memory/
-ijfw uninstall --purge  # removes memory too
-```
-
-If `ijfw` isn't on your PATH (e.g. you uninstalled the global `@ijfw/install`
-package already), invoke the bin directly:
-
-```bash
-npx -p @ijfw/install ijfw-uninstall
-```
-
-Memory is preserved across re-runs by default.
-
-## Preflight
-
-Requires `node >=18` and `git` (used for the initial repo clone). The
-installer is Node-native end to end -- no bash, no WSL, no Git for Windows
-shell. On native Windows use the PowerShell installer (PS 5.1+), which
-delegates to Node directly:
-
-```powershell
-iwr https://gitlab.com/therealseandonahoe/ijfw/-/raw/main/installer/src/install.ps1 -OutFile install.ps1
-.\install.ps1 -Dir $env:USERPROFILE\.ijfw
+npm install -g @ijfw/memory-server
 ```
 
 ## Extension CLI
@@ -79,14 +42,26 @@ ijfw extension registry-status                     # Show registry cache age + s
 
 The rotation flow and registry maintainer docs live in `docs/REGISTRY-MAINTAINER.md`.
 
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `ijfw_memory_store` | Store a memory entry |
+| `ijfw_memory_recall` | Recall memory entries |
+| `ijfw_memory_search` | Full-text search over memories |
+| `ijfw_memory_prelude` | Load project context at session start |
+| `ijfw_cross_project_search` | Search memories across projects |
+| `ijfw_metrics` | Read cost + usage metrics |
+| `ijfw_update_check` | Check for IJFW updates |
+| `ijfw_update_apply` | Apply a pending IJFW update |
+| `ijfw_prompt_check` | Validate a prompt against IJFW rules |
+| `ijfw_run` | Run a sandboxed IJFW command |
+
 ## Build (contributors)
 
 ```bash
-cd installer
+cd mcp-server
 npm install
-npm run build   # outputs dist/install.js + dist/uninstall.js
 npm test
-npm run pack:check
+node --experimental-sqlite --test test-*.js
 ```
-
-Tarball target: **<100 KB**.

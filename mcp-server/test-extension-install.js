@@ -461,3 +461,118 @@ test('extensionAuditBrief produces a string summary containing name + permission
   assert.ok(brief.includes('./README.md'));
   assert.ok(brief.includes('memory:write'));
 });
+
+// === B11: TTY-aware untrusted confirmation ===
+
+import { promptUntrustedConfirmation } from './src/extension-installer.js';
+
+test('B11: promptUntrustedConfirmation resolves true when correct suffix typed', async () => {
+  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+  const expected = keyId.slice(-8); // '23456789'
+  // Mock readline by replacing stdin with a Readable that emits the correct suffix.
+  const { Readable } = await import('node:stream');
+  const fakeStdin = new Readable({ read() {} });
+  const origStdin = process.stdin;
+  // Inject via createInterface seam: pass our fakeStdin as input directly
+  // by calling the exported function with a mocked readline factory.
+  // Since promptUntrustedConfirmation uses process.stdin internally, we
+  // validate it via the TTY-mock pattern used in the install tests below.
+  // This test validates the helper directly by stubbing process.stdin.
+  Object.defineProperty(process, 'stdin', { value: fakeStdin, writable: true, configurable: true });
+  try {
+    const p = promptUntrustedConfirmation(keyId);
+    fakeStdin.push(expected + '\n');
+    const result = await p;
+    assert.equal(result, true, 'correct suffix should resolve true');
+  } finally {
+    Object.defineProperty(process, 'stdin', { value: origStdin, writable: true, configurable: true });
+  }
+});
+
+test('B11: promptUntrustedConfirmation resolves false when wrong suffix typed', async () => {
+  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+  const { Readable } = await import('node:stream');
+  const fakeStdin = new Readable({ read() {} });
+  const origStdin = process.stdin;
+  Object.defineProperty(process, 'stdin', { value: fakeStdin, writable: true, configurable: true });
+  try {
+    const p = promptUntrustedConfirmation(keyId);
+    fakeStdin.push('WRONGSUF\n');
+    const result = await p;
+    assert.equal(result, false, 'wrong suffix should resolve false');
+  } finally {
+    Object.defineProperty(process, 'stdin', { value: origStdin, writable: true, configurable: true });
+  }
+});
+
+test('B11: promptUntrustedConfirmation resolves false on EOF (ctrl-D)', async () => {
+  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+  const { Readable } = await import('node:stream');
+  const fakeStdin = new Readable({ read() {} });
+  const origStdin = process.stdin;
+  Object.defineProperty(process, 'stdin', { value: fakeStdin, writable: true, configurable: true });
+  try {
+    const p = promptUntrustedConfirmation(keyId);
+    fakeStdin.push(null); // EOF
+    const result = await p;
+    assert.equal(result, false, 'EOF should resolve false');
+  } finally {
+    Object.defineProperty(process, 'stdin', { value: origStdin, writable: true, configurable: true });
+  }
+});
+
+test('B11: non-TTY install with --accept-untrusted proceeds without prompt (regression)', async () => {
+  // When process.stdin.isTTY is not true, --accept-untrusted must behave
+  // identically to v1.4.0: install proceeds with a stderr warn, no prompt.
+  await withIsolatedHome(async () => {
+    const extDir = await makeTmp('ext-non-tty');
+    const projectRoot = await makeTmp('proj-non-tty');
+    try {
+      // Build a manifest signed with an UNTRUSTED key (different HOME so
+      // the key is never added to the trusted store).
+      await mkdir(join(extDir, 'skills'), { recursive: true });
+      const skillBody = '# Non-TTY test skill\n';
+      await writeFile(join(extDir, 'skills', 'hello.md'), skillBody, 'utf8');
+      const { generatePublisherKeypair, signManifest, computeIntegrity } = await import('./src/extension-signer.js');
+      const kp = await generatePublisherKeypair('untrusted-author');
+      // Do NOT call addTrustedPublisher — key is intentionally untrusted.
+      const base = {
+        schema_version: '1.0',
+        name: 'non-tty-ext',
+        version: '1.0.0',
+        type: 'skill-only',
+        skills: [{ name: 'hello', file: 'skills/hello.md' }],
+        permissions: { reads: [], writes: [] },
+      };
+      const signed = signManifest(base, kp.privateKey);
+      await writeFile(join(extDir, 'manifest.json'), JSON.stringify(signed, null, 2), 'utf8');
+      seedLensesLive();
+
+      // Confirm stdin is not a TTY in this test environment.
+      assert.notEqual(process.stdin.isTTY, true, 'test runner stdin should not be a TTY');
+
+      const stderrLines = [];
+      const origWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (s, ...rest) => { stderrLines.push(String(s)); return origWrite(s, ...rest); };
+      try {
+        const result = await installExtension(extDir, {
+          scope: 'project',
+          projectRoot,
+          acceptUntrusted: true,
+          tridentExecutor: makeTridentStub('PASS'),
+        });
+        // Non-TTY: install should proceed (ok:true) with a stderr warn, no prompt.
+        assert.equal(result.ok, true, `expected ok:true for non-TTY untrusted, got ${JSON.stringify(result.errors)}`);
+        assert.ok(
+          stderrLines.some((l) => l.includes('signature unverified')),
+          'expected stderr warn about signature, got: ' + stderrLines.join('|'),
+        );
+      } finally {
+        process.stderr.write = origWrite;
+      }
+    } finally {
+      await cleanup(extDir);
+      await cleanup(projectRoot);
+    }
+  });
+});

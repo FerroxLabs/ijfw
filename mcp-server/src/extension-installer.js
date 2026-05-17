@@ -36,6 +36,7 @@ import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { get as httpsGet } from 'node:https';
 import { pipeline } from 'node:stream/promises';
+import { createInterface } from 'node:readline';
 
 import {
   validateExtensionManifest,
@@ -78,6 +79,36 @@ const EXTENSION_NAME_PATTERN = /^(@[a-z0-9-]+\/)?[a-z][a-z0-9-]*$/;
 
 // Verdicts considered acceptable for a normal install (3/3 lenses).
 const ACCEPTABLE_VERDICTS = new Set(['PASS', 'CONDITIONAL']);
+
+// --- helpers: TTY confirmation ---------------------------------------------
+
+/**
+ * Prompt the user to confirm an untrusted publisher by typing the last 8 chars
+ * of the keyId. Returns true on match, false on mismatch or EOF.
+ * Only called when process.stdin.isTTY === true.
+ *
+ * @param {string} keyId
+ * @returns {Promise<boolean>}
+ */
+export async function promptUntrustedConfirmation(keyId) {
+  const expected = keyId.slice(-8);
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    process.stdout.write(
+      `⚠️  Extension is signed by publisher keyId ${keyId} but ${keyId} is not in your trusted publishers store.\n` +
+      `   Type the LAST 8 CHARS of the keyId to confirm: `,
+    );
+    let answered = false;
+    rl.once('line', (line) => {
+      answered = true;
+      rl.close();
+      resolve(line.trim() === expected);
+    });
+    rl.once('close', () => {
+      if (!answered) resolve(false); // EOF / ctrl-D
+    });
+  });
+}
 
 // --- helpers: source resolution -------------------------------------------
 
@@ -762,6 +793,15 @@ export async function installExtension(source, opts = {}) {
             ok: false,
             errors: [`signature: verify failed: ${sigCheck.reason}${kidHint}`],
           };
+        }
+        // B11: when stdin is a TTY, require the user to confirm by typing the
+        // last 8 chars of the keyId. Non-TTY (CI / scripted) falls through to
+        // the stderr-warn path unchanged — no regression for automation.
+        if (process.stdin.isTTY === true && sigCheck.publisherKeyId) {
+          const confirmed = await promptUntrustedConfirmation(sigCheck.publisherKeyId);
+          if (!confirmed) {
+            return { ok: false, errors: ['signature: untrusted confirmation cancelled'] };
+          }
         }
         process.stderr.write(
           `[ijfw] extension-installer: signature unverified for ${manifest.name}: ${sigCheck.reason}\n`,
