@@ -641,6 +641,50 @@ export function verifyManifestSignature(manifest, trustedKeys) {
   return { valid: true, publisherKeyId: kid, reason: 'ok' };
 }
 
+// === B6: Revoked publishers store ========================================
+
+/**
+ * Read the revoked publishers list from ~/.ijfw/state/revoked-publishers.json.
+ * Returns an empty list when absent or malformed.
+ *
+ * @returns {Promise<Array<{keyId: string, revoked_at: string, reason: string, superseded_by: string|null}>>}
+ */
+export async function readRevokedPublishers() {
+  const path = join(homedir(), '.ijfw', 'state', 'revoked-publishers.json');
+  let raw;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    return [];
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!parsed || !Array.isArray(parsed.revoked)) return [];
+  return parsed.revoked.filter(r => typeof r.keyId === 'string');
+}
+
+// Module-level revoked set cache — loaded once per process, refreshed by applyRegistry.
+let _revokedSet = null;
+
+/**
+ * O(1) check: is a keyId on the revoked list?
+ * Loads the set on first call; cached for the process lifetime.
+ *
+ * @param {string} keyId
+ * @returns {Promise<boolean>}
+ */
+export async function isRevoked(keyId) {
+  if (_revokedSet === null) {
+    const list = await readRevokedPublishers();
+    _revokedSet = new Set(list.map(r => r.keyId));
+  }
+  return _revokedSet.has(keyId);
+}
+
 /**
  * Read the trusted publishers JSON. Returns `{publishers: {}}` when absent or
  * malformed (fail-closed for verification: no trusted keys means nothing is
@@ -700,6 +744,10 @@ export async function addTrustedPublisher(keyId, publicKey, name) {
   }
   if (typeof publicKey !== 'string' || publicKey.indexOf('BEGIN PUBLIC KEY') === -1) {
     return { ok: false, error: 'publicKey must be PEM-encoded' };
+  }
+  // B6: refuse to add a revoked publisher
+  if (await isRevoked(keyId)) {
+    return { ok: false, error: 'publisher revoked by IJFW registry' };
   }
   let fp;
   try {

@@ -44,6 +44,7 @@ variables:
 stages:
   - test
   - manual
+  - deploy
 
 default:
   # If a job runs longer than 30 min, something is structurally wrong --
@@ -290,6 +291,26 @@ windows:test:
 # Click "Run pipeline" in the web UI, set CI_MANUAL_REPLAY=1, and this job
 # fires the same three legs via parent-child pipelines under the hood by
 # depending on them.
+
+# ---------------------------------------------------------------------------
+# GitLab Pages — registry deployment (B6)
+# ---------------------------------------------------------------------------
+#
+# Copies docs/registry/publishers/v1.json to the Pages public/ tree on push
+# to main. Serves at https://therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json
+# as a fallback when the apex domain (registry.ijfw.dev) isn't set up yet.
+
+pages:
+  stage: deploy
+  image: alpine:3
+  script:
+    - mkdir -p public/registry/publishers
+    - cp docs/registry/publishers/v1.json public/registry/publishers/v1.json
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 manual_full_matrix:
   stage: manual

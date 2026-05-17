@@ -52,6 +52,18 @@
             "_description": "Scan about-to-run commands for destructive patterns. Inject confirmation reminders before execution."
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hooks/scripts/pre-tool-use-extension-check.sh",
+            "timeout": 5,
+            "_ijfw": true,
+            "_description": "IJFW B7 tier-2: gate tool calls against active extension permissions allowlist."
+          }
+        ]
       }
     ],
     "PermissionRequest": [

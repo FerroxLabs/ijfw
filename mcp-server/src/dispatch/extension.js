@@ -31,6 +31,15 @@ import {
   readTrustedPublishers,
 } from '../extension-signer.js';
 import {
+  refreshTrustFromRegistry,
+  readCachedRegistry,
+  verifyRegistry,
+  keygenMeta,
+  signRegistry,
+  verifyRegistryFile,
+  DEFAULT_REGISTRY_URL,
+} from '../extension-registry.js';
+import {
   deployExtensionSkillsToPlatforms,
   deployExtensionToAgentsMd,
 } from '../../../installer/src/install-helpers.js';
@@ -355,6 +364,104 @@ async function deployOneExtension({ scope, name, extDir, projectRoot, result }) 
   }
 }
 
+// === B6: Registry commands ================================================
+
+async function cmdTrustRegistry({ args }) {
+  const url = args.trim() || DEFAULT_REGISTRY_URL;
+  try {
+    const r = await refreshTrustFromRegistry(url);
+    if (!r.ok) return { ok: false, command: 'trust-registry', error: r.error };
+    const lines = [];
+    if (r.fromCache) {
+      lines.push('(loaded from cache — network unavailable)');
+    } else if (r.diff) {
+      for (const kid of r.diff.added) lines.push(`+ added: ${kid}`);
+      for (const kid of r.diff.removed) lines.push(`- removed (revoked): ${kid}`);
+      for (const kid of r.diff.unchanged) lines.push(`  unchanged: ${kid}`);
+      for (const kid of r.diff.rejected) lines.push(`! rejected: ${kid}`);
+      if (lines.length === 0) lines.push('registry applied — no changes');
+    }
+    for (const w of (r.warnings || [])) lines.push(`[warn] ${w}`);
+    return { ok: true, command: 'trust-registry', result: { url, diff: r.diff, fromCache: r.fromCache, lines } };
+  } catch (err) {
+    return { ok: false, command: 'trust-registry', error: err.message };
+  }
+}
+
+async function cmdRegistryStatus() {
+  try {
+    const cached = await readCachedRegistry();
+    if (!cached.registry) {
+      return { ok: true, command: 'registry-status', result: { cached: false, message: 'no cached registry' } };
+    }
+    const ageMs = cached.cachedAt ? Date.now() - cached.cachedAt : null;
+    const ageHours = ageMs !== null ? (ageMs / 3600000).toFixed(1) : null;
+    const body = JSON.stringify(cached.registry);
+    const sizeBytes = Buffer.byteLength(body, 'utf8');
+    const sigStatus = verifyRegistry(body);
+    return {
+      ok: true,
+      command: 'registry-status',
+      result: {
+        cached: true,
+        stale: cached.stale,
+        cached_at: cached.cachedAt ? new Date(cached.cachedAt).toISOString() : null,
+        age_hours: ageHours,
+        size_bytes: sizeBytes,
+        signature_valid: sigStatus.valid,
+        signature_reason: sigStatus.reason,
+        publisher_count: Object.keys(cached.registry.publishers || {}).length,
+        revoked_count: (cached.registry.revoked || []).length,
+      },
+    };
+  } catch (err) {
+    return { ok: false, command: 'registry-status', error: err.message };
+  }
+}
+
+async function cmdKeygenMeta({ args }) {
+  const author = args.trim();
+  if (!author) return { ok: false, command: 'keygen-meta', error: 'missing author name; usage: keygen-meta <author>' };
+  try {
+    const r = await keygenMeta(author);
+    return {
+      ok: true,
+      command: 'keygen-meta',
+      result: { keyId: r.keyId, publicKey: r.publicKey, dir: r.dir },
+    };
+  } catch (err) {
+    return { ok: false, command: 'keygen-meta', error: err.message };
+  }
+}
+
+async function cmdSignRegistry({ args }) {
+  const registryPath = args.trim();
+  if (!registryPath) return { ok: false, command: 'sign-registry', error: 'missing path; usage: sign-registry <path>' };
+  try {
+    const r = await signRegistry(registryPath);
+    return r.ok
+      ? { ok: true, command: 'sign-registry', result: { path: registryPath } }
+      : { ok: false, command: 'sign-registry', error: r.error };
+  } catch (err) {
+    return { ok: false, command: 'sign-registry', error: err.message };
+  }
+}
+
+async function cmdVerifyRegistry({ args }) {
+  const registryPath = args.trim();
+  if (!registryPath) return { ok: false, command: 'verify-registry', error: 'missing path; usage: verify-registry <path>' };
+  try {
+    const r = await verifyRegistryFile(registryPath);
+    return {
+      ok: r.ok,
+      command: 'verify-registry',
+      result: { path: registryPath, valid: r.valid, reason: r.reason },
+    };
+  } catch (err) {
+    return { ok: false, command: 'verify-registry', error: err.message };
+  }
+}
+
 async function cmdActivate({ args, projectRoot }) {
   const name = args && args.trim();
   if (!name) return { ok: false, command: 'activate', error: 'missing extension name; usage: activate <name>' };
@@ -394,11 +501,16 @@ export async function extensionDispatch({ command, args = '', projectRoot }) {
     case 'trusted': return cmdTrusted(ctx);
     case 'activate': return cmdActivate(ctx);
     case 'deactivate': return cmdDeactivate(ctx);
+    case 'trust-registry': return cmdTrustRegistry(ctx);
+    case 'registry-status': return cmdRegistryStatus(ctx);
+    case 'keygen-meta': return cmdKeygenMeta(ctx);
+    case 'sign-registry': return cmdSignRegistry(ctx);
+    case 'verify-registry': return cmdVerifyRegistry(ctx);
     default:
       return {
         ok: false,
         command,
-        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy | keygen | trust | untrust | trusted | activate | deactivate`,
+        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy | keygen | trust | untrust | trusted | activate | deactivate | trust-registry | registry-status | keygen-meta | sign-registry | verify-registry`,
       };
   }
 }
