@@ -1,7 +1,7 @@
 {
   "registry_version": "1.0",
-  "updated_at": "2026-05-17T00:00:00.000Z",
-  "signature": null,
+  "updated_at": "2026-05-17T10:05:31.216Z",
   "publishers": {},
-  "revoked": []
+  "revoked": [],
+  "signature": "ed25519:cPpb9K4zcB3WkzPz3646bW+22PGTyRkIf3F+phw1vf4mLRyrPQpp+mNcMtWo0eJxSOVLln+GNjlDxUKLh6vKBA=="
 }
