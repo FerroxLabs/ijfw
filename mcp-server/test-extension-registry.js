@@ -86,15 +86,25 @@ function buildSignedRegistry({ publishers = {}, revoked = [], privateKey } = {})
   return registry;
 }
 
-// Isolate HOME for each test that writes to ~/.ijfw/
+// Isolate HOME for each test that writes to ~/.ijfw/. Patch BOTH HOME and
+// USERPROFILE: on Windows, os.homedir() reads USERPROFILE first; on macOS/Linux
+// it reads HOME. Patching both = same code works on every CI runner. Same
+// pattern as the v1.4.0 W3 fix campaign.
 async function withTmpHome(fn) {
   const tmp = await mkdtemp(join(tmpdir(), 'ijfw-reg-test-'));
   const origHome = process.env.HOME;
+  const origUserprofile = process.env.USERPROFILE;
   process.env.HOME = tmp;
+  process.env.USERPROFILE = tmp;
+  // Reset the in-process revoked-publishers cache so tests don't see state
+  // from a prior test's HOME directory.
+  _resetRevokedCacheForTest();
   try {
     await fn(tmp);
   } finally {
     process.env.HOME = origHome;
+    process.env.USERPROFILE = origUserprofile;
+    _resetRevokedCacheForTest();
     await rm(tmp, { recursive: true, force: true });
   }
 }

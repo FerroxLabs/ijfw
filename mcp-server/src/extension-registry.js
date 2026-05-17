@@ -456,8 +456,26 @@ export async function refreshTrustFromRegistry(url = DEFAULT_REGISTRY_URL, opts 
 
 import { generateKeyPairSync, createPrivateKey, sign as cryptoSign } from 'node:crypto';
 import { chmod } from 'node:fs/promises';
-import { resolve as pathResolve } from 'node:path';
+import { resolve as pathResolve, relative as pathRelative, isAbsolute as pathIsAbsolute } from 'node:path';
 import { cwd } from 'node:process';
+
+/**
+ * Cross-platform path-under-cwd check. Returns true when `targetPath` resolves
+ * under the current working directory. Uses path.relative + path.isAbsolute so
+ * the result is correct on Windows (\ separators, drive letters) and POSIX.
+ *
+ * @param {string} targetPath
+ * @returns {boolean}
+ */
+function isUnderCwd(targetPath) {
+  const abs = pathResolve(targetPath);
+  const cwdAbs = pathResolve(cwd());
+  if (abs === cwdAbs) return true;
+  const rel = pathRelative(cwdAbs, abs);
+  // Outside cwd: relative path starts with '..' or is absolute (e.g. on
+  // Windows when target is on a different drive than cwd).
+  return rel !== '' && !rel.startsWith('..') && !pathIsAbsolute(rel);
+}
 
 /**
  * Generate a registry meta-keypair and persist under ~/.ijfw/keys/<keyId>/.
@@ -504,10 +522,9 @@ export async function keygenMeta(author) {
  * @returns {Promise<{ok: boolean, error?: string}>}
  */
 export async function signRegistry(registryPath, opts = {}) {
-  // Path security: must resolve under cwd
+  // Path security: must resolve under cwd (cross-platform).
   const abs = pathResolve(registryPath);
-  const cwdAbs = pathResolve(cwd());
-  if (!abs.startsWith(cwdAbs + '/') && abs !== cwdAbs) {
+  if (!isUnderCwd(registryPath)) {
     return { ok: false, error: `path traversal rejected: ${registryPath}` };
   }
 
@@ -582,10 +599,9 @@ export async function signRegistry(registryPath, opts = {}) {
  * @returns {Promise<{ok: boolean, valid: boolean, reason: string}>}
  */
 export async function verifyRegistryFile(registryPath) {
-  // Path security
+  // Path security (cross-platform).
   const abs = pathResolve(registryPath);
-  const cwdAbs = pathResolve(cwd());
-  if (!abs.startsWith(cwdAbs + '/') && abs !== cwdAbs) {
+  if (!isUnderCwd(registryPath)) {
     return { ok: false, valid: false, reason: `path traversal rejected: ${registryPath}` };
   }
 
