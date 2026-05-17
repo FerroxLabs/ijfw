@@ -169,6 +169,44 @@ rotation token. Document the identity verification in the revocation `reason`.
 
 ---
 
+## Lost old key — manual key replacement
+
+A publisher who **loses** their old private key cannot produce a rotation token
+(the token must be signed by the old key as proof of control). The
+`extension rotate-keys` command will fail with "old keypair not found".
+
+**Limitation:** There is no cryptographic way to verify the publisher's identity
+without the old private key. Manual out-of-band verification is required.
+
+**Maintainer steps:**
+
+1. Receive a key replacement request from the publisher out-of-band (email,
+   signed message with a separate identity credential, etc.).
+2. Verify the publisher's identity independently — do NOT rely solely on the
+   request message.
+3. Add the new key to `publishers` in `docs/registry/publishers/v1.json`.
+4. Add the old key to `revoked` with `reason` documenting the identity
+   verification performed and `superseded_by` set to the new keyId:
+
+```json
+{
+  "keyId": "<old-keyId>",
+  "revoked_at": "2026-05-17T00:00:00.000Z",
+  "reason": "lost key — identity verified via GitHub signed commit on 2026-05-17",
+  "superseded_by": "<new-keyId>"
+}
+```
+
+5. Sign, verify, commit, push — clients will pick up the new key on next
+   `extension trust-registry` and reject the old one.
+
+**Note:** Any extension manifests signed with the lost old key will stop
+verifying on client machines after the registry update. The publisher must
+re-sign all existing extensions with the new private key and publish new
+versions.
+
+---
+
 ## Deployment
 
 The `pages:` CI job in `.gitlab-ci.yml` copies the registry JSON to the Pages

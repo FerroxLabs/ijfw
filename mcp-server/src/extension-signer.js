@@ -668,6 +668,8 @@ export async function readRevokedPublishers() {
 }
 
 // Module-level revoked set cache — loaded once per process, refreshed by applyRegistry.
+// Export for test isolation only (allows tests to reset after changing HOME).
+export function _resetRevokedCacheForTest() { _revokedSet = null; }
 let _revokedSet = null;
 
 /**
@@ -766,6 +768,108 @@ export async function addTrustedPublisher(keyId, publicKey, name) {
   };
   await writeTrustedPublishers(store);
   return { ok: true, store };
+}
+
+// === B8: Key rotation + revocation ==========================================
+//
+// Rotation token is signed by the OLD private key — proof of control.
+// An attacker without the old private key cannot produce a valid token.
+// A publisher who lost their old private key must contact the registry
+// maintainer for out-of-band manual key replacement (see docs/REGISTRY-MAINTAINER.md).
+//
+// Token shape: { rotated_at, old_key_id, new_key_id, new_public_key, signature }
+// Canonical signing bytes: all fields except `signature`, sorted by key (sortKeysDeep).
+
+/**
+ * Produce a rotation token asserting that newPublicKey supersedes the key
+ * identified by oldPrivateKey. Signed by the old private key.
+ *
+ * @param {string} oldPrivateKeyPem
+ * @param {string} newPublicKeyPem
+ * @param {object} [opts]
+ * @param {string} [opts.rotated_at] ISO timestamp (defaults to now)
+ * @returns {{ rotated_at: string, old_key_id: string, new_key_id: string, new_public_key: string, signature: string }}
+ */
+export function signRotationToken(oldPrivateKeyPem, newPublicKeyPem, opts = {}) {
+  const priv = createPrivateKey(oldPrivateKeyPem);
+  // Derive old_key_id from the old private key's matching public key.
+  const oldPub = createPublicKey(priv);
+  const old_key_id = publicKeyFingerprint(oldPub.export({ type: 'spki', format: 'pem' }).toString());
+  const new_key_id = publicKeyFingerprint(newPublicKeyPem);
+
+  const token = {
+    rotated_at: opts.rotated_at || new Date().toISOString(),
+    old_key_id,
+    new_key_id,
+    new_public_key: newPublicKeyPem,
+  };
+
+  // Canonical signing bytes: sortKeysDeep of token (signature excluded — not present yet).
+  const bytes = Buffer.from(JSON.stringify(sortKeysDeep(token)), 'utf8');
+  const sigBuf = cryptoSign(null, bytes, priv);
+  return { ...token, signature: `ed25519:${sigBuf.toString('base64')}` };
+}
+
+/**
+ * Verify a rotation token against the old public key.
+ * Checks:
+ *   1. Signature is valid Ed25519 over canonical bytes (signature field excluded).
+ *   2. fingerprint(oldPublicKey) === token.old_key_id.
+ *
+ * @param {object} token
+ * @param {string} oldPublicKeyPem
+ * @returns {{ valid: boolean, reason: string }}
+ */
+export function verifyRotationToken(token, oldPublicKeyPem) {
+  if (!token || typeof token !== 'object') {
+    return { valid: false, reason: 'token must be an object' };
+  }
+  const { rotated_at, old_key_id, new_key_id, new_public_key, signature } = token;
+  if (!rotated_at || !old_key_id || !new_key_id || !new_public_key || !signature) {
+    return { valid: false, reason: 'token missing required fields' };
+  }
+  if (typeof signature !== 'string' || !signature.startsWith('ed25519:')) {
+    return { valid: false, reason: 'signature must be "ed25519:<base64>"' };
+  }
+
+  // Check old_key_id matches the supplied public key fingerprint.
+  let fp;
+  try {
+    fp = publicKeyFingerprint(oldPublicKeyPem);
+  } catch (err) {
+    return { valid: false, reason: `old public key parse failed: ${err.message}` };
+  }
+  if (fp !== old_key_id) {
+    return { valid: false, reason: `old_key_id mismatch: token says ${old_key_id} but supplied key fingerprints to ${fp}` };
+  }
+
+  // Reconstruct canonical signing bytes (exclude signature field).
+  const payload = { rotated_at, old_key_id, new_key_id, new_public_key };
+  const bytes = Buffer.from(JSON.stringify(sortKeysDeep(payload)), 'utf8');
+
+  let pubKey;
+  try {
+    pubKey = createPublicKey(oldPublicKeyPem);
+  } catch (err) {
+    return { valid: false, reason: `old public key unparseable: ${err.message}` };
+  }
+
+  let sigBuf;
+  try {
+    sigBuf = Buffer.from(signature.slice('ed25519:'.length), 'base64');
+  } catch {
+    return { valid: false, reason: 'signature base64 decode failed' };
+  }
+
+  let ok;
+  try {
+    ok = cryptoVerify(null, bytes, pubKey, sigBuf);
+  } catch (err) {
+    return { valid: false, reason: `verify threw: ${err.message}` };
+  }
+
+  if (!ok) return { valid: false, reason: 'signature does not verify' };
+  return { valid: true, reason: 'ok' };
 }
 
 /**

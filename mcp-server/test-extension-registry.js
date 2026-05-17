@@ -342,4 +342,161 @@ test('keygen-meta + sign-registry + verify-registry round-trip', async () => {
   });
 });
 
-// === B8: rotation + revocation === (W8-B will append here)
+// === B8: rotation + revocation ===
+
+import {
+  signRotationToken,
+  verifyRotationToken,
+  addTrustedPublisher,
+  _resetRevokedCacheForTest,
+} from './src/extension-signer.js';
+
+// ---------------------------------------------------------------------------
+// Test B8-1 — Happy path: sign rotation token → verify → correct key ids
+// ---------------------------------------------------------------------------
+test('B8 happy path: signRotationToken → verifyRotationToken with old public key returns valid=true', async () => {
+  const kpA = makeKeypair(); // old keypair
+  const kpB = makeKeypair(); // new keypair
+
+  const token = signRotationToken(kpA.privPem, kpB.pubPem);
+
+  assert.ok(token.rotated_at, 'should have rotated_at');
+  assert.equal(token.old_key_id, kpA.keyId, 'old_key_id should be fingerprint of old key');
+  assert.equal(token.new_key_id, kpB.keyId, 'new_key_id should be fingerprint of new key');
+  assert.equal(token.new_public_key, kpB.pubPem, 'new_public_key should be new PEM');
+  assert.ok(token.signature && token.signature.startsWith('ed25519:'), 'should have ed25519 signature');
+
+  const verdict = verifyRotationToken(token, kpA.pubPem);
+  assert.equal(verdict.valid, true, `expected valid=true, got: ${verdict.reason}`);
+  assert.equal(verdict.reason, 'ok');
+});
+
+// ---------------------------------------------------------------------------
+// Test B8-2 — Tampered token: flip a byte in new_public_key → verify fails
+// ---------------------------------------------------------------------------
+test('B8 tampered token: flipped byte in new_public_key → verifyRotationToken fails', async () => {
+  const kpA = makeKeypair();
+  const kpB = makeKeypair();
+
+  const token = signRotationToken(kpA.privPem, kpB.pubPem);
+
+  // Flip a character mid-PEM (not the header/footer lines to keep it PEM-parseable-ish)
+  const lines = token.new_public_key.split('\n');
+  // Find a data line (not header/footer) and flip a char
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] && !lines[i].startsWith('-----')) {
+      const chars = lines[i].split('');
+      // Flip a middle character (change 'A' to 'B', etc.)
+      const mid = Math.floor(chars.length / 2);
+      chars[mid] = chars[mid] === 'A' ? 'B' : 'A';
+      lines[i] = chars.join('');
+      break;
+    }
+  }
+  const tampered = { ...token, new_public_key: lines.join('\n') };
+
+  const verdict = verifyRotationToken(tampered, kpA.pubPem);
+  assert.equal(verdict.valid, false, 'tampered token should not verify');
+  assert.ok(verdict.reason, 'should have reason');
+});
+
+// ---------------------------------------------------------------------------
+// Test B8-3 — Mismatched old keyId: token.old_key_id doesn't match supplied old public key
+// ---------------------------------------------------------------------------
+test('B8 mismatched old keyId: verifyRotationToken returns valid=false with helpful reason', async () => {
+  const kpA = makeKeypair();
+  const kpB = makeKeypair();
+  const kpC = makeKeypair(); // unrelated key — will be passed as oldPublicKey
+
+  const token = signRotationToken(kpA.privPem, kpB.pubPem);
+  // token.old_key_id = kpA.keyId, but we supply kpC's public key
+
+  const verdict = verifyRotationToken(token, kpC.pubPem);
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.reason.includes('old_key_id mismatch'), `expected mismatch reason, got: ${verdict.reason}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test B8-4 — applyRegistry with revoked entry: removes key from trust + records in revoked-publishers.json
+// ---------------------------------------------------------------------------
+test('B8 applyRegistry consumes revocation: removes key from local trust + writes revoked-publishers.json', async () => {
+  const keyX = makeKeypair();
+
+  await withTmpHome(async (tmp) => {
+    // Pre-populate trust store with keyX
+    const tpPath = join(tmp, '.ijfw', 'trusted-publishers.json');
+    await mkdir(join(tmp, '.ijfw'), { recursive: true });
+    await writeFile(tpPath, JSON.stringify({
+      publishers: {
+        [keyX.keyId]: { name: 'Publisher X', publicKey: keyX.pubPem, added_at: new Date().toISOString() },
+      },
+    }), 'utf8');
+
+    const registry = {
+      registry_version: '1.0',
+      updated_at: new Date().toISOString(),
+      signature: null,
+      publishers: {},
+      revoked: [{
+        keyId: keyX.keyId,
+        revoked_at: new Date().toISOString(),
+        reason: 'key rotation test',
+        superseded_by: null,
+      }],
+    };
+
+    const diff = await applyRegistry(registry);
+
+    assert.ok(diff.removed.includes(keyX.keyId), `expected ${keyX.keyId} in removed`);
+
+    // Trust store no longer has keyX
+    const updated = JSON.parse(await readFile(tpPath, 'utf8'));
+    assert.equal(updated.publishers[keyX.keyId], undefined, 'revoked key should be removed from trust store');
+
+    // revoked-publishers.json records it
+    const revokedPath = join(tmp, '.ijfw', 'state', 'revoked-publishers.json');
+    const revokedStore = JSON.parse(await readFile(revokedPath, 'utf8'));
+    assert.ok(
+      revokedStore.revoked.some(r => r.keyId === keyX.keyId),
+      'keyX should appear in revoked-publishers.json',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test B8-5 — Revoked key install attempt: addTrustedPublisher refuses with helpful reason
+// ---------------------------------------------------------------------------
+test('B8 revoked key install attempt: addTrustedPublisher refuses with "publisher revoked by IJFW registry"', async () => {
+  const keyX = makeKeypair();
+
+  await withTmpHome(async (tmp) => {
+    // Reset the module-level revoked cache so this test reads from the tmp HOME.
+    _resetRevokedCacheForTest();
+
+    // Write a revoked-publishers.json that lists keyX
+    const stateDir = join(tmp, '.ijfw', 'state');
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      join(stateDir, 'revoked-publishers.json'),
+      JSON.stringify({
+        revoked: [{
+          keyId: keyX.keyId,
+          revoked_at: new Date().toISOString(),
+          reason: 'key rotation test',
+          superseded_by: null,
+        }],
+      }),
+      'utf8',
+    );
+
+    // Attempt to add keyX to the trust store — should be refused
+    const r = await addTrustedPublisher(keyX.keyId, keyX.pubPem, 'Test Publisher');
+    assert.equal(r.ok, false);
+    assert.ok(
+      r.error && r.error.includes('publisher revoked by IJFW registry'),
+      `expected "publisher revoked" error, got: ${r.error}`,
+    );
+  });
+  // Reset cache after test so subsequent tests start clean.
+  _resetRevokedCacheForTest();
+});

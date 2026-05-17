@@ -29,6 +29,9 @@ import {
   addTrustedPublisher,
   removeTrustedPublisher,
   readTrustedPublishers,
+  loadPublisherKeypair,
+  signRotationToken,
+  verifyRotationToken,
 } from '../extension-signer.js';
 import {
   refreshTrustFromRegistry,
@@ -462,6 +465,122 @@ async function cmdVerifyRegistry({ args }) {
   }
 }
 
+// === B8: Key rotation + revocation =========================================
+
+/**
+ * rotate-keys <oldKeyId> <newKeyId> [--out <file>]
+ *
+ * Loads both keypairs from ~/.ijfw/keys/<keyId>/, produces a rotation token
+ * signed by the old private key, writes JSON to --out or stdout.
+ */
+async function cmdRotateKeys({ args }) {
+  const tokens = String(args || '').split(/\s+/).filter(Boolean);
+
+  // Extract --out flag
+  let outFile = null;
+  const keep = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === '--out' && tokens[i + 1]) {
+      outFile = tokens[i + 1];
+      i++;
+    } else {
+      keep.push(tokens[i]);
+    }
+  }
+
+  const [oldKeyId, newKeyId] = keep;
+  if (!oldKeyId || !newKeyId) {
+    return { ok: false, command: 'rotate-keys', error: 'usage: rotate-keys <oldKeyId> <newKeyId> [--out <file>]' };
+  }
+
+  const oldKp = await loadPublisherKeypair(oldKeyId);
+  if (!oldKp) return { ok: false, command: 'rotate-keys', error: `old keypair not found: ${oldKeyId}` };
+
+  const newKp = await loadPublisherKeypair(newKeyId);
+  if (!newKp) return { ok: false, command: 'rotate-keys', error: `new keypair not found: ${newKeyId}` };
+
+  let token;
+  try {
+    token = signRotationToken(oldKp.privateKey, newKp.publicKey);
+  } catch (err) {
+    return { ok: false, command: 'rotate-keys', error: `sign failed: ${err.message}` };
+  }
+
+  const json = JSON.stringify(token, null, 2) + '\n';
+
+  if (outFile) {
+    try {
+      await fs.writeFile(path.resolve(outFile), json, 'utf8');
+    } catch (err) {
+      return { ok: false, command: 'rotate-keys', error: `write failed: ${err.message}` };
+    }
+    return { ok: true, command: 'rotate-keys', result: { token, out: path.resolve(outFile) } };
+  }
+
+  return { ok: true, command: 'rotate-keys', result: { token } };
+}
+
+/**
+ * verify-rotation-token <file>
+ *
+ * Reads a rotation token JSON, looks up the old public key from the local
+ * trusted-publishers store (or ~/.ijfw/keys/<oldKeyId>/public.pem as fallback),
+ * calls verifyRotationToken, prints verdict.
+ */
+async function cmdVerifyRotationToken({ args }) {
+  const filePath = String(args || '').trim();
+  if (!filePath) {
+    return { ok: false, command: 'verify-rotation-token', error: 'usage: verify-rotation-token <file>' };
+  }
+
+  let raw;
+  try {
+    raw = await fs.readFile(path.resolve(filePath), 'utf8');
+  } catch (err) {
+    return { ok: false, command: 'verify-rotation-token', error: `read failed: ${err.message}` };
+  }
+
+  let token;
+  try {
+    token = JSON.parse(raw);
+  } catch (err) {
+    return { ok: false, command: 'verify-rotation-token', error: `JSON parse failed: ${err.message}` };
+  }
+
+  const oldKeyId = token && token.old_key_id;
+  if (!oldKeyId) {
+    return { ok: false, command: 'verify-rotation-token', error: 'token missing old_key_id' };
+  }
+
+  // Look up old public key: trusted-publishers store first, then key-dir fallback.
+  let oldPublicKey = null;
+  const store = await readTrustedPublishers();
+  const entry = store.publishers && store.publishers[oldKeyId];
+  if (entry && entry.publicKey) {
+    oldPublicKey = entry.publicKey;
+  } else {
+    // Fallback: key may be on disk even if not in trust store (already revoked).
+    const kp = await loadPublisherKeypair(oldKeyId);
+    if (kp) oldPublicKey = kp.publicKey;
+  }
+
+  if (!oldPublicKey) {
+    return { ok: false, command: 'verify-rotation-token', error: `old public key not found for keyId: ${oldKeyId}` };
+  }
+
+  const verdict = verifyRotationToken(token, oldPublicKey);
+  return {
+    ok: verdict.valid,
+    command: 'verify-rotation-token',
+    result: {
+      valid: verdict.valid,
+      reason: verdict.reason,
+      old_key_id: token.old_key_id,
+      new_key_id: token.new_key_id,
+    },
+  };
+}
+
 async function cmdActivate({ args, projectRoot }) {
   const name = args && args.trim();
   if (!name) return { ok: false, command: 'activate', error: 'missing extension name; usage: activate <name>' };
@@ -506,11 +625,13 @@ export async function extensionDispatch({ command, args = '', projectRoot }) {
     case 'keygen-meta': return cmdKeygenMeta(ctx);
     case 'sign-registry': return cmdSignRegistry(ctx);
     case 'verify-registry': return cmdVerifyRegistry(ctx);
+    case 'rotate-keys': return cmdRotateKeys(ctx);
+    case 'verify-rotation-token': return cmdVerifyRotationToken(ctx);
     default:
       return {
         ok: false,
         command,
-        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy | keygen | trust | untrust | trusted | activate | deactivate | trust-registry | registry-status | keygen-meta | sign-registry | verify-registry`,
+        error: `unknown extension command: ${command}. Supported: add | list | remove | audit | deploy-lazy | keygen | trust | untrust | trusted | activate | deactivate | trust-registry | registry-status | keygen-meta | sign-registry | verify-registry | rotate-keys | verify-rotation-token`,
       };
   }
 }
