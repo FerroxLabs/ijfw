@@ -45,6 +45,7 @@ import {
   mergeToml,
   mergeYamlMcp,
   mergeYamlPluginsEnabled,
+  mergeYamlHook,
   backup,
   installHook,
   writeAtomic,
@@ -352,6 +353,14 @@ export async function installCodex(ctx) {
     installHook(f.path, join(hooksBase, f.name), ctx.ts);
   }
 
+  // 3a. B7 tier-2 extension check script (codex/.codex/scripts/ subdir).
+  const codexScriptsSrc = join(ctx.repoRoot, 'codex', '.codex', 'scripts');
+  const codexScriptsDst = join(hooksBase, 'scripts');
+  ensureDir(codexScriptsDst);
+  for (const f of listFiles(codexScriptsSrc, '.sh')) {
+    installHook(f.path, join(codexScriptsDst, f.name), ctx.ts);
+  }
+
   // 4. IJFW.md context file (if absent).
   const codexCtx = join(ctx.home, '.codex', 'IJFW.md');
   copyIfAbsent(join(ctx.repoRoot, 'codex', '.codex', 'IJFW.md'), codexCtx);
@@ -470,6 +479,14 @@ export async function installGemini(ctx) {
     installHook(f.path, join(extDst, 'hooks', f.name), ctx.ts);
   }
 
+  // 4a. B7 tier-2 extension check script (hooks/scripts/ subdir).
+  const geminiHookScriptsSrc = join(extSrc, 'hooks', 'scripts');
+  const geminiHookScriptsDst = join(extDst, 'hooks', 'scripts');
+  ensureDir(geminiHookScriptsDst);
+  for (const f of listFiles(geminiHookScriptsSrc, '.sh')) {
+    installHook(f.path, join(geminiHookScriptsDst, f.name), ctx.ts);
+  }
+
   // 5. Skills, commands, agents -- copy if absent.
   const skillsSrc = join(extSrc, 'skills');
   for (const sd of listSubdirs(skillsSrc)) {
@@ -554,7 +571,10 @@ export async function installWayland(ctx) {
     }
   }
 
-  ctx.log.ok('Installed Wayland bundle: MCP + WAYLAND.md + skills + plugin');
+  // B7: wire tier-2 hook registration into config.yaml.
+  mergeYamlHook(dst, 'plugins/ijfw/hooks/pre_tool_use_extension_check.py', ctx.ts);
+
+  ctx.log.ok('Installed Wayland bundle: MCP + WAYLAND.md + skills + plugin + tier-2 hook');
   return { status: 'ok' };
 }
 
@@ -626,7 +646,10 @@ export async function installHermes(ctx) {
   // Hermes is opt-in -- add "ijfw" to plugins.enabled[].
   mergeYamlPluginsEnabled(dst, 'ijfw');
 
-  ctx.log.ok('Installed Hermes bundle: MCP + HERMES.md + skills + plugin');
+  // B7: wire tier-2 hook registration into config.yaml.
+  mergeYamlHook(dst, 'plugins/ijfw/hooks/pre_tool_use_extension_check.py', ctx.ts);
+
+  ctx.log.ok('Installed Hermes bundle: MCP + HERMES.md + skills + plugin + tier-2 hook');
   return { status: 'ok' };
 }
 

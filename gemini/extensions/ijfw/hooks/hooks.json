@@ -54,6 +54,12 @@
             "type": "command",
             "command": "bash {{extensionPath}}/hooks/before-tool-compute-nudge.sh",
             "description": "Once per session, suggest ijfw_run compute:python when the agent is about to read a likely-large data file or run a data-processing shell command. Advisory; never blocks."
+          },
+          {
+            "name": "ijfw-extension-permission-check",
+            "type": "command",
+            "command": "bash {{extensionPath}}/hooks/scripts/pre-tool-use-extension-check.sh",
+            "description": "IJFW B7 tier-2: gate tool calls against active extension permissions allowlist."
           }
         ]
       }

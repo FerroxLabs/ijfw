@@ -48,3 +48,13 @@ Skills hot-load on trigger and unload when done -- zero resident context cost.
 Lead with what works. Never lead with "not found", "missing", "failed", or any negative framing.
 Startup output, status reports, and any user-facing surface: positive framing only.
 Sutherland principle: position outcomes as smart and effective, not as recoveries from failure.
+
+## IJFW Extension Sandbox (tier-1 only)
+
+This platform doesn't support pre-tool-use hooks. When an IJFW extension is
+activated (`ijfw extension activate <name>`), the IJFW MCP server enforces
+the extension's declared permissions on every MCP tool call (memory, run,
+prompt-check, metrics). **Built-in platform tools (Edit, Write, Bash) are
+NOT gated here -- only Claude Code's tier-2 hook gates those.** If your
+workflow requires built-in-tool gating, prefer Claude Code, Codex, Gemini,
+Hermes, or Wayland for v1.4.x.

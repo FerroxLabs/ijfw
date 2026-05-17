@@ -1218,3 +1218,40 @@ export async function uninstallExtensionSkillsFromPlatforms(extensionName, proje
   if (writeReceipt) result.receiptPath = receiptPath;
   return result;
 }
+
+/**
+ * mergeYamlHook -- append an IJFW B7 tier-2 hook registration block to a
+ * Hermes or Wayland config.yaml. Sentinel-anchored; idempotent across re-runs.
+ *
+ * Sentinels:
+ *   # IJFW-HOOK-BEGIN pre_tool_use
+ *   # IJFW-HOOK-END pre_tool_use
+ *
+ * @param {string} dst        Absolute path to config.yaml
+ * @param {string} scriptPath Relative path to the hook script (as Hermes/Wayland expect it)
+ * @param {string} [ts]       Backup timestamp (passed to backup())
+ */
+export function mergeYamlHook(dst, scriptPath, ts) {
+  mkdirSync(dirname(dst), { recursive: true });
+  if (ts) backup(dst, ts);
+
+  let text = '';
+  try { text = existsSync(dst) ? readFileSync(dst, 'utf8') : ''; }
+  catch { text = ''; }
+
+  const BEGIN = '# IJFW-HOOK-BEGIN pre_tool_use';
+  const END   = '# IJFW-HOOK-END pre_tool_use';
+  text = stripSentinelBlock(text, BEGIN, END);
+
+  if (text && !text.endsWith('\n')) text += '\n';
+
+  const escaped = String(scriptPath).replace(/"/g, '\\"');
+  let block = `${BEGIN}\n`;
+  block += 'hooks:\n';
+  block += '  pre_tool_use:\n';
+  block += `    - script: "${escaped}"\n`;
+  block += '      interpreter: python3\n';
+  block += `${END}\n`;
+
+  writeAtomic(dst, text + block, { mode: 0o600 });
+}

@@ -1,0 +1,7 @@
+# IJFW Wayland config template.
+# Merged into ~/.wayland/config.yaml by the installer.
+
+hooks:
+  pre_tool_use:
+    - script: plugins/ijfw/hooks/pre_tool_use_extension_check.py
+      interpreter: python3
