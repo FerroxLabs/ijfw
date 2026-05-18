@@ -73,3 +73,120 @@ export function reviewSubagentReport(reportText, ctx) {
   const decision = handleStatus(parsed, ctx.dispatchTimestamp, { projectRoot: ctx.projectRoot });
   return { ...decision, parsed };
 }
+
+/**
+ * Cross-AI resume routing (v1.5.0 W12-C N02).
+ *
+ * When a subagent truncates mid-task, the orchestrator can resume the same
+ * checkpoint on a *different* AI to avoid the same context-window/format
+ * failure mode. These helpers encode the routing matrix + brief composition
+ * so the orchestrator-LLM doesn't have to remember it.
+ *
+ * The matrix is deliberately small and hand-tuned: each entry picks an
+ * alternate AI whose context window / output style differs from the one
+ * that truncated. We never reselect the truncated AI itself.
+ */
+
+const RESUME_PREFERENCE = {
+  claude: ['gemini', 'codex'],
+  gemini: ['claude', 'codex'],
+  codex: ['claude', 'gemini'],
+};
+
+/**
+ * Pick a resume AI for a truncated subagent.
+ *
+ * @param {object} args
+ * @param {string} args.truncatedAI               - AI that truncated ('claude' | 'gemini' | 'codex')
+ * @param {string[]} [args.available]             - AIs the orchestrator can dispatch to
+ * @param {string} [args.lastFailureReason]       - e.g. 'context_window'
+ * @returns {string|null}                         - resume target, or null when blocked
+ */
+export function selectResumeAI({ truncatedAI, available = ['claude', 'gemini', 'codex'], lastFailureReason } = {}) {
+  if (typeof truncatedAI !== 'string' || truncatedAI.length === 0) {
+    return null;
+  }
+
+  // gemini already has the largest practical context window of the three.
+  // If it truncated *because of* context-window pressure, no alternative
+  // gives us a larger window -- escalate instead of pretending to resume.
+  if (lastFailureReason === 'context_window' && truncatedAI === 'gemini') {
+    return null;
+  }
+
+  const preferred = RESUME_PREFERENCE[truncatedAI] || [];
+  for (const candidate of preferred) {
+    if (candidate === truncatedAI) continue;
+    if (available.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build a resume brief composing the original spec + checkpoint state.
+ * Intentionally omits the Step 0 workspace-setup boilerplate: the resume
+ * agent inherits the branch + worktree from the first attempt and skips it.
+ *
+ * @param {object} args
+ * @param {string} args.originalSpec   - original task brief, verbatim
+ * @param {object} args.checkpoint     - { filesWritten?, commitSha?, partialProgress? }
+ * @param {string} args.fromAI         - AI that truncated
+ * @param {string} args.toAI           - AI taking over
+ * @returns {string}
+ */
+export function buildResumeBrief({ originalSpec, checkpoint = {}, fromAI, toAI } = {}) {
+  const spec = typeof originalSpec === 'string' ? originalSpec : '';
+  const files = Array.isArray(checkpoint.filesWritten) ? checkpoint.filesWritten : [];
+  const sha = typeof checkpoint.commitSha === 'string' ? checkpoint.commitSha : '';
+  const partial = typeof checkpoint.partialProgress === 'string' ? checkpoint.partialProgress : '';
+
+  const filesLine = files.length > 0 ? `  Files written: ${files.join(', ')}` : '  Files written: (none recorded)';
+  const shaLine = sha ? `  Commit: ${sha}` : '  Commit: (none yet)';
+  const partialLine = partial ? `  Partial progress: ${partial}` : '  Partial progress: (none recorded)';
+
+  return [
+    spec,
+    '',
+    '---',
+    `RESUME CONTEXT — Prior agent (${fromAI}) truncated. Already done:`,
+    filesLine,
+    shaLine,
+    partialLine,
+    '',
+    `You are ${toAI}. Continue from here. Do NOT redo completed work.`,
+    'Skip workspace setup (Step 0) -- branch + worktree already exist.',
+  ].join('\n');
+}
+
+/**
+ * Decide what to do when a subagent report indicates truncation.
+ *
+ * @param {object} args
+ * @param {object} args.parsed                 - parsed report (must carry ai + reason if known)
+ * @param {object} args.ctx                    - orchestrator context; ctx.checkpoint may be present
+ * @param {string[]} [args.available]          - AIs available to dispatch
+ * @returns {{action:'resume_with_alt_ai', toAI:string, brief:string}
+ *           | {action:'escalate_to_user', reason:string}}
+ */
+export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude', 'gemini', 'codex'] } = {}) {
+  const truncatedAI = typeof parsed.ai === 'string' && parsed.ai.length > 0 ? parsed.ai : 'claude';
+  const lastFailureReason = parsed.reason;
+  const toAI = selectResumeAI({ truncatedAI, available, lastFailureReason });
+
+  if (!toAI) {
+    return {
+      action: 'escalate_to_user',
+      reason: lastFailureReason === 'context_window' && truncatedAI === 'gemini'
+        ? 'context_window_exceeded_on_largest_ai'
+        : 'no_alternate_ai_available',
+    };
+  }
+
+  const checkpoint = ctx.checkpoint && typeof ctx.checkpoint === 'object' ? ctx.checkpoint : {};
+  const originalSpec = typeof ctx.originalSpec === 'string' ? ctx.originalSpec : '';
+  const brief = buildResumeBrief({ originalSpec, checkpoint, fromAI: truncatedAI, toAI });
+
+  return { action: 'resume_with_alt_ai', toAI, brief };
+}
