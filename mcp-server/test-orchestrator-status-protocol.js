@@ -266,3 +266,46 @@ test('handleStatus DONE with empty branch (detached HEAD) falls back to time-onl
   assert.equal(result.action, 'proceed_to_review');
   assert.equal(result.commit_sha, sha);
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0-major S07 (W12-A): Attempts field + 3-attempt cap escalation
+// ---------------------------------------------------------------------------
+
+test('parseAgentReport extracts Attempts: 2 from the Attempts line', () => {
+  const report = [
+    'Status: DONE',
+    'Branch: main',
+    'Commit: abc123',
+    'Tests: 5 pass',
+    'Attempts: 2',
+  ].join('\n');
+  const parsed = parseAgentReport(report);
+  assert.equal(parsed.attempts, 2);
+  assert.equal(parsed.status, 'DONE');
+});
+
+test('handleStatus escalates to user when attempts >= 3 regardless of DONE status', () => {
+  // Even if the implementer claims DONE, hitting the 3-attempt cap means a
+  // documented-but-unfixed issue remains; the orchestrator MUST surface it.
+  const parsed = {
+    status: 'DONE',
+    commit_sha: 'abc',
+    branch: 'main',
+    attempts: 3,
+  };
+  const result = handleStatus(parsed, 0, { projectRoot: '/' });
+  assert.equal(result.action, 'escalate_to_user');
+  assert.equal(result.reason, '3-attempt-cap-hit');
+  assert.equal(result.original_status, 'DONE');
+});
+
+test('handleStatus with attempts: 0 routes normally for DONE (3-cap is opt-in)', () => {
+  // Reports without an Attempts: line (default 0) MUST behave exactly as
+  // before — the 3-cap field is purely additive.
+  const { root, sha, ts } = makeGitRepo();
+  const dispatchTs = ts - 10;
+  const parsed = { status: 'DONE', commit_sha: sha, branch: 'main', attempts: 0 };
+  const result = handleStatus(parsed, dispatchTs, { projectRoot: root });
+  assert.equal(result.action, 'proceed_to_review');
+  assert.equal(result.commit_sha, sha);
+});
