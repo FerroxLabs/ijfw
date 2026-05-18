@@ -16,7 +16,7 @@
  * Frozen surface for Wave 11-A (S1 rest, S2, S3) — do not change signatures.
  */
 
-import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, copyFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
 
@@ -75,6 +75,12 @@ export async function recordCheckpoint(waveId, subId, checkpoint, projectRoot) {
   validateWaveId(waveId);
   validateSubId(subId);
 
+  // v1.5.0-major S01: when running in a worktree subagent, the parent orchestrator
+  // passes IJFW_PARENT_PROJECT_ROOT in env so checkpoints land in the parent's
+  // .ijfw/ directory (visible after worktree cleanup). Backward-compatible:
+  // missing env var → use projectRoot as before.
+  const effectiveRoot = process.env.IJFW_PARENT_PROJECT_ROOT ?? projectRoot;
+
   const payload = {
     schema_version: 1,
     wave_id: waveId,
@@ -90,7 +96,7 @@ export async function recordCheckpoint(waveId, subId, checkpoint, projectRoot) {
     );
   }
 
-  const { dir, file, lock } = checkpointPaths(waveId, subId, projectRoot);
+  const { dir, file, lock } = checkpointPaths(waveId, subId, effectiveRoot);
 
   await withFsLock(lock, async () => {
     await mkdir(dir, { recursive: true });
@@ -111,7 +117,10 @@ export async function readLastCheckpoint(waveId, subId, projectRoot) {
   validateWaveId(waveId);
   validateSubId(subId);
 
-  const { file } = checkpointPaths(waveId, subId, projectRoot);
+  // v1.5.0-major S01: honor IJFW_PARENT_PROJECT_ROOT for worktree subagents.
+  const effectiveRoot = process.env.IJFW_PARENT_PROJECT_ROOT ?? projectRoot;
+
+  const { file } = checkpointPaths(waveId, subId, effectiveRoot);
   let raw;
   try {
     raw = await readFile(file, 'utf8');
@@ -131,37 +140,114 @@ export async function readLastCheckpoint(waveId, subId, projectRoot) {
  * STATE.md frontmatter.completed_subs). This returns ALL subIds with a
  * checkpoint file. W11-A1 will refine by reading the wave STATE.md.
  *
- * Returns [] if the wave directory doesn't exist.
+ * v1.5.0-major S01: accepts optional `additionalRoots: string[]` — additional
+ * project roots to scan (e.g. active git worktree paths). This lets the
+ * orchestrator see checkpoints written by worktree subagents BEFORE drain runs,
+ * by inspecting both the parent root and each worktree root. Honors
+ * IJFW_PARENT_PROJECT_ROOT for the primary `projectRoot` argument like
+ * record/read do (worktree subagents calling this still see the parent dir).
+ *
+ * Returns [] if no directory exists. Returned IDs are deduplicated.
  *
  * @param {string} waveId
  * @param {string} projectRoot
+ * @param {string[]} [additionalRoots] optional extra roots to scan
  * @returns {Promise<string[]>}
  */
-export async function listOrphanedSubagents(waveId, projectRoot) {
+export async function listOrphanedSubagents(waveId, projectRoot, additionalRoots = []) {
   validateWaveId(waveId);
 
-  const dir = join(projectRoot, '.ijfw', `wave-${waveId}`);
-  let entries;
-  try {
-    entries = await readdir(dir);
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return [];
-    throw err;
-  }
+  // v1.5.0-major S01: honor IJFW_PARENT_PROJECT_ROOT for the primary root.
+  const effectiveRoot = process.env.IJFW_PARENT_PROJECT_ROOT ?? projectRoot;
 
-  const subIds = [];
-  for (const name of entries) {
-    // Match subagent-<subId>.checkpoint.json
-    const m = name.match(/^subagent-(.+)\.checkpoint\.json$/);
-    if (!m) continue;
-    const subId = m[1];
-    // Defence in depth: skip entries that wouldn't pass the pattern (e.g.
-    // an attacker-crafted filename someone dropped in by hand).
-    if (!SUB_ID_PATTERN.test(subId)) continue;
-    subIds.push(subId);
+  const rootsToScan = [effectiveRoot, ...(Array.isArray(additionalRoots) ? additionalRoots : [])];
+
+  const seen = new Set();
+  for (const root of rootsToScan) {
+    if (typeof root !== 'string' || root.length === 0) continue;
+    const dir = join(root, '.ijfw', `wave-${waveId}`);
+    let entries;
+    try {
+      entries = await readdir(dir);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') continue;
+      throw err;
+    }
+
+    for (const name of entries) {
+      // Match subagent-<subId>.checkpoint.json
+      const m = name.match(/^subagent-(.+)\.checkpoint\.json$/);
+      if (!m) continue;
+      const subId = m[1];
+      // Defence in depth: skip entries that wouldn't pass the pattern (e.g.
+      // an attacker-crafted filename someone dropped in by hand).
+      if (!SUB_ID_PATTERN.test(subId)) continue;
+      seen.add(subId);
+    }
   }
 
   // Completed-subs set is empty in v1 — every subId with a checkpoint is
   // "orphaned" from the orchestrator's POV until W11-A1 wires in STATE.md.
-  return subIds;
+  return [...seen];
+}
+
+/**
+ * v1.5.0-major S01: drain checkpoint files from a worktree's .ijfw/wave-<id>/
+ * directory into the parent project's .ijfw/wave-<id>/ directory.
+ *
+ * Belt-and-suspenders for the IJFW_PARENT_PROJECT_ROOT env-var passthrough:
+ * if a subagent runs without the env var set (older callers, manual `claude`
+ * invocation in a worktree, etc.) the checkpoint will land in the worktree's
+ * own .ijfw/ — this drain copies them into the parent before
+ * `git worktree remove` deletes them forever.
+ *
+ * Idempotent: re-running with the same source overwrites destination (same
+ * checkpoint content). Filenames are preserved.
+ *
+ * @param {string} waveId
+ * @param {string} worktreePath  absolute path to the worktree root
+ * @param {string} projectRoot   absolute path to the parent project root
+ * @returns {Promise<{ok: true, drained: number} | {ok: false, reason: string}>}
+ */
+export async function drainCheckpoints(waveId, worktreePath, projectRoot) {
+  validateWaveId(waveId);
+  if (typeof worktreePath !== 'string' || worktreePath.length === 0) {
+    return { ok: false, reason: 'invalid worktreePath' };
+  }
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    return { ok: false, reason: 'invalid projectRoot' };
+  }
+
+  const sourceDir = join(worktreePath, '.ijfw', `wave-${waveId}`);
+  const destDir = join(projectRoot, '.ijfw', `wave-${waveId}`);
+
+  let entries;
+  try {
+    entries = await readdir(sourceDir);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { ok: true, drained: 0 };
+    return { ok: false, reason: `readdir ${sourceDir}: ${err.message}` };
+  }
+
+  let drained = 0;
+  await mkdir(destDir, { recursive: true });
+  for (const name of entries) {
+    const m = name.match(/^subagent-(.+)\.checkpoint\.json$/);
+    if (!m) continue;
+    const subId = m[1];
+    if (!SUB_ID_PATTERN.test(subId)) continue;
+
+    const src = join(sourceDir, name);
+    const dst = join(destDir, name);
+    try {
+      const srcStat = await stat(src);
+      if (!srcStat.isFile()) continue;
+    } catch {
+      continue;
+    }
+    await copyFile(src, dst);
+    drained += 1;
+  }
+
+  return { ok: true, drained };
 }
