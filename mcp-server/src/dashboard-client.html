@@ -1402,7 +1402,18 @@ async function loadExtensionActive() {
       permsEl.setAttribute('style', 'font-size:12px;color:var(--fg-dim)');
       var reads = (a.permissions.reads || []).join(', ') || 'none';
       var writes = (a.permissions.writes || []).join(', ') || 'none';
-      permsEl.innerHTML = '<b style="color:var(--fg)">reads:</b> ' + reads + ' &nbsp; <b style="color:var(--fg)">writes:</b> ' + writes;
+      var bReads = document.createElement('b');
+      bReads.setAttribute('style', 'color:var(--fg)');
+      bReads.textContent = 'reads:';
+      var textReads = document.createTextNode(' ' + reads + '\u00A0\u00A0');
+      var bWrites = document.createElement('b');
+      bWrites.setAttribute('style', 'color:var(--fg)');
+      bWrites.textContent = 'writes:';
+      var textWrites = document.createTextNode(' ' + writes);
+      permsEl.appendChild(bReads);
+      permsEl.appendChild(textReads);
+      permsEl.appendChild(bWrites);
+      permsEl.appendChild(textWrites);
       wrap.appendChild(permsEl);
     }
     el.appendChild(wrap);
