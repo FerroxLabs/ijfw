@@ -12,6 +12,7 @@
 // gets filtered as "self."
 
 import { spawnSync } from 'node:child_process';
+import { getLatestModel } from './model-refresh.js';
 
 // ---------------------------------------------------------------------------
 // v1.5.0 F5 -- audit-rotation v0 schema (schema-only; runtime ships in v1.6.0)
@@ -74,7 +75,11 @@ export const ROSTER = [
     // installed but where the caller is something else (Claude Code, Cursor,
     // etc.). Surface noted by carrmjw during the qwen roster review (#11).
     detect: (env) => Boolean(env.CODEX_SESSION_ID) || /codex/i.test(env._ || ''),
-    apiFallback: { provider: 'openai', model: 'gpt-5.5', authEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1/chat/completions' },
+    // model is resolved at call-time via model-refresh.js (24h-cached probe of
+    // /v1/models). Hardcoded value below is the offline fallback only.
+    get apiFallback() {
+      return { provider: 'openai', model: getLatestModel('openai'), authEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1/chat/completions' };
+    },
   },
   {
     id: 'gemini',
@@ -84,7 +89,10 @@ export const ROSTER = [
     invoke: 'gemini',
     note: 'Strong on security + architectural patterns. Auto-detects piped stdin for headless mode.',
     detect: (env) => Boolean(env.GEMINI_CLI || env.GOOGLE_CLOUD_PROJECT_GEMINI) || /gemini-cli/i.test(env._ || ''),
-    apiFallback: { provider: 'google', model: 'gemini-3.1-pro', authEnv: 'GEMINI_API_KEY', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent' },
+    // model is resolved at call-time via model-refresh.js (24h-cached probe).
+    get apiFallback() {
+      return { provider: 'google', model: getLatestModel('google'), authEnv: 'GEMINI_API_KEY', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent' };
+    },
   },
   {
     id: 'qwen',
@@ -154,7 +162,10 @@ export const ROSTER = [
     invoke: 'claude -p',
     note: 'Anthropic; useful when you want a second Claude pass in a fresh session.',
     detect: (env) => Boolean(env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT || env.CLAUDE_PLUGIN_ROOT),
-    apiFallback: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', authEnv: 'ANTHROPIC_API_KEY', endpoint: 'https://api.anthropic.com/v1/messages' },
+    // model is resolved at call-time via model-refresh.js (24h-cached probe).
+    get apiFallback() {
+      return { provider: 'anthropic', model: getLatestModel('anthropic'), authEnv: 'ANTHROPIC_API_KEY', endpoint: 'https://api.anthropic.com/v1/messages' };
+    },
   },
 ];
 
