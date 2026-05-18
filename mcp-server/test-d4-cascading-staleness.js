@@ -502,7 +502,7 @@ test('D4 -- propagateStale is idempotent across repeated calls', async () => {
 
 // --- Tool-cap (live MCP introspection) ---------------------------------
 
-test('D4 -- MCP tool count remains 10 (no D4 tools registered)', async () => {
+test('D4 -- MCP tool count remains 11 (no D4 tools registered; v1.5.0-major raised cap to 11 for ijfw_subagent_post_done)', async () => {
   // bin/ijfw-memory is a bash launcher; spawn server.js directly via
   // process.execPath so the test runs on every platform.
   const SERVER = join(__dirname, 'src', 'server.js');
@@ -546,7 +546,7 @@ test('D4 -- MCP tool count remains 10 (no D4 tools registered)', async () => {
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const resp = await waitForResponse(2);
     assert.ok(resp.result && Array.isArray(resp.result.tools), 'tools list returned');
-    assert.equal(resp.result.tools.length, 10, `tool count is 10 (got ${resp.result.tools.length})`);
+    assert.equal(resp.result.tools.length, 11, `tool count is 11 (got ${resp.result.tools.length})`);
   } finally {
     try { child.kill('SIGTERM'); } catch { /* nothing */ }
   }

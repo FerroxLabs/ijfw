@@ -393,8 +393,8 @@ test('runner.mjs --project-root completes cleanly without args extras', () => {
 
 // --- 9. tool-cap budget unchanged ------------------------------------------
 
-test('MCP tool-cap stays under 10 (D3 adds zero new tools)', () => {
+test('MCP tool-cap stays under 12 (D3 adds zero new tools; v1.5.0-major raised cap to 12 with 1-slot headroom)', () => {
   const server = readFileSync(join(REPO_ROOT, 'mcp-server', 'src', 'server.js'), 'utf8');
   const matches = server.match(/name:\s*'ijfw_/g) || [];
-  assert.ok(matches.length <= 10, `tool-cap must be <= 10; saw ${matches.length}`);
+  assert.ok(matches.length <= 12, `tool-cap must be <= 12; saw ${matches.length}`);
 });
