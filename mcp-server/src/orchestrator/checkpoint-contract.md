@@ -91,3 +91,50 @@ Subagents that don't call `ijfw checkpoint` still work — they just have the sa
 | v1.5.0 W11-A1 | 14 / 80s | First commit landed, last two lost |
 
 **8 of 13 dispatches = 62% truncation rate.** v1.5.0 S1 is the load-bearing fix for this class of failure.
+
+## Worktree isolation drain protocol — v1.5.0-major S01
+
+The v1.5.0 S1 checkpoint contract above assumes the subagent's `projectRoot` matches the orchestrator's `projectRoot`. That assumption **does not hold** for canonical dispatch in `isolation: 'worktree'` mode: the Claude Code harness spawns the subagent with `cwd` set to a disposable worktree (e.g. `.claude/worktrees/agent-<id>/`), so `process.cwd()` resolves to the worktree — not the parent project. Checkpoints written under the worktree's `.ijfw/` directory vanish the moment `git worktree remove` runs, taking truncation forensics with them.
+
+**This was R3's #1 honest finding for v1.5.0:** without the fix below, S1 is shelfware in the canonical dispatch mode where it matters most.
+
+### How the fix works
+
+Two complementary mechanisms:
+
+1. **Env-var passthrough (primary).** When the orchestrator/dispatcher spawns a worktree subagent, it MUST set:
+
+   ```
+   IJFW_PARENT_PROJECT_ROOT=<absolute path to the parent projectRoot>
+   ```
+
+   `orchestrator/subagent-telemetry.js` (`recordCheckpoint`, `readLastCheckpoint`, `listOrphanedSubagents`) and `dispatch/checkpoint-cli.js` consult this env var first and fall back to the passed `projectRoot` when absent. Net effect: a worktree subagent's `ijfw checkpoint` write lands in the **parent** project's `.ijfw/wave-<id>/` directory automatically — visible to the orchestrator before and after worktree cleanup, no drain step required.
+
+   The `ijfw checkpoint` CLI also logs the resolved root to stderr (`ijfw checkpoint: writing to <root>/.ijfw/wave-<id>/`) so operators can see at a glance whether the env var was honored.
+
+2. **Belt-and-suspenders drain (fallback).** When the dispatcher cannot set env vars (older Claude Code harness builds, manual `claude` invocation inside a worktree, third-party orchestrators), the subagent's checkpoint still lands in the worktree's `.ijfw/`. To prevent loss, the orchestrator MUST run the drain CLI **BEFORE** `git worktree remove`:
+
+   ```
+   ijfw worktree-drain <waveId> <worktreePath>
+   ```
+
+   This copies every `<worktreePath>/.ijfw/wave-<waveId>/subagent-*.checkpoint.json` into the parent's `.ijfw/wave-<waveId>/`. Idempotent (safe to re-run). Returns `{ok:true, drained: N}` (or `{ok:true, drained: 0}` if the worktree has no checkpoints).
+
+### Orchestrator scanning across active worktrees
+
+`listOrphanedSubagents(waveId, projectRoot, additionalRoots)` accepts an optional `additionalRoots: string[]` argument — pass the list of active worktree paths (typically from `git worktree list --porcelain`) so the orchestrator sees in-flight checkpoints from worktree subagents that have NOT yet drained. Returned subId list is deduplicated across all scanned roots.
+
+### Backward compatibility
+
+- **Subagents without the env var set** continue to write to the passed `projectRoot` (which for legacy non-worktree dispatch is already correct).
+- **Subagents in a worktree without the env var set** write to the worktree's own `.ijfw/` — the orchestrator's `ijfw worktree-drain` pre-cleanup step recovers them.
+- **`listOrphanedSubagents` called without `additionalRoots`** preserves v1.5.0-S1 behavior (single-root scan).
+
+### Why both mechanisms
+
+Env passthrough is the right primary because it makes checkpoints visible **continuously**, not just at cleanup time (matters for live `wave-status` queries and mid-flight resume). The drain step exists because env passthrough requires harness cooperation that may not exist in every dispatch path; the drain ensures checkpoints survive even when the env var doesn't propagate.
+
+### Wiring status
+
+- `subagent-telemetry.js`, `checkpoint-cli.js`, `wave-cli.js` (`worktree-drain`) — wired in v1.5.0 W12-A0 S01.
+- Dispatcher env passthrough — **TODO marker** in `dispatch/extension.js`; depends on Claude Code harness exposing an env-passthrough hook on `Agent({ isolation: 'worktree' })` spawn. Until that lands, orchestrators MUST rely on the drain step.
