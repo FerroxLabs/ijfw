@@ -64,7 +64,12 @@ export async function provisionWorktree(worktreePath, opts = {}) {
         await execFileP(det.cmd, det.args, { cwd: dir, timeout: perInstallMs, maxBuffer: 16 * 1024 * 1024 });
         result.installed.push({ name: det.name, path: dir, ms: Date.now() - t0 });
       } catch (err) {
-        result.failed.push({ name: det.name, path: dir, reason: err.code === 'ETIMEDOUT' ? 'timeout' : (err.code || err.message) });
+        // execFile timeout surfaces as either err.code === 'ETIMEDOUT' OR
+        // (err.killed && err.signal === 'SIGTERM'/'SIGKILL') depending on
+        // platform/Node version. Detect both to give callers a stable signal.
+        const timedOut = err.code === 'ETIMEDOUT'
+          || (err.killed && (err.signal === 'SIGTERM' || err.signal === 'SIGKILL'));
+        result.failed.push({ name: det.name, path: dir, reason: timedOut ? 'timeout' : (err.code || err.message) });
       }
     }
   }

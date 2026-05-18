@@ -613,12 +613,14 @@ async function cmdDeactivate() {
 let _v143Handlers = null;
 async function loadV143Handlers() {
   if (_v143Handlers !== null) return _v143Handlers;
-  const [registry, signer, quota, active, wave] = await Promise.all([
+  const [registry, signer, quota, active, wave, checkpoint, worktree] = await Promise.all([
     import('./registry-cli.js'),
     import('./signer-cli.js'),
     import('./quota-cli.js'),
     import('./active-cli.js'),
-    import('./wave-cli.js'),  // v1.4.4 N9 — wave-status / wave-list
+    import('./wave-cli.js'),       // v1.4.4 N9 — wave-status / wave-list
+    import('./checkpoint-cli.js'), // v1.5.0 W11-A1 — ijfw checkpoint (S1)
+    import('./worktree-cli.js'),   // v1.5.0 W11-A2 — ijfw worktree provision (S2)
   ]);
   _v143Handlers = Object.assign(
     Object.create(null),
@@ -627,6 +629,8 @@ async function loadV143Handlers() {
     quota.handlers || {},
     active.handlers || {},
     wave.handlers || {},
+    checkpoint.handlers || {},
+    worktree.handlers || {},
   );
   return _v143Handlers;
 }
