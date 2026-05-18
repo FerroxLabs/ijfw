@@ -19,7 +19,22 @@ export const ROSTER = [
     family: 'openai',
     model: '',
     name: 'Codex CLI',
+    // Prompt-via-stdin path. Proven working 2026-05-18 with codex-cli 0.130.0.
     invoke: 'codex exec --skip-git-repo-check --sandbox read-only -c approval_policy="never" -c mcp_servers.ijfw-memory.enabled=false -',
+    // Dedicated review subcommand path. Use when an audit target is a git ref
+    // (HEAD~N, branch name, or commit SHA). The -c mcp_servers.ijfw-memory.enabled=false
+    // override is LOAD-BEARING: without it, codex review hangs indefinitely on
+    // the ijfw_memory_prelude MCP tool autostart (cycle: codex spawns IJFW MCP
+    // server, prelude tool waits on a response, IJFW MCP server is itself the
+    // child of the codex session). Verified 2026-05-18, codex-cli 0.130.0.
+    // {REF} is the substitution token the caller swaps for the base git ref.
+    reviewInvoke: 'codex review --base {REF} -c approval_policy="never" -c mcp_servers.ijfw-memory.enabled=false',
+    // 8 min default per-auditor budget for review work. codex review against
+    // HEAD~5 with MCP disabled completed in ~75s during S7 reproduction;
+    // larger diffs and reasoning-heavy targets need headroom. The existing
+    // PROVIDER_TIMEOUT_MS['codex'] in cross-orchestrator.js is 120s (2 min),
+    // which is fine for exec-mode quick prompts but too tight for review.
+    timeoutMs: 8 * 60 * 1000,
     note: 'Different training lineage; fast on review tasks. The - flag reads prompt from stdin. --skip-git-repo-check bypasses the trusted-directory gate added in codex-cli 0.118.0. --sandbox read-only blocks file WRITES on the host (verified Codex 0.122.0: `echo > /tmp/x` returns `operation not permitted`); it does NOT block shell exec or subprocess launching -- a `read-only` sandbox can still run `ls`, `curl`, or `gemini`. The defense against codex going meta and shelling out to other auditors is the prompt-layer "Operating constraints" block in cross-dispatcher.js buildRequest, not the sandbox flag. The model layer additionally refuses to read explicitly-secret files like ~/.ssh/id_rsa or ~/.codex/auth.json even when prompt-injected to do so. The visibility surface in cross-orchestrator-cli.js cmdCross catches any residual silent failure. approval_policy="never" auto-approves without an interactive prompt. mcp_servers.ijfw-memory.enabled=false disables IJFW MCP for this session because Codex in `codex exec` mode under a non-bypass sandbox auto-cancels MCP tool calls -- the cancellation noise wastes tokens and the audit does not need IJFW memory recall (the brief contains the full target inline).',
     // CODEX_SESSION_ID is set by codex itself when running INSIDE a codex
     // session; CODEX_HOME is a config-path env var that's set whenever codex
