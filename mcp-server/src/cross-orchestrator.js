@@ -775,3 +775,289 @@ export async function runCrossOp({
     accept_degraded: !!accept_degraded,
   };
 }
+
+// ---------------------------------------------------------------------------
+// v1.5.0 W12-C N01+N03 — runPhaseEConverge
+// ---------------------------------------------------------------------------
+//
+// Multi-lens consensus convergence (lock-in #47 — canonical Phase E).
+// Single-shot Phase E is the FALLBACK. Default behavior is a convergence
+// loop with divergence detection.
+//
+// Per-iteration flow:
+//   1. Dispatch all lenses in parallel.
+//   2. Collect verdicts (PASS / CONDITIONAL / FAIL) + finding lists.
+//   3. If all PASS → done.
+//   4. If verdicts diverge, build a CYCLE_SUMMARY (prior verdicts +
+//      areas of disagreement) and re-dispatch with it injected.
+//   5. Cap at `maxIterations` (default 3). If still divergent at the cap,
+//      emit `consensus_failed` and surface divergence.
+//   6. Stall breaker: if iter N produces byte-identical findings to
+//      iter N-1, halt with `stalled: true` rather than burn tokens.
+//
+// Dispatcher contract (for test/DI):
+//   dispatch({ lens, commitRange, iteration, cycleSummary }) →
+//     { lens, verdict: 'PASS'|'CONDITIONAL'|'FAIL'|'UNREACHABLE',
+//       findings: Array<{severity?, text?, ...}> }
+//
+// Tests inject a synthetic dispatcher; production passes a real one
+// that wraps `fireExternal` / `parseResponse` / `classifyVerdict` (or
+// reuses runCrossOp for each iteration).
+// ---------------------------------------------------------------------------
+
+const VERDICT_PASS          = 'PASS';
+const VERDICT_CONDITIONAL   = 'CONDITIONAL';
+const VERDICT_FAIL          = 'FAIL';
+const VERDICT_UNREACHABLE   = 'UNREACHABLE';
+const VERDICT_CONSENSUS_FAIL = 'consensus_failed';
+const DEFAULT_LENSES        = ['codex', 'gemini', 'claude'];
+
+// Stable serialization for stall comparison.
+function stableFindingsKey(perLensFindings) {
+  // perLensFindings: { lens → Array<finding> }
+  // Use lens-sorted keys, and within each lens stringify findings (sorted by
+  // a stable text representation) so semantically-identical iterations match.
+  const lenses = Object.keys(perLensFindings).sort();
+  const parts = [];
+  for (const lens of lenses) {
+    const findings = Array.isArray(perLensFindings[lens]) ? perLensFindings[lens] : [];
+    const serialized = findings
+      .map(f => JSON.stringify(f, Object.keys(f || {}).sort()))
+      .sort();
+    parts.push(`${lens}:[${serialized.join(',')}]`);
+  }
+  return parts.join('|');
+}
+
+// Detect whether lens verdicts diverge.
+// All-PASS (with no UNREACHABLE) → false. Anything else with mixed verdicts → true.
+// All-FAIL across reachable lenses → still divergent only if findings differ;
+// pure consensus FAIL is not divergence (everyone agrees the change is bad).
+function detectDivergence(lensResults) {
+  const reachable = lensResults.filter(r => r.verdict !== VERDICT_UNREACHABLE);
+  if (reachable.length === 0) return { divergent: false, axes: [] };
+  const verdicts = new Set(reachable.map(r => r.verdict));
+  if (verdicts.size === 1) {
+    // All reachable lenses agree on the verdict. Findings can still differ
+    // (one lens may report extra MEDIUM findings), but verdict consensus is
+    // sufficient — convergence is verdict-level, not finding-level.
+    return { divergent: false, axes: [] };
+  }
+  // Verdicts diverge: compute axes (which lens differs from the majority).
+  const counts = {};
+  for (const r of reachable) counts[r.verdict] = (counts[r.verdict] || 0) + 1;
+  let majority = reachable[0].verdict;
+  let max = 0;
+  for (const v of Object.keys(counts)) {
+    if (counts[v] > max) { max = counts[v]; majority = v; }
+  }
+  const axes = reachable
+    .filter(r => r.verdict !== majority)
+    .map(r => ({ lens: r.lens, verdict: r.verdict, majority }));
+  return { divergent: true, axes };
+}
+
+// Build a CYCLE_SUMMARY string injected into the next iteration's lens brief.
+function buildCycleSummary(iteration, prior) {
+  const lines = [
+    `# CYCLE_SUMMARY (iteration ${iteration})`,
+    '',
+    'Previous round verdicts:',
+  ];
+  for (const r of prior.lensResults) {
+    lines.push(`- ${r.lens}: ${r.verdict} (${(r.findings || []).length} findings)`);
+  }
+  if (prior.divergence && prior.divergence.axes && prior.divergence.axes.length > 0) {
+    lines.push('');
+    lines.push('Areas of disagreement (lens vs majority):');
+    for (const a of prior.divergence.axes) {
+      lines.push(`- ${a.lens} said ${a.verdict}; majority said ${a.majority}`);
+    }
+  }
+  lines.push('');
+  lines.push('Re-evaluate. If your prior verdict was correct, restate it with explicit reasoning. If the other lenses changed your mind, update accordingly.');
+  return lines.join('\n');
+}
+
+// Public convergence entrypoint.
+// Inputs:
+//   commitRange    string (e.g. 'HEAD~1..HEAD')
+//   lenses         array of lens ids (default ['codex','gemini','claude'])
+//   maxIterations  number (default 3; lock-in #43/#44 style)
+//   dispatch       async function (DI hook for tests/production)
+//   projectRoot    string (passed through to dispatch)
+// Returns:
+//   { verdict, iterations, findings, divergence?, stalled?, perIteration }
+export async function runPhaseEConverge({
+  commitRange,
+  lenses = DEFAULT_LENSES,
+  maxIterations = 3,
+  dispatch,
+  projectRoot,
+} = {}) {
+  if (typeof dispatch !== 'function') {
+    throw new Error('runPhaseEConverge: dispatch function is required');
+  }
+  if (!Array.isArray(lenses) || lenses.length === 0) {
+    throw new Error('runPhaseEConverge: lenses must be a non-empty array');
+  }
+  const cap = Math.max(1, Math.floor(maxIterations));
+
+  let cycleSummary = null;
+  let prior = null;
+  let priorFindingsKey = null;
+  const perIteration = [];
+
+  for (let iter = 1; iter <= cap; iter++) {
+    // Fire all lenses in parallel.
+    const settlements = await Promise.all(lenses.map(lens =>
+      Promise.resolve()
+        .then(() => dispatch({ lens, commitRange, iteration: iter, cycleSummary, projectRoot }))
+        .catch(err => ({
+          lens,
+          verdict: VERDICT_UNREACHABLE,
+          findings: [],
+          error: err && err.message ? err.message : String(err),
+        }))
+    ));
+
+    const lensResults = settlements.map((r, i) => ({
+      lens: r && r.lens ? r.lens : lenses[i],
+      verdict: r && r.verdict ? r.verdict : VERDICT_UNREACHABLE,
+      findings: r && Array.isArray(r.findings) ? r.findings : [],
+      ...(r && r.error ? { error: r.error } : {}),
+    }));
+
+    // Build per-lens findings map for stall detection.
+    const perLensFindings = {};
+    for (const r of lensResults) perLensFindings[r.lens] = r.findings;
+    const findingsKey = stableFindingsKey(perLensFindings);
+
+    const reachable = lensResults.filter(r => r.verdict !== VERDICT_UNREACHABLE);
+    const divergence = detectDivergence(lensResults);
+
+    perIteration.push({
+      iteration: iter,
+      lensResults,
+      divergent: divergence.divergent,
+    });
+
+    const mergedFindings = lensResults.flatMap(r => r.findings.map(f => ({ ...f, _lens: r.lens })));
+
+    // Stop conditions, in priority order.
+
+    // 1. maxIterations === 1 — cap the loop after first iter no matter what.
+    if (cap === 1) {
+      const verdict = reachable.length === 0
+        ? VERDICT_UNREACHABLE
+        : (divergence.divergent ? VERDICT_CONSENSUS_FAIL : reachable[0].verdict);
+      return {
+        verdict,
+        iterations: 1,
+        findings: mergedFindings,
+        ...(divergence.divergent ? { divergence: divergence.axes } : {}),
+        perIteration,
+      };
+    }
+
+    // 2. All reachable lenses PASS → done.
+    if (reachable.length > 0 && !divergence.divergent && reachable[0].verdict === VERDICT_PASS) {
+      return {
+        verdict: VERDICT_PASS,
+        iterations: iter,
+        findings: mergedFindings,
+        perIteration,
+      };
+    }
+
+    // 3. Consensus on non-PASS (e.g. all FAIL) — short-circuit, no point looping.
+    if (reachable.length > 0 && !divergence.divergent) {
+      return {
+        verdict: reachable[0].verdict,
+        iterations: iter,
+        findings: mergedFindings,
+        perIteration,
+      };
+    }
+
+    // 4. Stall breaker: byte-identical findings to prior iter → halt.
+    if (priorFindingsKey !== null && findingsKey === priorFindingsKey) {
+      return {
+        verdict: VERDICT_CONSENSUS_FAIL,
+        iterations: iter,
+        findings: mergedFindings,
+        divergence: divergence.axes,
+        stalled: true,
+        perIteration,
+      };
+    }
+
+    // 5. Cap hit while still divergent → consensus_failed.
+    if (iter === cap) {
+      return {
+        verdict: VERDICT_CONSENSUS_FAIL,
+        iterations: iter,
+        findings: mergedFindings,
+        divergence: divergence.axes,
+        perIteration,
+      };
+    }
+
+    // Otherwise: stage next iteration with cycle summary.
+    prior = { lensResults, divergence };
+    cycleSummary = buildCycleSummary(iter + 1, prior);
+    priorFindingsKey = findingsKey;
+  }
+
+  // Unreachable; loop must exit via one of the return paths above.
+  /* c8 ignore next */
+  return { verdict: VERDICT_CONSENSUS_FAIL, iterations: cap, findings: [], perIteration };
+}
+
+// Default production dispatcher.  Wraps the existing single-lens spawn path
+// (audit-roster pick → buildRequest → fireExternal → parseResponse →
+// classifyVerdict).  Tests pass their own dispatcher; production callers can
+// either pass this one or supply a customized wrapper.
+//
+// One quirk: this dispatcher embeds the cycleSummary into the audit target
+// string (prefixed) so the lens sees prior-round context in its prompt.
+// Lens stdout shape: same as parseResponse('audit', stdout).
+export async function defaultConvergeDispatch({ lens, commitRange, iteration, cycleSummary, projectRoot } = {}) {
+  const env = process.env;
+  const entry = ROSTER.find(e => e.id === lens);
+  if (!entry) {
+    return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: `lens "${lens}" not in roster` };
+  }
+  const reach = isReachable(lens, env);
+  if (!reach.any) {
+    return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: `lens "${lens}" CLI missing and no apiFallback` };
+  }
+  const pick = (!reach.cli && reach.api) ? { ...entry, preferredSource: 'api' } : { ...entry };
+
+  // Inject cycleSummary into the target so lens reasoning sees prior context.
+  const target = (iteration > 1 && cycleSummary)
+    ? `${cycleSummary}\n\n---\n\n${commitRange}`
+    : commitRange;
+
+  const request = buildRequest('audit', target, pick.id, 'general', null);
+  const timeoutMs = timeoutForPick(pick, null);
+  try {
+    const raw = await fireExternal(pick, request, timeoutMs, env, null);
+    if (!raw || raw.status === 'timeout' || raw.status === 'failed' || raw.status === 'aborted') {
+      return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: (raw && raw.stderr) || 'no output' };
+    }
+    if (raw.exitCode !== 0 && raw.status !== 'fallback-used') {
+      return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: `exit ${raw.exitCode}` };
+    }
+    const parsed = parseResponse('audit', raw.stdout);
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    const verdict = classifyVerdict(items);
+    return { lens, verdict, findings: items };
+  } catch (err) {
+    return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: err && err.message ? err.message : String(err) };
+  }
+  /* projectRoot reserved for future per-project dispatcher overrides */
+  // eslint-disable-next-line no-unreachable
+  void projectRoot;
+}
+

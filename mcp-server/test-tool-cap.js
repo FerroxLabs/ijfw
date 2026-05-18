@@ -2,12 +2,13 @@
 /**
  * test-tool-cap.js -- Live MCP introspection of the tool-cap.
  *
- * Per IJFW MCP discipline: the server may register at most 10 tools. The
- * structural grep in test.js can drift if a new tool is added without
- * removing one. This harness spawns bin/ijfw-memory, speaks JSON-RPC over
- * stdio, calls tools/list, and asserts:
+ * Per IJFW MCP discipline: the server may register at most 12 tools (v1.5.0-major
+ * cap, fully populated: 11 wired tools + ijfw_cross_audit_converge for
+ * Trident-as-a-service). The structural grep in test.js can drift if a new tool
+ * is added without removing one. This harness spawns bin/ijfw-memory, speaks
+ * JSON-RPC over stdio, calls tools/list, and asserts:
  *
- *   1. result.tools.length === 10
+ *   1. result.tools.length === 12
  *   2. names match the expected canonical set exactly (no extras, none missing)
  *
  * Hard-fails on any deviation. This is the actual gate.
@@ -42,8 +43,12 @@ const EXPECTED_TOOLS = [
   // Combined into one tool (vs. shipping reviewSubagentReport + runPostDone
   // as two tools) to minimise cap pressure. See server.js for the dispatch.
   'ijfw_subagent_post_done',
+  // v1.5.0-major (W12-C N03): Trident-as-a-service. Multi-lens consensus
+  // convergence loop (lock-in #47 — canonical Phase E). Fills the 12th
+  // tool-cap slot; cap is now fully populated.
+  'ijfw_cross_audit_converge',
 ];
-const EXPECTED_COUNT = 11;
+const EXPECTED_COUNT = 12;
 
 function send(child, msg) {
   child.stdin.write(JSON.stringify(msg) + '\n');

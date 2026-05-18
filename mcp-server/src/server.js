@@ -912,6 +912,25 @@ const TOOLS = [
       },
       required: ['reportText', 'dispatchTimestamp'],
     },
+  },
+  {
+    // v1.5.0-major W12-C N03: Trident-as-a-service.  Multi-lens consensus
+    // convergence (lock-in #47 — canonical Phase E).  Dispatches all 3 lenses
+    // (codex/gemini/claude by default) in parallel; if verdicts diverge,
+    // re-runs with a CYCLE_SUMMARY of the disagreement until consensus or
+    // maxIterations (default 3).  Stall breaker halts on byte-identical
+    // iterations.  Fills the 12th tool-cap slot.
+    name: 'ijfw_cross_audit_converge',
+    description: 'Multi-lens Trident audit with consensus convergence loop. Dispatches codex/gemini/claude in parallel against a commit range, detects verdict divergence, and re-runs with a cycle summary until consensus or maxIterations. Returns {verdict, iterations, findings, divergence?, stalled?}. Verdict: PASS / CONDITIONAL / FAIL / consensus_failed / UNREACHABLE.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        commitRange:   { type: 'string',  description: 'Git commit range to audit (e.g. "HEAD~1..HEAD", "main..feature/x"). Required.' },
+        maxIterations: { type: 'number',  description: 'Max convergence iterations (default 3). 1 → single-shot (fallback mode).' },
+        lenses:        { type: 'array',   items: { type: 'string' }, description: 'Lens ids to dispatch (default ["codex","gemini","claude"]).' },
+      },
+      required: ['commitRange'],
+    },
   }
 ];
 
@@ -1519,6 +1538,29 @@ function handleMessage(msg) {
           case 'ijfw_update_apply': {
             const r = ijfwUpdateApply(args || {});
             result = { text: JSON.stringify(r, null, 2), isError: r && r.status === 'error' };
+            break;
+          }
+          case 'ijfw_cross_audit_converge': {
+            // v1.5.0-major W12-C N03: Trident-as-a-service.
+            const a = args || {};
+            if (!a.commitRange || typeof a.commitRange !== 'string') {
+              result = { text: JSON.stringify({ error: 'commitRange (string) is required' }), isError: true };
+              break;
+            }
+            const { runPhaseEConverge, defaultConvergeDispatch } = await import('./cross-orchestrator.js');
+            try {
+              const r = await runPhaseEConverge({
+                commitRange: a.commitRange,
+                maxIterations: typeof a.maxIterations === 'number' ? a.maxIterations : 3,
+                lenses: Array.isArray(a.lenses) && a.lenses.length > 0 ? a.lenses : undefined,
+                dispatch: defaultConvergeDispatch,
+                projectRoot: process.cwd(),
+              });
+              const isErr = r.verdict === 'consensus_failed' || r.verdict === 'FAIL' || r.verdict === 'UNREACHABLE';
+              result = { text: JSON.stringify(r, null, 2), isError: isErr };
+            } catch (err) {
+              result = { text: JSON.stringify({ error: err && err.message ? err.message : String(err) }), isError: true };
+            }
             break;
           }
           case 'ijfw_memory_recall':
