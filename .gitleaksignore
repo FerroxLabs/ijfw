@@ -29,3 +29,14 @@ mcp-server/test/fixtures/longmemeval-s/longmemeval_s_cleaned.json:generic-api-ke
 
 # Historic gitleaks finding from a prior commit, kept for back-compat.
 3ef884ee206b1fd92651b6fdfae2fd2206778448:mcp-server/test-redactor.js:slack-webhook-url:145
+
+# v1.4.3 handoff documents the Ed25519 registry meta-key FINGERPRINT
+# (sha256 of the public key). The public key is compiled into
+# mcp-server/src/extension-registry.js as IJFW_REGISTRY_META_KEY_PEM and
+# is also published openly at https://therealseandonahoe.gitlab.io/ijfw/
+# registry/publishers/v1.json. By definition not a secret — high entropy
+# triggers generic-api-key. Same string appears in v1.4.1 ship memory
+# (~/.claude/projects/-Users-seandonahoe-dev-ijfw/memory/v141-shipped.md)
+# but that's outside the scan root.
+.planning/1.4.3/HANDOFF-1.4.3.md:generic-api-key:711
+/Users/seandonahoe/dev/ijfw/.planning/1.4.3/HANDOFF-1.4.3.md:generic-api-key:711
