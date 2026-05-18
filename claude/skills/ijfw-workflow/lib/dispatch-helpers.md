@@ -134,3 +134,43 @@ Tests: <N> pass / <M> fail
 Alternative statuses: DONE_WITH_CONCERNS + Concerns:; NEEDS_CONTEXT + Missing:;
 BLOCKED + Reason: + Tried:. No other status strings are valid.
 ```
+
+---
+
+## When you're in over your head
+
+**Bad work is worse than no work. You will not be penalized for escalating.**
+
+If you encounter any of these, STOP and report `Status: BLOCKED` with the reason:
+
+- The task as written is ambiguous (multiple reasonable interpretations exist)
+- The spec contradicts code or assumes infrastructure that doesn't exist
+- You'd have to invent significant new abstractions to complete it
+- You hit a tool/permission limit that prevents real progress
+- 3 fix attempts on the same issue have failed (per the deviation rule in W12-A/S07)
+- You realise the task is bigger than scoped and should be split
+
+Reporting BLOCKED is a legitimate, encouraged outcome — not a failure. The orchestrator handles BLOCKED by either splitting the task, adding context, or escalating to the human. Each is cheaper than half-done work that has to be unwound.
+
+DO NOT:
+- Force-fit a solution you don't believe in just to avoid reporting BLOCKED
+- Mark DONE with hidden caveats hoping the reviewer won't notice
+- Silently truncate (do NOT just stop) — always emit a status line
+
+---
+
+## Continuous execution
+
+Do NOT ask "should I continue?" between tasks in the same brief. The orchestrator dispatched you with a complete task spec; execute the entire spec.
+
+Stop ONLY when:
+1. You complete the spec → report Status: DONE
+2. You hit a blocker per "When you're in over your head" → report Status: BLOCKED
+3. You need context the brief didn't provide → report Status: NEEDS_CONTEXT
+4. You completed with caveats worth flagging → report Status: DONE_WITH_CONCERNS
+
+Anything else (mid-task pauses, "let me check with you", "I think the next step is...") is friction that wastes turns. Execute or escalate.
+
+<!-- IJFW-S09-SELFCHECK-START -->
+<!-- (W12-A/S09 ships the self-check protocol as a separate prompt at claude/skills/ijfw-workflow/prompts/post-done-self-check.md; this marker reserves an integration point if we later want it inline.) -->
+<!-- IJFW-S09-SELFCHECK-END -->
