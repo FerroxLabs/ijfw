@@ -90,7 +90,7 @@ function processGeminiChat(chat, projectHash) {
     session_id: sessionId,
     project: projectHash,
     timestamp: lastTimestamp,
-    model: 'gemini-2.0-flash', // Gemini CLI default; no model id in chat file
+    model: 'gemini-3.1-pro', // Gemini CLI default; no model id in chat file
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     cache_create_tokens_5m: 0,

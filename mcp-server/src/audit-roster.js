@@ -74,7 +74,7 @@ export const ROSTER = [
     // installed but where the caller is something else (Claude Code, Cursor,
     // etc.). Surface noted by carrmjw during the qwen roster review (#11).
     detect: (env) => Boolean(env.CODEX_SESSION_ID) || /codex/i.test(env._ || ''),
-    apiFallback: { provider: 'openai', model: 'gpt-4o-mini', authEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1/chat/completions' },
+    apiFallback: { provider: 'openai', model: 'gpt-5.5', authEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1/chat/completions' },
   },
   {
     id: 'gemini',
@@ -84,7 +84,7 @@ export const ROSTER = [
     invoke: 'gemini',
     note: 'Strong on security + architectural patterns. Auto-detects piped stdin for headless mode.',
     detect: (env) => Boolean(env.GEMINI_CLI || env.GOOGLE_CLOUD_PROJECT_GEMINI) || /gemini-cli/i.test(env._ || ''),
-    apiFallback: { provider: 'google', model: 'gemini-2.0-flash', authEnv: 'GEMINI_API_KEY', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent' },
+    apiFallback: { provider: 'google', model: 'gemini-3.1-pro', authEnv: 'GEMINI_API_KEY', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent' },
   },
   {
     id: 'qwen',
