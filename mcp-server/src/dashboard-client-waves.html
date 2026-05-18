@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IJFW · Waves</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fafafa; color: #222; }
+  header { padding: 12px 20px; border-bottom: 1px solid #ddd; background: #fff; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .sub { color: #777; font-size: 12px; margin-top: 4px; }
+  main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+  .layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; min-height: 500px; }
+  .sidebar { background: #fff; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
+  .sidebar-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #eee; font-size: 13px; color: #555; }
+  .wave-list { max-height: 70vh; overflow-y: auto; }
+  .wave-row { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 4px; }
+  .wave-row:hover { background: #f4f8ff; }
+  .wave-row.selected { background: #eaf3ff; }
+  .wave-row .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600; }
+  .wave-row .status { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #eee; color: #555; text-transform: uppercase; align-self: center; }
+  .wave-row.status-done .status { background: #d6f5d6; color: #1a6b1a; }
+  .wave-row.status-in_progress .status { background: #fff4cc; color: #7a5a00; }
+  .wave-row.status-blocked .status { background: #fbd5d5; color: #8a1a1a; }
+  .wave-row .ts { grid-column: 1 / -1; font-size: 11px; color: #888; }
+  .viewer { background: #fff; padding: 24px 28px; border: 1px solid #ddd; border-radius: 6px; min-height: 500px; }
+  .meta { font-size: 12px; color: #666; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+  .meta .meta-row { display: inline-block; margin-right: 16px; }
+  .meta strong { color: #333; }
+  .doc h1 { font-size: 22px; margin: 0 0 12px; }
+  .doc h2 { font-size: 18px; margin: 24px 0 10px; padding-bottom: 4px; border-bottom: 1px solid #eee; }
+  .doc h3 { font-size: 15px; margin: 20px 0 8px; }
+  .doc pre { background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .doc code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .doc pre code { background: transparent; padding: 0; }
+  .doc table { border-collapse: collapse; margin: 12px 0; }
+  .doc th, .doc td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 13px; }
+  .doc th { background: #f4f4f4; }
+  .doc blockquote { border-left: 3px solid #ccc; padding-left: 12px; color: #666; margin: 12px 0; }
+  .err { color: #c00; font-style: italic; }
+  .hint { color: #777; font-style: italic; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1a1a1a; color: #ddd; }
+    header, .sidebar, .viewer { background: #222; border-color: #333; }
+    .sidebar-header, .meta { border-color: #2e2e2e; color: #aaa; }
+    .wave-row { border-color: #2a2a2a; }
+    .wave-row:hover { background: #2a2f3a; }
+    .wave-row.selected { background: #2c3548; }
+    .wave-row .status { background: #333; color: #ccc; }
+    .doc pre, .doc code, .doc th { background: #2a2a2a; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>IJFW · Waves</h1>
+  <div class="sub">Live state of .ijfw/wave-*/STATE.md across the current project.</div>
+</header>
+<main>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">Waves (newest first)</div>
+      <div class="wave-list" id="waveList"></div>
+    </aside>
+    <section class="viewer">
+      <div class="meta" id="waveMeta"></div>
+      <div id="doc" class="doc"></div>
+    </section>
+  </div>
+</main>
+<script>
+  // Reused markdown shim from /planning — produces a safe DOMFragment, no innerHTML.
+  // Handles headings, paragraphs, code blocks, inline code/bold/italic, links,
+  // lists, blockquotes, tables. Not full CommonMark.
+
+  function setText(el, text) {
+    while (el.firstChild) el.removeChild(el.firstChild);
+    el.appendChild(document.createTextNode(text));
+  }
+  function setStatus(el, text, cls) {
+    while (el.firstChild) el.removeChild(el.firstChild);
+    const div = document.createElement('div');
+    div.className = cls;
+    div.textContent = text;
+    el.appendChild(div);
+  }
+
+  function makeNode(tag, text) {
+    const el = document.createElement(tag);
+    if (text !== undefined) el.appendChild(document.createTextNode(text));
+    return el;
+  }
+
+  function renderInlineToNodes(s) {
+    const nodes = [];
+    let i = 0;
+    while (i < s.length) {
+      if (s[i] === '`') {
+        const end = s.indexOf('`', i + 1);
+        if (end !== -1) { nodes.push(makeNode('code', s.slice(i + 1, end))); i = end + 1; continue; }
+      }
+      if (s[i] === '*' && s[i + 1] === '*') {
+        const end = s.indexOf('**', i + 2);
+        if (end !== -1) { nodes.push(makeNode('strong', s.slice(i + 2, end))); i = end + 2; continue; }
+      }
+      if (s[i] === '*') {
+        const end = s.indexOf('*', i + 1);
+        if (end !== -1 && end - i > 1) { nodes.push(makeNode('em', s.slice(i + 1, end))); i = end + 1; continue; }
+      }
+      if (s[i] === '[') {
+        const close = s.indexOf(']', i + 1);
+        if (close !== -1 && s[close + 1] === '(') {
+          const urlEnd = s.indexOf(')', close + 2);
+          if (urlEnd !== -1) {
+            const a = document.createElement('a');
+            a.textContent = s.slice(i + 1, close);
+            // r13-L-01: tightened URL guard. ALLOW http/https + same-origin relative.
+            // BLOCK javascript:, data:, mailto:, vbscript:, file:, AND protocol-relative `//`.
+            const url = s.slice(close + 2, urlEnd);
+            const isAllowed = (
+              /^https?:\/\//.test(url) ||
+              (!url.startsWith('//') && !/^[^:/?#]+:/.test(url))
+            );
+            if (isAllowed) { a.href = url; a.target = '_blank'; a.rel = 'noopener'; }
+            nodes.push(a);
+            i = urlEnd + 1;
+            continue;
+          }
+        }
+      }
+      let j = i;
+      while (j < s.length && !'`*['.includes(s[j])) j++;
+      if (j === i) j = i + 1;
+      nodes.push(document.createTextNode(s.slice(i, j)));
+      i = j;
+    }
+    return nodes;
+  }
+
+  function renderMarkdownToFragment(md) {
+    const frag = document.createDocumentFragment();
+    const lines = md.split('\n');
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (/^```/.test(line)) {
+        const buf = []; i++;
+        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        i++;
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.textContent = buf.join('\n');
+        pre.appendChild(code);
+        frag.appendChild(pre);
+        continue;
+      }
+      const h = line.match(/^(#{1,6})\s+(.*)$/);
+      if (h) {
+        const tag = 'h' + h[1].length;
+        const el = document.createElement(tag);
+        for (const n of renderInlineToNodes(h[2])) el.appendChild(n);
+        frag.appendChild(el); i++; continue;
+      }
+      if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|?\s*-/.test(lines[i + 1])) {
+        const tbl = document.createElement('table');
+        const head = line.split('|').slice(1, -1).map((c) => c.trim());
+        const tr = document.createElement('tr');
+        for (const c of head) {
+          const th = document.createElement('th');
+          for (const n of renderInlineToNodes(c)) th.appendChild(n);
+          tr.appendChild(th);
+        }
+        tbl.appendChild(tr); i += 2;
+        while (i < lines.length && /^\s*\|/.test(lines[i])) {
+          const cells = lines[i].split('|').slice(1, -1).map((c) => c.trim());
+          const row = document.createElement('tr');
+          for (const c of cells) {
+            const td = document.createElement('td');
+            for (const n of renderInlineToNodes(c)) td.appendChild(n);
+            row.appendChild(td);
+          }
+          tbl.appendChild(row); i++;
+        }
+        frag.appendChild(tbl); continue;
+      }
+      if (/^\s*[-*]\s+/.test(line)) {
+        const ul = document.createElement('ul');
+        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+          const li = document.createElement('li');
+          for (const n of renderInlineToNodes(lines[i].replace(/^\s*[-*]\s+/, ''))) li.appendChild(n);
+          ul.appendChild(li); i++;
+        }
+        frag.appendChild(ul); continue;
+      }
+      if (/^>\s?/.test(line)) {
+        const bq = document.createElement('blockquote');
+        let first = true;
+        while (i < lines.length && /^>\s?/.test(lines[i])) {
+          if (!first) bq.appendChild(document.createElement('br'));
+          for (const n of renderInlineToNodes(lines[i].replace(/^>\s?/, ''))) bq.appendChild(n);
+          first = false; i++;
+        }
+        frag.appendChild(bq); continue;
+      }
+      if (line.trim() === '') { i++; continue; }
+      const p = document.createElement('p');
+      const buf = [line]; i++;
+      while (i < lines.length && lines[i].trim() !== '' && !/^(#{1,6}\s|```|>|\s*[-*]\s|\s*\|)/.test(lines[i])) {
+        buf.push(lines[i]); i++;
+      }
+      for (const n of renderInlineToNodes(buf.join(' '))) p.appendChild(n);
+      frag.appendChild(p);
+    }
+    return frag;
+  }
+
+  // ---------- wave list + viewer ----------
+
+  let selectedRow = null;
+
+  function renderMeta(w) {
+    const meta = document.getElementById('waveMeta');
+    while (meta.firstChild) meta.removeChild(meta.firstChild);
+    const fields = [
+      ['Wave', w.id],
+      ['Status', w.status],
+      ['Created', w.created_at ?? '—'],
+      ['Checkpoint', w.checkpoint_at ?? '—'],
+      ['Agents', String(w.agents_count ?? 0)],
+      ['Active claims', String(w.claims_active ?? 0)],
+      ['Open blockers', String(w.blockers_open ?? 0)],
+    ];
+    for (const [label, val] of fields) {
+      const row = document.createElement('span');
+      row.className = 'meta-row';
+      const lab = document.createElement('strong');
+      lab.textContent = label + ': ';
+      row.appendChild(lab);
+      row.appendChild(document.createTextNode(val));
+      meta.appendChild(row);
+    }
+  }
+
+  async function loadWaveState(w, row) {
+    if (selectedRow) selectedRow.classList.remove('selected');
+    if (row) { row.classList.add('selected'); selectedRow = row; }
+    renderMeta(w);
+    const doc = document.getElementById('doc');
+    setStatus(doc, 'Loading…', 'hint');
+    try {
+      const r = await fetch('/api/planning?path=' + encodeURIComponent(w.path));
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: 'unknown' }));
+        setStatus(doc, r.status + ': ' + (err.error || 'failed'), 'err');
+        return;
+      }
+      const j = await r.json();
+      while (doc.firstChild) doc.removeChild(doc.firstChild);
+      doc.appendChild(renderMarkdownToFragment(j.body || ''));
+    } catch (e) {
+      setStatus(doc, e.message, 'err');
+    }
+  }
+
+  async function loadWaves() {
+    const list = document.getElementById('waveList');
+    setStatus(list, 'Loading…', 'hint');
+    try {
+      const r = await fetch('/api/waves');
+      const j = await r.json();
+      while (list.firstChild) list.removeChild(list.firstChild);
+      const waves = j.waves || [];
+      if (waves.length === 0) {
+        setStatus(list, 'No waves found in .ijfw/wave-*/', 'hint');
+        setStatus(document.getElementById('doc'),
+          'No wave-* directories exist yet. Dispatch a wave via /superpowers:subagent-driven-development to see live state here.',
+          'hint');
+        return;
+      }
+      for (const w of waves) {
+        const row = document.createElement('div');
+        row.className = 'wave-row status-' + (w.status || 'unknown');
+        const id = document.createElement('div'); id.className = 'id'; id.textContent = w.id;
+        const status = document.createElement('div'); status.className = 'status'; status.textContent = w.status || 'unknown';
+        const ts = document.createElement('div'); ts.className = 'ts'; ts.textContent = w.checkpoint_at ?? (w.created_at ?? '');
+        row.appendChild(id); row.appendChild(status); row.appendChild(ts);
+        row.addEventListener('click', () => loadWaveState(w, row));
+        list.appendChild(row);
+      }
+      // Auto-select first (newest) wave.
+      const first = list.firstChild;
+      if (first) loadWaveState(waves[0], first);
+    } catch (e) {
+      setStatus(list, e.message, 'err');
+    }
+  }
+
+  setStatus(document.getElementById('doc'), 'Select a wave from the list to view its STATE.md.', 'hint');
+  loadWaves();
+</script>
+</body>
+</html>
