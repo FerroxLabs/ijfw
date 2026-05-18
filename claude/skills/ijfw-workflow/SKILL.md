@@ -321,7 +321,11 @@ Dispatching Wave 1...
 - Criteria met, scope clean, tests pass, no new assumptions.
 
 <!-- IJFW-A2-REVIEW-START -->
-<!-- Wave 10 v1.4.4 W10-A2: post-DONE two-stage per-task review (spec-compliance then code-quality) + verification-gate advisory lint. Insert content here. -->
+**Post-DONE two-stage review (v1.4.4 N3):** after the implementer subagent reports `Status: DONE`, the orchestrator runs `mcp-server/src/orchestrator/review.js::reviewTask`. Stage 1 dispatches the spec-compliance reviewer (`prompts/spec-reviewer.md`); on PASS, Stage 2 dispatches the code-quality reviewer (`prompts/quality-reviewer.md`). Either FAIL → re-dispatch the implementer with the findings; cap at `REVIEW_MAX_ITERATIONS = 3` iterations. On both PASS → mark task complete in the blackboard.
+
+Reviewer subagents are SEPARATE from the implementer (no self-review). Both use `isolation: 'none'` (read-only on the implementer's branch).
+
+**Verification gate (v1.4.4 N5, advisory):** `mcp-server/src/orchestrator/verification-gate.js::checkVerificationGate` scans orchestrator messages for completion claims (`DONE`, `complete`, `shipped`, `✅`, "all tests pass", "build succeeded") that lack a fresh `Bash` tool call running tests/build in the SAME message. Violations are recorded via `recordViolation` to `.ijfw/memory/verification-violations.jsonl` for memory-feedback pattern detection. The gate is ADVISORY — it never blocks; it teaches over time.
 <!-- IJFW-A2-REVIEW-END -->
 
 <!-- IJFW-A3-SPECIALISTS-START -->
