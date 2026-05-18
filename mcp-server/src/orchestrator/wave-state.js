@@ -12,6 +12,18 @@
 import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
+import { readBlackboard } from '../blackboard.js';
+
+// Try-import populateBlackboardBlock from S4 (W11-B2). If the module doesn't
+// exist yet (parallel-dispatch race against S4), no-op silently. This makes S5
+// deployable independently of S4 landing.
+let populateBlackboardBlock = null;
+try {
+  // Dynamic import — resolves at module-load time. Wrapped in try so missing
+  // S4 module is non-fatal.
+  const mod = await import('./agents-md-blackboard.js');
+  populateBlackboardBlock = mod.populateBlackboardBlock;
+} catch { /* S4 not landed yet — advisory only */ }
 
 // ---------------------------------------------------------------------------
 // Internal YAML helpers — flat subset only (string/number/boolean/string[])
@@ -226,9 +238,109 @@ export async function appendSummary(waveId, delta, projectRoot) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Rollup helpers — exported for direct testing (W11-B1 / S5)
+// ---------------------------------------------------------------------------
+
 /**
- * Stub checkpoint — full blackboard→STATE rollup remains v1.5.0 work.
- * Seeds an empty state if missing; updates only frontmatter.checkpoint_at.
+ * Derive the next STATE.md status from the wave-filtered blackboard slice and
+ * the previously-persisted state.
+ *
+ * Rules (R1 §S5):
+ *   1. any open blocker       → 'blocked'
+ *   2. no claims at all       → preserve existing status (default 'pending')
+ *   3. every claim 'released' → 'review'
+ *   4. otherwise              → 'in_progress'
+ *
+ * @param {{claims: object[], findings: object[], blockers: object[]}} filtered
+ * @param {{frontmatter?: object} | null} existing
+ * @returns {'blocked'|'pending'|'review'|'in_progress'}
+ */
+export function deriveStatus(filtered, existing) {
+  if (filtered.blockers && filtered.blockers.length > 0) return 'blocked';
+  if (filtered.claims.length === 0) return existing?.frontmatter?.status ?? 'pending';
+  if (filtered.claims.every((c) => c.status === 'released')) return 'review';
+  return 'in_progress';
+}
+
+/**
+ * Tag a blackboard entry as belonging to a wave by checking, in order:
+ *   - explicit `wave_id` field
+ *   - artifact_id prefixed `<waveId>:`
+ *   - message containing `[<waveId>]`
+ *
+ * @param {{claims?: {data?: {claims?: object[]}}, recent?: {findings?: object[], blockers?: object[]}}} blackboard
+ * @param {string} waveId
+ * @returns {{claims: object[], findings: object[], blockers: object[]}}
+ */
+export function filterByWave(blackboard, waveId) {
+  const tag = (entry) => {
+    if (!entry) return false;
+    if (entry.wave_id === waveId) return true;
+    if (typeof entry.artifact_id === 'string' && entry.artifact_id.startsWith(`${waveId}:`)) return true;
+    if (typeof entry.message === 'string' && entry.message.includes(`[${waveId}]`)) return true;
+    return false;
+  };
+  const claims = (blackboard.claims?.data?.claims ?? []).filter(tag);
+  const findings = (blackboard.recent?.findings ?? []).filter(tag);
+  const blockers = (blackboard.recent?.blockers ?? []).filter(tag);
+  return { claims, findings, blockers };
+}
+
+/**
+ * Quote YAML strings that would otherwise confuse the flat-subset parser/emitter:
+ * presence of `:`, `#`, `[`, `]`, `{`, `}`, `"`, newline, or `<space>-`.
+ *
+ * Fold-in: Trident r13 F6 — emit safety for STATE.md frontmatter strings.
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+export function quoteYamlStr(s) {
+  if (typeof s !== 'string') return String(s);
+  if (/[:#\[\]{}"\n]|\s-/.test(s)) return `"${s.replace(/"/g, '\\"')}"`;
+  return s;
+}
+
+/**
+ * Render the markdown body for STATE.md from the wave-filtered blackboard slice.
+ * Findings are capped to the last 5 (matches frontmatter.findings_recent window).
+ *
+ * @param {{findings: object[], blockers: object[]}} filtered
+ * @param {{body?: string} | null} _existing  (reserved for future merge logic)
+ * @returns {string}
+ */
+export function renderBody(filtered, _existing) {
+  const lines = [];
+  if (filtered.findings.length > 0) {
+    lines.push('## Recent findings');
+    for (const f of filtered.findings.slice(-5)) {
+      lines.push(`- ${f.message ?? '(unspecified)'}`);
+    }
+    lines.push('');
+  }
+  if (filtered.blockers.length > 0) {
+    lines.push('## Open blockers');
+    for (const b of filtered.blockers) {
+      lines.push(`- ${b.message ?? '(unspecified)'}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Roll up the blackboard slice for `waveId` into STATE.md frontmatter+body.
+ *
+ * Steps:
+ *  1. Read existing STATE.md (preserve created_at if present).
+ *  2. Read blackboard.js — defensive: missing/uninitialized blackboard yields
+ *     empty arrays so checkpointing never throws on a clean tree.
+ *  3. Filter blackboard entries by wave tag.
+ *  4. Derive status + frontmatter; render markdown body.
+ *  5. Persist atomically via writeWaveState.
+ *  6. Append a SUMMARY.md delta when status transitions.
+ *  7. If S4's populateBlackboardBlock is loaded, refresh AGENTS.md (advisory —
+ *     silent on failure).
  *
  * @param {string} waveId
  * @param {string} projectRoot
@@ -238,18 +350,54 @@ export async function checkpointWave(waveId, projectRoot) {
   const now = new Date().toISOString();
   const existing = await readWaveState(waveId, projectRoot);
 
-  const next = existing
-    ? { frontmatter: { ...existing.frontmatter, checkpoint_at: now }, body: existing.body }
-    : {
-        frontmatter: {
-          wave_id: waveId,
-          status: 'in_progress',
-          created_at: now,
-          checkpoint_at: now,
-        },
-        body: '',
-      };
+  // readBlackboard returns synchronously per blackboard.js; uninitialized
+  // blackboard yields empty arrays so the rollup is safe on a clean tree.
+  let blackboard;
+  try {
+    blackboard = readBlackboard(projectRoot);
+  } catch {
+    blackboard = {
+      claims: { data: { claims: [] } },
+      recent: { findings: [], blockers: [] },
+    };
+  }
+
+  const filtered = filterByWave(blackboard, waveId);
+  const status = deriveStatus(filtered, existing);
+
+  const next = {
+    frontmatter: {
+      wave_id: waveId,
+      status,
+      created_at: existing?.frontmatter?.created_at ?? now,
+      checkpoint_at: now,
+      claims_active: filtered.claims.filter((c) => c.status === 'active').length,
+      findings_recent: filtered.findings.slice(-5).map((f) => quoteYamlStr(f.message ?? '')),
+      blockers_open: filtered.blockers
+        .filter((b) => !b.resolved)
+        .map((b) => quoteYamlStr(b.message ?? '')),
+      agents: [...new Set(filtered.claims.map((c) => c.agent ?? c.owner).filter(Boolean))],
+    },
+    body: renderBody(filtered, existing),
+  };
 
   await writeWaveState(waveId, next, projectRoot);
+
+  // Append summary delta when status changes (audit log).
+  const prevStatus = existing?.frontmatter?.status ?? 'new';
+  if (prevStatus !== status) {
+    await appendSummary(
+      waveId,
+      { agent_id: 'checkpointWave', surprises: `status: ${prevStatus} → ${status}` },
+      projectRoot,
+    );
+  }
+
+  // S4 integration: refresh AGENTS.md BLACKBOARD block. Silent on failure —
+  // populating AGENTS.md is advisory and must not block checkpointing.
+  if (populateBlackboardBlock) {
+    try { await populateBlackboardBlock(waveId, projectRoot); } catch { /* advisory */ }
+  }
+
   return next;
 }
