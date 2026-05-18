@@ -20,6 +20,7 @@ thin adapter that points here.
 - User says: "agents.md", "update AGENTS.md", "regenerate agents file".
 - Auto-fired by `ijfw-team` after generating agents to `.ijfw/agents/`.
 - Auto-fired by session-start hooks to refresh memory + agents blocks.
+- Auto-fired by `ijfw-workflow` at brainstorm-LOCK and plan-LOCK with intent context (v1.4.4 N7).
 
 ---
 
@@ -111,6 +112,65 @@ any manual skill invocation.
    diff noise.
 4. If no wave STATE.md exists yet, write an empty JSON object `{}` inside the
    block rather than omitting the block entirely (markers must remain present).
+
+---
+
+## Intent-aware seeding (v1.4.4 N7)
+
+When AGENTS.md is being **created fresh** (file missing), the bootstrap is fed
+`intent` context from the active brainstorm/plan output (`.ijfw/memory/brief.md`
+if present). The bootstrap merges that intent into the initial AGENTS.md body
+under a `## Project intent (seeded from brainstorm)` H2 so every subagent has
+project goals visible from the first session.
+
+### Rules
+
+1. **Fresh creation only.** If `AGENTS.md` already exists, intent seeding does
+   NOT run — idempotent by design. Existing files receive brainstorm context
+   as a BLACKBOARD block update instead (see "BLACKBOARD Block Population").
+2. **brief.md is optional.** If `.ijfw/memory/brief.md` is absent, bootstrap
+   proceeds from the static template without the intent section.
+3. **Placement.** The intent section is inserted after the YAML frontmatter
+   and before any IJFW-managed marker blocks. User-authored content added
+   later is never moved.
+4. **Auto-fire trigger.** `ijfw-workflow` fires this skill at brainstorm-LOCK
+   and plan-LOCK with the `intent` context. The skill self-detects whether
+   AGENTS.md exists to decide seed vs. blackboard-update path.
+
+---
+
+## Platform adapter creation (v1.4.4 N7)
+
+IDE is detected via `mcp-server/src/ide-detect.js` (shipped in v1.4.3 B18).
+When the skill runs and the detected platform file is missing, it is created
+from the matching adapter template.
+
+| Detected IDE | Missing file    | Template source                        |
+|---|---|---|
+| Claude       | `CLAUDE.md`     | `templates/CLAUDE.md.adapter.tmpl`     |
+| Gemini       | `GEMINI.md`     | `templates/GEMINI.md.adapter.tmpl`     |
+| Hermes       | `HERMES.md`     | `templates/HERMES.md.adapter.tmpl`     |
+| Wayland      | `WAYLAND.md`    | `templates/WAYLAND.md.adapter.tmpl`    |
+
+### Adapter body
+
+```
+# <IDE>
+
+All project conventions live in [AGENTS.md](./AGENTS.md). Read it first.
+```
+
+### Rules
+
+1. **Idempotent.** If `<IDE>.md` already exists, it is never touched.
+2. **Detection required.** Adapter is only created when `ide-detect.js`
+   positively identifies the platform — never speculatively.
+3. **Template resolution.** Templates live in the repository root
+   `templates/` directory. If the template is absent, the adapter is written
+   inline from the body above rather than failing.
+4. **Auto-fire trigger.** Same LOCK hook that fires intent seeding also runs
+   the adapter-creation check, so a fresh Claude session always bootstraps
+   both AGENTS.md content and a matching CLAUDE.md pointer.
 
 ---
 

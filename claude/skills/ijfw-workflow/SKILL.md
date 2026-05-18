@@ -134,6 +134,7 @@ For focused work. Picks up from current context. Each move has ONE input slot.
 - Assistant pastes the brief in-chat (max 6 lines: goal / root / approach / risk / mitigation / success).
 - User says one word: `lock` / `fix <X>` / `go deeper`.
 - On `lock`: write `.ijfw/memory/brief.md`. Route straight to PLAN.
+  - Invoke `ijfw-agents-md` skill with intent context (brief.md) to seed AGENTS.md if missing; create platform adapter (e.g. CLAUDE.md) from template if detected IDE file is absent.
 
 **Quick-mode closer:** `You went from <original-ask> to locked brief with <N> risks mitigated in <M> minutes.` Receipt for the work.
 
@@ -186,6 +187,7 @@ For substantial projects. Modules are a spine, not a checklist. Every module has
 - Optional Trident cross-critique fires here if ENABLED (see below).
 - User says `lock` / `fix <X>` / `skip Trident` / `route to plan`.
 - On `lock`: promote `.ijfw/memory/brief-draft.md` to `.ijfw/memory/brief.md` or write the confirmed brief there, then route to PLAN phase.
+  - Invoke `ijfw-agents-md` skill with intent context (brief.md) to seed AGENTS.md if missing; create platform adapter (e.g. CLAUDE.md) from template if detected IDE file is absent.
 
 ## Optional modules (auto-triggered)
 
@@ -359,7 +361,48 @@ structure.
 - User confirms: `verified` / `gap: <X>` / `ship it`.
 
 <!-- IJFW-B1-PHASE-E-START -->
-<!-- Wave 10 v1.4.4 W10-B1: auto-fired Cross-Audit Phase (Phase E) between VERIFY and SHIP — cross-orchestrator runs in mode:'phase-e-auto' picking from audit-roster per .ijfw/swarm.json. Insert content here. -->
+## Cross-Audit Phase (Phase E — auto-fired after VERIFY, before SHIP)
+
+After VERIFY completes and the user confirms, the orchestrator **automatically**
+fires a Trident cross-audit before any ship action.
+
+### How it fires
+
+```js
+const result = await runCrossOp({
+  mode: 'phase-e-auto',
+  target: '<current-phase>',   // e.g. 'v1.4.4' or wave label
+  projectDir,
+});
+// result: { verdict: 'PASS'|'CONDITIONAL'|'FAIL', findings: [...], outputPath }
+```
+
+### Auditor selection
+
+1. Reads `.ijfw/swarm.json` for `auditors: string[]` (roster IDs).
+2. Falls back to `['codex', 'gemini', 'claude']` when the field is absent.
+3. Each ID is probed via `audit-roster.isReachable()`:
+   - CLI present → use CLI.
+   - CLI missing + `apiFallback` key set in env → use API fallback.
+   - CLI missing + no `apiFallback` → **skip with NOTE** (never fails the run).
+
+### Output
+
+Writes synthesis to `.planning/<phase>/CROSS-AUDIT-r<N>.md` where N is
+auto-incremented from existing files in that directory.
+
+### Verdict routing
+
+| Verdict | Action |
+|---|---|
+| `PASS` | Proceed to SHIP immediately. |
+| `CONDITIONAL` | Surface findings to user; user says `ship` or `fix <X>`. |
+| `FAIL` (HIGH+ finding) | Loop back to fix-wave; re-enter EXECUTE with findings as brief addendum. |
+
+### User overrides
+
+- `skip cross-audit` at VERIFY — bypasses Phase E (recorded in memory).
+- `force cross-audit` at any step — fires Phase E immediately.
 <!-- IJFW-B1-PHASE-E-END -->
 
 ## SHIP

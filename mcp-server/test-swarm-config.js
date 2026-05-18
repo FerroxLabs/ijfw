@@ -72,8 +72,13 @@ test('existing swarm.json is returned unchanged and not overwritten', () => {
     const mtimeBefore = existsSync(swarmPath) && readFileSync(swarmPath, 'utf8');
 
     const cfg = getSwarmConfig(dir);
-    assert.deepEqual(cfg, custom);
-    // Content must be identical (not regenerated).
+    // v1.4.4 N10: loadSwarmConfig merges auditors/auditor_count defaults at
+    // read time (in-memory only; file on disk is NOT rewritten).
+    assert.equal(cfg.project_type, custom.project_type);
+    assert.deepEqual(cfg.specialists, custom.specialists);
+    assert.ok(Array.isArray(cfg.auditors), 'auditors default should be injected');
+    assert.equal(typeof cfg.auditor_count, 'number');
+    // Content must be identical (not regenerated -- defaults are in-memory only).
     assert.equal(readFileSync(swarmPath, 'utf8'), mtimeBefore);
   } finally {
     cleanup(dir);

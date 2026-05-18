@@ -12,6 +12,9 @@ import { join } from 'node:path';
 export const SCHEMA = {
   project_type: 'string',
   specialists: [{ id: 'string', role: 'string', agent_type: 'string' }],
+  // v1.4.4 N10: auditor roster for phase-e-auto
+  auditors: ['string'],       // roster IDs to use for Cross-Audit Phase; default ['codex','gemini','claude']
+  auditor_count: 'number',    // number of lenses; default 3
 };
 
 const BASE = [
@@ -58,10 +61,22 @@ export function detectProjectType(projectDir) {
   return 'other';
 }
 
+// Default auditor IDs for Cross-Audit Phase (N10).
+export const DEFAULT_AUDITORS = ['codex', 'gemini', 'claude'];
+export const DEFAULT_AUDITOR_COUNT = 3;
+
+// Merge v1.4.4 N10 defaults into a raw config object (non-destructive).
+function applySwarmDefaults(config) {
+  const out = { ...config };
+  if (!Array.isArray(out.auditors)) out.auditors = [...DEFAULT_AUDITORS];
+  if (typeof out.auditor_count !== 'number' || out.auditor_count < 1) out.auditor_count = DEFAULT_AUDITOR_COUNT;
+  return out;
+}
+
 // Returns a fresh default config object for the given project type.
 function buildDefault(projectType) {
   const specialists = DEFAULT_SPECIALISTS[projectType] ?? DEFAULT_SPECIALISTS.other;
-  return { project_type: projectType, specialists: specialists.map(s => ({ ...s })) };
+  return applySwarmDefaults({ project_type: projectType, specialists: specialists.map(s => ({ ...s })) });
 }
 
 // Reads .ijfw/swarm.json if present, otherwise detects type, generates
@@ -70,7 +85,9 @@ export function loadSwarmConfig(projectDir) {
   const swarmPath = join(projectDir, '.ijfw', 'swarm.json');
 
   if (existsSync(swarmPath)) {
-    return JSON.parse(readFileSync(swarmPath, 'utf8'));
+    const raw = JSON.parse(readFileSync(swarmPath, 'utf8'));
+    // Merge defaults for v1.4.4 N10 fields so older swarm.json files work.
+    return applySwarmDefaults(raw);
   }
 
   const projectType = detectProjectType(projectDir);
