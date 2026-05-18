@@ -236,7 +236,38 @@ After LOCK, the brief drives every downstream phase. Same discipline, same memor
 ## EXECUTE
 
 <!-- IJFW-A1-DISPATCH-START -->
-<!-- Wave 10 v1.4.4 W10-A1: dispatch-planner → Agent isolation:'worktree' wiring + 4-value status protocol contract for implementer prompts. Insert content here. -->
+### Wave Dispatch
+
+Wave dispatch resolves each sub-wave's isolation mode via `dispatch-planner.js`.
+Full contract: `claude/skills/ijfw-workflow/lib/dispatch-helpers.md`.
+
+**Dispatch steps (inside Execute, before agent launch):**
+1. Parse `.ijfw/memory/plan.md` with `parsePlan()` + `buildManifest()`.
+2. For each sub-wave: `mode === 'worktree'` → `Agent({ isolation: 'worktree' })`, else no isolation flag.
+3. Branch naming: `wave/<wave-id>/<sub-id>` (e.g. `wave/W10-A1/dispatch`).
+4. Worktree agents: brief them to run `cd mcp-server && npm install --no-audit --no-fund` first.
+
+**Every implementer prompt must end with this exact block (orchestrator parses it):**
+```
+Status: DONE
+Branch: wave/<wave-id>/<sub-id>
+Commit: <full SHA>
+Tests: <N> pass / <M> fail
+```
+
+**handleStatus action table** (from `orchestrator/status-protocol.js`):
+
+| Status reported | handleStatus action | Next step |
+|---|---|---|
+| `DONE` | `proceed_to_review` | Hand commit_sha to W10-A2 review |
+| `DONE` (stale commit) | `redispatch_needs_context` | Re-prompt with `missing: commit-before-report` |
+| `DONE_WITH_CONCERNS` | `proceed_with_flag` | Proceed to review; surface `Concerns:` to user |
+| `NEEDS_CONTEXT` | `redispatch_with_context` | Re-prompt agent; append `Missing:` field to context |
+| `BLOCKED` | `escalate_to_user` | Surface `Reason:` + `Tried:` to user; halt wave |
+
+Alternative status strings (append below the standard block as needed):
+`DONE_WITH_CONCERNS` + `Concerns:`; `NEEDS_CONTEXT` + `Missing:`; `BLOCKED` + `Reason:` + `Tried:`.
+No other status strings are valid.
 <!-- IJFW-A1-DISPATCH-END -->
 
 **Phase banner** -- emit at every phase transition (Brainstorm, Plan, Execute, Verify, Ship):
