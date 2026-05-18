@@ -513,6 +513,79 @@ export async function startServer(options = {}) {
       }
     }],
 
+    // v1.5.0 S10 — wave-state JSON list. Reads .ijfw/wave-*/STATE.md frontmatter.
+    // Sorted by checkpoint_at desc, capped at 50 (any project with >50 active
+    // waves has bigger problems). Same security pattern as /api/planning.
+    ['/api/waves', async (req, res) => {
+      try {
+        const ijfwDir = join(REPO_ROOT, '.ijfw');
+        if (!existsSync(ijfwDir)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ waves: [] }));
+          return;
+        }
+        const entries = readdirSync(ijfwDir, { withFileTypes: true });
+        const { readWaveState } = await import('./orchestrator/wave-state.js');
+        const out = [];
+        for (const ent of entries) {
+          if (!ent.isDirectory() || !ent.name.startsWith('wave-')) continue;
+          const waveId = ent.name.slice('wave-'.length);
+          if (!waveId || !/^[A-Za-z0-9_-]+$/.test(waveId)) continue;
+          try {
+            const state = await readWaveState(waveId, REPO_ROOT);
+            if (!state) continue;
+            out.push({
+              id: waveId,
+              status: state.frontmatter.status ?? 'unknown',
+              created_at: state.frontmatter.created_at ?? null,
+              checkpoint_at: state.frontmatter.checkpoint_at ?? null,
+              claims_active: state.frontmatter.claims_active ?? 0,
+              agents_count: Array.isArray(state.frontmatter.agents) ? state.frontmatter.agents.length : 0,
+              path: `.ijfw/wave-${waveId}/STATE.md`,
+            });
+          } catch { /* skip malformed wave dirs */ }
+        }
+        out.sort((a, b) => String(b.checkpoint_at || '').localeCompare(String(a.checkpoint_at || '')));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ waves: out.slice(0, 50) }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/waves' }));
+      }
+    }],
+
+    // v1.5.0 S10 — wave-state viewer (HTML SPA). Same CSP as /planning.
+    ['/waves', async (req, res) => {
+      try {
+        const html = await readFile(join(__dirname, 'dashboard-client-waves.html'), 'utf8');
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
+        });
+        res.end(html);
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Waves viewer not found: ' + err.message);
+      }
+    }],
+
+    // v1.5.0 F4 — serve checkpoint-contract.md as plain text so operators can
+    // find the implementer-side checkpoint protocol from the dashboard.
+    ['/docs/checkpoint-contract', async (req, res) => {
+      try {
+        const md = await readFile(join(__dirname, 'orchestrator/checkpoint-contract.md'), 'utf8');
+        res.writeHead(200, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'public, max-age=300',
+        });
+        res.end(md);
+      } catch (err) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Checkpoint contract not found: ' + err.message);
+      }
+    }],
+
     ['/api/memory/file', (req, res, url) => {
       const rawPath = url.searchParams.get('path') || '';
       if (!rawPath) {

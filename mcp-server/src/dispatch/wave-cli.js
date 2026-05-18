@@ -111,13 +111,15 @@ export const handlers = {
       return { ok: true, output: '(no waves)' };
     }
     waves.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    const rows = [];
-    for (const { id } of waves) {
-      const state = await readWaveState(id, projectRoot);
+    // v1.5.0 F3 (R3 fold-in): parallel reads via Promise.all.
+    // Sequential await over N waves was O(N*disk-latency); parallelised on N>3.
+    const states = await Promise.all(waves.map(({ id }) => readWaveState(id, projectRoot)));
+    const rows = waves.map(({ id }, i) => {
+      const state = states[i];
       const status = state?.frontmatter?.status ?? '?';
       const createdAt = state?.frontmatter?.created_at ?? '';
-      rows.push(`${id}\t${status}\t${createdAt}`);
-    }
+      return `${id}\t${status}\t${createdAt}`;
+    });
     return { ok: true, output: rows.join('\n') };
   },
 };
