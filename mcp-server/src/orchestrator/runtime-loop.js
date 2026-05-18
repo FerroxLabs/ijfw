@@ -146,6 +146,14 @@ export function buildResumeBrief({ originalSpec, checkpoint = {}, fromAI, toAI }
   const shaLine = sha ? `  Commit: ${sha}` : '  Commit: (none yet)';
   const partialLine = partial ? `  Partial progress: ${partial}` : '  Partial progress: (none recorded)';
 
+  // r15-M6: estimate brief size and surface a context-window advisory. The
+  // receiving model may have a SMALLER window than the one that truncated
+  // (selectResumeAI refuses gemini→larger when reason is context_window, but
+  // it can't know the receiver's exact window from here). Tell the receiver
+  // to summarise rather than re-quote if the prior context approaches its cap.
+  const approxTokens = Math.ceil((spec.length + filesLine.length + shaLine.length + partialLine.length) / 4);
+  const budgetLine = `Approx prior-context tokens: ~${approxTokens}. If this brief plus your reply would exceed your context window, summarise the prior agent's "Files written" + "Partial progress" lines instead of quoting verbatim and proceed.`;
+
   return [
     spec,
     '',
@@ -154,6 +162,8 @@ export function buildResumeBrief({ originalSpec, checkpoint = {}, fromAI, toAI }
     filesLine,
     shaLine,
     partialLine,
+    '',
+    budgetLine,
     '',
     `You are ${toAI}. Continue from here. Do NOT redo completed work.`,
     'Skip workspace setup (Step 0) -- branch + worktree already exist.',

@@ -4,7 +4,7 @@
 
 ## [1.5.0] -- 2026-05-18 (MAJOR — "The All-in-One That Just Fucking Works")
 
-**Replaces GSD + Superpowers; ships multi-domain templates.** This release is the foundation (S1-S10 + 6 fold-ins — see "Foundation summary" below) plus **30 net-new items + 3 replacement tests + 6 polish fixes** that prove the all-in-one claim. The cross-system audit (R1 Superpowers / R2 GSD / R3 IJFW-current / R4 synthesis) drove the scope; the replacement tests (RT1 GSD-style software / RT2 Superpowers-style TDD / RT3 multi-domain proof) are the falsifiable acceptance gate, not a marketing claim. **Net: 30 new files (skills + agents + templates + libraries) + 38 subagent dispatches across Waves 12-A0/A/B/C/D/E/F + multi-lens convergence ships as the canonical Phase E.**
+**Replaces GSD + Superpowers; ships multi-domain templates.** This release is the foundation (S1-S10 + 6 fold-ins — see "Foundation summary" below) plus **30 net-new scope items + 3 replacement tests + 6 polish fixes + 6 r15-audit closures** that prove the all-in-one claim. ("Scope items" — each item is a feature, not a file; some items ship multiple files. Concrete file count v1.4.4..HEAD: ~108 new content files across skills/agents/templates/libraries/tests/docs/dashboard.) The cross-system audit (R1 Superpowers / R2 GSD / R3 IJFW-current / R4 synthesis) drove the scope; the replacement tests (RT1 GSD-style software / RT2 Superpowers-style TDD / RT3 multi-domain proof) are the falsifiable acceptance gate, not a marketing claim. **Net: 30 new files (skills + agents + templates + libraries) + 38 subagent dispatches across Waves 12-A0/A/B/C/D/E/F + multi-lens convergence ships as the canonical Phase E.**
 
 ### Why one major version (no v1.5.1 / v1.6.0 split)
 
@@ -41,6 +41,14 @@
 - **C14 plan-checker library** — `mcp-server/src/orchestrator/plan-checker.js` (`validatePlan` w/ 6 mechanical checks: placeholders, completeness, acceptance, empty-steps, dangling-deps, test+skip contradiction). No new MCP tool — fits inside `ijfw_subagent_post_done` routing.
 - **C15 TDD skill** — `ijfw-tdd` (RED-GREEN-REFACTOR + 6 anti-patterns + 4 multi-domain examples).
 
+**Trident r15 closures (6 items):**
+- **r15-H1** lock-in #44 tightened — skill-text-only instructions explicitly excluded from "wired, not advisory" (see updated lock-in below).
+- **r15-H2** worktree-guards.js `assertPathWithinToplevel` now resolves symlinks via `realpathSync` on both ends before comparing. Closes the `<toplevel>/escape-link → /etc` bypass. +1 regression test (18/18 PASS).
+- **r15-H3** dashboard POST endpoints reject cross-origin requests via Origin-vs-Host check. Same-origin browser navigations + curl/no-Origin still work; a tab on attacker.example POSTing back to localhost is refused.
+- **r15-M4** dogfooding receipt prose downgraded from proof-of-runtime to completion-record (retroactive caveat called out — see "Dogfooding receipt" below).
+- **r15-M5** "30 new files" claim corrected — the 30 is scope items (features), not files (~108).
+- **r15-M6** `buildResumeBrief` includes approx prior-context token count + explicit summarise-don't-quote instruction if receiving model's context window is tight.
+
 **Bucket F — polish wave closing replacement-test HIGH findings (W12-F, 6 items):**
 - **F1** `software.brief.md` template (closes RT1-H1: software domain was missing while 5 non-software domains had templates).
 - **F2** `ijfw-review` rewritten domain-agnostic w/ mandatory `REVIEW.md` artifact contract + `since: '1.5.0'` (closes RT1-H2).
@@ -61,7 +69,7 @@
 ### Lock-ins added in this milestone (additive to #1-42)
 
 43. **Replacement claim is acceptance-tested, not asserted.** RT1, RT2, RT3 are required Phase E gates.
-44. **Discipline is wired, not advisory.** Every v1.5.0-major feature has a runtime caller in JS OR is invoked as an MCP tool the orchestrator-LLM is REQUIRED by skill text to call.
+44. **Discipline is wired, not advisory.** Every v1.5.0-major feature must have a **runtime caller in JS** OR be **invoked through an MCP tool whose output is a hard-block signal the orchestrator surface honors** (e.g., `ijfw_subagent_post_done` returning `block: true` on `gateAction: 'block'`). Skill-text-only instructions to the orchestrator LLM are explicitly **NOT sufficient** under this lock-in — they are a soft layer above the runtime gate, not a substitute for it. (Trident r15 H1 closure.)
 45. **Domain templates are first-class.** Software, book, campaign, landing-page, design-system, launch all have brief templates + phase patterns shipped.
 46. **Cross-worktree checkpoint visibility is the canonical S1 path.** Shared-tree dispatch is a fallback.
 47. **Multi-lens consensus is the canonical Phase E.** Single-shot is the fallback.
@@ -78,7 +86,7 @@
 
 ### Dogfooding receipt
 
-`.ijfw/wave-W12-*/subagent-*.checkpoint.json` — **38 receipts** (target ≥12 per lock-in #42). Each captures wave/subagent-id/branch/status/commits/files-changed for the dispatched subagent. Most are retroactive (S01's checkpoint CLI was not invoked by every agent; next milestone the dispatcher will inject the calls automatically).
+`.ijfw/wave-W12-*/subagent-*.checkpoint.json` — **38 receipts** (target ≥12 per lock-in #42, satisfied by count). **Caveat:** all 38 are retroactively synthesised from merge-log evidence at Phase D — the subagent-side `ijfw checkpoint` CLI was available (S01 shipped at W12-A0) but NOT invoked by the dispatched agents during their runs. Receipts therefore document COMPLETION outcomes, not real-time intermediate checkpoints. **The runtime visibility lock-in (#46) is not yet exercised end-to-end at the dispatcher layer**; v1.5.1 will inject `ijfw checkpoint` calls automatically in the dispatch wrapper so receipts become real-time artifacts. (Trident r15 M4 acknowledgement.)
 
 ---
 

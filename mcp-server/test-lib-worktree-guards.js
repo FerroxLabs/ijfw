@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -142,6 +142,33 @@ test('9. assertNotProtectedRef passes on `wave/W12-A/test`', () => {
     assert.equal(branch, 'wave/W12-A/test');
   } finally {
     cleanup();
+  }
+});
+
+// r15-H2: regression for the symlink-escape bug. Without realpathSync,
+// `/worktree/escape-link/foo` (where escape-link → /etc) lexically appears
+// inside the toplevel and passes containment — but in reality it escapes
+// to /etc. assertPathWithinToplevel must resolve symlinks first.
+test('11. r15-H2: assertPathWithinToplevel throws when path escapes via symlink', () => {
+  const { dir, cleanup } = makeRepo();
+  const escapeTarget = mkdtempSync(join(tmpdir(), 'wt-escape-target-'));
+  try {
+    writeFileSync(join(escapeTarget, 'secret.txt'), 'secret\n');
+    // Create a symlink INSIDE the worktree that points OUTSIDE it.
+    const linkInside = join(dir, 'escape-link');
+    symlinkSync(escapeTarget, linkInside);
+    const lexicallyInside = join(linkInside, 'secret.txt');
+    // Without realpath: relative(dir, lexicallyInside) is "escape-link/secret.txt"
+    // which does NOT start with ".." — false-pass. WITH realpath, the link
+    // resolves to escapeTarget which is outside dir → must throw.
+    assert.throws(
+      () => assertPathWithinToplevel(lexicallyInside, dir),
+      /path escapes toplevel/,
+      'symlink that escapes toplevel must be rejected by realpath resolution',
+    );
+  } finally {
+    cleanup();
+    rmSync(escapeTarget, { recursive: true, force: true });
   }
 });
 

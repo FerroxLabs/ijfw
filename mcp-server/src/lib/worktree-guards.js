@@ -12,7 +12,19 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { resolve, isAbsolute, relative } from 'node:path';
+
+// r15-H2: resolve symlinks before containment check. Without this, a path like
+// <toplevel>/escape-link/foo (where escape-link → /etc) trivially escapes the
+// toplevel even though `relative(toplevel, path)` reports a non-`..` result for
+// the lexical path. realpathSync resolves the link first. If the path does not
+// exist yet (e.g. a not-yet-created file we're about to write), realpathSync
+// throws ENOENT — we fall back to the input path since a not-yet-existing
+// target is still a valid containment surface to check lexically.
+function safeRealpath(p) {
+  try { return realpathSync(p); } catch { return p; }
+}
 
 const PROTECTED_REF_PATTERNS = [
   /^main$/, /^master$/, /^develop$/, /^trunk$/,
@@ -62,9 +74,15 @@ export function assertPathWithinToplevel(absolutePath, toplevel) {
   if (!isAbsolute(absolutePath)) {
     throw new Error(`worktree-guards: path must be absolute (got: ${absolutePath})`);
   }
-  const rel = relative(toplevel, absolutePath);
+  // r15-H2: resolve symlinks on BOTH path AND toplevel before comparing.
+  // A path that lexically starts with toplevel can still escape via a symlink
+  // (e.g. <toplevel>/escape-link/foo where escape-link → /etc). Resolving
+  // both ends through realpath catches the real-fs destination.
+  const resolvedPath = safeRealpath(absolutePath);
+  const resolvedTop  = safeRealpath(toplevel);
+  const rel = relative(resolvedTop, resolvedPath);
   if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`worktree-guards: path escapes toplevel! path=${absolutePath}, toplevel=${toplevel}`);
+    throw new Error(`worktree-guards: path escapes toplevel! path=${absolutePath} (resolved: ${resolvedPath}), toplevel=${toplevel} (resolved: ${resolvedTop})`);
   }
   return absolutePath;
 }

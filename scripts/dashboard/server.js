@@ -1548,6 +1548,26 @@ const server = createServer((req, res) => {
       res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
       return;
     }
+    // r15-H3: CSRF/origin defense. The dashboard binds to localhost-only and
+    // state-mutating POSTs are operator actions. Reject any cross-origin
+    // request: same-origin browser navigations + curl/script (no Origin
+    // header) are fine; a browser tab on attacker.example POSTing here is not.
+    const origin = req.headers && req.headers.origin;
+    if (origin) {
+      try {
+        const o = new URL(origin);
+        const host = req.headers.host || '';
+        if (o.host !== host) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'cross-origin POST refused' }));
+          return;
+        }
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'malformed Origin header' }));
+        return;
+      }
+    }
     const rawWaveId = decodeURIComponent(interventionMatch[1]);
     const rawSubId = interventionMatch[2] ? decodeURIComponent(interventionMatch[2]) : null;
     const action = interventionMatch[3];
