@@ -1013,3 +1013,51 @@ export async function runPhaseEConverge({
   /* c8 ignore next */
   return { verdict: VERDICT_CONSENSUS_FAIL, iterations: cap, findings: [], perIteration };
 }
+
+// Default production dispatcher.  Wraps the existing single-lens spawn path
+// (audit-roster pick → buildRequest → fireExternal → parseResponse →
+// classifyVerdict).  Tests pass their own dispatcher; production callers can
+// either pass this one or supply a customized wrapper.
+//
+// One quirk: this dispatcher embeds the cycleSummary into the audit target
+// string (prefixed) so the lens sees prior-round context in its prompt.
+// Lens stdout shape: same as parseResponse('audit', stdout).
+export async function defaultConvergeDispatch({ lens, commitRange, iteration, cycleSummary, projectRoot } = {}) {
+  const env = process.env;
+  const entry = ROSTER.find(e => e.id === lens);
+  if (!entry) {
+    return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: `lens "${lens}" not in roster` };
+  }
+  const reach = isReachable(lens, env);
+  if (!reach.any) {
+    return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: `lens "${lens}" CLI missing and no apiFallback` };
+  }
+  const pick = (!reach.cli && reach.api) ? { ...entry, preferredSource: 'api' } : { ...entry };
+
+  // Inject cycleSummary into the target so lens reasoning sees prior context.
+  const target = (iteration > 1 && cycleSummary)
+    ? `${cycleSummary}\n\n---\n\n${commitRange}`
+    : commitRange;
+
+  const request = buildRequest('audit', target, pick.id, 'general', null);
+  const timeoutMs = timeoutForPick(pick, null);
+  try {
+    const raw = await fireExternal(pick, request, timeoutMs, env, null);
+    if (!raw || raw.status === 'timeout' || raw.status === 'failed' || raw.status === 'aborted') {
+      return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: (raw && raw.stderr) || 'no output' };
+    }
+    if (raw.exitCode !== 0 && raw.status !== 'fallback-used') {
+      return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: `exit ${raw.exitCode}` };
+    }
+    const parsed = parseResponse('audit', raw.stdout);
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    const verdict = classifyVerdict(items);
+    return { lens, verdict, findings: items };
+  } catch (err) {
+    return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: err && err.message ? err.message : String(err) };
+  }
+  /* projectRoot reserved for future per-project dispatcher overrides */
+  // eslint-disable-next-line no-unreachable
+  void projectRoot;
+}
+
