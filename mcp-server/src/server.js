@@ -1532,7 +1532,18 @@ function handleMessage(msg) {
                 projectRoot: process.cwd(),
               }).catch((err) => ({ error: err && err.message ? err.message : String(err) }));
             }
-            result = { text: JSON.stringify({ routeDecision, postDone }, null, 2), isError: false };
+            // v1.5.0-major W12-F/F4 (RT2-H1): when post-done sets
+            // gateAction:'block' (verification failed in strict mode),
+            // surface a structured `block: true` so the orchestrator-LLM
+            // treats it as a hard stop instead of an advisory note.
+            const blocked = postDone && postDone.gateAction === 'block';
+            const payload = { routeDecision, postDone };
+            if (blocked) {
+              payload.block = true;
+              payload.blockReason = 'verification_gate_strict';
+              payload.blockDetail = postDone.gateViolation || null;
+            }
+            result = { text: JSON.stringify(payload, null, 2), isError: blocked };
             break;
           }
           case 'ijfw_update_apply': {
