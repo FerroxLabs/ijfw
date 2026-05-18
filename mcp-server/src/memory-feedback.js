@@ -12,12 +12,31 @@
  * counts, never IDs or full receipt content.
  */
 
-import { readdir, readFile, lstat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir, readFile, lstat, mkdir, appendFile } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const RECEIPTS_SUBPATH = join('.ijfw', 'memory', 'gate-receipts');
+const DEVIATIONS_SUBPATH = join('.ijfw', 'memory', 'deviations.jsonl');
 const MAX_FILE_BYTES = 64 * 1024;
+const MAX_DEVIATIONS_FILE_BYTES = 4 * 1024 * 1024; // 4MB JSONL cap
 const FAIL_VERDICTS = new Set(['FAIL', 'FLAG']);
+
+// W12-C N04 — deviation pattern derivation heuristics (ordered: most specific first).
+const DEVIATION_PATTERN_RULES = [
+  { label: 'test-fixture-drift',    rx: /test.*fail|expected.*got/i },
+  { label: 'flaky-infra',           rx: /timeout|EBUSY|ECONNRESET/i },
+  { label: 'missing-dep',           rx: /Cannot find module|MODULE_NOT_FOUND/i },
+  { label: 'fs-permissions',        rx: /permission denied|EACCES/i },
+  { label: 'git-cache-corruption',  rx: /cache-tree|fatal: unable to read/i },
+  { label: 'branch-collision',      rx: /branch.*already exists|cannot create branch/i },
+];
+
+const VALID_DEVIATION_EVENTS = new Set([
+  '3-attempt-cap-hit',
+  'BLOCKED',
+  'cross-ai-divergence',
+]);
 
 /**
  * readRecentReceipts(projectRoot, limit)
@@ -369,4 +388,243 @@ export async function getFeedbackSuggestions(projectRoot, opts = {}) {
   } catch {
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// W12-C N04 — memory-backed deviation patterns (lock-in #48: memory feeds forward)
+// ---------------------------------------------------------------------------
+
+/**
+ * derivePattern(errorText) -> string
+ *
+ * Maps free-form error / failure text to one of seven labels (or 'unclassified').
+ * Rules are tried in order; first match wins so e.g. an "EACCES timeout" string
+ * resolves to 'flaky-infra' only when the test-fixture and timeout patterns
+ * don't match earlier — the rule order encodes priority.
+ *
+ * Pure. Safe to call with any input (null, undefined, non-strings → 'unclassified').
+ *
+ * @param {string} errorText
+ * @returns {string}
+ */
+export function derivePattern(errorText) {
+  if (typeof errorText !== 'string' || errorText.length === 0) return 'unclassified';
+  for (const rule of DEVIATION_PATTERN_RULES) {
+    if (rule.rx.test(errorText)) return rule.label;
+  }
+  return 'unclassified';
+}
+
+/**
+ * Build a short, stable hash of a payload for idempotency keys.
+ * SHA-256 over a sorted-key JSON of {event, payload}, truncated to 12 hex chars.
+ */
+function payloadHash(event, payload) {
+  const stable = stableStringify({ event, payload });
+  return createHash('sha256').update(stable).digest('hex').slice(0, 12);
+}
+
+/** Deterministic JSON: object keys sorted recursively. */
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(value).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(value[k])).join(',') + '}';
+}
+
+/** Extract a short task summary from a payload object (best-effort, never throws). */
+function summarizeTask(payload) {
+  if (!payload || typeof payload !== 'object') return 'unknown task';
+  const s = payload.task || payload.task_summary || payload.title || payload.name;
+  if (typeof s === 'string' && s.length > 0) return s.slice(0, 120);
+  return 'unknown task';
+}
+
+/** Extract last_error text from a payload object (best-effort, never throws). */
+function extractError(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const e = payload.last_error || payload.error || payload.message || '';
+  if (typeof e === 'string') return e;
+  return '';
+}
+
+/** Build the canonical key for an event. ts is required so repeated calls
+ * with the SAME ts produce the same key (idempotency); different ts ⇒ new key
+ * (but the payload hash guards against duplicate writes regardless of ts).
+ */
+function buildKey(event, payload, ts) {
+  const hash = payloadHash(event, payload);
+  switch (event) {
+    case '3-attempt-cap-hit':
+      return `deviation_${hash}_3attempt_${ts}`;
+    case 'BLOCKED':
+      return `deviation_${hash}_blocked_${ts}`;
+    case 'cross-ai-divergence': {
+      const commit =
+        payload && typeof payload.commit === 'string' && payload.commit.length > 0
+          ? payload.commit.slice(0, 12)
+          : 'nocommit';
+      return `deviation_consensus_${commit}_${ts}`;
+    }
+    default:
+      return `deviation_${hash}_${event}_${ts}`;
+  }
+}
+
+/** Build the human-readable value text for an event. */
+function buildValue(event, payload, pattern) {
+  if (event === 'cross-ai-divergence') {
+    const v = (payload && payload.verdicts) || {};
+    const codex = v.codex || 'n/a';
+    const gemini = v.gemini || 'n/a';
+    const claude = v.claude || 'n/a';
+    return `codex: ${codex}, gemini: ${gemini}, claude: ${claude} — pattern: ${pattern}`;
+  }
+  const task = summarizeTask(payload);
+  const err = extractError(payload);
+  const attempts = (payload && typeof payload.attempts === 'number') ? payload.attempts : 3;
+  if (event === '3-attempt-cap-hit') {
+    return `${task} failed at attempt ${attempts} — last error: ${err}. Pattern: ${pattern}`;
+  }
+  if (event === 'BLOCKED') {
+    return `${task} BLOCKED — last error: ${err}. Pattern: ${pattern}`;
+  }
+  return `${task} (${event}) — ${err}. Pattern: ${pattern}`;
+}
+
+/**
+ * recordDeviation({ event, payload, projectRoot, ts? }) → { key, pattern, written }
+ *
+ * Writes one JSONL entry to <projectRoot>/.ijfw/memory/deviations.jsonl.
+ * Idempotent: if an entry with the same payload_hash already exists in the
+ * file, returns { written: false } without appending.
+ *
+ * @param {{event: string, payload: object, projectRoot: string, ts?: string}} opts
+ * @returns {Promise<{ key: string, pattern: string, written: boolean, type: 'feedback' }>}
+ */
+export async function recordDeviation({ event, payload, projectRoot, ts } = {}) {
+  if (typeof event !== 'string' || !VALID_DEVIATION_EVENTS.has(event)) {
+    throw new Error(`recordDeviation: event must be one of ${Array.from(VALID_DEVIATION_EVENTS).join(', ')}`);
+  }
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    throw new Error('recordDeviation: projectRoot is required');
+  }
+  payload = payload && typeof payload === 'object' ? payload : {};
+  const timestamp = typeof ts === 'string' && ts.length > 0 ? ts : new Date().toISOString();
+
+  const errorText =
+    event === 'cross-ai-divergence'
+      ? (payload && typeof payload.divergence_summary === 'string' ? payload.divergence_summary : '')
+      : extractError(payload);
+  const pattern = derivePattern(errorText);
+  const hash = payloadHash(event, payload);
+  const key = buildKey(event, payload, timestamp);
+  const value = buildValue(event, payload, pattern);
+
+  const entry = {
+    key,
+    value,
+    ts: timestamp,
+    pattern,
+    event,
+    type: 'feedback',
+    payload_hash: hash,
+  };
+
+  const filePath = join(projectRoot, DEVIATIONS_SUBPATH);
+
+  // Idempotency: scan existing entries for matching payload_hash.
+  const existing = await readDeviationsFile(filePath);
+  for (const e of existing) {
+    if (e && e.payload_hash === hash) {
+      return { key: e.key, pattern: e.pattern, written: false, type: 'feedback' };
+    }
+  }
+
+  try {
+    await mkdir(dirname(filePath), { recursive: true });
+    await appendFile(filePath, JSON.stringify(entry) + '\n', 'utf8');
+  } catch (err) {
+    throw new Error(`recordDeviation: failed to write ${filePath}: ${err.message}`);
+  }
+
+  return { key, pattern, written: true, type: 'feedback' };
+}
+
+/**
+ * Read & parse the JSONL deviations file. Skips malformed lines. Never throws.
+ */
+async function readDeviationsFile(filePath) {
+  let info;
+  try {
+    info = await lstat(filePath);
+  } catch {
+    return [];
+  }
+  if (!info.isFile()) return [];
+  if (info.size > MAX_DEVIATIONS_FILE_BYTES) return [];
+
+  let raw;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch {
+    return [];
+  }
+
+  const out = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj === 'object' && typeof obj.key === 'string') {
+        out.push(obj);
+      }
+    } catch {
+      // skip malformed line
+    }
+  }
+  return out;
+}
+
+/**
+ * readDeviationPatterns({ patternLabel?, sinceISO?, event?, projectRoot })
+ *   -> Array<{key, value, ts, pattern, event, type, payload_hash}>
+ *
+ * Query function so the planner can ask "all `git-cache-corruption` events
+ * from the last 30 days" and surface the warning in fresh dispatch briefs.
+ *
+ * Returns newest-first.
+ *
+ * @param {{patternLabel?: string, sinceISO?: string, event?: string, projectRoot: string}} opts
+ * @returns {Promise<object[]>}
+ */
+export async function readDeviationPatterns(opts = {}) {
+  const { patternLabel, sinceISO, event, projectRoot } = opts;
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    throw new Error('readDeviationPatterns: projectRoot is required');
+  }
+
+  const filePath = join(projectRoot, DEVIATIONS_SUBPATH);
+  const all = await readDeviationsFile(filePath);
+
+  let sinceMs = null;
+  if (typeof sinceISO === 'string' && sinceISO.length > 0) {
+    const parsed = Date.parse(sinceISO);
+    if (!Number.isNaN(parsed)) sinceMs = parsed;
+  }
+
+  const filtered = all.filter((e) => {
+    if (patternLabel && e.pattern !== patternLabel) return false;
+    if (event && e.event !== event) return false;
+    if (sinceMs !== null) {
+      const eMs = Date.parse(e.ts);
+      if (Number.isNaN(eMs) || eMs < sinceMs) return false;
+    }
+    return true;
+  });
+
+  // Newest first by ts (string ISO compare works for valid ISO timestamps).
+  filtered.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  return filtered;
 }
