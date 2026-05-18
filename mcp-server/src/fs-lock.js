@@ -14,7 +14,7 @@
  */
 
 import { mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 5000;
 const DEFAULT_STALE_MS = 30000;
@@ -99,6 +99,21 @@ export async function withFsLock(lockPath, fn, opts = {}) {
     typeof opts.acquireTimeoutMs === 'number'
       ? opts.acquireTimeoutMs
       : DEFAULT_ACQUIRE_TIMEOUT_MS;
+
+  // Ensure the lock's parent directory exists. `tryAcquireOnce` uses
+  // `mkdir(lockPath, { recursive: false })` which fails with ENOENT when any
+  // parent is missing — surfacing as a non-EEXIST error and breaking callers
+  // that expect locks to "just work" in fresh tmp HOMEs. Single best-effort
+  // recursive mkdir up-front is cheap (one stat on the common case) and makes
+  // the lock primitive safe to invoke against any path under a writable root.
+  // Surfaced as a Windows CI regression in v1.4.3 (test-extension-registry
+  // tests 523/527/534/535 — Linux/macOS passed only because earlier tests
+  // happened to create ~/.ijfw/state by side-effect).
+  try {
+    await mkdir(dirname(lockPath), { recursive: true });
+  } catch {
+    // Ignore — the subsequent mkdir(lockPath) will surface a clearer error.
+  }
 
   const deadline = Date.now() + acquireTimeoutMs;
   let staleRecoveryUsed = false;
