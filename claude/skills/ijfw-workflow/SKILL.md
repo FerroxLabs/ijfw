@@ -323,11 +323,19 @@ Dispatching Wave 1...
 - Criteria met, scope clean, tests pass, no new assumptions.
 
 <!-- IJFW-A2-REVIEW-START -->
-**Post-DONE two-stage review (v1.4.4 N3):** after the implementer subagent reports `Status: DONE`, the orchestrator runs `mcp-server/src/orchestrator/review.js::reviewTask`. Stage 1 dispatches the spec-compliance reviewer (`prompts/spec-reviewer.md`); on PASS, Stage 2 dispatches the code-quality reviewer (`prompts/quality-reviewer.md`). Either FAIL → re-dispatch the implementer with the findings; cap at `REVIEW_MAX_ITERATIONS = 3` iterations. On both PASS → mark task complete in the blackboard.
+**Post-DONE pipeline (v1.5.0-major S02 — MANDATORY MCP tool call, NOT advisory text):**
+
+After every subagent finishes (any `Status:` value), the orchestrator MUST call the `ijfw_subagent_post_done` MCP tool with `reportText` + `dispatchTimestamp` (Unix seconds at dispatch) + `branch`. The tool returns `{routeDecision, postDone}`. Act on `routeDecision.action`:
+
+- `proceed_to_review` → tool already ran two-stage review + verification-gate scan. Inspect `postDone.verdict`. If approved, mark task complete in blackboard. If findings, re-dispatch implementer (max `REVIEW_MAX_ITERATIONS = 3`).
+- `redispatch_needs_context` → re-dispatch with `routeDecision.missing` as added context.
+- `redispatch_with_context` → re-dispatch with `routeDecision.missing` as the NEEDS_CONTEXT field.
+- `escalate_to_user` → surface to human with `routeDecision.reason` + `routeDecision.tried`.
+- `proceed_with_flag` → mark complete; note `routeDecision.concerns` in wave SUMMARY.
+
+This is wired runtime contract, NOT honor-system markdown. Behind the tool: `runtime-loop.js::reviewSubagentReport` + `post-done-runner.js::runPostDone`. Combined into one MCP tool to stay under the ≤10-tool cap. The two-stage review (spec-reviewer.md then quality-reviewer.md) + verification-gate scan are now invoked automatically; skipping the tool call silently no-ops these v1.4.4 N3 + N5 features.
 
 Reviewer subagents are SEPARATE from the implementer (no self-review). Both use `isolation: 'none'` (read-only on the implementer's branch).
-
-**Verification gate (v1.4.4 N5, advisory):** `mcp-server/src/orchestrator/verification-gate.js::checkVerificationGate` scans orchestrator messages for completion claims (`DONE`, `complete`, `shipped`, `✅`, "all tests pass", "build succeeded") that lack a fresh `Bash` tool call running tests/build in the SAME message. Violations are recorded via `recordViolation` to `.ijfw/memory/verification-violations.jsonl` for memory-feedback pattern detection. The gate is ADVISORY — it never blocks; it teaches over time.
 <!-- IJFW-A2-REVIEW-END -->
 
 <!-- IJFW-A3-SPECIALISTS-START -->
