@@ -25,8 +25,85 @@
  * 'no_review' to signal that.
  */
 
+import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { reviewTask } from './review.js';
 import { checkVerificationGate, recordViolation } from './verification-gate.js';
+
+/**
+ * Extract paths claimed in the report. Naive but effective: looks for
+ * "created/modified/file: <path>" plus bullet-list `- path/...` patterns.
+ * Skip lines under "Self-Check" section (don't recurse into reported self-checks).
+ */
+function extractClaimedPaths(reportText) {
+  const lines = String(reportText || '').split('\n');
+  const paths = new Set();
+  let inSelfCheck = false;
+  for (const line of lines) {
+    if (/^##\s*Self-Check/i.test(line)) { inSelfCheck = true; continue; }
+    if (inSelfCheck) continue;
+    const m = line.match(/(?:created|modified|file):\s*[`"]?([^\s`"]+)[`"]?/i);
+    if (m && m[1].includes('.')) paths.add(m[1]);
+    const m2 = line.match(/^\s*-\s+[`"]?([^\s`"]+\.\w+)[`"]?/);
+    if (m2) paths.add(m2[1]);
+  }
+  return [...paths];
+}
+
+/**
+ * Extract plausible commit SHAs (hex, 7-40 chars) from the report.
+ */
+function extractClaimedCommits(reportText) {
+  const matches = String(reportText || '').match(/\b[0-9a-f]{7,40}\b/g) || [];
+  return [...new Set(matches.filter((s) => /^[0-9a-f]+$/.test(s) && s.length >= 7))];
+}
+
+/**
+ * runSelfCheck — verify claimed files + commits actually exist before review.
+ * @param {string} reportText
+ * @param {string} projectRoot
+ * @returns {{
+ *   verdict: 'PASSED'|'FAILED',
+ *   files_claimed: number,
+ *   files_present: number,
+ *   files_missing: string[],
+ *   commits_claimed: number,
+ *   commits_present: number,
+ *   commits_missing: string[],
+ * }}
+ */
+export function runSelfCheck(reportText, projectRoot) {
+  const claimedPaths = extractClaimedPaths(reportText);
+  const claimedCommits = extractClaimedCommits(reportText);
+  const filesPresent = claimedPaths.filter((p) =>
+    existsSync(p.startsWith('/') ? p : `${projectRoot}/${p}`),
+  );
+  let commitsPresent = [];
+  try {
+    const allShas = execFileSync('git', ['log', '--all', '--format=%H'], {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).split('\n');
+    commitsPresent = claimedCommits.filter((c) => allShas.some((sha) => sha.startsWith(c)));
+  } catch {
+    /* not a git repo — skip commit check */
+  }
+  const verdict =
+    filesPresent.length === claimedPaths.length &&
+    commitsPresent.length === claimedCommits.length
+      ? 'PASSED'
+      : 'FAILED';
+  return {
+    verdict,
+    files_claimed: claimedPaths.length,
+    files_present: filesPresent.length,
+    files_missing: claimedPaths.filter((p) => !filesPresent.includes(p)),
+    commits_claimed: claimedCommits.length,
+    commits_present: commitsPresent.length,
+    commits_missing: claimedCommits.filter((c) => !commitsPresent.includes(c)),
+  };
+}
 
 /**
  * @param {object} params
@@ -46,6 +123,15 @@ import { checkVerificationGate, recordViolation } from './verification-gate.js';
  *   reviewFindings: string[],
  *   gatePassed: boolean,
  *   gateViolation: object|null,
+ *   selfCheck: {
+ *     verdict: 'PASSED'|'FAILED',
+ *     files_claimed: number,
+ *     files_present: number,
+ *     files_missing: string[],
+ *     commits_claimed: number,
+ *     commits_present: number,
+ *     commits_missing: string[],
+ *   },
  * }>}
  */
 export async function runPostDone({
@@ -65,6 +151,11 @@ export async function runPostDone({
   if (typeof reportText !== 'string') {
     throw new TypeError('runPostDone: reportText must be a string');
   }
+
+  // ---- Self-Check (S09) ------------------------------------------------
+  // Verify claimed files + commits exist before spending review tokens.
+  // Additive: doesn't gate downstream — surfaces the divergence in result.
+  const selfCheck = runSelfCheck(reportText, projectRoot);
 
   // ---- Two-stage review (N3) -------------------------------------------
   let reviewOk = false;
@@ -115,5 +206,6 @@ export async function runPostDone({
     reviewFindings,
     gatePassed: gateOutcome.ok === true,
     gateViolation: gateOutcome.ok ? null : { violation: gateOutcome.violation, claim: gateOutcome.claim },
+    selfCheck,
   };
 }
