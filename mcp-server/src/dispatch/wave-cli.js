@@ -17,6 +17,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { readWaveState } from '../orchestrator/wave-state.js';
+import { drainCheckpoints } from '../orchestrator/subagent-telemetry.js';
 
 const WAVE_DIR_PREFIX = 'wave-';
 
@@ -122,9 +123,43 @@ export const handlers = {
     });
     return { ok: true, output: rows.join('\n') };
   },
+
+  // v1.5.0-major S01: belt-and-suspenders drain of subagent checkpoints from
+  // a worktree's .ijfw/wave-<id>/ into the parent project's .ijfw/wave-<id>/.
+  // Run BEFORE `git worktree remove` so checkpoints survive cleanup even if
+  // the subagent didn't honor IJFW_PARENT_PROJECT_ROOT (older callers, manual
+  // claude invocation in a worktree, etc.).
+  'worktree-drain': async (args, ctx) => {
+    const tokens = tokenize(args);
+    const [waveId, worktreePath] = tokens;
+    if (!waveId || !worktreePath) {
+      return {
+        ok: false,
+        error: 'Usage: ijfw worktree-drain <waveId> <worktreePath>',
+      };
+    }
+    const projectRoot = (ctx && ctx.projectRoot) || process.cwd();
+    try {
+      const result = await drainCheckpoints(waveId, worktreePath, projectRoot);
+      if (!result.ok) {
+        return { ok: false, error: `ijfw worktree-drain: ${result.reason}` };
+      }
+      return {
+        ok: true,
+        output: `ok: drained ${result.drained} checkpoint(s) from ${worktreePath}`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `ijfw worktree-drain: ${err && err.message ? err.message : String(err)}`,
+      };
+    }
+  },
 };
 
 export const subcommandHelp = {
   'wave-status': 'wave-status [<id>|latest] — print live state of a wave',
   'wave-list':   'wave-list — list all known waves (newest first)',
+  'worktree-drain':
+    'worktree-drain <waveId> <worktreePath> — copy subagent checkpoints from a worktree to the parent before `git worktree remove` (v1.5.0 S01)',
 };
