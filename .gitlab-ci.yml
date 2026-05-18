@@ -45,6 +45,7 @@ stages:
   - test
   - manual
   - deploy
+  - publish
 
 default:
   # If a job runs longer than 30 min, something is structurally wrong --
@@ -338,3 +339,55 @@ manual_full_matrix:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - when: manual
+
+# ---------------------------------------------------------------------------
+# Publish stage (S8 — v1.5.0): CI publish via OIDC + provenance
+# ---------------------------------------------------------------------------
+#
+# Closes the local-2FA dependency. Tag pushes matching the strict pattern
+# v\d+\.\d+\.\d+ trigger both packages to publish to npm with provenance.
+# No long-lived NPM_TOKEN secret stored in CI variables — tokens are minted
+# per-run from the GitLab OIDC issuer and validated by npmjs.com against
+# the trusted-publisher registration done once at the npmjs UI.
+#
+# Pre-flight gate (one-time operator setup before first ship):
+#   See docs/CI-PUBLISH.md for the npmjs trusted-publisher registration.
+#
+# Tag pattern is strict: rc/beta tags (e.g. v1.5.0-rc1) DO NOT trigger
+# publish. Phase F can dry-run with such a tag to confirm the regex holds.
+#
+# Two independent jobs (not one) so a transient registry failure on one
+# package can be retried without risking a double-publish on the other.
+
+publish:mcp-server:
+  stage: publish
+  image: node:22-bookworm
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  id_tokens:
+    NPM_ID_TOKEN:
+      aud: https://registry.npmjs.org
+  before_script:
+    - cd mcp-server
+    - npm ci --no-audit --no-fund
+  script:
+    - npm publish --provenance --access public
+  environment:
+    name: production
+
+publish:installer:
+  stage: publish
+  image: node:22-bookworm
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  id_tokens:
+    NPM_ID_TOKEN:
+      aud: https://registry.npmjs.org
+  before_script:
+    - cd installer
+    - npm ci --no-audit --no-fund
+    - npm run build
+  script:
+    - npm publish --provenance --access public
+  environment:
+    name: production
