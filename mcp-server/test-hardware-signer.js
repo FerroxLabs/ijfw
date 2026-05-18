@@ -300,7 +300,13 @@ test('schema: missing publisher_key_backend is back-compat valid', () => {
   assert.equal(r.valid, true, JSON.stringify(r.errors));
 });
 
-test('ssh-agent backend: happy path — sign + verify with software backend (round-trip)', async () => {
+// ssh-agent mock tests skipped on win32: the mock listens on a UNIX socket at a
+// tmp path; Windows requires named pipes (\\.\pipe\...) at fixed names which
+// the mock harness can't create at arbitrary tmp paths. Production code paths
+// (extension-signer + hardware-signer) remain Windows-compatible via Node's
+// net.connect support for named pipes when SSH_AUTH_SOCK points to one
+// (openssh-server on Windows exposes \\.\pipe\openssh-ssh-agent).
+test('ssh-agent backend: happy path — sign + verify with software backend (round-trip)', { skip: process.platform === 'win32' }, async () => {
   await withIsolatedEnv('happy', async (home) => {
     const fx = genFixture();
     const keyId = publicKeyFingerprint(fx.publicKeyPem);
@@ -350,7 +356,7 @@ test('ssh-agent backend: agent unavailable yields clear error', async () => {
   });
 });
 
-test('ssh-agent backend: key not in agent — selection-by-blob fails (SEC-H-03)', async () => {
+test('ssh-agent backend: key not in agent — selection-by-blob fails (SEC-H-03)', { skip: process.platform === 'win32' }, async () => {
   await withIsolatedEnv('missing-key', async (home) => {
     const expectedFx = genFixture();
     const otherFx = genFixture(); // agent serves THIS one — not expected
@@ -379,7 +385,7 @@ test('ssh-agent backend: key not in agent — selection-by-blob fails (SEC-H-03)
   });
 });
 
-test('ssh-agent backend: ambiguous identities (duplicate blob) → error', async () => {
+test('ssh-agent backend: ambiguous identities (duplicate blob) → error', { skip: process.platform === 'win32' }, async () => {
   await withIsolatedEnv('ambiguous', async (home) => {
     const fx = genFixture();
     const keyId = publicKeyFingerprint(fx.publicKeyPem);
@@ -411,7 +417,7 @@ test('ssh-agent backend: ambiguous identities (duplicate blob) → error', async
   });
 });
 
-test('signManifestWithBackend: ssh-agent path produces a manifest verifiable by verifyManifestSignature', async () => {
+test('signManifestWithBackend: ssh-agent path produces a manifest verifiable by verifyManifestSignature', { skip: process.platform === 'win32' }, async () => {
   await withIsolatedEnv('mwb-ssh', async (home) => {
     const fx = genFixture();
     const keyId = publicKeyFingerprint(fx.publicKeyPem);
@@ -515,7 +521,7 @@ test('signer-cli: keygen-fido2 emits deferred message + exits ok', async () => {
   assert.ok(/deferred to v1\.5\.0/.test(captured.join('')), 'stderr message present');
 });
 
-test('signer-cli: keygen --backend ssh-agent enrolls a key', async () => {
+test('signer-cli: keygen --backend ssh-agent enrolls a key', { skip: process.platform === 'win32' }, async () => {
   await withIsolatedEnv('cli-enrol', async (home) => {
     const fx = genFixture();
     const agent = await startMockAgent([
@@ -538,7 +544,7 @@ test('signer-cli: keygen --backend ssh-agent enrolls a key', async () => {
   });
 });
 
-test('signer-cli: keygen --backend ssh-agent rejects unknown comment', async () => {
+test('signer-cli: keygen --backend ssh-agent rejects unknown comment', { skip: process.platform === 'win32' }, async () => {
   await withIsolatedEnv('cli-bad-comment', async (home) => {
     const fx = genFixture();
     const agent = await startMockAgent([
