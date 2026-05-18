@@ -270,6 +270,8 @@ Tests: <N> pass / <M> fail
 Alternative status strings (append below the standard block as needed):
 `DONE_WITH_CONCERNS` + `Concerns:`; `NEEDS_CONTEXT` + `Missing:`; `BLOCKED` + `Reason:` + `Tried:`.
 No other status strings are valid.
+
+**Deviation rules + 3-attempt cap (v1.5.0-major S07):** dispatched implementer subagents follow `claude/agents/ijfw-executor.md`'s deviation taxonomy (Rules 1-3 auto-fix bugs / missing critical things / blockers; Rule 4 STOPs on architectural change) + a per-issue 3-attempt fix cap. The orchestrator-LLM should brief implementers using ijfw-executor's PROCESS + DEVIATION RULES sections. After-DONE, an `Attempts: N` line in the Status block is parsed by `ijfw_subagent_post_done` MCP tool — N≥3 routes to `escalate_to_user` with `reason: '3-attempt-cap-hit'` regardless of reported status. The field is opt-in: reports without an `Attempts:` line default to 0 and behave exactly as before.
 <!-- IJFW-A1-DISPATCH-END -->
 
 **Phase banner** -- emit at every phase transition (Brainstorm, Plan, Execute, Verify, Ship):
