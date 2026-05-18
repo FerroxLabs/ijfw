@@ -15,7 +15,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a temp git repo with one empty commit; return { root, sha, ts }. */
+/** Create a temp git repo with one empty commit on `main`; return { root, sha, ts }. */
 function makeGitRepo() {
   const root = mkdtempSync(join(tmpdir(), 'status-proto-'));
   const env = {
@@ -25,14 +25,31 @@ function makeGitRepo() {
     GIT_COMMITTER_NAME: 't',
     GIT_COMMITTER_EMAIL: 't@t',
   };
-  execFileSync('git', ['init'], { cwd: root, env, stdio: 'ignore' });
+  // -b main: deterministic branch name across git versions / host configs
+  // (v1.5.0 S3 branch-tuple verifier checks ref membership).
+  execFileSync('git', ['init', '-b', 'main'], { cwd: root, env, stdio: 'ignore' });
   execFileSync('git', ['commit', '--allow-empty', '-m', 'x'], { cwd: root, env, stdio: 'ignore' });
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, env, encoding: 'utf8' }).trim();
   const ts = parseInt(
     execFileSync('git', ['log', '-1', '--format=%ct'], { cwd: root, env, encoding: 'utf8' }).trim(),
     10,
   );
-  return { root, sha, ts };
+  return { root, sha, ts, env };
+}
+
+/**
+ * Add a second commit on a NEW branch `feat`, leaving HEAD on that branch.
+ * Returns the feature-branch sha + ts. Original {sha,ts} remain on `main`.
+ */
+function addFeatureBranchCommit(root, env) {
+  execFileSync('git', ['checkout', '-b', 'feat'], { cwd: root, env, stdio: 'ignore' });
+  execFileSync('git', ['commit', '--allow-empty', '-m', 'feat-only'], { cwd: root, env, stdio: 'ignore' });
+  const featSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, env, encoding: 'utf8' }).trim();
+  const featTs = parseInt(
+    execFileSync('git', ['log', '-1', '--format=%ct'], { cwd: root, env, encoding: 'utf8' }).trim(),
+    10,
+  );
+  return { featSha, featTs };
 }
 
 // ---------------------------------------------------------------------------
@@ -199,4 +216,53 @@ test('handleStatus DONE with no commit sha returns redispatch_needs_context', ()
   const result = handleStatus(parsed, Date.now() / 1000, { projectRoot: root });
   assert.equal(result.action, 'redispatch_needs_context');
   assert.equal(result.missing, 'commit-before-report');
+});
+
+// ---------------------------------------------------------------------------
+// v1.5.0 S3 (W11-A3): branch-tuple verifyFreshCommit
+// ---------------------------------------------------------------------------
+
+test('handleStatus DONE with fresh commit on dispatched branch returns proceed_to_review', () => {
+  const { root, sha, ts } = makeGitRepo();
+  // commit is on `main`, dispatched branch is `main` → membership check passes
+  const dispatchTs = ts - 10;
+  const parsed = { status: 'DONE', commit_sha: sha, branch: 'main' };
+  const result = handleStatus(parsed, dispatchTs, { projectRoot: root });
+  assert.equal(result.action, 'proceed_to_review');
+  assert.equal(result.commit_sha, sha);
+});
+
+test('handleStatus DONE with fresh commit on a DIFFERENT branch returns redispatch_needs_context', () => {
+  const { root, sha, ts, env } = makeGitRepo();
+  // Create a second commit on `feat` branch; agent reports the `main`-only sha
+  // but claims branch `feat`. Time check passes (commit is recent) but the
+  // branch-tuple check must reject because `sha` is not contained in `feat`'s
+  // history? Actually `feat` branches off main so it WOULD contain `sha`.
+  // We need the inverse: the reported sha is on `feat` only, but dispatched
+  // branch is `main` → main does not contain featSha.
+  const { featSha, featTs } = addFeatureBranchCommit(root, env);
+  const dispatchTs = featTs - 10;
+  const parsed = { status: 'DONE', commit_sha: featSha, branch: 'main' };
+  const result = handleStatus(parsed, dispatchTs, { projectRoot: root });
+  assert.equal(result.action, 'redispatch_needs_context');
+  assert.equal(result.missing, 'commit-before-report');
+  // sanity: the same featSha against branch `feat` would pass
+  const okResult = handleStatus(
+    { status: 'DONE', commit_sha: featSha, branch: 'feat' },
+    dispatchTs,
+    { projectRoot: root },
+  );
+  assert.equal(okResult.action, 'proceed_to_review');
+  // sanity: unused vars referenced to satisfy lint
+  assert.ok(sha && ts);
+});
+
+test('handleStatus DONE with empty branch (detached HEAD) falls back to time-only check', () => {
+  const { root, sha, ts } = makeGitRepo();
+  const dispatchTs = ts - 10;
+  // Empty branch string skips the membership check; fresh commit passes.
+  const parsed = { status: 'DONE', commit_sha: sha, branch: '' };
+  const result = handleStatus(parsed, dispatchTs, { projectRoot: root });
+  assert.equal(result.action, 'proceed_to_review');
+  assert.equal(result.commit_sha, sha);
 });
