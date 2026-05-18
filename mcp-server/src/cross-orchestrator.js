@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import * as readline from 'node:readline';
 import { readdirSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { pickAuditors, isInstalled, isReachable, ROSTER } from './audit-roster.js';
+import { pickAuditors, isReachable, ROSTER } from './audit-roster.js';
 import { loadSwarmConfig, DEFAULT_AUDITORS } from './swarm-config.js';
 import { buildRequest, parseResponse, mergeResponses, checkBudget } from './cross-dispatcher.js';
 import { writeReceipt, readReceipts } from './receipts.js';

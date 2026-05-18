@@ -10,7 +10,7 @@
  */
 
 import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
 
 // ---------------------------------------------------------------------------
