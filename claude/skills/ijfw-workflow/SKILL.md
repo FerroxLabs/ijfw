@@ -235,6 +235,10 @@ After LOCK, the brief drives every downstream phase. Same discipline, same memor
 
 ## EXECUTE
 
+<!-- IJFW-A1-DISPATCH-START -->
+<!-- Wave 10 v1.4.4 W10-A1: dispatch-planner → Agent isolation:'worktree' wiring + 4-value status protocol contract for implementer prompts. Insert content here. -->
+<!-- IJFW-A1-DISPATCH-END -->
+
 **Phase banner** -- emit at every phase transition (Brainstorm, Plan, Execute, Verify, Ship):
 ```
 IJFW > BRAINSTORM (Quick mode, step 2 of 5)
@@ -285,6 +289,14 @@ Dispatching Wave 1...
 **Task micro-audit** -- one line per task:
 - Criteria met, scope clean, tests pass, no new assumptions.
 
+<!-- IJFW-A2-REVIEW-START -->
+<!-- Wave 10 v1.4.4 W10-A2: post-DONE two-stage per-task review (spec-compliance then code-quality) + verification-gate advisory lint. Insert content here. -->
+<!-- IJFW-A2-REVIEW-END -->
+
+<!-- IJFW-A3-SPECIALISTS-START -->
+<!-- Wave 10 v1.4.4 W10-A3: specialist roster awareness — 5 new ijfw-* agents (doc-verifier, pattern-mapper, security-auditor, integration-checker, nyquist-auditor). Reserved for any workflow-side hook the agent owner judges necessary; primary edits land in ijfw-agents-md SKILL.md + claude/agents/*. Insert here only if needed. -->
+<!-- IJFW-A3-SPECIALISTS-END -->
+
 **Phase audit** -- at wave/milestone boundaries:
 - Brief still accurate? Speed respectful? Security invisible? Memory updated?
 
@@ -310,6 +322,10 @@ structure.
 - Functional + UX + Security + Quality checklists.
 - Optional Trident cross-audit on the diff: `ijfw cross audit <diff>`.
 - User confirms: `verified` / `gap: <X>` / `ship it`.
+
+<!-- IJFW-B1-PHASE-E-START -->
+<!-- Wave 10 v1.4.4 W10-B1: auto-fired Cross-Audit Phase (Phase E) between VERIFY and SHIP — cross-orchestrator runs in mode:'phase-e-auto' picking from audit-roster per .ijfw/swarm.json. Insert content here. -->
+<!-- IJFW-B1-PHASE-E-END -->
 
 ## SHIP
 
