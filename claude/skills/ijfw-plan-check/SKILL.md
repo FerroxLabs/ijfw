@@ -162,6 +162,39 @@ Do NOT reference `plan-issues.json` -- the unified ledger path is always `execut
 
 Closer: `You have a <PASS|FLAG|BLOCK> -- <next action>.`
 
+## Pre-dispatch gate (C14, mechanical)
+
+Before the human-judgment review above, a **deterministic** rule pass runs via
+the `validatePlan(planText, { strict })` library in
+`mcp-server/src/orchestrator/plan-checker.js`. It's already wired into the
+post-done runner that the orchestrator-LLM calls per S02 -- no new MCP tool
+(the cap is at 12/12). Callers can also invoke it directly when they want a
+fast pre-flight before paying the cost of full review.
+
+The mechanical gate checks:
+
+1. **No placeholder tokens** -- `TBD`, `FIXME`, `XXX`, `[fill me in]`,
+   `<placeholder>`, `???` (WARN; promoted to BLOCK in `strict: true`).
+2. **Completeness** -- plan must declare at least one `## Task` / `### Task` /
+   `task_id:` block (BLOCK if zero).
+3. **Acceptance criteria** -- each task block mentions `acceptance` / `done when`
+   / `criteria` / `expected` (WARN if missing).
+4. **No empty steps** -- list items under 20 chars of substantive content (e.g.
+   "implement the thing") get WARN.
+5. **Dependency sanity** -- a task referencing `depends:` / `blocked-by:` must
+   point at a `task_id:` declared in the same plan (BLOCK on dangling).
+6. **No test-skip contradiction** -- a task that says "add tests" and "skip the
+   tests" in the same block is a BLOCK.
+
+**On any BLOCK finding the dispatch is aborted** and the orchestrator surfaces
+the findings to the user. WARN findings flow through to the human-judgment
+review (Steps 2-7 above) so the planner can decide whether they matter for
+this run.
+
+This gate is intentionally syntactic / structural -- it catches the
+fast-and-obvious failure modes before spending tokens on the slower
+goal-alignment + scope-leak + risk-surface review that follows.
+
 ## Output contract
 
 Emit a `gate-result` block as the **LAST** content of your output. Nothing
