@@ -14,16 +14,20 @@ import { join } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
 import { readBlackboard } from '../blackboard.js';
 
-// Try-import populateBlackboardBlock from S4 (W11-B2). If the module doesn't
-// exist yet (parallel-dispatch race against S4), no-op silently. This makes S5
-// deployable independently of S4 landing.
-let populateBlackboardBlock = null;
-try {
-  // Dynamic import — resolves at module-load time. Wrapped in try so missing
-  // S4 module is non-fatal.
-  const mod = await import('./agents-md-blackboard.js');
-  populateBlackboardBlock = mod.populateBlackboardBlock;
-} catch { /* S4 not landed yet — advisory only */ }
+// Lazy S4 loader. Top-level `await import` would break `node:test` (unsettled
+// top-level await). Resolves on first checkpointWave call instead. Missing
+// module is non-fatal (silent fail — populateBlackboardBlock stays null).
+let _populateBlackboardBlock = null;
+let _s4LoadAttempted = false;
+async function loadPopulateBlackboardBlock() {
+  if (_s4LoadAttempted) return _populateBlackboardBlock;
+  _s4LoadAttempted = true;
+  try {
+    const mod = await import('./agents-md-blackboard.js');
+    _populateBlackboardBlock = mod.populateBlackboardBlock ?? null;
+  } catch { /* S4 not landed — advisory only */ }
+  return _populateBlackboardBlock;
+}
 
 // ---------------------------------------------------------------------------
 // Internal YAML helpers — flat subset only (string/number/boolean/string[])
@@ -395,6 +399,7 @@ export async function checkpointWave(waveId, projectRoot) {
 
   // S4 integration: refresh AGENTS.md BLACKBOARD block. Silent on failure —
   // populating AGENTS.md is advisory and must not block checkpointing.
+  const populateBlackboardBlock = await loadPopulateBlackboardBlock();
   if (populateBlackboardBlock) {
     try { await populateBlackboardBlock(waveId, projectRoot); } catch { /* advisory */ }
   }
