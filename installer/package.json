@@ -55,6 +55,7 @@
     "url": "git+https://gitlab.com/therealseandonahoe/ijfw.git"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

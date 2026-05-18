@@ -48,7 +48,7 @@ function captureStderr(fn) {
   }
 }
 
-test('KNOWN_IDE_LIST contains all 8 platforms', () => {
+test('KNOWN_IDE_LIST contains all 8 known IDE identifiers', () => {
   assert.deepEqual(
     [...KNOWN_IDE_LIST].sort(),
     ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'hermes', 'wayland', 'windsurf'].sort(),
