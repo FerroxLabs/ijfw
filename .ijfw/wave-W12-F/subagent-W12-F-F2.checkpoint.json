@@ -1,0 +1,12 @@
+{
+  "wave": "W12-F",
+  "subagent_id": "F2",
+  "branch": "wave/W12-F/F2-review-domain-agnostic",
+  "status": "DONE",
+  "commits": ["9aea971"],
+  "files_changed": ["skills/ijfw-review/SKILL.md"],
+  "attempts": 1,
+  "recorded_at": "2026-05-18T16:14:03Z",
+  "retroactive": true,
+  "note": "Synthesized at Phase D from merge-log evidence."
+}

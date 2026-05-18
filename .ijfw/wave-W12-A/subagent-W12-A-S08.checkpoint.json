@@ -1,0 +1,12 @@
+{
+  "wave": "W12-A",
+  "subagent_id": "S08",
+  "branch": "wave/W12-A/S08-worktree-guards",
+  "status": "DONE",
+  "commits": ["4a70849","3fd2801"],
+  "files_changed": ["lib/worktree-guards.js"],
+  "attempts": 1,
+  "recorded_at": "2026-05-18T16:14:03Z",
+  "retroactive": true,
+  "note": "Synthesized at Phase D from merge-log evidence."
+}

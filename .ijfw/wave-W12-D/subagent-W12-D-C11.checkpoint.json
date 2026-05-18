@@ -1,0 +1,12 @@
+{
+  "wave": "W12-D",
+  "subagent_id": "C11",
+  "branch": "wave/W12-D/C11-codebase-mapper",
+  "status": "DONE",
+  "commits": ["c528c7a"],
+  "files_changed": ["agents/ijfw-codebase-mapper.md"],
+  "attempts": 1,
+  "recorded_at": "2026-05-18T16:14:03Z",
+  "retroactive": true,
+  "note": "Synthesized at Phase D from merge-log evidence."
+}

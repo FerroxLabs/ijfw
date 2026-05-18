@@ -1,0 +1,12 @@
+{
+  "wave": "W12-F",
+  "subagent_id": "F6",
+  "branch": "wave/W12-F/F6-receiving-review",
+  "status": "DONE",
+  "commits": ["6bc6234"],
+  "files_changed": ["skills/ijfw-receiving-review/SKILL.md"],
+  "attempts": 1,
+  "recorded_at": "2026-05-18T16:14:03Z",
+  "retroactive": true,
+  "note": "Synthesized at Phase D from merge-log evidence."
+}

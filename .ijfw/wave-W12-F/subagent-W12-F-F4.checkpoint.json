@@ -1,0 +1,12 @@
+{
+  "wave": "W12-F",
+  "subagent_id": "F4",
+  "branch": "wave/W12-F/F4-final",
+  "status": "DONE",
+  "commits": ["a61fac6","aa6c797","c18f8e3","fb919bf"],
+  "files_changed": ["verification-gate.js","post-done-runner.js","server.js","test-verification-gate-strict.js"],
+  "attempts": 1,
+  "recorded_at": "2026-05-18T16:14:03Z",
+  "retroactive": true,
+  "note": "Synthesized at Phase D from merge-log evidence."
+}

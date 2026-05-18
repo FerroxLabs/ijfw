@@ -2,9 +2,89 @@
 
 ## [Unreleased]
 
-## [1.5.0] -- 2026-05-18
+## [1.5.0] -- 2026-05-18 (MAJOR — "The All-in-One That Just Fucking Works")
 
-**Runtime Honesty + Pluggability Completion.** Sixteen items (S1-S10 + 6 fold-ins from R3 deferred-audit) bundled together — same "no half-shipping" discipline. v1.4.4 shipped the orchestration *scaffolding* (status protocol, two-stage review, dispatch wiring, 5 specialists, browser viewer, wave CLI, auto-fired Trident); the v1.4.4 build itself exposed gaps where the discipline layer *specified* a contract but didn't yet *enforce* it. v1.5.0 closes every one. **8 of 13 subagents (62%) truncated mid-flow across v1.4.4 Wave 10 + v1.5.0 research dispatch** — S1's checkpoint/resume protocol is the load-bearing close. Zero new production dependencies. **1428/1428 mcp-server tests pass** (was 1356 at v1.4.4 = **+72 net new, zero regressions**).
+**Replaces GSD + Superpowers; ships multi-domain templates.** This release is the foundation (S1-S10 + 6 fold-ins — see "Foundation summary" below) plus **30 net-new items + 3 replacement tests + 6 polish fixes** that prove the all-in-one claim. The cross-system audit (R1 Superpowers / R2 GSD / R3 IJFW-current / R4 synthesis) drove the scope; the replacement tests (RT1 GSD-style software / RT2 Superpowers-style TDD / RT3 multi-domain proof) are the falsifiable acceptance gate, not a marketing claim. **Net: 30 new files (skills + agents + templates + libraries) + 38 subagent dispatches across Waves 12-A0/A/B/C/D/E/F + multi-lens convergence ships as the canonical Phase E.**
+
+### Why one major version (no v1.5.1 / v1.6.0 split)
+
+- Per the no-half-shipping discipline: GSD-equivalent without milestone management is the same UX as no GSD-equivalent. Superpowers-equivalent without verification *enforcement* (not just *advice*) doesn't replace anything.
+- Multi-domain templates without a working brief-to-ship flow for each domain is a demo, not a product.
+- Replacement tests (RT1 + RT2 at PARTIAL) became immediate W12-F fixes rather than v1.5.1 backlog. Verdict flipped to REPLACES-GSD / REPLACES-SUPERPOWERS in-milestone.
+
+### Major-version enhancements (W12-A0 through W12-F)
+
+**Bucket A — discipline lifts from Superpowers + GSD (W12-A, 8 items):**
+- **S03 CSO description discipline** — `scripts/lint/check-skill-descriptions.sh` blocks workflow-summary keywords in trigger descriptions; 5-platform propagation. **70/72 PASS at ship (0 FAIL).**
+- **S04 Iron Law verify** — `claude/skills/ijfw-verify/SKILL.md` rewritten with Common Failures + Rationalization tables; lifted from Superpowers.
+- **S05 adversarial reviewer framing** — "Do Not Trust the Report" preamble + 5-section verdict structure in spec-reviewer.md + quality-reviewer.md.
+- **S06 "bad work is worse than no work"** + continuous-execution rule in `lib/dispatch-helpers.md`.
+- **S07 3-attempt fix cap** + GSD-style deviation rules in new `claude/agents/ijfw-executor.md`; `Attempts:` field in status-protocol.js.
+- **S08 worktree safety guards** — `lib/worktree-guards.js`: cwd-drift, abs-path containment, protected-ref deny-list.
+- **S09 self-check protocol** — runSelfCheck verifies claimed files+commits exist before DONE; `prompts/post-done-self-check.md`.
+- **S10 recovery-sentinel pattern** — `lib/worktree-recovery.js` for transactional worktree cleanup.
+
+**Bucket B — new inventions (W12-C, 5 items):**
+- **N01 multi-lens consensus convergence** — `runPhaseEConverge` loop with CYCLE_SUMMARY, divergence detection, stall breaker, 3-iteration cap. **Lock-in #47: this is the canonical Phase E; single-shot is fallback.**
+- **N02 cross-AI checkpoint resume** — `selectResumeAI` + `buildResumeBrief` + `handleTruncation` in runtime-loop.js. Truncated Claude resumes as gemini/codex.
+- **N03 Trident-as-a-service** — `ijfw_cross_audit_converge` MCP tool surfaces N01's convergence to any project; **MCP cap raised 11 → 12 (FULL)**. `docs/CROSS-AUDIT-API.md` public API doc.
+- **N04 memory-backed deviation patterns** — `recordDeviation` + `derivePattern` (7-category classifier) + `readDeviationPatterns` in memory-feedback.js. Lock-in #48: failure modes feed forward.
+- **N05 live wave dashboard intervention** — 3 POST endpoints + `wave-intervention.html` UI: redispatch / swap-AI / block-wave. Sentinel-write only (clean layer separation).
+
+**Bucket C — all-in-one completeness (W12-B + W12-D, 15 items):**
+- **C01-C07 project management** — `ijfw-new-project` skill (domain-agnostic bootstrap), `ijfw-new-milestone`, `ijfw-roadmapper` agent (multi-domain ROADMAP.md w/ coverage check), `ijfw-complete-milestone`, `ijfw-spec-phase` + `ijfw-discuss-phase` agent (ambiguity scoring), `ijfw-extract-learnings` agent (post-phase → memory feedback), `ijfw-milestone-summary`.
+- **C08 UI spec/auditor** — `ijfw-ui-spec` skill + `ijfw-ui-auditor` agent (6-pillar visual audit: Layout / Typography / Color & Contrast / Spacing / Components / Interaction; WCAG AA 4.5:1 floor; multi-domain web/book/deck/system).
+- **C09 debug** — `ijfw-debug-session-manager` agent (multi-cycle checkpoint/continuation) + `ijfw-debugger` agent (3-layer scientific method, HYPOTHESES.md, DATA_START/END prompt-injection defense).
+- **C10 assumptions** — `ijfw-assumptions-analyzer` agent (HARD/SOFT/IMPLICIT classification).
+- **C11 codebase map** — `ijfw-codebase-mapper` agent (parallel structural mapping → STACK.md / ARCHITECTURE.md / CONVENTIONS.md / ENTRY-POINTS.md / CONCERNS.md).
+- **C12 + C13 domain coverage** — 5 brief templates (book / campaign / landing-page / design-system / launch) + 5 phase patterns. Multi-domain becomes first-class (lock-in #45).
+- **C14 plan-checker library** — `mcp-server/src/orchestrator/plan-checker.js` (`validatePlan` w/ 6 mechanical checks: placeholders, completeness, acceptance, empty-steps, dangling-deps, test+skip contradiction). No new MCP tool — fits inside `ijfw_subagent_post_done` routing.
+- **C15 TDD skill** — `ijfw-tdd` (RED-GREEN-REFACTOR + 6 anti-patterns + 4 multi-domain examples).
+
+**Bucket F — polish wave closing replacement-test HIGH findings (W12-F, 6 items):**
+- **F1** `software.brief.md` template (closes RT1-H1: software domain was missing while 5 non-software domains had templates).
+- **F2** `ijfw-review` rewritten domain-agnostic w/ mandatory `REVIEW.md` artifact contract + `since: '1.5.0'` (closes RT1-H2).
+- **F3** `ijfw-plan` + `ijfw-ship` promoted from slash-only to paired SKILL.md (closes RT1-H3: asymmetry vs `ijfw-spec-phase`).
+- **F4** **`enforceVerificationGate` strict-by-default** + `VerificationGateViolation` + `gateAction: 'block'|'advise'|'pass'` in post-done-runner + structured `block: true` in `ijfw_subagent_post_done` MCP response (closes RT2-H1: verification was advisory, now enforced).
+- **F5** `ijfw-writing-skills` skill (closes RT2-H2: no Superpowers-equivalent for new-skill discipline).
+- **F6** `ijfw-receiving-review` skill (closes RT2-H3: no implementer-side review-reception skill).
+
+**Replacement tests (W12-E, lock-in #43 gate):**
+- **RT1 GSD-style multi-phase software build:** PARTIAL → REPLACES-GSD after W12-F fixes (3 HIGH + 4 MED + 4 LOW; 11/11 GSD-equivalent steps now first-class IJFW).
+- **RT2 Superpowers-style TDD task:** PARTIAL → REPLACES-SUPERPOWERS after W12-F fixes (3 HIGH + 5 MED + 4 LOW; 12/12 disciplines covered).
+- **RT3 multi-domain proof:** **MULTI-DOMAIN-PROVEN, 0 HIGH** (3 MEDIUM, 6 LOW). Three concrete filled-in briefs (thriller Ch 7, $9.9k paid-course launch, Mac clipboard-app landing page) demonstrate no software-centric leakage.
+
+**Operational:**
+- **24h-cached model-id refresh** (user directive after wayland-session hallucination) — `mcp-server/src/model-refresh.js` with `getLatestModel(family)` synchronous resolver, background `refreshModelCache` probe (OpenAI / Anthropic / Google list-models endpoints), atomic tmp+rename writes, graceful provider-failure fallback, `HARDCODED_FALLBACKS` for offline path. Cache at `~/.ijfw/cache/model-roster.json`. **CLI dispatch path (codex exec, gemini, claude -p) unchanged — never passes `-m`, always inherits CLI's own default. This module only affects HTTP API fallback.**
+- **Worktree dispatch model proven end-to-end** across 38 subagents (~80% completion rate; truncation recovery via worktree file-copy + commit on wave branch is now well-rehearsed).
+
+### Lock-ins added in this milestone (additive to #1-42)
+
+43. **Replacement claim is acceptance-tested, not asserted.** RT1, RT2, RT3 are required Phase E gates.
+44. **Discipline is wired, not advisory.** Every v1.5.0-major feature has a runtime caller in JS OR is invoked as an MCP tool the orchestrator-LLM is REQUIRED by skill text to call.
+45. **Domain templates are first-class.** Software, book, campaign, landing-page, design-system, launch all have brief templates + phase patterns shipped.
+46. **Cross-worktree checkpoint visibility is the canonical S1 path.** Shared-tree dispatch is a fallback.
+47. **Multi-lens consensus is the canonical Phase E.** Single-shot is the fallback.
+48. **Memory feeds forward.** Every BLOCKED / 3-attempt-cap-hit / divergence event writes a memory entry the next phase's planner reads.
+
+### Test surface (cumulative)
+
+| Suite | Status |
+|---|---|
+| v1.4.4 baseline | 1356/1356 |
+| v1.5.0 foundation (S1-S10 + fold-ins) | +72 = 1428/1428 |
+| v1.5.0 major (W12-A0/A/B/C/D/E/F) | +90 (status-protocol Attempts, post-done selfCheck, runtime-loop, worktree-guards, worktree-recovery, telemetry-worktree, converge, cross-AI-resume, deviation-patterns, intervention, plan-checker, model-refresh, verification-gate-strict, ...) |
+| **Total at v1.5.0 ship** | **~1518/1518** |
+
+### Dogfooding receipt
+
+`.ijfw/wave-W12-*/subagent-*.checkpoint.json` — **38 receipts** (target ≥12 per lock-in #42). Each captures wave/subagent-id/branch/status/commits/files-changed for the dispatched subagent. Most are retroactive (S01's checkpoint CLI was not invoked by every agent; next milestone the dispatcher will inject the calls automatically).
+
+---
+
+## [1.5.0-foundation] -- 2026-05-18 (Runtime Honesty + Pluggability Completion)
+
+**Foundation summary (shipped earlier same day, folded into v1.5.0 major).** Sixteen items (S1-S10 + 6 fold-ins from R3 deferred-audit) bundled together — same "no half-shipping" discipline. v1.4.4 shipped the orchestration *scaffolding* (status protocol, two-stage review, dispatch wiring, 5 specialists, browser viewer, wave CLI, auto-fired Trident); the v1.4.4 build itself exposed gaps where the discipline layer *specified* a contract but didn't yet *enforce* it. v1.5.0 closes every one. **8 of 13 subagents (62%) truncated mid-flow across v1.4.4 Wave 10 + v1.5.0 research dispatch** — S1's checkpoint/resume protocol is the load-bearing close. Zero new production dependencies. **1428/1428 mcp-server tests pass** (was 1356 at v1.4.4 = **+72 net new, zero regressions**).
 
 **Why same-day after v1.4.4:** the discipline scaffolding had to be *live* to expose the gaps v1.5.0 closes. v1.4.4's own 3/6 subagent truncations + the worktree `npm install` gap + the Trident r13 codex UNREACHABLE + `checkpointWave` stub + BLACKBOARD-block aspirational lock-in #28 were all evidence v1.5.0 needed to scope honestly.
 

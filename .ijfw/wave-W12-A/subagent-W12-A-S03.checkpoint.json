@@ -1,0 +1,12 @@
+{
+  "wave": "W12-A",
+  "subagent_id": "S03",
+  "branch": "wave/W12-A/S03-cso-descriptions",
+  "status": "DONE",
+  "commits": ["0ebbe79","ac247dd"],
+  "files_changed": ["scripts/lint/check-skill-descriptions.sh"],
+  "attempts": 1,
+  "recorded_at": "2026-05-18T16:14:03Z",
+  "retroactive": true,
+  "note": "Synthesized at Phase D from merge-log evidence."
+}

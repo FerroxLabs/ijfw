@@ -1,6 +1,6 @@
 ---
 name: ijfw-compute
-description: "Compute over read. Run sandboxed scripts to process data instead of dumping it into context. Trigger: 'compute', 'process this data', 'analyze logs', or PreToolUse nudge."
+description: "Use when the user says: 'compute', 'crunch this', 'analyze logs', 'aggregate the data', 'run a script', 'dedupe', 'count by', 'top N', or any data-shaping ask. Replaces dumping raw data into context with sandboxed script execution."
 context: fork
 model: sonnet
 ---

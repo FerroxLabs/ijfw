@@ -1,0 +1,12 @@
+{
+  "wave": "W12-A",
+  "subagent_id": "S10",
+  "branch": "wave/W12-A/S10-recovery-sentinel",
+  "status": "DONE",
+  "commits": ["<merged>"],
+  "files_changed": ["lib/worktree-recovery.js"],
+  "attempts": 1,
+  "recorded_at": "2026-05-18T16:14:03Z",
+  "retroactive": true,
+  "note": "Synthesized at Phase D from merge-log evidence."
+}

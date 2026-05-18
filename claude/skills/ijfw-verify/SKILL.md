@@ -1,6 +1,6 @@
 ---
 name: ijfw-verify
-description: Use when about to claim completion -- "done", "fix complete", "tests pass", "build succeeded", "shipped", "no regressions", "ready to merge", "phase complete" -- IJFW verify-phase gate that requires fresh verification evidence in the same message as the claim. Imports Superpowers' Iron Law verbatim and wires into runtime gate (verification-gate.js + ijfw_subagent_post_done).
+description: "Use when about to claim completion: 'done', 'fix complete', 'tests pass', 'build succeeded', 'shipped', 'no regressions', 'ready to merge', 'ready to ship'. Iron Law gate requiring fresh verification evidence in the same message as the claim; wires into runtime (verification-gate.js + ijfw_subagent_post_done)."
 ---
 
 # IJFW Verify -- The Iron Law
