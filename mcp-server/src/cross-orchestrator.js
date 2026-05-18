@@ -37,6 +37,9 @@ const DEFAULT_TIMEOUT_MS = 90_000;
 
 function timeoutForPick(pick, resolvedTimeoutSec) {
   if (resolvedTimeoutSec) return resolvedTimeoutSec * 1000;
+  // v1.5.0 S7: roster-level override takes precedence over family default.
+  // Codex needs 8min for review work vs 90s default; see audit-roster.js.
+  if (pick.timeoutMs) return pick.timeoutMs;
   return PROVIDER_TIMEOUT_MS[pick.id] ?? DEFAULT_TIMEOUT_MS;
 }
 
@@ -486,25 +489,31 @@ async function runPhaseEAuto({ projectDir, phase, target, env, quiet }) {
   const auditorResults = rawResults.map((raw, i) => {
     const pick = picks[i];
     if (raw === null) {
-      return { status: 'failed', parsed: { items: [], prose: `[${pick.id}: spawn failed]` } };
+      return { status: 'failed', counted: false, parsed: { items: [], prose: `[${pick.id}: spawn failed]` } };
     }
     const { stdout, exitCode, status: rawStatus } = raw;
-    if (rawStatus === 'timeout') return { status: 'timeout', parsed: { items: [], prose: `[${pick.id}: timeout]` } };
-    if (rawStatus === 'failed') return { status: 'failed', parsed: { items: [], prose: `[${pick.id}: failed]` } };
-    if (rawStatus === 'aborted') return { status: 'aborted', parsed: { items: [], prose: `[${pick.id}: aborted]` } };
+    // v1.5.0 S7: non-productive results MUST NOT count toward synthesis verdict.
+    // A hung CLI returning zero items would silently produce a PASS under the
+    // old logic (classifyVerdict([]) === 'PASS'). counted:false isolates them.
+    if (rawStatus === 'timeout') return { status: 'timeout', counted: false, parsed: { items: [], prose: `[${pick.id}: timeout]` } };
+    if (rawStatus === 'failed') return { status: 'failed', counted: false, parsed: { items: [], prose: `[${pick.id}: failed]` } };
+    if (rawStatus === 'aborted') return { status: 'aborted', counted: false, parsed: { items: [], prose: `[${pick.id}: aborted]` } };
     if (rawStatus === 'fallback-used') {
       const p = parseResponse('audit', stdout);
-      return { status: 'fallback-used', parsed: p };
+      return { status: 'fallback-used', counted: true, parsed: p };
     }
-    if (exitCode !== 0) return { status: 'failed', parsed: { items: [], prose: `[${pick.id}: exited ${exitCode}]` } };
+    if (exitCode !== 0) return { status: 'failed', counted: false, parsed: { items: [], prose: `[${pick.id}: exited ${exitCode}]` } };
     const p = parseResponse('audit', stdout);
-    return { status: 'ok', parsed: p };
+    return { status: 'ok', counted: true, parsed: p };
   });
 
-  const parsed = auditorResults.map(r => r.parsed);
+  const productive = auditorResults.filter(r => r.counted);
+  const parsed = productive.map(r => r.parsed);
   const merged = mergeResponses('audit', parsed);
   const items = Array.isArray(merged) ? merged : [];
-  const verdict = classifyVerdict(items);
+  // v1.5.0 S7: when zero auditors return productive output, the verdict is
+  // INCONCLUSIVE — refuses to grant PASS from a hung-CLI floor.
+  const verdict = productive.length === 0 ? 'INCONCLUSIVE' : classifyVerdict(items);
 
   // Write synthesis to .planning/<phase>/CROSS-AUDIT-r<N>.md
   const outputPath = resolveAuditOutputPath(projectDir, phase);
