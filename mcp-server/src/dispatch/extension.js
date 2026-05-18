@@ -17,6 +17,26 @@
  *                             current project's platform dirs. Fired by the
  *                             session-start hook so org/user-scoped extensions
  *                             become available in every project session.
+ *
+ * TODO(v1.5.0-major S01 — IJFW_PARENT_PROJECT_ROOT env passthrough):
+ *   The Agent({ isolation: 'worktree' }) spawn path lives in the Claude Code
+ *   harness (Task tool / SDK), NOT in this MCP server's dispatch flow. When the
+ *   harness eventually exposes a hook for env passthrough on worktree dispatch,
+ *   the dispatcher MUST set:
+ *
+ *     IJFW_PARENT_PROJECT_ROOT=<absolute path to the orchestrator's projectRoot>
+ *
+ *   so that the subagent's `ijfw checkpoint` writes land in the PARENT project's
+ *   .ijfw/wave-<id>/ instead of the disposable worktree's .ijfw/. Until that
+ *   harness hook exists, the contract is documented in
+ *   `mcp-server/src/orchestrator/checkpoint-contract.md` ("Worktree isolation
+ *   drain protocol") and the orchestrator MUST run `ijfw worktree-drain
+ *   <waveId> <worktreePath>` BEFORE `git worktree remove` as a belt-and-
+ *   suspenders fallback (see dispatch/wave-cli.js worktree-drain handler).
+ *
+ *   Subagent-side: any agent template that may run in worktree isolation should
+ *   read `process.env.IJFW_PARENT_PROJECT_ROOT` (already honored transparently
+ *   by orchestrator/subagent-telemetry.js record/read/list).
  */
 
 import {

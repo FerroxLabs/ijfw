@@ -65,6 +65,17 @@ async function handleCheckpoint(args, ctx) {
 
   const projectRoot = (ctx && ctx.projectRoot) || process.cwd();
 
+  // v1.5.0-major S01: log the effective root (parent vs worktree) to stderr for
+  // debugging worktree-mode checkpoint visibility issues.
+  const effectiveRoot = process.env.IJFW_PARENT_PROJECT_ROOT ?? projectRoot;
+  try {
+    process.stderr.write(
+      `ijfw checkpoint: writing to ${effectiveRoot}/.ijfw/wave-${waveId}/\n`,
+    );
+  } catch {
+    // stderr write failure must never break the checkpoint path
+  }
+
   try {
     await recordCheckpoint(waveId, subId, payload, projectRoot);
     return { ok: true, output: `ok: wrote checkpoint for ${waveId}/${subId}` };
