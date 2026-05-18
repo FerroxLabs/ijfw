@@ -36,8 +36,14 @@ const EXPECTED_TOOLS = [
   'ijfw_update_check',
   'ijfw_update_apply',
   'ijfw_run',
+  // v1.5.0-major (S02): runtime contract enforcement — wraps the v1.4.4 N2
+  // status protocol + N3 review.js + N5 verification-gate.js into a single
+  // callable so the orchestrator-LLM invokes them via MCP, not on honor.
+  // Combined into one tool (vs. shipping reviewSubagentReport + runPostDone
+  // as two tools) to minimise cap pressure. See server.js for the dispatch.
+  'ijfw_subagent_post_done',
 ];
-const EXPECTED_COUNT = 10;
+const EXPECTED_COUNT = 11;
 
 function send(child, msg) {
   child.stdin.write(JSON.stringify(msg) + '\n');
