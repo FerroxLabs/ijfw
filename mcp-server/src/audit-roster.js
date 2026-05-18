@@ -13,6 +13,37 @@
 
 import { spawnSync } from 'node:child_process';
 
+// ---------------------------------------------------------------------------
+// v1.5.0 F5 -- audit-rotation v0 schema (schema-only; runtime ships in v1.6.0)
+// ---------------------------------------------------------------------------
+//
+// We are NOT shipping rotation logic in v1.5.0. We are shipping the schema
+// commitment so callers / future code have a stable contract to encode
+// against. Auto-rotation flips on in v1.6.0 once we have telemetry to
+// decide rotation policy (cost-weighted, win-rate-weighted, round-robin).
+//
+// Contract:
+//   - ROTATION_SCHEMA_VERSION = 1: any future schema change bumps this
+//     integer; consumers MUST refuse to apply policy from a higher version
+//     than they support.
+//   - defaultRotationPolicy = 'manual': v0 behavior is "no rotation;
+//     caller (or operator) picks the auditor explicitly via pickAuditors
+//     `only:` or default-priority strategy." Other policy values reserved
+//     for v1.6.0: 'round-robin', 'cost-weighted', 'win-rate-weighted'.
+//
+// Shape (reserved; not consumed yet):
+//   {
+//     schema: ROTATION_SCHEMA_VERSION,
+//     policy: defaultRotationPolicy,
+//     window_days: 7,        // reserved -- look-back for win-rate
+//     min_picks_per_auditor: 1, // reserved -- floor on usage
+//     last_rotated: <ISO>,   // reserved -- persistence anchor
+//   }
+//
+/** @typedef {{ schema: number, policy: string, window_days?: number, min_picks_per_auditor?: number, last_rotated?: string }} RotationPolicy */
+export const ROTATION_SCHEMA_VERSION = 1;
+export const defaultRotationPolicy = 'manual';
+
 export const ROSTER = [
   {
     id: 'codex',
