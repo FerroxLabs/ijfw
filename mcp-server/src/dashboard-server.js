@@ -434,6 +434,80 @@ export async function startServer(options = {}) {
       }));
     }],
 
+    // v1.4.4 N8 — Planning doc viewer. Same path-traversal guard as /api/memory/file,
+    // but allowed roots are .planning/, .ijfw/memory/, and .ijfw/wave-*/ all under REPO_ROOT.
+    ['/api/planning', (req, res, url) => {
+      const rawPath = url.searchParams.get('path') || '';
+      if (!rawPath) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'path query param required' }));
+        return;
+      }
+      if (isAbsolute(rawPath) || rawPath.split(/[\\/]/).some((seg) => seg === '..')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'path traversal not allowed' }));
+        return;
+      }
+      const reqPath = resolve(REPO_ROOT, rawPath);
+      function canonOrNull(p) {
+        try { return realpathSync(p); } catch { return null; }
+      }
+      function isUnder(allowedRoot, canonChild) {
+        const canonRoot = canonOrNull(allowedRoot);
+        if (!canonRoot || !canonChild) return false;
+        const rel = relative(canonRoot, canonChild);
+        return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+      }
+      function isUnderWaveRoot(canonChild) {
+        const ijfwDir = canonOrNull(join(REPO_ROOT, '.ijfw'));
+        if (!ijfwDir || !canonChild) return false;
+        const rel = relative(ijfwDir, canonChild);
+        if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
+        const first = rel.split(/[\\/]/)[0];
+        return first.startsWith('wave-') && first.length > 'wave-'.length;
+      }
+      const canonPath = canonOrNull(reqPath);
+      if (!canonPath) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'file not found' }));
+        return;
+      }
+      const allowed = (
+        isUnder(join(REPO_ROOT, '.planning'), canonPath) ||
+        isUnder(join(REPO_ROOT, '.ijfw', 'memory'), canonPath) ||
+        isUnderWaveRoot(canonPath)
+      );
+      if (!allowed) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'outside allowed planning roots' }));
+        return;
+      }
+      try {
+        const body = readFileSync(canonPath, 'utf8');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ body: body.slice(0, 200000), path: rawPath }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, endpoint: '/api/planning' }));
+      }
+    }],
+
+    // v1.4.4 N8 — Planning-docs viewer (HTML SPA).
+    ['/planning', async (req, res) => {
+      try {
+        const html = await readFile(join(__dirname, 'dashboard-client-planning.html'), 'utf8');
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
+        });
+        res.end(html);
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Planning viewer not found: ' + err.message);
+      }
+    }],
+
     ['/api/memory/file', (req, res, url) => {
       const rawPath = url.searchParams.get('path') || '';
       if (!rawPath) {

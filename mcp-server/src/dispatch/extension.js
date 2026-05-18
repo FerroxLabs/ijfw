@@ -613,11 +613,12 @@ async function cmdDeactivate() {
 let _v143Handlers = null;
 async function loadV143Handlers() {
   if (_v143Handlers !== null) return _v143Handlers;
-  const [registry, signer, quota, active] = await Promise.all([
+  const [registry, signer, quota, active, wave] = await Promise.all([
     import('./registry-cli.js'),
     import('./signer-cli.js'),
     import('./quota-cli.js'),
     import('./active-cli.js'),
+    import('./wave-cli.js'),  // v1.4.4 N9 — wave-status / wave-list
   ]);
   _v143Handlers = Object.assign(
     Object.create(null),
@@ -625,6 +626,7 @@ async function loadV143Handlers() {
     signer.handlers || {},
     quota.handlers || {},
     active.handlers || {},
+    wave.handlers || {},
   );
   return _v143Handlers;
 }
