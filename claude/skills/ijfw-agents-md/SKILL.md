@@ -76,6 +76,44 @@ remain stable for cross-tool references.
 
 ---
 
+## BLACKBOARD Block Population (v1.4.4 Pillar B activation)
+
+The reserved `BLACKBOARD` marker block is now populated by
+`mcp-server/src/orchestrator/wave-state.js::checkpointWave` after every wave
+checkpoint. This activates Pillar B (multi-CLI orchestration) without requiring
+any manual skill invocation.
+
+### Block content shape
+
+```json
+{
+  "state_path": ".ijfw/wave-<waveId>/STATE.md",
+  "last_completions": [
+    "<waveId>: <summary line 1>",
+    "<waveId>: <summary line 2>",
+    "<waveId>: <summary line 3>"
+  ]
+}
+```
+
+- `state_path` — JSON pointer to the active wave's STATE.md.
+- `last_completions` — last N=3 completion summaries (configurable; default 3).
+  Drawn from the `body` field of each wave's STATE.md, newest first.
+
+### Write rules
+
+1. The populator replaces content **only** between
+   `<!-- IJFW-BLACKBOARD-START -->` and `<!-- IJFW-BLACKBOARD-END -->` markers.
+2. **Never write outside those markers.** Use `merge-block-aware.sh` with
+   `BLACKBOARD` as the block argument — same mechanism as MEMORY/ROUTING/AGENTS.
+3. **Idempotency**: serialise the JSON with stable key order + `\n` terminator.
+   Re-running on unchanged STATE.md produces byte-identical output; git sees no
+   diff noise.
+4. If no wave STATE.md exists yet, write an empty JSON object `{}` inside the
+   block rather than omitting the block entirely (markers must remain present).
+
+---
+
 ## Don'ts
 
 - Do not write outside the four marker blocks.

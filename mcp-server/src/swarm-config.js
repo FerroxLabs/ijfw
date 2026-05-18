@@ -22,13 +22,20 @@ const BASE = [
 const TESTS_SPECIALIST = { id: 'tests', role: 'Test coverage', agent_type: 'pr-test-analyzer' };
 const TYPES_SPECIALIST = { id: 'types', role: 'Type invariants', agent_type: 'type-design-analyzer' };
 
+// v1.4.4 N6 — 5 specialist agents addressing v1.4.3 build pain points
+const DOC_VERIFIER     = { id: 'doc-verifier',       role: 'Doc accuracy',       agent_type: 'ijfw-doc-verifier' };
+const PATTERN_MAPPER   = { id: 'pattern-mapper',     role: 'Onboarding patterns', agent_type: 'ijfw-pattern-mapper' };
+const SECURITY_AUDITOR = { id: 'security-auditor',   role: 'Security mitigations', agent_type: 'ijfw-security-auditor' };
+const INTEGRATION_CHECKER = { id: 'integration-checker', role: 'E2E flow verification', agent_type: 'ijfw-integration-checker' };
+const NYQUIST_AUDITOR  = { id: 'nyquist-auditor',    role: 'Coverage gaps',      agent_type: 'ijfw-nyquist-auditor' };
+
 export const DEFAULT_SPECIALISTS = {
-  node:   [...BASE, TESTS_SPECIALIST],
-  python: [...BASE, TESTS_SPECIALIST],
-  typed:  [...BASE, TESTS_SPECIALIST, TYPES_SPECIALIST],
-  go:     [...BASE],
-  rust:   [...BASE],
-  other:  [...BASE],
+  node:   [...BASE, TESTS_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR],
+  python: [...BASE, TESTS_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR],
+  typed:  [...BASE, TESTS_SPECIALIST, TYPES_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR],
+  go:     [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR],
+  rust:   [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR],
+  other:  [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR],
 };
 
 // Detects project type from filesystem signals in projectDir.
