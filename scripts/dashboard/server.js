@@ -768,6 +768,219 @@ async function buildComputeSavings() {
   return totals;
 }
 
+// --- v1.5.0 W12-C N05: dashboard intervention sentinels ---
+//
+// The operator clicks a button in the live wave dashboard; we write a sentinel
+// JSON file into `<projectRoot>/.ijfw/wave-<waveId>/` that the orchestrator-LLM
+// polls on its next loop. Three sentinel kinds:
+//   - subagent-<subId>.redispatch.json  -- re-run a stuck subagent
+//   - subagent-<subId>.swap-ai.json     -- swap the AI family for next dispatch
+//   - wave-<waveId>.block.json          -- pause the wave pending clearance
+//
+// Strict separation of concerns: dashboard = read + sentinel-writer,
+// orchestrator = sentinel-consumer + actor. We never invoke orchestrator code
+// directly from the HTTP server; the orchestrator picks sentinels up on its
+// own cadence. This keeps the dashboard a pure I/O layer.
+//
+// All three writes are atomic (tmp file + rename) so a torn write can never
+// leave half a sentinel on disk.
+
+// ID validator -- accepted by both wave_id and sub_id. Strict to prevent path
+// traversal (no '.', '/', '\\', whitespace). Mirrors the lock-file pattern in
+// orchestrator/subagent-telemetry.js.
+const INTERVENTION_ID_RE = /^[A-Za-z0-9_-]+$/;
+const ALLOWED_AI_FAMILIES = new Set(['claude', 'codex', 'gemini']);
+
+function _interventionProjectRoot() {
+  // Same precedence as checkpoint-cli.js: env override first, then __dirname's
+  // two-up (repo root). Tests pass via env to point at a tmp dir.
+  if (process.env.IJFW_PARENT_PROJECT_ROOT) {
+    return process.env.IJFW_PARENT_PROJECT_ROOT;
+  }
+  return resolve(__dirname, '..', '..');
+}
+
+function _interventionWaveDir(waveId) {
+  return join(_interventionProjectRoot(), '.ijfw', `wave-${waveId}`);
+}
+
+function _writeSentinelAtomic(targetPath, payload) {
+  // mkdir -p the wave dir (orchestrator may not have created it yet if the
+  // operator is staging an intervention before the wave is dispatched).
+  mkdirSync(dirname(targetPath), { recursive: true });
+  // Per-pid + per-call tmp suffix avoids collisions between concurrent writes
+  // hitting the same sentinel name.
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+  writeFileSync(tmpPath, JSON.stringify(payload, null, 2));
+  renameSync(tmpPath, targetPath);
+  return targetPath;
+}
+
+/**
+ * Write a redispatch sentinel for a stuck subagent.
+ * Returns { ok: true, sentinelPath } on success, { ok: false, status, error } on failure.
+ */
+export function writeRedispatchSentinel(waveId, subId, body = {}) {
+  if (!INTERVENTION_ID_RE.test(String(waveId || ''))) {
+    return { ok: false, status: 400, error: 'invalid waveId' };
+  }
+  if (!INTERVENTION_ID_RE.test(String(subId || ''))) {
+    return { ok: false, status: 400, error: 'invalid subId' };
+  }
+  const payload = {
+    type: 'redispatch',
+    waveId,
+    subId,
+    requestedAt: new Date().toISOString(),
+    requestedBy: 'dashboard',
+    reason: typeof body.reason === 'string' ? body.reason : null,
+  };
+  const target = join(_interventionWaveDir(waveId), `subagent-${subId}.redispatch.json`);
+  try {
+    const sentinelPath = _writeSentinelAtomic(target, payload);
+    return { ok: true, sentinelPath };
+  } catch (err) {
+    return { ok: false, status: 500, error: `sentinel write failed: ${err.message}` };
+  }
+}
+
+/**
+ * Write a swap-ai sentinel for a subagent. body.toAI must be one of the
+ * supported AI families.
+ */
+export function writeSwapAiSentinel(waveId, subId, body = {}) {
+  if (!INTERVENTION_ID_RE.test(String(waveId || ''))) {
+    return { ok: false, status: 400, error: 'invalid waveId' };
+  }
+  if (!INTERVENTION_ID_RE.test(String(subId || ''))) {
+    return { ok: false, status: 400, error: 'invalid subId' };
+  }
+  const toAI = body && typeof body.toAI === 'string' ? body.toAI : null;
+  if (!toAI || !ALLOWED_AI_FAMILIES.has(toAI)) {
+    return { ok: false, status: 400, error: `invalid toAI; expected one of ${[...ALLOWED_AI_FAMILIES].join(',')}` };
+  }
+  const payload = {
+    type: 'swap-ai',
+    waveId,
+    subId,
+    toAI,
+    requestedAt: new Date().toISOString(),
+    requestedBy: 'dashboard',
+    reason: typeof body.reason === 'string' ? body.reason : null,
+  };
+  const target = join(_interventionWaveDir(waveId), `subagent-${subId}.swap-ai.json`);
+  try {
+    const sentinelPath = _writeSentinelAtomic(target, payload);
+    return { ok: true, sentinelPath };
+  } catch (err) {
+    return { ok: false, status: 500, error: `sentinel write failed: ${err.message}` };
+  }
+}
+
+/**
+ * Write a block-wave sentinel. body.reason is required (operator must say
+ * something so the next person to look at the wave knows why it's paused).
+ */
+export function writeBlockWaveSentinel(waveId, body = {}) {
+  if (!INTERVENTION_ID_RE.test(String(waveId || ''))) {
+    return { ok: false, status: 400, error: 'invalid waveId' };
+  }
+  const reason = body && typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!reason) {
+    return { ok: false, status: 400, error: 'reason is required' };
+  }
+  const payload = {
+    type: 'block',
+    waveId,
+    requestedAt: new Date().toISOString(),
+    requestedBy: 'dashboard',
+    reason,
+  };
+  const target = join(_interventionWaveDir(waveId), `wave-${waveId}.block.json`);
+  try {
+    const sentinelPath = _writeSentinelAtomic(target, payload);
+    return { ok: true, sentinelPath };
+  } catch (err) {
+    return { ok: false, status: 500, error: `sentinel write failed: ${err.message}` };
+  }
+}
+
+/**
+ * Read POST body with a small cap (sentinels are tiny). Returns parsed JSON
+ * or { _bodyError: <msg> } on failure.
+ */
+function _readJsonBody(req, maxBytes = 16_384) {
+  return new Promise((resolveBody) => {
+    let body = '';
+    let destroyed = false;
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > maxBytes) {
+        destroyed = true;
+        try { req.destroy(); } catch {}
+        resolveBody({ _bodyError: 'request body too large' });
+      }
+    });
+    req.on('end', () => {
+      if (destroyed) return;
+      if (!body) { resolveBody({}); return; }
+      try { resolveBody(JSON.parse(body)); }
+      catch { resolveBody({ _bodyError: 'invalid JSON body' }); }
+    });
+    req.on('error', () => {
+      if (!destroyed) resolveBody({ _bodyError: 'request read error' });
+    });
+  });
+}
+
+/**
+ * Listed active waves for the intervention UI. Reads .ijfw/wave-<id> checkpoints
+ * and returns { waves: [{ waveId, subagents: [{ subId, lastAction, ts, ... }] }] }.
+ */
+export function listActiveWaves(projectRootOverride) {
+  const root = projectRootOverride || _interventionProjectRoot();
+  const ijfwDir = join(root, '.ijfw');
+  if (!existsSync(ijfwDir)) return { waves: [] };
+  let entries;
+  try { entries = readdirSync(ijfwDir); }
+  catch { return { waves: [] }; }
+  const waves = [];
+  for (const name of entries) {
+    if (!name.startsWith('wave-')) continue;
+    const waveId = name.slice('wave-'.length);
+    if (!INTERVENTION_ID_RE.test(waveId)) continue;
+    const waveDir = join(ijfwDir, name);
+    let files;
+    try { files = readdirSync(waveDir); }
+    catch { continue; }
+    const subagents = [];
+    let blocked = false;
+    for (const f of files) {
+      if (f === `wave-${waveId}.block.json`) { blocked = true; continue; }
+      const cpMatch = f.match(/^subagent-(.+)\.checkpoint\.json$/);
+      if (!cpMatch) continue;
+      const subId = cpMatch[1];
+      try {
+        const data = JSON.parse(readFileSync(join(waveDir, f), 'utf8'));
+        subagents.push({
+          subId,
+          ts: data.ts || null,
+          lastAction: data.last_action || null,
+          toolUseCount: data.tool_use_count ?? null,
+          redispatchPending: existsSync(join(waveDir, `subagent-${subId}.redispatch.json`)),
+          swapAiPending: existsSync(join(waveDir, `subagent-${subId}.swap-ai.json`)),
+        });
+      } catch {
+        subagents.push({ subId, ts: null, lastAction: '(unreadable checkpoint)' });
+      }
+    }
+    subagents.sort((a, b) => a.subId.localeCompare(b.subId));
+    waves.push({ waveId, blocked, subagents });
+  }
+  waves.sort((a, b) => a.waveId.localeCompare(b.waveId));
+  return { waves };
+}
+
 // --- Transcript summary cache ---
 function readTranscriptSummary() {
   const p = join(IJFW_GLOBAL, 'transcript-summary.json');
@@ -1302,6 +1515,91 @@ const server = createServer((req, res) => {
         res.end(JSON.stringify({ error: 'invalid config data' }));
       }
     });
+    return;
+  }
+
+  // v1.5.0 W12-C N05 — live wave intervention.
+  //
+  // GET  /api/waves                                     -- list active waves + subagents
+  // POST /api/wave/<waveId>/subagent/<subId>/redispatch -- write redispatch sentinel
+  // POST /api/wave/<waveId>/subagent/<subId>/swap-ai    -- write swap-ai sentinel
+  // POST /api/wave/<waveId>/block                       -- write block-wave sentinel
+  //
+  // The dashboard ONLY writes sentinels; the orchestrator-LLM consumes them.
+  if (url === '/api/waves' && (req.method === 'GET' || req.method === 'HEAD')) {
+    try {
+      const data = listActiveWaves();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    }
+    return;
+  }
+
+  // Match /api/wave/<waveId>/subagent/<subId>/(redispatch|swap-ai)
+  // and    /api/wave/<waveId>/block
+  // We use a manual parse rather than a router to keep the zero-dep promise.
+  const interventionMatch = url.match(/^\/api\/wave\/([^/]+)(?:\/subagent\/([^/]+))?\/(redispatch|swap-ai|block)$/);
+  if (interventionMatch) {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'POST' });
+      res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+      return;
+    }
+    const rawWaveId = decodeURIComponent(interventionMatch[1]);
+    const rawSubId = interventionMatch[2] ? decodeURIComponent(interventionMatch[2]) : null;
+    const action = interventionMatch[3];
+
+    _readJsonBody(req).then((body) => {
+      if (body && body._bodyError) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: body._bodyError }));
+        return;
+      }
+      let result;
+      if (action === 'block') {
+        result = writeBlockWaveSentinel(rawWaveId, body);
+      } else if (action === 'redispatch') {
+        if (!rawSubId) {
+          result = { ok: false, status: 400, error: 'subId required' };
+        } else {
+          result = writeRedispatchSentinel(rawWaveId, rawSubId, body);
+        }
+      } else if (action === 'swap-ai') {
+        if (!rawSubId) {
+          result = { ok: false, status: 400, error: 'subId required' };
+        } else {
+          result = writeSwapAiSentinel(rawWaveId, rawSubId, body);
+        }
+      } else {
+        result = { ok: false, status: 400, error: 'unknown action' };
+      }
+      const status = result.ok ? 200 : (result.status || 400);
+      // Don't echo internal status field in the response body.
+      const payload = result.ok
+        ? { ok: true, sentinelPath: result.sentinelPath }
+        : { ok: false, error: result.error };
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    }).catch((err) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    });
+    return;
+  }
+
+  // Serve the intervention UI.
+  if (url === '/wave-intervention' || url === '/wave-intervention.html') {
+    try {
+      const html = readFileSync(join(__dirname, 'wave-intervention.html'), 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+      res.end(html);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end(`wave-intervention.html error: ${err.message}`);
+    }
     return;
   }
 
