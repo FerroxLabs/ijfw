@@ -196,4 +196,91 @@ Ranked by **gap severity × adoption cost ratio**. ID prefix `v151-S` indicates 
 
 **Total backlog:** 23-40 dev-days.
 
+---
+
+## Anti-patterns to AVOID adopting
+
+### From Superpowers
+
+1. **DO NOT regress to single-tree dispatch.** `subagent-driven-development` runs ALL subagents in the controller's tree and explicitly forbids parallel implementers ("Dispatch multiple implementation subagents in parallel (conflicts)" = Never). IJFW's `Agent({ isolation: 'worktree' })` per dispatched agent is strictly better. R1 says this verbatim. The worktree-blindness fix (v151-S01) repairs IJFW's S1; reverting to single-tree to dodge the bug would lose the parallelism. **Stay worktree-isolated.**
+2. **DO NOT adopt graphviz `dot` decision trees inside SKILL.md.** Cute for Claude Code but unparseable for the other 7 platforms IJFW ships to (codex, gemini, cursor, windsurf, copilot, hermes, wayland). IJFW's plain-prose convention serves all 8 platforms; graphviz would split the codebase.
+3. **DO NOT adopt "every project gets full process" rigor.** Superpowers' `brainstorming` skill HARD-GATEs even a config change through the full 9-step process. IJFW's Quick/Deep mode auto-picker is strictly better DX — Sutherland-style "smarter not slower" wins. Keep auto-picker; do not bolt the GATE on Quick mode.
+
+### From GSD
+
+1. **DO NOT adopt the 66-skill / 33-agent surface area.** GSD's "everything is a skill" approach has produced 6 namespace-router skills (`gsd-ns-context`, `gsd-ns-ideate`, `gsd-ns-manage`, `gsd-ns-project`, `gsd-ns-review`, `gsd-ns-workflow`) that exist mainly to redirect to other skills. IJFW's `ijfw:ijfw` command-index pattern is leaner. Cap IJFW at ~25 skills / ~20 specialists max. Pick the 5 highest-leverage GSD agents (v151-S10), defer the other 14.
+2. **DO NOT adopt `gsd-manager` interactive command center.** Adds a coordination surface for a problem IJFW does not have. IJFW's dispatch-parallel-agents pattern + wave-CLI already covers this. R2 flags it as IGNORE.
+3. **DO NOT adopt Node 22+ engine requirement.** GSD locks out users on older runtimes. IJFW supports Node 18+ — keep it. The two-runtime-deps discipline (`better-sqlite3` + `@modelcontextprotocol/sdk`) is fine; do not chase GSD's `@anthropic-ai/claude-agent-sdk` dependency which is Anthropic-specific.
+
+---
+
+## v1.5.1 vs v1.6.0 split
+
+### v1.5.1 — "Wired-in Honesty" (~10-14 dev-days budget)
+
+Tightest, highest-leverage. Focus: **make IJFW honest about what its code actually does**. Every item in v1.5.1 closes a "spec ≠ runtime" gap or a "broken in canonical mode" gap.
+
+| Order | ID | Cost | Why this milestone |
+|-------|-----|------|---------------------|
+| 1 | **v151-S04** | 0.5d | Cheapest, highest behavioral leverage. Land first. |
+| 2 | **v151-S01** | 3-5d | Closes S1's worktree blindspot — without this, S1 is shelfware. Cannot ship v1.5.1 without it. |
+| 3 | **v151-S03** | 1-2d | 3-attempt fix cap + deviation rules turn truncation into a budget problem. R2 says "fold into v1.5.0 S1 immediately." |
+| 4 | **v151-S05** | 1-2d | Adversarial reviewer framing is prompt-level only; ships independently of S02. |
+| 5 | **v151-S02** | 4-6d | Runtime-loop MCP tools that the orchestrator-LLM MUST call. Foundational for v1.6.0 items. |
+
+**v1.5.1 total: 9.5-15.5 dev-days.** Calls v1.5.1 "Runtime Honesty Completion" — closes the discipline-in-markdown gap.
+
+### v1.6.0 — "Convergence + Specialist Roster" (~20-30 dev-days budget)
+
+Bigger structural changes. Focus: **make IJFW iterative + extend the specialist surface area** in ways that depend on v1.5.1's runtime-wiring foundation.
+
+| Order | ID | Cost | Why this milestone |
+|-------|-----|------|---------------------|
+| 6 | **v151-S06** | 3-5d | CYCLE_SUMMARY convergence loop — depends on v151-S02's MCP tool surface |
+| 7 | **v151-S07** | 2-3d | Code-fixer with recovery sentinel — pairs with v151-S05 + v151-S01 |
+| 8 | **v151-S08** | 3-4d | Debug-session-manager — depends on v151-S09's state-SDK for persistence |
+| 9 | **v151-S09** | 2-3d | State-verb namespace consolidation — refactor stable enough to require runtime tests |
+| 10 | **v151-S10** | 3-5d | Top 5 specialists — depends on v151-S04's frontmatter discipline being landed |
+
+**v1.6.0 total: 13-20 dev-days.** Plus a buffer for inevitable F-series follow-ups (Trident convergence will surface integration friction; debug-session-manager will surface MCP tool gaps).
+
+**v1.6.0 plus reserve: ~20-30 dev-days.**
+
+---
+
+## Where we fucked up (honesty section)
+
+The user asked: "find out where we fucked up, where we need to improve, where we need to strengthen, and what we need to adapt." Below is the honest reckoning across v1.4.x and v1.5.0, written with the benefit of this three-agent audit.
+
+### 1. The "orchestrator is the LLM session" assumption was never written down
+
+The single most consequential drift in IJFW is that every v1.4.4 N-series feature (N2 status protocol, N3 review.js, N5 verification-gate.js) and most v1.5.0 S-series features (S1 checkpoint contract, S3 freshness check, S5 checkpointWave rollup) were shipped as JS modules with unit tests but **no production caller in the JS codebase**. The implicit assumption was always: "the Claude session running ijfw-workflow is the orchestrator — it will read the skill, import the function mentally, and call it." That assumption never appeared in a CLAUDE.md, design doc, or DESIGN.md. It became architecturally load-bearing without ever being explicit, and the result is that ~6 features ship as advisory-of-nothing. R3 calls this out repeatedly: "the orchestrator is the LLM session, not the JS module." We need to either make the LLM-as-orchestrator pattern explicit (and design around it) or invert it — expose every contract function as an MCP tool the orchestrator-LLM MUST call (v151-S02's path).
+
+### 2. v1.4.4 N3 review.js exists but was never called — wrong abstraction
+
+We built `reviewTask` with an injected `dispatch` callback so we could test it without a live Agent tool. That was good engineering for the test surface. We then shipped it and assumed the workflow skill would describe "the orchestrator runs reviewTask after DONE" and the orchestrator would do it. Eight months later, `grep -rn "reviewTask"` returns the definition file and nothing else. The abstraction (function-with-injected-dispatch) was correct; the deployment surface (markdown prose telling an LLM session to invoke it) was wrong. Same pattern repeats with `parseAgentReport`, `handleStatus`, `checkVerificationGate`. We mistook unit-testability for production-readiness.
+
+### 3. v1.5.0 S1 checkpoint contract has the worktree blindspot — tested but not field-validated
+
+S1 shipped with `recordCheckpoint` + `listOrphanedSubagents` + atomic FS-lock writes + 4 KB max size + WAVE_ID_PATTERN / SUB_ID_PATTERN traversal hardening + a 94-line frozen contract document. All of that is real. What we never tested end-to-end was the dispatch mode it was sized to close: `Agent({ isolation: 'worktree' })`. The subagent in a worktree writes its checkpoint to its own `.ijfw/wave-<id>/`; the parent orchestrator reads the parent's `.ijfw/wave-<id>/` and finds nothing; after worktree cleanup the checkpoint is gone. We have a checkpoint contract that closes the 62% truncation rate for **shared-tree dispatch** (a mode we explicitly call non-canonical) and not for worktree dispatch (canonical). The fix is small (env-var passthrough + drain-before-cleanup, ~3-5 days). The lesson is bigger: feature acceptance for v1.5.0 needed to include "demonstrate it firing in the canonical dispatch mode," not just "1428/1428 tests pass."
+
+### 4. v1.5.0 N6 5-specialists were picked from build-pain, not from cross-system comparison
+
+We added accessibility-eng, dep-audit, doc-verifier, e2e-runner, integration-checker, nyquist-auditor, pattern-mapper, security-auditor across v1.4.4 W10-A3 and v1.5.0 W11-D1 because we kept hitting recurring failure modes in our own waves. That's a fine heuristic. What we never did was compare the roster against existing GSD specialists or Superpowers patterns. R2's audit shows we re-invented some wheels (nyquist-auditor, security-auditor have direct GSD analogues) while missing high-leverage agents we didn't think to build (assumptions-analyzer, debug-session-manager, codebase-mapper, extract-learnings). Roster expansion needs an explicit "what does the field do?" gate, not just "what hurt this week?" v151-S10 codifies the top 5 missing.
+
+### 5. Trident shipped as single-shot when the iteration discipline already existed in our own dev cycle
+
+We ran Phase E r1 → r14 during v1.5.0 development. The pattern was: fan out, find HIGH, fix, re-fan-out, repeat until 0 HIGH or 2-of-3 productive PASS. That IS gsd-plan-review-convergence's CYCLE_SUMMARY contract — we just never automated it. Every cycle was a human (or LLM-session) re-firing `runCrossOp({ mode: 'phase-e-auto' })` by hand and reading r1 vs r2 by eye. R2 calls this out: "iteration is LLM-orchestrated, not auto-converged." We had the empirical loop; we never made it a first-class primitive. v151-S06 fixes by adopting CYCLE_SUMMARY verbatim.
+
+### 6. We didn't audit our skill descriptions against Superpowers' description-as-trigger rule until R1 read it
+
+R1's audit caught that current IJFW skill descriptions (visible in this very session's reminder block) summarize workflow ("Quick mode (fast brainstorm, ~5 min) or Deep mode … Auto-picks based on task size"). Superpowers' testing showed workflow-summary descriptions cause Claude to follow the description shortcut and skip the skill body. We may have been shipping partially-loaded skills for months and never noticed. v151-S04 is a 20-line frontmatter fix that could be the biggest single behavioral leverage in the whole backlog. The deeper lesson: we never set up a "compare against best-in-class" gate during release. R2 + R3 confirm there are 10+ such cheap wins (analysis-paralysis guard, destructive-git deny-list, self-check protocol, DATA_START/END injection defense) we missed because we built in isolation.
+
+---
+
+## Closing recommendation
+
+**v1.5.1 should commit to one thing: "Runtime Honesty Completion."** Scope = the 5 items above (v151-S04, S01, S03, S05, S02 in landing order), 10-14 dev-days. The no-half-shipping boundary is: **every wired-in feature must have a runtime caller in the JS codebase OR be invoked as an MCP tool the orchestrator-LLM is required by skill text to call.** If a v1.4.4 N-series or v1.5.0 S-series feature cannot meet that bar, it gets either (a) wired up in v1.5.1, (b) explicitly demoted to "advisory library, not enforced" in the docs, or (c) deleted. No more "ships as code, ships as test, ships as markdown — but never fires." That violates the v1.4.0 lesson ("no half-shipping") and Trident r14 cannot save us from a feature that never runs. v1.6.0 then earns the right to add convergence + specialists on top of a runtime-honest foundation.
+
+
 
