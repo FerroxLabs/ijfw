@@ -6,6 +6,20 @@
 
 **Workflow + Subagent Discipline.** Ten items (N1-N10) folded together — same "no half-shipping" discipline as v1.4.0/1/3. The v1.4.3 build cycle exposed a structural subagent failure mode (subagents returning mid-stream with uncommitted artifacts; orchestrator hand-recovering). v1.4.4 wires the orchestration surface that closes the gap, **without rebuilding the ~60% of infrastructure that already shipped** (blackboard.js, dispatch-planner.js, audit-roster.js with 9 CLIs, cross-orchestrator.js, swarm-config.js, ijfw-agents-md skill). Trident becomes a workflow step rather than a manual `/cross-audit` invocation. Zero new production dependencies.
 
+**Why same-day after v1.4.3:** v1.4.3 had to ship first as a hard prerequisite for v1.4.4's dogfooding receipt. The dispatch-planner-driven worktree isolation (lock-in #22/#32) and the cross-orchestrator auto-fire (N10) both consume primitives that v1.4.3 introduced (`dispatch-planner.js`, `audit-roster.js`, `cross-orchestrator.js`, federated registries, hardened `withFsLock`). Building v1.4.4's discipline layer required a *live, shipped* v1.4.3 baseline to dogfood against — not a candidate branch, not a local snapshot, the actual published infrastructure. So v1.4.3 → v1.4.4 was deliberately back-to-back, not churn.
+
+### Enhancements at a glance (top-line)
+
+- **Dispatch discipline:** worktree-per-sub-wave is now automatic when the plan declares file overlap. No more "did the orchestrator remember to isolate?" — the planner decides, the dispatcher honors.
+- **Status protocol:** 4-value status (`DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`) replaces freeform subagent reports. Commit-before-report enforced via fresh-commit-SHA check (tightened from 5s → 1s window post-Trident r13).
+- **Two-stage review:** every implementer's `DONE` triggers spec-compliance then code-quality reviewer subagents automatically. Cap 3 iterations before escalation.
+- **Verification gate:** advisory lint flags completion claims that lack fresh test/build evidence in the same turn. Records to `.ijfw/memory/verification-violations.jsonl` for the pattern-detection loop (v1.4.1 B10) to learn from.
+- **5 new specialist agents:** doc-verifier, pattern-mapper, security-auditor, integration-checker, nyquist-auditor — each picked by a specific v1.4.3-build pain point, not arbitrary GSD port.
+- **AGENTS.md extensions:** intent-aware seeding + automatic CLAUDE.md / GEMINI.md / HERMES.md / WAYLAND.md adapter creation when missing + BLACKBOARD block spec.
+- **Browser preview for planning docs:** `localhost:19747/planning?path=.planning/<phase>/...` serves any doc under `.planning/`, `.ijfw/memory/`, or `.ijfw/wave-*/{STATE,SUMMARY}.md` (path-traversal guarded). Markdown rendered safely via DOM construction (zero `innerHTML` on user content).
+- **`ijfw wave-status [<id>|latest]` CLI:** read-only snapshot of any wave's STATE.md from the terminal.
+- **Auto-fired cross-audit (Trident becomes Phase E):** `cross-orchestrator.runCrossOp({mode: 'phase-e-auto'})` picks from `.ijfw/swarm.json` `auditors[]` (default `[codex, gemini, claude]`); 9-CLI roster supported (codex/gemini/qwen/deepseek/kimi/opencode/aider/copilot/claude).
+
 ### Wave 10: Workflow + Subagent Discipline (N1-N10)
 
 - **N1 — Dispatch isolation wiring.** `mcp-server/src/dispatch-planner.js` already decided `SHARED` vs `WORKTREE` per sub-wave from file-overlap analysis. v1.4.4 wires that decision into the `Agent` tool's `isolation` parameter via `claude/skills/ijfw-workflow/lib/dispatch-helpers.md` (new reference doc) and the `<!-- IJFW-A1-DISPATCH -->` marker in the workflow skill. Worktree-per-sub-wave becomes automatic when planner flags overlap; back-compat falls through to single-shared-tree for plans without `### Wave` headers.
