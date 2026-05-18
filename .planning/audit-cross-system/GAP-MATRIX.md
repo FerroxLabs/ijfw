@@ -36,3 +36,164 @@ IJFW v1.5.0 is **strongest at cross-AI audit** (Phase E `runPhaseEAuto` is fully
 
 **Aggregate:** IJFW averages **2.0** across 8 dimensions. Strongest at #8 (cross-AI audit, rank 3); weakest at #2 and #6 (subagent recovery, debug loop — both rank 1).
 
+---
+
+## Top 10 ranked backlog items (v1.5.1+)
+
+Ranked by **gap severity × adoption cost ratio**. ID prefix `v151-S` indicates "synthesis item" (vs. existing S-series in v1.5.0 handoff).
+
+### v151-S01 — Worktree → parent checkpoint visibility fix
+
+- **Source pattern:** R3 (IJFW-CURRENT) — top single gap, "load-bearing for v1.6.0 planning"
+- **Estimated cost:** 3-5 dev-days
+- **Concrete file changes:**
+  - `mcp-server/src/dispatch/checkpoint-cli.js` — when `process.env.IJFW_PARENT_PROJECT_ROOT` is set, resolve checkpoint path against parent, not `process.cwd()`
+  - `mcp-server/src/dispatch/extension.js` — when spawning `Agent({ isolation: 'worktree' })`, pass `IJFW_PARENT_PROJECT_ROOT=<parent>` in env
+  - `mcp-server/src/orchestrator/subagent-telemetry.js` — `listOrphanedSubagents` accepts optional `additionalRoots: string[]` and reads checkpoints from all worktree paths in `git worktree list --porcelain` before cleanup runs
+  - `mcp-server/src/dispatch/wave-cli.js` (or wherever `ijfw swarm worktree cleanup` lives) — add `drainCheckpoints(taskId)` pre-step that copies any `<worktree>/.ijfw/wave-<id>/*.checkpoint.json` to parent before `git worktree remove`
+  - `mcp-server/src/orchestrator/checkpoint-contract.md` — add "Worktree isolation drain protocol" section
+  - Test: `mcp-server/test-orchestrator-subagent-telemetry-worktree.js` — e2e test: spawn worktree subagent → write checkpoint → cleanup → assert parent sees checkpoint
+- **Verdict:** **ADAPT** (env-var passthrough + drain-before-cleanup)
+- **Why this rank:** This is R3's #1 honest finding. S1 was sized to close the 62% truncation rate but currently doesn't fire in the canonical dispatch mode. Without this, S1 is shelfware. Highest-leverage single item in the backlog.
+
+### v151-S02 — Discipline-in-markdown → wired-in-code runtime loop
+
+- **Source pattern:** R3 (IJFW-CURRENT) — "no runtime caller" finding across S3, S5, F6, N2, N3, N5
+- **Estimated cost:** 4-6 dev-days
+- **Concrete file changes:**
+  - New: `mcp-server/src/orchestrator/runtime-loop.js` — exports `reviewSubagentReport(reportText, ctx)` that internally calls `parseAgentReport` → `handleStatus` → `verifyFreshCommit` → returns route decision
+  - New: `mcp-server/src/orchestrator/post-done-runner.js` — exports `runPostDone({ taskId, taskSpec, commitSha, branch, dispatch })` that internally calls `reviewTask` (two-stage) → `checkVerificationGate` on the final message → returns `{ verdict, violations }`
+  - New MCP tools: `ijfw_review_subagent_report` + `ijfw_run_post_done` in `mcp-server/src/server.js` — exposes the runtime loop as callable tools the orchestrator-LLM MUST invoke (with cheap test-side fakes)
+  - `claude/skills/ijfw-workflow/SKILL.md` (lines 240-330) — replace "the orchestrator runs … reviewTask" prose with explicit "call `ijfw_run_post_done` with `taskId / commitSha / branch`" instructions
+  - Test: `mcp-server/test-orchestrator-runtime-loop.js` + `mcp-server/test-orchestrator-post-done-runner.js`
+- **Verdict:** **ADAPT** (wrap existing functions in MCP-callable tools, force orchestrator-LLM to invoke them via concrete tool calls rather than mental imports)
+- **Why this rank:** This converts the entire `mcp-server/src/orchestrator/*.js` library from aspirational to invocable. Without this, ~6 v1.4.4/v1.5.0 features are advisory-of-nothing.
+
+### v151-S03 — GSD deviation rules + 3-attempt fix cap
+
+- **Source pattern:** R2 (GSD-AUDIT) — "the one pattern that changes the roadmap"
+- **Estimated cost:** 1-2 dev-days
+- **Concrete file changes:**
+  - `claude/agents/ijfw-executor.md` — NEW agent (currently no IJFW executor agent), modeled on `gsd-executor.md`'s 4-rule taxonomy: (1) auto-fix bug, (2) auto-add missing critical, (3) auto-fix blocker, (4) ASK on architectural change
+  - Embed scope boundary: "only auto-fix issues directly caused by current task's changes; pre-existing → log to `deferred-items.md`"
+  - Embed 3-attempt fix-cap: track per-task auto-fix attempt counter; after 3 → STOP, document in SUMMARY, continue to next task, do NOT restart build
+  - `claude/skills/ijfw-workflow/lib/dispatch-helpers.md` — append "Deviation rules" + "Fix-attempt budget" sections to implementer prompt template
+  - `mcp-server/src/orchestrator/status-protocol.js` — new status sub-field `Attempts:` in parseAgentReport; handleStatus routes Attempts>=3 to `escalate_to_user`
+- **Verdict:** **DUPLICATE** (verbatim adoption of GSD's taxonomy + cap)
+- **Why this rank:** Converts truncation from behavior problem to budget problem. Cheapest big-impact item. R2 explicitly says this should land in v1.5.0 S1 immediately, not wait.
+
+### v151-S04 — Superpowers description-as-trigger CSO discipline
+
+- **Source pattern:** R1 (SUPERPOWERS-AUDIT) — recommendation #5, highest-leverage 20-line fix
+- **Estimated cost:** 0.5 dev-day
+- **Concrete file changes:**
+  - `claude/skills/ijfw-workflow/SKILL.md` (frontmatter `description:`) — strip the current workflow summary ("Quick mode (fast brainstorm, ~5 min) or Deep mode … Auto-picks based on task size") and replace with pure "Use when..." trigger
+  - `claude/skills/ijfw-plan/SKILL.md`, `ijfw-execute/SKILL.md`, `ijfw-debug/SKILL.md`, `ijfw-ship/SKILL.md`, `ijfw-verify/SKILL.md`, `ijfw-design/SKILL.md`, `ijfw-commit/SKILL.md`, `ijfw-recall/SKILL.md`, `ijfw-summarize/SKILL.md`, `ijfw-critique/SKILL.md` — same treatment
+  - `scripts/lint/check-skill-descriptions.sh` — NEW lint: reject any SKILL.md frontmatter `description:` over 1024 chars OR containing workflow keywords (steps, phases, modes)
+- **Verdict:** **DUPLICATE** (verbatim CSO discipline from Superpowers' `writing-skills`)
+- **Why this rank:** Highest-impact 20-line fix in the whole backlog. Superpowers' testing showed workflow-summary descriptions cause Claude to follow the description shortcut and skip the skill body — IJFW skills may currently be partially loaded. Lowest cost, biggest behavioral leverage.
+
+### v151-S05 — Spec→quality strict ordering with adversarial framing
+
+- **Source pattern:** R1 (SUPERPOWERS-AUDIT) — recommendation #1, HIGH impact / LOW cost
+- **Estimated cost:** 1-2 dev-days
+- **Concrete file changes:**
+  - `claude/skills/ijfw-workflow/prompts/spec-reviewer.md` — prepend Superpowers' verbatim adversarial preamble: "## CRITICAL: Do Not Trust the Report — The implementer finished suspiciously quickly. Their report may be incomplete, inaccurate, or optimistic. You MUST verify everything independently." + DO / DO NOT lists + 3 failure modes (Missing requirements / Extra unneeded work / Misunderstandings)
+  - `claude/skills/ijfw-workflow/prompts/quality-reviewer.md` — restructure to 5-section verdict (Strengths / Critical / Important / Minor / Recommendations / Assessment with Ready-to-merge Yes/No/With-fixes)
+  - Both prompts: add git-SHA range diff scoping (`BASE_SHA=$(git rev-parse HEAD~1)` … `git diff {BASE_SHA}..{HEAD_SHA}`)
+  - `mcp-server/src/orchestrator/review.js` — already enforces spec-PASS-gates-quality; add explicit `Never` rule violation log if stage-2 dispatched without stage-1 PASS
+- **Verdict:** **ADAPT** (Superpowers' framing + GSD's per-finding `file:line, issue, fix` structure)
+- **Why this rank:** Two-stage review already exists; this is a prompt-level hardening that produces sharper findings. Pairs naturally with v151-S02 (which makes it actually fire).
+
+### v151-S06 — GSD plan-review-convergence iterative loop
+
+- **Source pattern:** R2 (GSD-AUDIT) — "likely IJFW's single biggest competitive gap"
+- **Estimated cost:** 3-5 dev-days
+- **Concrete file changes:**
+  - `mcp-server/src/cross-orchestrator.js` — new function `runPhaseEConverge({ phase, maxCycles=3, threshold='high', dispatch })` that wraps `runPhaseEAuto` in a loop
+  - Adopt CYCLE_SUMMARY contract verbatim: each auditor's prompt template (in `claude/skills/ijfw-workflow/prompts/`) must include "End with `CYCLE_SUMMARY: current_high=<N>` + `## Current HIGH Concerns` section (bulleted, or `None.`)"
+  - Stall detection: if `HIGH_COUNT >= prev_high_count`, log warning but continue to max_cycles
+  - Replan trigger: between cycles, if HIGH > 0, write findings to `.planning/<phase>/REVIEWS-r<N>.md`, dispatch ijfw-plan to replan with `--reviews` flag
+  - New MCP tool: `ijfw_cross_audit_converge` exposed via `server.js`
+  - `claude/skills/ijfw-workflow/SKILL.md` — replace Phase E single-shot description with auto-converge protocol (still LLM can opt-out via `skip cross-audit`)
+- **Verdict:** **DUPLICATE** (verbatim CYCLE_SUMMARY contract, IJFW-specific roster wiring)
+- **Why this rank:** Closes the biggest functional gap between IJFW Trident and GSD's review pipeline. Single-shot Trident in production has been re-fired manually r1→r14 during v1.5.0 dev; codifying that loop saves human attention and adds stall detection.
+
+### v151-S07 — GSD code-fixer 3-tier verification matrix + recovery sentinel
+
+- **Source pattern:** R2 (GSD-AUDIT) — priorities #4 and #5 (3-tier verification + recovery sentinel)
+- **Estimated cost:** 2-3 dev-days
+- **Concrete file changes:**
+  - New: `claude/agents/ijfw-code-fixer.md` (worktree-isolated edits agent, modeled on `gsd-code-fixer.md`)
+  - `mcp-server/src/orchestrator/review.js` — when reviewer returns issues + `--fix` flag, dispatch ijfw-code-fixer agent into worktree
+  - Recovery sentinel: write `.planning/<phase>/.review-fix-recovery-pending.json` BEFORE `git worktree remove`, delete AFTER successful removal — sentinel discoverable on next run for crash-safe cleanup
+  - 3-tier verification: per-fix Tier 1 (re-read modified file section) mandatory, Tier 2 per-language syntax check (`node -c`, `npx tsc --noEmit`, `python -c "import ast"`), Tier 3 fallback to Tier 1
+  - Logic-bug flag: if fix is classified as logic (not syntax), commit status = `"fixed: requires human verification"`
+  - Atomic per-finding commits, conventional format `fix({phase}): {finding_id} {desc}`
+  - Test: `mcp-server/test-orchestrator-code-fixer-worktree.js` + crash-recovery test
+- **Verdict:** **ADAPT** (verbatim GSD pattern)
+- **Why this rank:** Closes the "review finds things, nothing fixes them" gap. Pairs with v151-S05 (better reviews) + v151-S01 (worktree visibility). Recovery sentinel is also general — could be reused for swarm worktree cleanup.
+
+### v151-S08 — GSD debug-session-manager 3-layer isolation
+
+- **Source pattern:** R2 (GSD-AUDIT) — priority #7
+- **Estimated cost:** 3-4 dev-days
+- **Concrete file changes:**
+  - New: `claude/agents/ijfw-debug-session-manager.md` (orchestrator-side, persistent context across resets)
+  - New: `claude/agents/ijfw-debugger.md` (one-cycle investigator)
+  - `claude/skills/ijfw-debug/SKILL.md` — restructure as thin dispatch to session-manager (current 52-line in-skill protocol becomes the session-manager's instructions)
+  - Persistent state: `.ijfw/debug/<slug>.md` — session survives context resets; `ijfw debug continue <slug>` + `ijfw debug list` resumes/lists
+  - 5 structured return-header types: `## ROOT CAUSE FOUND` / `## TDD CHECKPOINT` / `## DEBUG COMPLETE` / `## CHECKPOINT REACHED` / `## INVESTIGATION INCONCLUSIVE`
+  - DATA_START/DATA_END prompt-injection defense: wrap user-supplied bug-report content in markers; both manager and debugger agents have `<security_context>` block declaring data-not-instructions
+  - Falsifiability requirement in debugger prompt
+  - Specialist dispatch table (typescript/react/swift/python/go/rust/ios/android/general → existing IJFW agents where they exist)
+  - New MCP tool: `ijfw_debug_session_start|continue|list`
+- **Verdict:** **ADAPT** (3-layer pattern + DATA_START/END + falsifiability)
+- **Why this rank:** IJFW debug is currently the thinnest skill of the three systems. Multi-cycle persistence + structured-header contract + prompt-injection defense are all missing.
+
+### v151-S09 — Consolidate state writes behind ijfw-sdk verb namespace
+
+- **Source pattern:** R2 (GSD-AUDIT) — priority #8 ("STATE machine driven by gsd-sdk query verbs")
+- **Estimated cost:** 2-3 dev-days
+- **Concrete file changes:**
+  - New: `mcp-server/src/state-sdk.js` exporting a single `query(verb, ...args)` dispatcher
+  - Verb namespace: `state.advance-phase`, `state.update-progress`, `state.add-decision`, `state.record-session`, `state.record-metric`, `state.record-checkpoint`, `state.add-violation`, `state.add-extension`
+  - Refactor all callers of `.ijfw/state/workflow.json`, `.ijfw/memory/verification-violations.jsonl`, `.ijfw/wave-*/`, `.ijfw/active-extension.json` to route through `state-sdk.query`
+  - Idempotency: every verb is safe to call N times with same args (key by timestamp + verb + payload hash)
+  - New CLI bin: `bin/ijfw-state` exposing the verbs (so external tools / scripts can mutate state without writing JSON by hand)
+  - Test: `mcp-server/test-state-sdk.js` — all verbs idempotent + concurrent-write safe
+- **Verdict:** **DUPLICATE** (GSD's `gsd-sdk query` pattern)
+- **Why this rank:** Currently `.ijfw/state/*` writes are scattered across `dispatch-planner.js`, `agents-md-blackboard.js`, `subagent-telemetry.js`, `verification-gate.js`. Consolidating before v1.6.0 prevents drift. Modest cost, big maintainability win.
+
+### v151-S10 — Top 5 GSD specialists IJFW lacks
+
+- **Source pattern:** R2 (GSD-AUDIT) — priority #9 (5 priority specialists)
+- **Estimated cost:** 3-5 dev-days (1 day per agent, picking the 5 highest-leverage)
+- **Concrete file changes:**
+  - `claude/agents/ijfw-assumptions-analyzer.md` — surfaces hidden assumptions in brief/plan before EXECUTE
+  - `claude/agents/ijfw-codebase-mapper.md` — produces `.planning/codebase/*.md` documents via parallel mapping subagents (not just pattern detection like current `ijfw-pattern-mapper`)
+  - `claude/agents/ijfw-extract-learnings.md` — post-phase mining: decisions/lessons/patterns/surprises → memory entries
+  - `claude/agents/ijfw-discuss-phase.md` — adaptive questioning specialist that consults prior brief.md decisions and skips already-resolved gray areas
+  - `claude/agents/ijfw-eval-auditor.md` — AI eval coverage audit for AI-integration phases
+  - Each frontmatter follows the v151-S04 "Use when..." trigger discipline
+- **Verdict:** **ADAPT** (selectively, not the full 19-agent gap — pick the 5 with highest orthogonality to existing roster)
+- **Why this rank:** Lower-impact than runtime-wiring fixes (S01-S03), but high-leverage for cross-project ergonomics. Defer the other 14 GSD specialists (doc-pipeline quartet, 5-agent research roster, framework-selector, ui-checker, etc.) to v1.6.0 or never.
+
+### Summary by impact × cost
+
+| Rank | ID | Source | Cost | Impact | Verdict |
+|------|-----|--------|------|--------|---------|
+| 1 | S01 | R3 | 3-5d | CRITICAL — closes S1 in canonical mode | ADAPT |
+| 2 | S02 | R3 | 4-6d | CRITICAL — converts 6 features from advisory to wired | ADAPT |
+| 3 | S03 | R2 | 1-2d | HIGH — truncation as budget problem | DUPLICATE |
+| 4 | S04 | R1 | 0.5d | HIGH — fixes possible skill-body skipping | DUPLICATE |
+| 5 | S05 | R1 | 1-2d | HIGH — sharper reviewer findings | ADAPT |
+| 6 | S06 | R2 | 3-5d | HIGH — closes Trident single-shot | DUPLICATE |
+| 7 | S07 | R2 | 2-3d | MEDIUM — review→fix loop completion | ADAPT |
+| 8 | S08 | R2 | 3-4d | MEDIUM — debug persistence + injection defense | ADAPT |
+| 9 | S09 | R2 | 2-3d | MEDIUM — maintainability + scriptability | DUPLICATE |
+| 10 | S10 | R2 | 3-5d | MEDIUM — cross-project ergonomics | ADAPT |
+
+**Total backlog:** 23-40 dev-days.
+
+
