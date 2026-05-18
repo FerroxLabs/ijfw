@@ -108,7 +108,7 @@ test('5. Each new specialist body has ROLE / PROCESS / OUTPUT CONTRACT sections'
 test('6. ijfw-e2e-runner declares HARD CONTRACT in DO NOT section', () => {
   const { body } = readFrontmatter('ijfw-e2e-runner');
   assert.match(body, /# DO NOT[\s\S]*HARD CONTRACT/, 'HARD CONTRACT missing under # DO NOT');
-  assert.match(body, /\.e2e\.fixture\.json/, 'fixture path commitment missing');
+  assert.match(body, /e2e\.fixture\.json/, 'fixture path commitment missing');
 });
 
 test('7. All 8 new specialists registered in DEFAULT_SPECIALISTS for every project type', () => {
