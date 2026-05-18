@@ -1,6 +1,6 @@
 ---
 name: ijfw-status
-description: "Show IJFW state -- mode, routing, session metrics, memory health. Trigger: 'status', /status, /ijfw-status"
+description: "Use when the user says: 'ijfw status', 'show me the system state', 'what is ijfw doing', or to see the at-a-glance routing / memory / activity banner."
 ---
 
 # IJFW Status

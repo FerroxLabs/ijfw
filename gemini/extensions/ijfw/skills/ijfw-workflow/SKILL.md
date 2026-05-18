@@ -1,6 +1,6 @@
 ---
 name: ijfw-workflow
-description: "Universal project workflow with built-in quality auditing. Quick mode (fast brainstorm, ~5 min) or Deep mode (full plan with audits, ~30 min). Auto-picks based on task size. Trigger: 'build', 'create', 'plan', 'new project', 'brainstorm', 'design', 'UI', 'website', 'dashboard', 'app', 'help me build', or any project-level task."
+description: "Use when the user says: 'build', 'create', 'plan', 'new project', 'brainstorm', 'design', 'UI', 'website', 'dashboard', 'app', 'help me build', 'launch', 'book', 'campaign', or anything project-level. Skill body decides Quick vs Deep path."
 context: fork
 model: sonnet
 ---

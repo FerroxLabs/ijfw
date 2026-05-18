@@ -1,6 +1,6 @@
 ---
 name: ijfw-team
-description: "Generate project-specific agent teams during workflow Discovery. Trigger: 'set up a team', 'create agents for', or auto-triggered by ijfw-workflow deep mode after Discovery."
+description: "Use when the user says: 'set up a team', 'create agents for', 'team for this project', 'who should work on this', or after Discovery in a project setup flow."
 context: fork
 model: sonnet
 ---
@@ -233,7 +233,7 @@ Each generated agent follows this structure:
 name: <role-name>
 model: <haiku|sonnet|opus>
 effort: <low|medium|high>
-description: <when to use this agent -- 1-2 lines>
+description: "Use when the user says: 'set up a team', 'create agents for', 'team for this project', 'who should work on this', or after Discovery in a project setup flow."
 allowed-tools: <relevant tools for this role>
 ---
 

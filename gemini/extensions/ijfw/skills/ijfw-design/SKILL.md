@@ -1,6 +1,6 @@
 ---
 name: ijfw-design
-description: "First-class design intelligence. Dispatches to the best available design skill (ui-ux-pro-max, frontend-design, superpowers), then layers IJFW constraints on top. Triggers: 'design', 'redesign', 'UI', 'UX', 'dashboard', 'page', 'component', 'make it look better', 'polish', 'pretty', 'professional', 'user experience', 'layout', 'visual', 'mobile-first', 'dark mode', 'accessibility', 'colors', 'typography', 'brand'."
+description: "Use when the user says: 'design', 'redesign', 'UI', 'UX', 'dashboard', 'page', 'component', 'make it look better', 'polish', 'pretty', 'professional', 'user experience', 'layout', 'visual', 'accessibility', 'colors', 'typography', 'brand'."
 ---
 
 # IJFW Design
