@@ -290,7 +290,7 @@ Decisions, patterns, handoffs, and journal entries persist as plain markdown in 
 |------|-------|--------------|
 | Hot  | Plain markdown | Always on. Instant reads. Git friendly. |
 | Warm | BM25 ranked retrieval | Always on. Scales to around 10,000 entries. |
-| Cold | Optional semantic vectors | Off by default. Requires a user-installed embedding provider. |
+| Cold | Optional semantic vectors (hybrid BM25 + cosine rerank) | Off by default. Enable with `IJFW_VECTORS=on` and `npm i @xenova/transformers` (one-time ~23MB MiniLM model cached locally). Pure no-op fallback to BM25 if disabled, the package isn't installed, or the model fails to load. |
 
 Ten MCP tools (cap raised 8 -> 10 in 1.1.6 to land the update-check + update-apply admin tools) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
 

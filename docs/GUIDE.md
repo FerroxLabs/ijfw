@@ -172,7 +172,7 @@ Run `/team setup` in Claude Code, or `ijfw team` from the shell, to see your cur
 |------|-------|--------------|
 | Hot  | Plain markdown in `.ijfw/memory/` | Always on. Instant reads. Git friendly. |
 | Warm | BM25 ranked search | Always on. Scales to around 10,000 entries per project. |
-| Cold | Optional semantic vectors | Off by default. Requires a user-installed embedding provider. |
+| Cold | Optional semantic vectors (hybrid BM25 + cosine rerank) | Off by default. Enable with `IJFW_VECTORS=on` and `npm i @xenova/transformers` (one-time ~23MB MiniLM model cached locally). Top-K BM25 candidates are reranked via cosine similarity with weights 0.6 BM25 / 0.4 vector. Pure no-op fallback to BM25 if disabled, the package isn't installed, or the model fails to load. |
 
 Every session also ends with an optional "dream cycle". Run `/consolidate` or "run a dream cycle" to have IJFW sweep the day's memory: promote observed patterns into your knowledge base, prune stale entries, reconcile contradictions, optionally lift winners into global memory so every future project benefits. Memory that grows sharper over time instead of heavier.
 

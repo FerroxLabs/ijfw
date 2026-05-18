@@ -291,7 +291,7 @@ Tier 3 -- Full LLM (user's configured model):
 - [ ] Benchmark harness (three-arm: baseline vs terse vs IJFW)
 
 ### Phase 4 -- Advanced
-- [ ] Optional vector embedding layer (cold storage)
+- [x] Optional vector embedding layer (cold storage) — shipped v1.5.0 r17. Hybrid BM25+cosine rerank via `src/search-hybrid.js` + `src/vectors.js`; enabled with `IJFW_VECTORS=on` + `npm i @xenova/transformers` (optional peer dep, not bundled).
 - [ ] Token usage dashboard (/ijfw-status with cost tracking)
 - [ ] Team memory sharing
 - [ ] Visual memory (image-based context for multimodal agents)

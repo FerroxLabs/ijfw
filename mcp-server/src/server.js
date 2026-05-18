@@ -33,6 +33,11 @@ import { checkPrompt } from './prompt-check.js';
 import { applyCaps, CAP_CONTENT } from './caps.js';
 import { ensureSchemaHeader, SCHEMA_HEADER } from './schema.js';
 import { searchCorpus } from './search-bm25.js';
+// r17 (cold-tier wire-up): hybrid BM25+vector ranking when IJFW_VECTORS=on AND
+// @xenova/transformers is installed. Silent BM25-only fallback otherwise.
+// Lives in its own module so tests can drive the rerank helper without
+// importing server.js (whose stdio bootstrap would hang the test runner).
+import { maybeRerankWithVectors } from './search-hybrid.js';
 import { crossProjectSearch } from './cross-project-search.js';
 // R2-E -- single source of truth for markdown/HTML/control-char defanger.
 import { sanitizeContent } from './sanitizer.js';
@@ -671,7 +676,14 @@ function searchAcrossProjects(query, limit) {
 // numbers preserved so callers get the same output shape; scoring is
 // BM25 (IDF + TF + length-normalized) with per-source boost. Team tier
 // ranks first via a score bump for ties.
-function searchMemory(query, limit = 10, scope = 'project') {
+//
+// r17 (cold-tier wire-up): when IJFW_VECTORS=on AND @xenova/transformers is
+// installed AND the model is loadable, the BM25 top-K is reranked via cosine
+// similarity over the snippet text (blended weights wBm25=0.6, wVec=0.4 from
+// vectors.js defaults). Async because embedder load + embed() are async. The
+// `opts.embedder` parameter lets tests inject a mock embedder without
+// installing @xenova/transformers.
+async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   limit = Math.min(Math.max(1, limit | 0), MAX_SEARCH_RESULTS);
   if (scope === 'all') return searchAcrossProjects(query, limit);
 
@@ -702,7 +714,11 @@ function searchMemory(query, limit = 10, scope = 'project') {
   const ranked = searchCorpus(query, docs, { limit: limit * 3 });
   if (ranked.length === 0) return [];
 
-  const boosted = ranked.map(r => {
+  // r17: cold-tier hybrid rerank. Pure no-op when vectors disabled OR
+  // embedder unavailable. Never throws into the caller.
+  const reranked = await maybeRerankWithVectors(query, ranked, opts);
+
+  const boosted = reranked.map(r => {
     const m = meta.get(r.id);
     return {
       source: m.source,
@@ -714,6 +730,7 @@ function searchMemory(query, limit = 10, scope = 'project') {
   boosted.sort((a, b) => b.score - a.score);
   return boosted.slice(0, limit);
 }
+
 
 // --- DESIGN picker (1.2.0 Phase 5) ---
 // MCP-only delivery of the 12-template design catalog for OpenCode / Qwen
@@ -1268,7 +1285,7 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
   return { text };
 }
 
-function handleSearch({ query, limit = 10, scope = 'project', label }) {
+async function handleSearch({ query, limit = 10, scope = 'project', label }) {
   if (scope === 'sandbox') {
     if (label) {
       const content = readFromSandbox(label);
@@ -1296,7 +1313,7 @@ function handleSearch({ query, limit = 10, scope = 'project', label }) {
   }
   if (query.length > 500) query = query.substring(0, 500);
   if (scope !== 'project' && scope !== 'all') scope = 'project';
-  const results = searchMemory(query, limit, scope);
+  const results = await searchMemory(query, limit, scope);
   if (results.length === 0) {
     const where = scope === 'all' ? ' across all projects' : '';
     return { text: `No results for: "${query}"${where}` };
@@ -1602,7 +1619,7 @@ function handleMessage(msg) {
                 break;
               }
             }
-            result = handleSearch(searchArgs);
+            result = await handleSearch(searchArgs);
             break;
           }
           case 'ijfw_memory_status':
