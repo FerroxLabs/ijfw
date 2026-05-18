@@ -96,29 +96,45 @@ function extract(text, field) {
 
 /**
  * Returns true if the commit at `sha` was authored at or after
- * (dispatchTimestamp - 5s tolerance).
+ * (dispatchTimestamp - 1s tolerance) AND is reachable from the dispatched branch.
+ *
+ * v1.5.0 S3 (W11-A3): branch-tuple check closes the r13-M-N2 bypass where a
+ * stale commit on main could pass as "fresh" because the time window happened
+ * to match. Empty/undefined branch falls back to time-only (detached HEAD or
+ * implicit-main case — orchestrator's choice whether to enforce).
  *
  * @param {string|undefined} sha
- * @param {string|undefined} _branch  (reserved for future ref-checking)
+ * @param {string|undefined} branch  Dispatched branch name (empty = skip membership check)
  * @param {number}           dispatchTimestamp  Unix seconds
  * @param {{ projectRoot: string }} ctx
  * @returns {boolean}
  */
-function verifyFreshCommit(sha, _branch, dispatchTimestamp, ctx) {
+function verifyFreshCommit(sha, branch, dispatchTimestamp, ctx) {
   if (!sha) return false;
   try {
-    const out = execFileSync(
+    // 1. Freshness check (r13-M-02: 1s tolerance for clock skew).
+    const tsOut = execFileSync(
       'git',
       ['log', '-1', '--format=%ct', sha],
       { cwd: ctx.projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
-    const commitTs = parseInt(out, 10);
-    if (!Number.isFinite(commitTs)) return false;
-    // r13-M-02: 5s window was too generous — let pre-existing commits pass as "fresh"
-    // when the orchestrator dispatched ~4s after a stale commit. 1s preserves
-    // minimal clock-skew tolerance. Future v1.5.0: verify commit is on the
-    // dispatched branch (tuple check), not just newer-than-dispatch.
-    return commitTs >= dispatchTimestamp - 1;
+    const commitTs = parseInt(tsOut, 10);
+    if (!Number.isFinite(commitTs) || commitTs < dispatchTimestamp - 1) return false;
+
+    // 2. v1.5.0 S3: branch-tuple check. Closes the "stale commit from main passes
+    //    as fresh because the time window happens to match" bypass that r13-M-N2
+    //    deferred to the structural fix.
+    //    Empty branch = detached HEAD or implicit-main — skip membership check
+    //    (orchestrator's choice whether to enforce).
+    if (branch && branch.length > 0) {
+      const branchOut = execFileSync(
+        'git',
+        ['branch', '--contains', sha, '--list', branch],
+        { cwd: ctx.projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      if (branchOut.trim().length === 0) return false;
+    }
+    return true;
   } catch {
     return false;
   }
