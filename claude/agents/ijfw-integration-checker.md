@@ -3,6 +3,7 @@ name: ijfw-integration-checker
 description: "Verify E2E flows that span multiple subagent worktrees after Phase D wiring."
 model: sonnet
 allowed-tools: Read, Grep, Glob, Bash
+since: '1.4.4'
 ---
 
 Verify end-to-end flows that cross subagent work boundaries. After Phase D

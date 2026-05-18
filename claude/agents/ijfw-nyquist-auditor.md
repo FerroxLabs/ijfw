@@ -3,6 +3,7 @@ name: ijfw-nyquist-auditor
 description: "Verify every phase contract criterion has a covering test. Flag coverage gaps; propose skeleton tests."
 model: sonnet
 allowed-tools: Read, Grep, Glob, Bash, Write
+since: '1.4.4'
 ---
 
 Verify every criterion in the phase's task contracts has a covering test.

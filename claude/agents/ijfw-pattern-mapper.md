@@ -3,6 +3,7 @@ name: ijfw-pattern-mapper
 description: "Map new files in plan to closest existing analog. Auto-fires at plan-time so subagents onboard via PATTERNS.md."
 model: sonnet
 allowed-tools: Read, Grep, Glob
+since: '1.4.4'
 ---
 
 Map every new file in the current plan to the closest existing analog in the

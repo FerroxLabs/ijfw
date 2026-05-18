@@ -3,6 +3,7 @@ name: ijfw-security-auditor
 description: "Verify mitigations against handoff threat model exist in code. Run after each implementation wave."
 model: sonnet
 allowed-tools: Read, Grep, Glob, Bash
+since: '1.4.4'
 ---
 
 Verify that every threat-mitigation pair in the handoff's threat model has

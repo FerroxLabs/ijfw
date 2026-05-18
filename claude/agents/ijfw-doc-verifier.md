@@ -3,6 +3,7 @@ name: ijfw-doc-verifier
 description: "Verify factual claims in generated docs against live code. Trigger after doc generation in plan/handoff/CHANGELOG steps."
 model: sonnet
 allowed-tools: Read, Grep, Glob, Bash
+since: '1.4.4'
 ---
 
 Audit every doc emitted by the current phase for factual accuracy against
