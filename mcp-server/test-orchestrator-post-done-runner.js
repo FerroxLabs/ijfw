@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runPostDone } from './src/orchestrator/post-done-runner.js';
@@ -102,5 +103,62 @@ test('null dispatch (server-side invocation) does not crash', async () => {
     });
     // result shape may indicate review was skipped or returned default verdict — must not throw.
     assert.ok(r, 'should return a result object even with null dispatch');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// ---- S09 selfCheck tests ---------------------------------------------------
+
+test('S09 selfCheck PASSED when claimed file exists + claimed commit exists', async () => {
+  const root = tmpRoot();
+  try {
+    // Initialise a real git repo so the commit lookup works.
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 't@t.t'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
+    writeFileSync(join(root, 'foo.js'), '// hi\n');
+    execFileSync('git', ['add', 'foo.js'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '-m', 'add foo'], { cwd: root });
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+    const shortSha = sha.slice(0, 8);
+
+    const r = await runPostDone({
+      taskId: 'sc1', taskSpec: 'x', commitSha: sha, branch: 'main',
+      reportText: `Status: DONE\nBranch: main\nCommit: ${shortSha}\n- created: foo.js`,
+      toolCallsInMessage: [],
+      dispatch: null, projectRoot: root,
+    });
+    assert.ok(r.selfCheck, 'selfCheck should be present');
+    assert.equal(r.selfCheck.verdict, 'PASSED');
+    assert.equal(r.selfCheck.files_claimed, 1);
+    assert.equal(r.selfCheck.files_present, 1);
+    assert.deepEqual(r.selfCheck.files_missing, []);
+    assert.equal(r.selfCheck.commits_claimed, 1);
+    assert.equal(r.selfCheck.commits_present, 1);
+    assert.deepEqual(r.selfCheck.commits_missing, []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('S09 selfCheck FAILED when claimed file does not exist', async () => {
+  const root = tmpRoot();
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 't@t.t'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
+    writeFileSync(join(root, 'real.js'), '// real\n');
+    execFileSync('git', ['add', 'real.js'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '-m', 'add real'], { cwd: root });
+
+    const r = await runPostDone({
+      taskId: 'sc2', taskSpec: 'x', commitSha: 'abc', branch: 'main',
+      // claims a file that was never written
+      reportText: 'Status: DONE\nBranch: main\n- created: phantom.js',
+      toolCallsInMessage: [],
+      dispatch: null, projectRoot: root,
+    });
+    assert.ok(r.selfCheck, 'selfCheck should be present');
+    assert.equal(r.selfCheck.verdict, 'FAILED');
+    assert.equal(r.selfCheck.files_claimed, 1);
+    assert.equal(r.selfCheck.files_present, 0);
+    assert.deepEqual(r.selfCheck.files_missing, ['phantom.js']);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

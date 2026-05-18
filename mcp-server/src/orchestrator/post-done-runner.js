@@ -83,6 +83,7 @@ export function runSelfCheck(reportText, projectRoot) {
     const allShas = execFileSync('git', ['log', '--all', '--format=%H'], {
       cwd: projectRoot,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).split('\n');
     commitsPresent = claimedCommits.filter((c) => allShas.some((sha) => sha.startsWith(c)));
   } catch {
