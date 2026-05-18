@@ -13,8 +13,19 @@
  *     reviewOk: boolean,
  *     reviewFindings: string[],
  *     gatePassed: boolean,
+ *     gateAction: 'block' | 'advise' | 'pass',
  *     gateViolation: object | null,
  *   }
+ *
+ * `gateAction` (W12-F/F4 — RT2-H1) tells the MCP tool handler what to do
+ * with a gate failure:
+ *   - 'pass'   → gate passed; advance normally.
+ *   - 'block'  → strict mode (default) AND gate failed. Caller MUST refuse
+ *                to claim success. The MCP handler should surface a structured
+ *                `block: true` so the orchestrator-LLM treats it as a hard stop.
+ *   - 'advise' → caller opted out of strict via `strictGate: false` AND gate
+ *                failed. Caller may proceed but should still surface the
+ *                violation so it gets routed into memory-feedback.
  *
  * The `dispatch` parameter is the reviewTask injected dispatcher:
  *   (kind: 'spec-compliance'|'code-quality', ctx: object)
@@ -106,6 +117,7 @@ export function runSelfCheck(reportText, projectRoot) {
 }
 
 /**
+/**
  * @param {object} params
  * @param {string} params.taskId
  * @param {string} [params.taskSpec]
@@ -116,12 +128,17 @@ export function runSelfCheck(reportText, projectRoot) {
  * @param {Function|null} [params.dispatch]   Reviewer dispatcher; null = skip review
  * @param {string} params.projectRoot
  * @param {string} [params.projectConventions]
+ * @param {boolean} [params.strictGate=true]
+ *   W12-F/F4 — RT2-H1. When true (default) and the verification gate fails,
+ *   the result includes `gateAction: 'block'` and the MCP handler MUST refuse
+ *   to claim success. Pass `false` for legacy advisory-only behavior.
  * @returns {Promise<{
  *   verdict: 'approved'|'spec_failed'|'quality_failed'|'no_review',
  *   reviewStage: 'spec'|'quality'|null,
  *   reviewOk: boolean,
  *   reviewFindings: string[],
  *   gatePassed: boolean,
+ *   gateAction: 'block'|'advise'|'pass',
  *   gateViolation: object|null,
  *   selfCheck: {
  *     verdict: 'PASSED'|'FAILED',
@@ -144,6 +161,7 @@ export async function runPostDone({
   dispatch,
   projectRoot,
   projectConventions = '',
+  strictGate = true,
 }) {
   if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
     throw new TypeError('runPostDone: projectRoot is required');
@@ -199,12 +217,26 @@ export async function runPostDone({
     }
   }
 
+  // W12-F/F4 — RT2-H1: classify the gate outcome so the caller knows whether
+  // to BLOCK (strict default + failure), ADVISE (caller opted out + failure),
+  // or PASS (gate succeeded). The MCP tool handler reads `gateAction` and
+  // surfaces a structured `block: true` to the orchestrator-LLM when 'block'.
+  let gateAction;
+  if (gateOutcome.ok) {
+    gateAction = 'pass';
+  } else if (strictGate === false) {
+    gateAction = 'advise';
+  } else {
+    gateAction = 'block';
+  }
+
   return {
     verdict,
     reviewStage,
     reviewOk,
     reviewFindings,
     gatePassed: gateOutcome.ok === true,
+    gateAction,
     gateViolation: gateOutcome.ok ? null : { violation: gateOutcome.violation, claim: gateOutcome.claim },
     selfCheck,
   };
