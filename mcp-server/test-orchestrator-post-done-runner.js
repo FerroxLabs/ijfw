@@ -26,6 +26,8 @@ test('spec PASS + quality PASS returns verdict (gate intentionally trips on DONE
     // (line 25 of verification-gate.js documents this). Without fresh test/build
     // evidence in toolCallsInMessage, the gate is expected to fail.
     assert.equal(r.gatePassed, false);
+    // W12-F/F4 — RT2-H1: strict mode is default; failed gate ⇒ gateAction: 'block'.
+    assert.equal(r.gateAction, 'block', 'strict default: failed gate ⇒ block');
     assert.ok(r.gateViolation, 'gateViolation should describe the missing evidence');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -40,6 +42,8 @@ test('non-completion report (NEEDS_CONTEXT) → gate passes (no claim to verify)
       toolCallsInMessage: [], dispatch, projectRoot: root,
     });
     assert.equal(r.gatePassed, true, 'no completion phrase in body → no claim → gate passes');
+    // W12-F/F4 — RT2-H1: gate passed ⇒ gateAction: 'pass'.
+    assert.equal(r.gateAction, 'pass', 'gate ok ⇒ pass');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -72,6 +76,7 @@ test('gate violation when report claims completion without test evidence', async
       dispatch, projectRoot: root,
     });
     assert.equal(r.gatePassed, false);
+    assert.equal(r.gateAction, 'block', 'strict default: failed gate ⇒ block');
     assert.ok(r.gateViolation, 'gateViolation should describe the missing evidence');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -89,6 +94,10 @@ test('recordViolation failure (e.g. .ijfw absent) is non-fatal', async () => {
   });
   // gateViolation should still be populated even though recording it failed.
   assert.equal(r.gatePassed, false);
+  // W12-F/F4 — RT2-H1: even with persistence failure, gateAction is still 'block'
+  // under strict default. The classification doesn't depend on whether the
+  // violation jsonl was written.
+  assert.equal(r.gateAction, 'block');
 });
 
 test('null dispatch (server-side invocation) does not crash', async () => {
@@ -160,5 +169,41 @@ test('S09 selfCheck FAILED when claimed file does not exist', async () => {
     assert.equal(r.selfCheck.files_claimed, 1);
     assert.equal(r.selfCheck.files_present, 0);
     assert.deepEqual(r.selfCheck.files_missing, ['phantom.js']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// ---- W12-F/F4 RT2-H1: strict-mode default + advisory opt-out --------------
+
+test('strict mode (default) returns gateAction: "block" on violation', async () => {
+  const root = tmpRoot();
+  try {
+    const dispatch = async () => ({ verdict: 'PASS', findings: [] });
+    const r = await runPostDone({
+      // No strictGate param ⇒ default true ⇒ block on failure.
+      taskId: 'strict-default', taskSpec: 'x', commitSha: 'abc', branch: 'main',
+      reportText: 'all tests pass ✅ shipped successfully',
+      toolCallsInMessage: [],
+      dispatch, projectRoot: root,
+    });
+    assert.equal(r.gatePassed, false, 'gate should fail on bare completion claim');
+    assert.equal(r.gateAction, 'block', 'strict default ⇒ block on failure');
+    assert.ok(r.gateViolation, 'violation detail required so caller can surface block reason');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('strictGate: false returns gateAction: "advise" on violation', async () => {
+  const root = tmpRoot();
+  try {
+    const dispatch = async () => ({ verdict: 'PASS', findings: [] });
+    const r = await runPostDone({
+      taskId: 'advise-opt-out', taskSpec: 'x', commitSha: 'abc', branch: 'main',
+      reportText: 'all tests pass ✅ shipped successfully',
+      toolCallsInMessage: [],
+      dispatch, projectRoot: root,
+      strictGate: false, // explicit advisory opt-out
+    });
+    assert.equal(r.gatePassed, false, 'gate still fails on the same input');
+    assert.equal(r.gateAction, 'advise', 'opt-out ⇒ advisory, not block');
+    assert.ok(r.gateViolation, 'violation still surfaced for memory-feedback routing');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

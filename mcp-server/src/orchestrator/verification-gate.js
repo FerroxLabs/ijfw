@@ -1,19 +1,49 @@
 /**
- * verification-gate.js — Advisory lint: detects completion claims in a
- * message that lack fresh verification evidence (a Bash test/build call
- * in the same message).
+ * verification-gate.js — Iron-Law completion lint: detects completion
+ * claims in a message that lack fresh verification evidence (a Bash
+ * test/build call in the same message).
  *
- * ADVISORY ONLY — never throws, never blocks. Returns { ok: true } or
- * { ok: false, violation: string, claim: string }.
+ * Gate enforcement: callers receive { ok, violation, claim, enforce }.
+ * When `enforce: 'strict'` (default in post-done-runner.js as of W12-F/F4),
+ * the caller MUST refuse to advance on ok=false. Use `enforceVerificationGate`
+ * (default strict) to get a thrown `VerificationGateViolation` on failure;
+ * use the lower-level `checkVerificationGate` for advisory-only callers
+ * that prefer to inspect the result themselves.
  *
  * Violations are persisted to .ijfw/memory/verification-violations.jsonl
  * so the memory-feedback system (v1.4.1 B10) can pattern-detect over time.
  *
- * Landed in W10-A2 (v1.4.4 — N5).
+ * Landed in W10-A2 (v1.4.4 — N5). Promoted to strict-by-default in
+ * W12-F/F4 (v1.5.0-major — RT2-H1).
  */
 
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+
+// ---------------------------------------------------------------------------
+// Error subclass — thrown by enforceVerificationGate in strict mode.
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by `enforceVerificationGate` when the gate fails and strict mode
+ * is in effect (default). Carries the structured violation alongside the
+ * Error contract so callers can branch on `instanceof VerificationGateViolation`.
+ */
+export class VerificationGateViolation extends Error {
+  /**
+   * @param {{ violation: string, claim: string }} outcome
+   *   The failure result returned by `checkVerificationGate`.
+   */
+  constructor(outcome) {
+    const reason = outcome && outcome.violation
+      ? String(outcome.violation)
+      : 'Verification gate violation';
+    super(reason);
+    this.name = 'VerificationGateViolation';
+    this.violation = reason;
+    this.claim = outcome && outcome.claim ? String(outcome.claim) : '';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Detection patterns
@@ -68,6 +98,33 @@ export function checkVerificationGate(message, toolCallsInMessage) {
   }
 
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Strict enforcement wrapper (W12-F/F4 — RT2-H1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Enforce the verification gate. By default this is strict: a failed gate
+ * throws `VerificationGateViolation`. Pass `{ strict: false }` for advisory
+ * behavior (returns the same shape as `checkVerificationGate`).
+ *
+ * @param {string} messageText
+ * @param {Array<{tool: string, input?: {command?: string}}>} toolCalls
+ * @param {{ strict?: boolean }} [opts]
+ * @returns {{ ok: true } | { ok: false, violation: string, claim: string }}
+ * @throws {VerificationGateViolation} when strict and gate fails.
+ */
+export function enforceVerificationGate(messageText, toolCalls, opts = {}) {
+  const strict = opts.strict !== false; // default strict
+  const outcome = checkVerificationGate(
+    typeof messageText === 'string' ? messageText : '',
+    Array.isArray(toolCalls) ? toolCalls : [],
+  );
+  if (!outcome.ok && strict) {
+    throw new VerificationGateViolation(outcome);
+  }
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
