@@ -15,8 +15,10 @@
 
 import { spawn } from 'node:child_process';
 import * as readline from 'node:readline';
-import { pickAuditors, isReachable } from './audit-roster.js';
-import { loadSwarmConfig } from './swarm-config.js';
+import { readdirSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { pickAuditors, isInstalled, isReachable, ROSTER } from './audit-roster.js';
+import { loadSwarmConfig, DEFAULT_AUDITORS } from './swarm-config.js';
 import { buildRequest, parseResponse, mergeResponses, checkBudget } from './cross-dispatcher.js';
 import { writeReceipt, readReceipts } from './receipts.js';
 import { runViaApi } from './api-client.js';
@@ -381,6 +383,158 @@ function countItems(p) {
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// phase-e-auto helpers (v1.4.4 N10)
+// ---------------------------------------------------------------------------
+
+// Resolve the next CROSS-AUDIT-r<N>.md path under .planning/<phase>/.
+// Scans for existing r<N> files and increments the highest N found.
+function resolveAuditOutputPath(projectDir, phase) {
+  const planningDir = join(projectDir, '.planning', phase);
+  let maxN = 0;
+  if (existsSync(planningDir)) {
+    try {
+      const files = readdirSync(planningDir);
+      for (const f of files) {
+        const m = f.match(/^CROSS-AUDIT-r(\d+)\.md$/);
+        if (m) {
+          const n = parseInt(m[1], 10);
+          if (n > maxN) maxN = n;
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+  return join(planningDir, `CROSS-AUDIT-r${maxN + 1}.md`);
+}
+
+// Classify a merged audit result into PASS / CONDITIONAL / FAIL.
+// HIGH severity finding → FAIL; any finding → CONDITIONAL; none → PASS.
+function classifyVerdict(items) {
+  if (!Array.isArray(items) || items.length === 0) return 'PASS';
+  const hasHigh = items.some(item => {
+    const sev = (item.severity || item.level || '').toString().toUpperCase();
+    return sev === 'HIGH' || sev === 'CRITICAL';
+  });
+  return hasHigh ? 'FAIL' : 'CONDITIONAL';
+}
+
+// Pick the auditor roster for phase-e-auto from swarm.json (or defaults).
+// Filters to entries that are reachable (CLI or API); missing CLI AND no
+// apiFallback → skipped with a NOTE entry in the return value.
+function resolvePhaseEAuditors(swarmConfig, env) {
+  const requestedIds = (Array.isArray(swarmConfig.auditors) && swarmConfig.auditors.length > 0)
+    ? swarmConfig.auditors
+    : [...DEFAULT_AUDITORS];
+
+  const picks = [];
+  const skipped = [];
+
+  for (const id of requestedIds) {
+    const entry = ROSTER.find(e => e.id === id);
+    if (!entry) {
+      skipped.push({ id, reason: 'not in roster' });
+      continue;
+    }
+    const reach = isReachable(id, env);
+    if (!reach.any) {
+      // CLI missing AND no apiFallback (or key not set) → skip with NOTE
+      skipped.push({ id, reason: 'CLI missing and no apiFallback configured' });
+      continue;
+    }
+    // Annotate API-only picks
+    const pick = (!reach.cli && reach.api) ? { ...entry, preferredSource: 'api' } : { ...entry };
+    picks.push(pick);
+  }
+
+  return { picks, skipped };
+}
+
+// Run the phase-e-auto branch.  Does NOT use process.exit / uxGate / budget
+// guard — it is a programmatic call from the orchestrator, not a CLI call.
+async function runPhaseEAuto({ projectDir, phase, target, env, quiet }) {
+  const swarmConfig = loadSwarmConfig(projectDir);
+  const { picks, skipped } = resolvePhaseEAuditors(swarmConfig, env);
+
+  const notes = skipped.map(s => `NOTE: skipped auditor '${s.id}' — ${s.reason}`);
+
+  if (!quiet && notes.length > 0) {
+    process.stderr.write(notes.join('\n') + '\n');
+  }
+
+  if (picks.length === 0) {
+    const outputPath = resolveAuditOutputPath(projectDir, phase);
+    const content = `# Cross-Audit Phase E\n\nNo auditors available.\n\n${notes.map(n => `- ${n}`).join('\n')}\n`;
+    const dir = dirname(outputPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(outputPath, content, 'utf8');
+    return { verdict: 'CONDITIONAL', findings: [], outputPath, notes };
+  }
+
+  const auditTarget = target || 'HEAD~1..HEAD';
+  const resolvedTimeoutSec = null;
+
+  const requests = picks.map(pick => ({
+    pick,
+    payload: buildRequest('audit', auditTarget, pick.id, 'general', null),
+  }));
+
+  const tasks = requests.map(({ pick, payload }) => () =>
+    fireExternal(pick, payload, timeoutForPick(pick, resolvedTimeoutSec), env)
+  );
+  const rawResults = await fanOut(tasks, 3);
+
+  const auditorResults = rawResults.map((raw, i) => {
+    const pick = picks[i];
+    if (raw === null) {
+      return { status: 'failed', parsed: { items: [], prose: `[${pick.id}: spawn failed]` } };
+    }
+    const { stdout, exitCode, status: rawStatus } = raw;
+    if (rawStatus === 'timeout') return { status: 'timeout', parsed: { items: [], prose: `[${pick.id}: timeout]` } };
+    if (rawStatus === 'failed') return { status: 'failed', parsed: { items: [], prose: `[${pick.id}: failed]` } };
+    if (rawStatus === 'aborted') return { status: 'aborted', parsed: { items: [], prose: `[${pick.id}: aborted]` } };
+    if (rawStatus === 'fallback-used') {
+      const p = parseResponse('audit', stdout);
+      return { status: 'fallback-used', parsed: p };
+    }
+    if (exitCode !== 0) return { status: 'failed', parsed: { items: [], prose: `[${pick.id}: exited ${exitCode}]` } };
+    const p = parseResponse('audit', stdout);
+    return { status: 'ok', parsed: p };
+  });
+
+  const parsed = auditorResults.map(r => r.parsed);
+  const merged = mergeResponses('audit', parsed);
+  const items = Array.isArray(merged) ? merged : [];
+  const verdict = classifyVerdict(items);
+
+  // Write synthesis to .planning/<phase>/CROSS-AUDIT-r<N>.md
+  const outputPath = resolveAuditOutputPath(projectDir, phase);
+  const dir = dirname(outputPath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  const auditorSummary = picks.map((p, i) => `- ${p.id}: ${auditorResults[i].status}`).join('\n');
+  const findingsSection = items.length > 0
+    ? items.map(item => `- [${(item.severity || item.level || 'INFO').toUpperCase()}] ${item.text || item.description || JSON.stringify(item)}`).join('\n')
+    : '_(none)_';
+  const content = [
+    `# Cross-Audit Phase E — ${phase}`,
+    '',
+    `**Verdict:** ${verdict}`,
+    `**Auditors:** ${picks.map(p => p.id).join(', ')}`,
+    '',
+    '## Auditor Status',
+    auditorSummary,
+    '',
+    '## Findings',
+    findingsSection,
+    '',
+    ...(notes.length > 0 ? ['## Notes', ...notes, ''] : []),
+  ].join('\n');
+
+  writeFileSync(outputPath, content, 'utf8');
+
+  return { verdict, findings: items, outputPath, notes };
+}
+
 export async function runCrossOp({
   mode,
   target,
@@ -399,6 +553,14 @@ export async function runCrossOp({
   projectDir = projectDir ?? process.cwd();
   runStamp   = runStamp   ?? new Date().toISOString();
   env        = env        ?? process.env;
+
+  // v1.4.4 N10: phase-e-auto branch — programmatic orchestrator call.
+  // Reads .ijfw/swarm.json for auditor roster; graceful CLI-missing skip;
+  // writes .planning/<phase>/CROSS-AUDIT-r<N>.md; returns {verdict, findings, outputPath}.
+  if (mode === 'phase-e-auto') {
+    const phase = target || 'current';
+    return runPhaseEAuto({ projectDir, phase, target, env, quiet });
+  }
 
   const start = Date.now();
 
