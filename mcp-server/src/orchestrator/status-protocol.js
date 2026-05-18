@@ -53,7 +53,7 @@ export class ProtocolViolation extends Error {
  * @param {string} reportText
  * @returns {{ status: string, commit_sha?: string, branch?: string, tests?: string,
  *             concerns?: string, reason?: string, missing?: string, tried?: string,
- *             raw: string }}
+ *             attempts: number, raw: string }}
  * @throws {ProtocolViolation}
  */
 export function parseAgentReport(reportText) {
@@ -80,6 +80,11 @@ export function parseAgentReport(reportText) {
     reason:     extract(raw, 'Reason'),
     missing:    extract(raw, 'Missing'),
     tried:      extract(raw, 'Tried'),
+    // v1.5.0-major S07 (W12-A): 3-attempt cap signal. Opt-in; defaults to 0
+    // when an implementer omits the line — preserving prior behavior for
+    // every existing report. Implementers using ijfw-executor.md set this to
+    // the max auto-fix attempts on any single issue (Rules 1-3).
+    attempts:   parseInt(extract(raw, 'Attempts') || '0', 10),
     raw,
   };
 }
@@ -148,12 +153,26 @@ function verifyFreshCommit(sha, branch, dispatchTimestamp, ctx) {
  * Decide the orchestrator action based on a parsed agent report.
  *
  * @param {{ status: string, commit_sha?: string, branch?: string, concerns?: string,
- *           missing?: string, reason?: string, tried?: string }} parsed
+ *           missing?: string, reason?: string, tried?: string, attempts?: number }} parsed
  * @param {number}  dispatchTimestamp  Unix seconds (Date.now()/1000 at dispatch)
  * @param {{ projectRoot: string }} ctx
  * @returns {{ action: string, [key: string]: unknown }}
  */
 export function handleStatus(parsed, dispatchTimestamp, ctx) {
+  // v1.5.0-major S07 (W12-A): 3-attempt cap is a hard escalation signal
+  // regardless of reported status. If an implementer (ijfw-executor.md) ran
+  // out the per-issue auto-fix budget, the orchestrator MUST surface to the
+  // user — even if the agent claims DONE — because by definition the
+  // remaining issue is documented but unfixed. R2's #1 pattern: convert
+  // truncation from a behavior problem to a budget problem.
+  if (typeof parsed.attempts === 'number' && parsed.attempts >= 3) {
+    return {
+      action: 'escalate_to_user',
+      reason: '3-attempt-cap-hit',
+      original_status: parsed.status,
+      original_action: undefined,
+    };
+  }
   switch (parsed.status) {
     case 'DONE': {
       const fresh = verifyFreshCommit(
