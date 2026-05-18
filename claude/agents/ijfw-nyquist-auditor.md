@@ -105,6 +105,11 @@ proposed_files:
 
 # DO NOT
 
+- **HARD CONTRACT (r13-M-06):** Every path passed to the `Write` tool MUST end
+  with `.proposed.js`. Any other extension is a contract violation — refuse
+  the write and emit a finding instead. This prevents an erroneous invocation
+  from overwriting a real test file. There is no runtime mediator enforcing
+  this for first-party agents; the contract is documentation + behavioural.
 - Do not commit proposed skeleton tests — Write to `.proposed.js` only.
 - Do not modify existing test files.
 - Do not mark EXEMPT without a documented invariant.

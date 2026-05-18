@@ -114,7 +114,11 @@ function verifyFreshCommit(sha, _branch, dispatchTimestamp, ctx) {
     ).trim();
     const commitTs = parseInt(out, 10);
     if (!Number.isFinite(commitTs)) return false;
-    return commitTs >= dispatchTimestamp - 5;
+    // r13-M-02: 5s window was too generous — let pre-existing commits pass as "fresh"
+    // when the orchestrator dispatched ~4s after a stale commit. 1s preserves
+    // minimal clock-skew tolerance. Future v1.5.0: verify commit is on the
+    // dispatched branch (tuple check), not just newer-than-dispatch.
+    return commitTs >= dispatchTimestamp - 1;
   } catch {
     return false;
   }

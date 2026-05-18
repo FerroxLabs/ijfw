@@ -459,12 +459,17 @@ export async function startServer(options = {}) {
         return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
       }
       function isUnderWaveRoot(canonChild) {
+        // r13-M-05: restrict to STATE.md / SUMMARY.md filenames within
+        // .ijfw/wave-*/ subdirs. Previously allowed ANY file in a wave dir;
+        // wave directories may contain .tmp, lock files, or partial blackboard
+        // data that shouldn't be browser-readable.
         const ijfwDir = canonOrNull(join(REPO_ROOT, '.ijfw'));
         if (!ijfwDir || !canonChild) return false;
         const rel = relative(ijfwDir, canonChild);
         if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
         const first = rel.split(/[\\/]/)[0];
-        return first.startsWith('wave-') && first.length > 'wave-'.length;
+        if (!first.startsWith('wave-') || first.length === 'wave-'.length) return false;
+        return rel.endsWith('STATE.md') || rel.endsWith('SUMMARY.md');
       }
       const canonPath = canonOrNull(reqPath);
       if (!canonPath) {

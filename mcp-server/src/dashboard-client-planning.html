@@ -111,9 +111,16 @@
           if (urlEnd !== -1) {
             const a = document.createElement('a');
             a.textContent = s.slice(i + 1, close);
-            // Only allow http(s) and relative URLs. Block javascript:, data:, etc.
+            // r13-L-01: tightened URL guard.
+            // ALLOW: http://, https://, and same-origin relative paths (no protocol).
+            // BLOCK: javascript:, data:, mailto:, vbscript:, file:, AND protocol-relative
+            //        URLs starting with `//` (would open cross-origin without scheme).
             const url = s.slice(close + 2, urlEnd);
-            if (/^(https?:|[^:]*$|[^:]*\/)/.test(url)) {
+            const isAllowed = (
+              /^https?:\/\//.test(url) ||                  // explicit http/https
+              (!url.startsWith('//') && !/^[^:/?#]+:/.test(url))   // relative, no protocol, no `//`
+            );
+            if (isAllowed) {
               a.href = url;
               a.target = '_blank';
               a.rel = 'noopener';

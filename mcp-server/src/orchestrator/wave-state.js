@@ -9,7 +9,7 @@
  * N4 (W10-A2) will flesh out the blackboard→STATE rollup logic.
  */
 
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
 
@@ -121,7 +121,9 @@ function wavePaths(waveId, projectRoot) {
   return {
     dir,
     state: join(dir, 'STATE.md'),
+    summary: join(dir, 'SUMMARY.md'),
     lock: join(dir, '.STATE.md.lock'),
+    summaryLock: join(dir, '.SUMMARY.md.lock'),
     tmp: join(dir, '.STATE.md.tmp'),
   };
 }
@@ -185,7 +187,47 @@ export async function writeWaveState(waveId, state, projectRoot) {
 }
 
 /**
- * Stub checkpoint — N4 (W10-A2) will flesh out the blackboard→STATE rollup.
+ * Append a delta entry to a wave's SUMMARY.md — markdown append-only log.
+ * r13-M-03 (post-Trident r13 fix): minimum-viable implementation closing the
+ * handoff §N4 promise. Full blackboard→STATE rollup remains future work for
+ * v1.5.0 (would mean reading blackboard.js claims/findings and summarising).
+ *
+ * Delta shape (caller chooses what to record):
+ *   { agent_id?, task_id?, commits?: string[], tests_delta?: string,
+ *     contracts_touched?: string[], surprises?: string }
+ *
+ * Atomic via withFsLock + appendFile. Each delta is rendered as a markdown
+ * H3 section dated by ISO timestamp; subsequent entries append below.
+ *
+ * @param {string} waveId
+ * @param {object} delta
+ * @param {string} projectRoot
+ * @returns {Promise<void>}
+ */
+export async function appendSummary(waveId, delta, projectRoot) {
+  const { dir, summary, summaryLock } = wavePaths(waveId, projectRoot);
+  const ts = new Date().toISOString();
+  const lines = [`### ${ts}`];
+  if (delta.agent_id) lines.push(`- **agent:** ${delta.agent_id}`);
+  if (delta.task_id) lines.push(`- **task:** ${delta.task_id}`);
+  if (Array.isArray(delta.commits) && delta.commits.length) {
+    lines.push(`- **commits:** ${delta.commits.join(', ')}`);
+  }
+  if (delta.tests_delta) lines.push(`- **tests:** ${delta.tests_delta}`);
+  if (Array.isArray(delta.contracts_touched) && delta.contracts_touched.length) {
+    lines.push(`- **contracts:** ${delta.contracts_touched.join(', ')}`);
+  }
+  if (delta.surprises) lines.push(`- **surprises:** ${delta.surprises}`);
+  const payload = lines.join('\n') + '\n\n';
+
+  await withFsLock(summaryLock, async () => {
+    await mkdir(dir, { recursive: true });
+    await appendFile(summary, payload, 'utf8');
+  });
+}
+
+/**
+ * Stub checkpoint — full blackboard→STATE rollup remains v1.5.0 work.
  * Seeds an empty state if missing; updates only frontmatter.checkpoint_at.
  *
  * @param {string} waveId

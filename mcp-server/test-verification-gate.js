@@ -17,12 +17,27 @@ test('checkVerificationGate returns ok:true for message with no completion claim
   assert.deepEqual(result, { ok: true });
 });
 
-test('checkVerificationGate returns ok:false for "Tests pass!" with no Bash tool call', () => {
-  const result = checkVerificationGate('Tests pass!', []);
+test('checkVerificationGate returns ok:false for "all tests pass" with no Bash tool call', () => {
+  // r13-M-04: original test was "Tests pass!" but lowercase `pass(?:es)?` was
+  // dropped (false positives on "pass the context"). The phrase pattern
+  // "all tests pass" still catches the canonical completion claim.
+  const result = checkVerificationGate('all tests pass', []);
   assert.equal(result.ok, false);
   assert.ok(typeof result.violation === 'string');
   assert.ok(result.violation.length > 0);
   assert.ok(typeof result.claim === 'string');
+});
+
+test('checkVerificationGate r13-M-04: does NOT flag neutral "pass the context"', () => {
+  // Regression: pre-r13 the pattern `\bpass(?:es)?\b` fired on common neutral
+  // language. Lowercase pass was dropped; uppercase PASS still fires.
+  const r1 = checkVerificationGate("I'll pass the context to the next agent.", []);
+  assert.equal(r1.ok, true, 'neutral "pass the context" should not fire');
+  const r2 = checkVerificationGate('Please pass the variable through.', []);
+  assert.equal(r2.ok, true, 'neutral "pass the variable" should not fire');
+  // Uppercase PASS (verdict literal) still flags
+  const r3 = checkVerificationGate('Verdict: PASS', []);
+  assert.equal(r3.ok, false, 'uppercase PASS still detected');
 });
 
 test('checkVerificationGate returns ok:true for "All tests pass" WITH npm test Bash call', () => {
@@ -37,10 +52,13 @@ test('checkVerificationGate returns ok:true for "completed" + node --test Bash c
   assert.deepEqual(result, { ok: true });
 });
 
-test('checkVerificationGate detects DONE, complete, shipped, ✅, "all tests pass", "build succeeded"', () => {
+test('checkVerificationGate detects DONE, completed, shipped, ✅, "all tests pass", "build succeeded"', () => {
+  // r13-M-01: dropped bare `complete` / lowercase `done` — negations like
+  // "not yet complete" fired falsely. Detection list is now: protocol literal
+  // DONE, completed/shipped/PASS/passes/✅, plus phrase patterns.
   const claims = [
     'DONE',
-    'complete',
+    'completed',
     'shipped',
     '✅',
     'all tests pass',
@@ -50,6 +68,15 @@ test('checkVerificationGate detects DONE, complete, shipped, ✅, "all tests pas
     const result = checkVerificationGate(`The work is ${claim}.`, []);
     assert.equal(result.ok, false, `Expected ok:false for claim: "${claim}"`);
   }
+});
+
+test('checkVerificationGate r13-M-01: does NOT flag negations like "not yet complete"', () => {
+  // Regression test: pre-r13 the pattern `\bcomplete\b` fired on "not yet complete"
+  // — a NEGATION. Bare `complete` was dropped from COMPLETION_PATTERNS.
+  const result1 = checkVerificationGate('The work is not yet complete.', []);
+  assert.equal(result1.ok, true, 'negation "not yet complete" should not fire');
+  const result2 = checkVerificationGate('Work to complete: 3 items remain.', []);
+  assert.equal(result2.ok, true, 'forward-looking "to complete" should not fire');
 });
 
 test('checkVerificationGate ignores non-Bash tool calls as verification evidence', () => {

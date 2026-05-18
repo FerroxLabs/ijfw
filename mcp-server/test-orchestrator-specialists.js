@@ -117,6 +117,16 @@ test('DEFAULT_SPECIALISTS has no duplicate ids within any project type', () => {
   }
 });
 
+test('r13-M-06: nyquist-auditor has HARD CONTRACT for Write path scoping', () => {
+  // Trident r13 Claude-lens MEDIUM mitigation: nyquist has allowed-tools=Write
+  // but no runtime sandbox restricts the path. Doc must contain an explicit
+  // HARD CONTRACT restricting Write to *.proposed.js so misinvocation can't
+  // overwrite real test files.
+  const content = readFileSync(join(AGENTS_DIR, 'ijfw-nyquist-auditor.md'), 'utf8');
+  assert.match(content, /HARD CONTRACT/, 'nyquist doc must declare HARD CONTRACT for Write scoping');
+  assert.match(content, /\.proposed\.js/, 'HARD CONTRACT must name .proposed.js extension');
+});
+
 test('existing pre-v1.4.4 specialists still present (regression)', () => {
   // BASE specialists + TESTS_SPECIALIST + TYPES_SPECIALIST should survive
   const nodeAgentTypes = new Set(DEFAULT_SPECIALISTS.node.map((s) => s.agent_type));

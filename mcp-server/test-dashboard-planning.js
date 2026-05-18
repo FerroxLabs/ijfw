@@ -111,6 +111,18 @@ test('/api/planning rejects empty path with 400', async () => {
   assert.equal(r.status, 400);
 });
 
+test('r13-M-05: /api/planning rejects non-STATE/SUMMARY files inside wave dirs', async () => {
+  writeFileSync(join(TEST_ROOT, '.ijfw', 'wave-W10-A0', 'internal.tmp'), 'should not leak');
+  const r = await fetchJSON('/api/planning?path=' + encodeURIComponent('.ijfw/wave-W10-A0/internal.tmp'));
+  assert.equal(r.status, 403);
+});
+
+test('r13-M-05: /api/planning allows SUMMARY.md within wave dirs', async () => {
+  const r = await fetchJSON('/api/planning?path=' + encodeURIComponent('.ijfw/wave-W10-A0/SUMMARY.md'));
+  assert.equal(r.status, 200);
+  assert.match(r.data.body, /summary/);
+});
+
 // ---------- /planning viewer ----------
 
 test('/planning returns HTML 200', async () => {

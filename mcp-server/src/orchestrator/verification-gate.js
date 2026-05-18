@@ -19,8 +19,14 @@ import { dirname, join } from 'node:path';
 // Detection patterns
 // ---------------------------------------------------------------------------
 
+// r13-M-01 + r13-M-04: dropped bare `complete`, lowercase `done`, AND lowercase
+// `pass(?:es)?` — all three fired falsely on common neutral language ("not yet
+// complete", "to be done in v1.5", "pass the context"). Detection list is now:
+// protocol literal `DONE`, `completed`/`shipped` (deliberate completion verbs),
+// uppercase `PASS` (verdict literal), `✅` emoji, and explicit completion phrases
+// ("all tests pass" / "build succeeded" / "deployed" / "ready to ship").
 const COMPLETION_PATTERNS = [
-  /\b(?:DONE|done|complete|completed|shipped|PASS|pass(?:es)?)\b/,
+  /\b(?:DONE|completed|shipped|PASS)\b/,
   /✅/,
   /\b(?:all tests pass|build succeeded|deployed|ready to ship)\b/i,
 ];
