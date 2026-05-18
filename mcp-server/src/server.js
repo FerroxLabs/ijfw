@@ -893,6 +893,25 @@ const TOOLS = [
       },
       required: ['command'],
     },
+  },
+  {
+    // v1.5.0-major S02: wired-in runtime contracts. MUST be called by the orchestrator-LLM
+    // after every subagent finishes -- NOT inferred from skill text. Parses report through
+    // the v1.4.4 4-value status protocol; if DONE, ALSO runs two-stage review + verification
+    // gate. Single tool with combined behavior keeps us under the 10-tool cap (CLAUDE.md).
+    name: 'ijfw_subagent_post_done',
+    description: 'Process a subagent report through wired-in v1.4.4 + v1.5.0 runtime contracts. Parses 4-value status, verifies fresh commit, and if DONE runs two-stage review (spec then quality) + verification-gate scan. Call after every subagent finishes. Returns route decision + (if DONE) review verdict + gate result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reportText:        { type: 'string',  description: 'The subagent’s final message verbatim.' },
+        dispatchTimestamp: { type: 'number',  description: 'Unix seconds at dispatch time (Date.now()/1000).' },
+        branch:            { type: 'string',  description: 'Dispatched branch name (optional; empty = detached HEAD).' },
+        taskId:            { type: 'string',  description: 'Task identifier (required only if status is DONE for review).' },
+        taskSpec:          { type: 'string',  description: 'Spec text the implementer was supposed to satisfy (optional).' },
+      },
+      required: ['reportText', 'dispatchTimestamp'],
+    },
   }
 ];
 
@@ -1469,6 +1488,32 @@ function handleMessage(msg) {
           case 'ijfw_update_check': {
             const r = await ijfwUpdateCheck(args || {});
             result = { text: JSON.stringify(r, null, 2), isError: !!(r && r.error) };
+            break;
+          }
+          case 'ijfw_subagent_post_done': {
+            // v1.5.0-major S02: wired-in runtime contract.
+            const a = args || {};
+            const { reviewSubagentReport } = await import('./orchestrator/runtime-loop.js');
+            const routeDecision = reviewSubagentReport(a.reportText || '', {
+              dispatchTimestamp: a.dispatchTimestamp || 0,
+              branch: a.branch || '',
+              projectRoot: process.cwd(),
+            });
+            let postDone = null;
+            if (routeDecision.action === 'proceed_to_review') {
+              const { runPostDone } = await import('./orchestrator/post-done-runner.js');
+              postDone = await runPostDone({
+                taskId: a.taskId || '',
+                taskSpec: a.taskSpec || '',
+                commitSha: routeDecision.commit_sha,
+                branch: a.branch || '',
+                reportText: a.reportText || '',
+                toolCallsInMessage: [],
+                dispatch: null, // server side has no Agent tool; review.js handles null dispatch
+                projectRoot: process.cwd(),
+              }).catch((err) => ({ error: err && err.message ? err.message : String(err) }));
+            }
+            result = { text: JSON.stringify({ routeDecision, postDone }, null, 2), isError: false };
             break;
           }
           case 'ijfw_update_apply': {
