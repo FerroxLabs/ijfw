@@ -1,6 +1,32 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { writeAtomic } from './lib/atomic-io.js';
+
+// F-FUN-7 (audit-MED-teams-#8): role-type → Codex tool allowlist. Honors
+// the principle of least authority: research roles read only, review roles
+// read+edit, software/lead/qa get the full toolbelt, book/content roles get
+// Read/Write/Edit (they author durable text artifacts). Unknown role types
+// fall back to the conservative software set so a missing entry never
+// silently downgrades a charter we already accepted.
+export const ROLE_TOOL_ALLOWLIST = Object.freeze({
+  research:   ['Read'],
+  review:     ['Read', 'Edit'],
+  software:   ['Read', 'Write', 'Edit', 'Bash'],
+  lead:       ['Read', 'Write', 'Edit', 'Bash'],
+  qa:         ['Read', 'Write', 'Edit', 'Bash'],
+  book:       ['Read', 'Write', 'Edit'],
+  content:    ['Read', 'Write', 'Edit'],
+  design:     ['Read', 'Write', 'Edit'],
+  business:   ['Read', 'Write', 'Edit'],
+  education:  ['Read', 'Write', 'Edit'],
+  operations: ['Read', 'Write', 'Edit', 'Bash'],
+});
+
+export function toolsForRoleType(roleType) {
+  const fallback = ROLE_TOOL_ALLOWLIST.software;
+  if (!roleType || typeof roleType !== 'string') return fallback;
+  return ROLE_TOOL_ALLOWLIST[roleType] || fallback;
+}
 
 export function renderCodexAgentToml(role, bundle = {}) {
   assertRole(role);
@@ -23,6 +49,12 @@ export function renderCodexAgentToml(role, bundle = {}) {
     lines.push(`model_reasoning_effort = ${tomlString(codexConfig.model_reasoning_effort.trim())}`);
   }
 
+  // F-FUN-7 (audit-MED-teams-#8): emit a role-type-keyed tools allowlist. The
+  // Codex agent runtime honors this as the per-agent toolbelt; research roles
+  // get read-only, software/lead/qa get the full set, etc.
+  const tools = toolsForRoleType(role.role_type);
+  lines.push(`tools = ${tomlStringArray(tools)}`);
+
   lines.push(`developer_instructions = ${tomlMultiline(instructions)}`);
   return `${lines.join('\n')}\n`;
 }
@@ -37,19 +69,73 @@ export function syncCodexAgents(projectRoot = process.cwd(), options = {}) {
   const agentsDir = join(root, '.codex', 'agents');
   mkdirSync(agentsDir, { recursive: true, mode: 0o700 });
 
+  // F-SEC-3 (audit-MED-teams-#12): symlink-realpath containment gate. If the
+  // .codex/agents/ target was swapped for a symlink that points outside the
+  // project root, writing into it would let a hostile project escape its
+  // own boundary. realpathSync resolves the link, and we require the
+  // resolved path to live inside the realpath'd project root.
+  const containment = assertAgentsDirContained(root, agentsDir);
+  if (!containment.ok) {
+    return { ok: false, error: containment.error, agentsDir, agentFiles: [], detail: containment.detail };
+  }
+  const safeAgentsDir = containment.realpath;
+
   const agentFiles = [];
+  let skipped = 0;
   for (const role of bundle.charter.roles) {
-    const agentPath = join(agentsDir, `${codexAgentFilename(role.name)}.toml`);
-    writeAtomic(agentPath, renderCodexAgentToml(role, bundle), { mode: 0o600 });
+    const agentPath = join(safeAgentsDir, `${codexAgentFilename(role.name)}.toml`);
+    const rendered = renderCodexAgentToml(role, bundle);
+    // F-SPD-3 (audit-MED-teams-#11): content-hash skip. Reading the existing
+    // file is cheap (TOML agent files are small) and avoids touching mtime
+    // when nothing changed -- which in turn keeps downstream watchers and
+    // Codex-side hot-reloaders from doing redundant work.
+    if (existsSync(agentPath)) {
+      let existing = '';
+      try { existing = readFileSync(agentPath, 'utf8'); } catch { existing = ''; }
+      if (existing === rendered) {
+        agentFiles.push(agentPath);
+        skipped += 1;
+        continue;
+      }
+    }
+    writeAtomic(agentPath, rendered, { mode: 0o600 });
     agentFiles.push(agentPath);
   }
 
   return {
     ok: true,
-    agentsDir,
+    agentsDir: safeAgentsDir,
     agentFiles,
     count: agentFiles.length,
+    skipped,
   };
+}
+
+// F-SEC-3: contain `.codex/agents/` to the project root. Returns the
+// realpath-resolved agents dir so callers write through the resolved path
+// (defence-in-depth: if a future writer re-uses `agentsDir` we still touch
+// the same vetted location).
+function assertAgentsDirContained(projectRoot, agentsDir) {
+  let resolvedRoot;
+  let resolvedAgents;
+  try {
+    resolvedRoot = realpathSync(projectRoot);
+  } catch (err) {
+    return { ok: false, error: 'project-realpath-failed', detail: String(err?.message || err) };
+  }
+  try {
+    resolvedAgents = realpathSync(agentsDir);
+  } catch (err) {
+    // Newly-created dir may not yet have a resolvable realpath if a parent
+    // is a symlink; fall back to the un-resolved path for containment but
+    // verify the parent is contained.
+    return { ok: false, error: 'agents-realpath-failed', detail: String(err?.message || err) };
+  }
+  const rel = relative(resolvedRoot, resolvedAgents);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    return { ok: false, error: 'agents-escapes-project', detail: `agentsDir=${resolvedAgents} root=${resolvedRoot}` };
+  }
+  return { ok: true, realpath: resolvedAgents };
 }
 
 function readTeamBundle(root) {
@@ -166,6 +252,11 @@ function codexAgentFilename(value) {
 
 function tomlString(value) {
   return JSON.stringify(String(value));
+}
+
+function tomlStringArray(values) {
+  const items = list(values).map((v) => tomlString(String(v)));
+  return `[${items.join(', ')}]`;
 }
 
 function tomlMultiline(value) {
