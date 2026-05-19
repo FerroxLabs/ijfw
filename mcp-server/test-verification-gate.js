@@ -86,6 +86,74 @@ test('checkVerificationGate ignores non-Bash tool calls as verification evidence
 });
 
 // ---------------------------------------------------------------------------
+// v1.5.1 H1 — audit finding HIGH-S2: `build` substring let
+// `Bash("ls build/")` clear the Iron Law without running tests.
+// Fix: require build/test verbs at command-start, not anywhere in the string.
+// ---------------------------------------------------------------------------
+
+test('v1.5.1 H1: Bash("ls build/") does NOT satisfy verification (audit HIGH-S2)', () => {
+  const toolCalls = [{ tool: 'Bash', input: { command: 'ls build/' } }];
+  const result = checkVerificationGate('DONE — shipping.', toolCalls);
+  assert.equal(result.ok, false,
+    'directory listing of a "build" folder must not clear the Iron Law');
+});
+
+test('v1.5.1 H1: Bash("echo \'build trust\'") does NOT satisfy verification', () => {
+  const toolCalls = [{ tool: 'Bash', input: { command: "echo 'build trust'" } }];
+  const result = checkVerificationGate('DONE — shipping.', toolCalls);
+  assert.equal(result.ok, false,
+    'echoing a string containing "build" must not clear the Iron Law');
+});
+
+test('v1.5.1 H1: Bash("mkdir build") does NOT satisfy verification', () => {
+  const toolCalls = [{ tool: 'Bash', input: { command: 'mkdir build' } }];
+  const result = checkVerificationGate('DONE — shipping.', toolCalls);
+  assert.equal(result.ok, false,
+    'making a directory called "build" must not clear the Iron Law');
+});
+
+test('v1.5.1 H1: real build commands still satisfy verification', () => {
+  const realBuilds = [
+    'npm run build',
+    'yarn build',
+    'pnpm build',
+    'bun build',
+    'cargo build',
+    'cargo build --release',
+    'make',
+    'make build',
+    'tsc --build',
+    'tsc -b',
+    'cd app && npm run build',
+    'NODE_ENV=production npm run build',
+  ];
+  for (const cmd of realBuilds) {
+    const toolCalls = [{ tool: 'Bash', input: { command: cmd } }];
+    const result = checkVerificationGate('DONE — built clean.', toolCalls);
+    assert.equal(result.ok, true,
+      `legitimate build command must still satisfy gate: ${cmd}`);
+  }
+});
+
+test('v1.5.1 H1: chained-after-separator verify commands still satisfy', () => {
+  // Real-world: subagents often chain `cd foo && npm test`. The command-start
+  // anchor must accept the verify verb after `&&`, `||`, `;`, `|`, or whitespace.
+  const chained = [
+    'cd mcp-server && npm test',
+    'pushd app; npm run build',
+    'mkdir -p logs && node --test',
+    'foo || cargo test',
+    'cd app | tee log && npm test',
+  ];
+  for (const cmd of chained) {
+    const toolCalls = [{ tool: 'Bash', input: { command: cmd } }];
+    const result = checkVerificationGate('DONE — verified.', toolCalls);
+    assert.equal(result.ok, true,
+      `chained verify command must still satisfy gate: ${cmd}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // recordViolation
 // ---------------------------------------------------------------------------
 

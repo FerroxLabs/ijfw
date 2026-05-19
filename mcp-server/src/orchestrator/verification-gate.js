@@ -62,8 +62,15 @@ const COMPLETION_PATTERNS = [
 ];
 
 // Bash tool calls that count as fresh verification evidence.
+//
+// v1.5.1 H1 (audit finding HIGH-S2): the bare `build` substring let
+// non-build commands like `Bash("ls build/")` or `Bash("echo 'build trust'")`
+// clear the Iron Law without running tests. Fix: require the verify verb at
+// command-start (start-of-string OR after a shell separator: whitespace,
+// `;`, `&&`, `||`, `|`), and replace the bare `build` with an explicit
+// allowlist of build invocations.
 const VERIFICATION_COMMAND_RE =
-  /(?:npm test|node --test|cargo test|pytest|preflight|ijfw preflight|build)/i;
+  /(?:^|[\s;&|])(?:npm test|node --test|cargo test|pytest|preflight|ijfw preflight|npm run build|yarn build|pnpm build|bun build|cargo build|tsc --build|tsc -b|make(?=\s|$))/i;
 
 // ---------------------------------------------------------------------------
 // Core gate
