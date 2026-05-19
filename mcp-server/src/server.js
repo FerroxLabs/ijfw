@@ -640,36 +640,12 @@ function readProjectMemory(projectPath) {
   };
 }
 
-function searchAcrossProjects(query, limit) {
-  const queryLower = String(query).toLowerCase();
-  const keywords = queryLower.split(/\s+/).filter(w => w.length > 2);
-  if (keywords.length === 0) return [];
-
-  const results = [];
-  for (const entry of readRegistry()) {
-    const tag = basename(entry.path);
-    const mem = readProjectMemory(entry.path);
-    for (const [src, content] of Object.entries(mem)) {
-      if (!content) continue;
-      const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.trim().length === 0) continue;
-        const score = keywords.filter(k => line.toLowerCase().includes(k)).length;
-        if (score > 0) {
-          results.push({
-            source: `${src}@${tag}`,
-            line: i + 1,
-            content: `[project:${tag}] ${line.trim().substring(0, 200)}`,
-            score
-          });
-        }
-      }
-    }
-  }
-  results.sort((a, b) => b.score - a.score);
-  return results.slice(0, limit);
-}
+// v1.5.1 H1.5 (audit memory-engine.md F-FUN-4): the legacy naive-keyword-count
+// `searchAcrossProjects` was removed. `scope:'all'` now routes to the BM25-
+// ranked `crossProjectSearch` in cross-project-search.js (which already
+// returns the same `{ source, line, content, score }` shape via the
+// `[project:<name>]` content prefix). Two parallel cross-project surfaces
+// existed; the worse one was the default. Now there is one.
 
 // --- Search ---
 // P5.1 / H4 -- BM25 ranking over line-level docs. Source tags and line
@@ -685,7 +661,13 @@ function searchAcrossProjects(query, limit) {
 // installing @xenova/transformers.
 async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   limit = Math.min(Math.max(1, limit | 0), MAX_SEARCH_RESULTS);
-  if (scope === 'all') return searchAcrossProjects(query, limit);
+  if (scope === 'all') {
+    // v1.5.1 H1.5 (audit memory-engine.md F-FUN-4): use BM25-ranked
+    // crossProjectSearch, not the legacy naive keyword-count scan.
+    const projects = readRegistry();
+    if (projects.length === 0) return [];
+    return crossProjectSearch(query, projects, readProjectMemory, { limit });
+  }
 
   const sources = [
     { name: 'team',          content: readTeamKnowledge(),                          boost: 1.25 },
@@ -956,8 +938,8 @@ const TOOLS = [
 function handleRecall({ context_hint, detail_level = 'standard', from_project }) {
   // Cross-project explicit pull. We bypass current-project sources and read
   // the target project's knowledge/handoff/journal directly. Search queries
-  // are routed through searchAcrossProjects via scope:'all' on the search tool;
-  // recall here is for "give me everything from X."
+  // are routed through crossProjectSearch (BM25) via scope:'all' on the
+  // search tool; recall here is for "give me everything from X."
   if (from_project) {
     const target = resolveProject(from_project);
     if (!target) {

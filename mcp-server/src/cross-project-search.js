@@ -1,7 +1,9 @@
 // --- cross-project-search: BM25 search across every registered IJFW project ---
 //
-// Complements the existing naive keyword-count searchAcrossProjects in
-// server.js. Builds a corpus of (project, source, line) docs from each
+// Canonical cross-project search surface. The legacy naive-keyword-count
+// `searchAcrossProjects` in server.js was removed in v1.5.1 H1.5 (audit
+// finding memory-engine.md F-FUN-4) — `scope:'all'` on the MCP search tool
+// now routes here. Builds a corpus of (project, source, line) docs from each
 // registered project's memory files, hands it to the BM25 ranker in
 // search-bm25.js, and returns hits tagged with [project:<basename>].
 //
