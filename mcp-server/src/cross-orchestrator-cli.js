@@ -22,6 +22,7 @@ import { aggregatePortfolioFindings } from './cross-project-search.js';
 import { runImport, runImportAll, listImporters } from './importers/cli.js';
 import { validateToken } from './lib/token.js';
 import { isVersionStringValid } from './lib/npm-view.js';
+import { verifyShasumCrossSource } from './lib/shasum-verify.js';
 import {
   addBlackboardNote,
   blackboardStatus,
@@ -1538,6 +1539,19 @@ function cmdUpdateVerify() {
   } else {
     console.log(`  provenance: NOT VERIFIED (audit signatures exited ${sig.status})`);
   }
+  // Second factor: shasum cross-verify (F-SEC-7). Dry-run: report but don't
+  // exit non-zero -- caller is asking "what would happen if I updated?", and
+  // the interactive flow already fails closed on mismatch.
+  const shasumDry = verifyShasumCrossSource(r.version);
+  if (shasumDry.mode === 'verified') {
+    console.log(`  shasum cross-verify: VERIFIED (${shasumDry.npmShasum.slice(0, 12)}...)`);
+  } else if (shasumDry.mode === 'mismatch') {
+    console.log(`  shasum cross-verify: MISMATCH (npm=${shasumDry.npmShasum} release=${shasumDry.releaseShasum}) -- install would be REFUSED`);
+  } else if (shasumDry.mode === 'advisory') {
+    console.log(`  shasum cross-verify: ADVISORY (${shasumDry.message})`);
+  } else {
+    console.log(`  shasum cross-verify: ERROR (${shasumDry.message})`);
+  }
   console.log('Verification complete.');
   process.exit(0);
 }
@@ -1713,6 +1727,37 @@ function cmdUpdateInteractive(opts = {}) {
       return 1;
     }
   }
+  // Shasum cross-verify (F-SEC-7): independent second factor on top of
+  // npm-side signatures. Fetches the GitLab release asset shasum and
+  // compares it against npm's dist.shasum for the same version. Mismatch
+  // means we refuse to install; advisory (release shasum unavailable)
+  // requires explicit --yes to proceed.
+  const shasum = verifyShasumCrossSource(r.version);
+  if (shasum.mode === 'verified') {
+    console.log(`  Shasum: verified (${shasum.npmShasum.slice(0, 12)}...)`);
+  } else if (shasum.mode === 'mismatch') {
+    console.error('  Shasum: MISMATCH -- refusing install.');
+    console.error(`    npm     : ${shasum.npmShasum}`);
+    console.error(`    release : ${shasum.releaseShasum}`);
+    console.error('  The npm tarball does NOT match the GitLab release asset.');
+    console.error('  This could indicate a compromised registry or release. Aborting.');
+    return 1;
+  } else if (shasum.mode === 'error') {
+    console.error(`  Shasum: error -- ${shasum.message}`);
+    console.error('  Refusing install: cannot establish second-factor integrity.');
+    return 1;
+  } else if (shasum.mode === 'advisory') {
+    console.error(`  Shasum: ADVISORY -- ${shasum.message}`);
+    if (!opts.yes) {
+      console.error('  Continuing requires --yes (acknowledge missing release shasum).');
+      return 1;
+    }
+    console.error('  Proceeding due to --yes; release shasum could not be verified.');
+  } else {
+    // Unknown mode: fail closed.
+    console.error(`  Shasum: unknown mode "${shasum.mode}" -- refusing install.`);
+    return 1;
+  }
   // Method dispatch
   const method = state.install_method || 'manual';
   console.log(`  install_method: ${method}`);
@@ -1805,8 +1850,17 @@ function cmdUpdateInteractive(opts = {}) {
     console.error(`Update did not complete (exit ${installRes.status}). State not written.`);
     return 1;
   }
-  // Persist both fields atomically -- single write avoids concurrent-reader inconsistency
-  writeStateFields({ last_applied_version: r.version, installed_version: r.version });
+  // Persist both fields atomically -- single write avoids concurrent-reader inconsistency.
+  // last_good_shasum records the shasum we just successfully cross-verified +
+  // installed (per docs/SECURITY.md "last_good_shasum is a one-way 'what did
+  // we actually install' record"). Only written when shasum was actually
+  // verified (mode === 'verified'); advisory paths leave the previous value
+  // so we don't poison the record with an unverified hash.
+  const stateUpdate = { last_applied_version: r.version, installed_version: r.version };
+  if (shasum && shasum.mode === 'verified' && shasum.npmShasum) {
+    stateUpdate.last_good_shasum = shasum.npmShasum;
+  }
+  writeStateFields(stateUpdate);
   console.log('');
   console.log(`IJFW updated to v${r.version}. Run \`ijfw status\` to confirm.`);
   return 0;
