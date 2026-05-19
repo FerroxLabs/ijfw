@@ -4,9 +4,10 @@
 // small and dependency-free: tasks/claims are atomic JSON, notes are append-only
 // JSONL, and handoff is plain markdown.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { writeAtomic, readSafe, withLock } from './lib/atomic-io.js';
+import { rotateJsonlIfNeeded } from './lib/jsonl-rotation.js';
 
 export const BLACKBOARD_VERSION = 1;
 
@@ -82,6 +83,10 @@ function readJsonl(path, limit = 5) {
 }
 
 function appendJsonlUnlocked(path, entry) {
+  // F-PRF-1 (audit-MED-teams-#10): rotate large JSONL files in place before
+  // appending. The rotator is a no-op when the file is under the 4MB
+  // threshold, so this stays a hot-path-friendly stat() in the common case.
+  try { rotateJsonlIfNeeded(path); } catch { /* rotation is best-effort */ }
   appendFileSync(path, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600 });
   return entry;
 }
@@ -116,10 +121,53 @@ export function initBlackboard(projectRoot = process.cwd()) {
   return { ok: true, dir: paths.dir };
 }
 
+// F-SPD-2 (audit-MED-teams-#9): mtime cache for readBlackboard. Re-parsing
+// tasks.json + claims.json on every status/listSwarmTasks call shows up in
+// hot-path traces (planner + dispatcher both call this). The cache is keyed
+// on the resolved project dir and remembers the mtimeMs of both JSON files.
+// On a hit we return the previously-parsed JSON shape; on miss we re-parse
+// and refresh the cache. JSONL recent-tails are NOT cached -- they are
+// append-only and the LRU is intentionally narrow.
+const BLACKBOARD_READ_CACHE = new Map();
+const BLACKBOARD_READ_CACHE_MAX = 32;
+
+function blackboardFileMtime(path) {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function getCachedJson(cacheKey, path, mtime, fallback, validator) {
+  const cached = BLACKBOARD_READ_CACHE.get(cacheKey);
+  if (cached && cached.path === path && cached.mtime === mtime && mtime > 0) {
+    return cached.value;
+  }
+  const value = readJson(path, fallback, validator);
+  BLACKBOARD_READ_CACHE.set(cacheKey, { path, mtime, value });
+  // Lightweight LRU eviction: drop oldest entry when over cap.
+  if (BLACKBOARD_READ_CACHE.size > BLACKBOARD_READ_CACHE_MAX) {
+    const firstKey = BLACKBOARD_READ_CACHE.keys().next().value;
+    if (firstKey !== undefined) BLACKBOARD_READ_CACHE.delete(firstKey);
+  }
+  return value;
+}
+
+// Exposed for tests + cache invalidation hooks. Clears all memoised entries.
+export function _resetBlackboardReadCache() {
+  BLACKBOARD_READ_CACHE.clear();
+}
+
 export function readBlackboard(projectRoot = process.cwd()) {
   const paths = blackboardPaths(projectRoot);
-  const tasks = readJson(paths.tasks, defaultTasks, validTasks);
-  const claims = readJson(paths.claims, defaultClaims, validClaims);
+  // F-SPD-2: mtime-keyed memo. When tasks.json + claims.json are unchanged
+  // we skip JSON.parse entirely. mtime===0 forces a miss so transient stat
+  // failures degrade to the un-cached path safely.
+  const tasksMtime = blackboardFileMtime(paths.tasks);
+  const claimsMtime = blackboardFileMtime(paths.claims);
+  const tasks = getCachedJson(`${paths.root}::tasks`, paths.tasks, tasksMtime, defaultTasks, validTasks);
+  const claims = getCachedJson(`${paths.root}::claims`, paths.claims, claimsMtime, defaultClaims, validClaims);
   return {
     paths,
     tasks,

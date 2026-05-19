@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  _resetBlackboardReadCache,
   addBlackboardNote,
   appendBlackboardEvent,
   blackboardPaths,
@@ -314,6 +315,45 @@ test('updateClaimHeartbeat fails cleanly on missing claim', () => {
     const result = updateClaimHeartbeat(dir, { claim_id: 'does-not-exist' });
     assert.equal(result.ok, false);
     assert.equal(result.error, 'claim-not-found');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// ── audit-MED-teams-#9: mtime-keyed readBlackboard memo ───────────────────
+
+test('readBlackboard returns the same JSON shape on unchanged files (mtime cache)', () => {
+  const dir = makeTmp();
+  try {
+    _resetBlackboardReadCache();
+    initBlackboard(dir);
+    const a = readBlackboard(dir);
+    const b = readBlackboard(dir);
+    // The cache returns the same parsed object reference on a hit, so the
+    // tasks + claims pointers must be identical (not deep-equal copies).
+    assert.equal(a.tasks, b.tasks, 'tasks should be served from the mtime cache');
+    assert.equal(a.claims, b.claims, 'claims should be served from the mtime cache');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('readBlackboard re-parses after a write invalidates the mtime', async () => {
+  const dir = makeTmp();
+  try {
+    _resetBlackboardReadCache();
+    initBlackboard(dir);
+    const before = readBlackboard(dir);
+    // Wait long enough for the mtime to advance, then mutate tasks via the
+    // public API.
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    appendBlackboardEvent(dir, { type: 'test.poke' }); // unrelated jsonl write
+    // Force a tasks.json write so its mtime changes.
+    const { writeBlackboardTasks } = await import('./src/blackboard.js');
+    writeBlackboardTasks(dir, [{ id: 't1', title: 'demo', status: 'todo', artifact_ids: ['x'] }]);
+    const after = readBlackboard(dir);
+    assert.notEqual(before.tasks, after.tasks, 'cache must invalidate after tasks.json mtime change');
+    assert.equal(after.tasks.data.tasks.length, 1);
   } finally {
     cleanup(dir);
   }
