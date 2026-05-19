@@ -20,6 +20,7 @@ if (process.env.IJFW_SKIP_PARSE === '1') process.exit(0);
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, unlinkSync, openSync, closeSync } from 'fs';
 import { homedir } from 'os';
 import { join, basename } from 'path';
+import { createHash } from 'crypto';
 // Canonical pricing -- single source of truth. mcp-server is a sibling
 // of scripts/. Importing keeps the dashboard receipt surface in lockstep
 // with everything else (cross-dispatcher, /api/prices, computeCost in
@@ -46,6 +47,55 @@ const BUDGET_MS = (() => {
   const n = parseInt(process.env.IJFW_PARSE_BUDGET_MS || '30000', 10);
   return Number.isFinite(n) && n > 0 ? n : 30000;
 })();
+
+// v1.5.0 audit-LOW-tok-L4: Bloom filter over already-parsed transcript content
+// hashes. Skips re-parsing when a file's content SHA1 has already been seen,
+// even if mtime ticked (touch / git checkout). Bloom is k=4 bits per entry,
+// 64KB total -> ~2^16 buckets fit ~6.5k transcripts at <1% FP. Persisted as a
+// base64 string in the summary file. False positives are tolerable (one
+// extra parse, no data loss); false negatives are impossible by construction.
+const BLOOM_BYTES = 8192;            // 64 Kbit
+const BLOOM_K = 4;                   // number of hash positions
+const BLOOM_BITS = BLOOM_BYTES * 8;
+
+function bloomNew() { return Buffer.alloc(BLOOM_BYTES, 0); }
+function _bloomPositions(sha) {
+  // SHA-1 is 40 hex chars / 20 bytes. Take 4 disjoint 4-byte windows
+  // as independent hash functions.
+  const buf = Buffer.from(sha, 'hex');
+  const positions = [];
+  for (let i = 0; i < BLOOM_K; i++) {
+    const h = buf.readUInt32BE(i * 4);
+    positions.push(h % BLOOM_BITS);
+  }
+  return positions;
+}
+function bloomHas(bloom, sha) {
+  for (const p of _bloomPositions(sha)) {
+    const byte = p >> 3, bit = 1 << (p & 7);
+    if ((bloom[byte] & bit) === 0) return false;
+  }
+  return true;
+}
+function bloomAdd(bloom, sha) {
+  for (const p of _bloomPositions(sha)) {
+    const byte = p >> 3, bit = 1 << (p & 7);
+    bloom[byte] |= bit;
+  }
+}
+function bloomDecode(b64) {
+  if (typeof b64 !== 'string' || !b64) return bloomNew();
+  try {
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length !== BLOOM_BYTES) return bloomNew();
+    return buf;
+  } catch { return bloomNew(); }
+}
+function bloomEncode(bloom) { return bloom.toString('base64'); }
+function sha1OfFile(path) {
+  try { return createHash('sha1').update(readFileSync(path)).digest('hex'); }
+  catch { return null; }
+}
 
 // Single-process guard. Returns true if we got the lock.
 // Atomic via O_CREAT|O_EXCL ('wx' flag) so concurrent starts cannot both
@@ -454,6 +504,12 @@ let partial = false;
 // Start from existing projects if incremental, else fresh
 const projects = (forceAll || !existing) ? {} : (existing.projects ? { ...existing.projects } : {});
 
+// v1.5.0 audit-LOW-tok-L4: load (or seed) the seen-content bloom filter.
+// On --force we deliberately reset so every file gets re-parsed exactly
+// once, then re-recorded into a fresh bloom.
+const bloom = (forceAll || !existing?.bloom) ? bloomNew() : bloomDecode(existing.bloom);
+let bloomHits = 0;
+
 // On --force, drop everything and rebuild. On incremental we dedupe at push
 // time so a partial run (budget hit) only replaces the sessions we actually
 // reparsed, not the ones we never got to.
@@ -470,6 +526,18 @@ for (const { path, projectDir, mtime } of toProcess) {
     console.log(`[parse-transcripts] ${BUDGET_MS}ms budget reached after ${processed}/${toProcess.length} files; saving partial.`);
     break;
   }
+  // Bloom-filter check: if the content SHA has been seen, skip the
+  // (expensive) parse + dedupe. mtime may tick due to touch/checkout
+  // even when content is identical; the bloom rejects those cheaply.
+  // FP risk: ~1% at full saturation -> one extra parse, never a miss.
+  const sha = sha1OfFile(path);
+  if (sha && !forceAll && bloomHas(bloom, sha)) {
+    bloomHits++;
+    if (mtime > newMaxMtime) newMaxMtime = mtime;
+    processed++;
+    continue;
+  }
+  if (sha) bloomAdd(bloom, sha);
   const name = projectName(projectDir);
   if (!projects[name]) {
     projects[name] = {
@@ -526,9 +594,17 @@ const summary = {
   totalTranscripts: allFiles.length,
   partial,
   billingMode: BILLING_MODE,
+  // v1.5.0 audit-LOW-tok-L4: persist the seen-content bloom filter so the
+  // next run can skip files whose SHA1 we've already processed even when
+  // mtime ticked.
+  bloom: bloomEncode(bloom),
   projects,
   aggregate,
 };
+
+if (bloomHits > 0) {
+  console.log(`[parse-transcripts] bloom skip: ${bloomHits} files matched prior content SHA1.`);
+}
 
 try {
   mkdirSync(IJFW_GLOBAL, { recursive: true });

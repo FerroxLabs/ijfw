@@ -124,29 +124,59 @@ export function buildCostReport(days, observations = []) {
   };
 }
 
+// v1.5.0 audit-LOW-tok-L3: memoize buildBreakdown per (dim, days, bucket).
+// Dashboards call this endpoint repeatedly on a 10s tick across four
+// dimensions; each call re-reads ~3 platforms of transcript JSON. Within
+// a 60-second time bucket the result is functionally identical, so cache
+// it. TTL is short enough that newly-arriving turns surface within one
+// dashboard refresh interval.
+const BREAKDOWN_CACHE_TTL_MS = 60_000;
+const _breakdownCache = new Map();
+
+function _bucketKey(dim, days, now = Date.now()) {
+  const bucket = Math.floor(now / BREAKDOWN_CACHE_TTL_MS);
+  return `${dim}|${days ?? 'all'}|${bucket}`;
+}
+
+// Test helper: clear the memoization cache.
+export function _resetBreakdownCache() { _breakdownCache.clear(); }
+
 /**
  * Build a breakdown grouped by a dimension.
  * dim: 'platform' | 'session' | 'model' | 'tool'
  */
 export function buildBreakdown(dim, days, _observations = []) {
+  const key = _bucketKey(dim, days);
+  const cached = _breakdownCache.get(key);
+  if (cached) return cached;
+
   const raw   = readAllTurns(days);
   const turns = annotateCosts(raw);
 
   const groups = {};
   for (const t of turns) {
-    const key = t[dim] || 'unknown';
-    if (!groups[key]) groups[key] = { key, cost_usd: 0, theoretical_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, count: 0 };
-    groups[key].cost_usd             += t.cost_usd;
-    groups[key].theoretical_cost_usd += t.theoretical_cost_usd || 0;
-    groups[key].input_tokens         += t.input_tokens || 0;
-    groups[key].output_tokens        += t.output_tokens || 0;
-    groups[key].cache_read_tokens    += t.cache_read_tokens || 0;
-    groups[key].count++;
+    const k = t[dim] || 'unknown';
+    if (!groups[k]) groups[k] = { key: k, cost_usd: 0, theoretical_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, count: 0 };
+    groups[k].cost_usd             += t.cost_usd;
+    groups[k].theoretical_cost_usd += t.theoretical_cost_usd || 0;
+    groups[k].input_tokens         += t.input_tokens || 0;
+    groups[k].output_tokens        += t.output_tokens || 0;
+    groups[k].cache_read_tokens    += t.cache_read_tokens || 0;
+    groups[k].count++;
   }
 
   // Sort by theoretical cost so Max-session breakdowns still rank by usage
   // intensity even when cost_usd is uniformly zero.
-  return Object.values(groups).sort((a, b) => b.theoretical_cost_usd - a.theoretical_cost_usd);
+  const result = Object.values(groups).sort((a, b) => b.theoretical_cost_usd - a.theoretical_cost_usd);
+
+  // Bound the cache: keep at most 32 entries (4 dims * 8 window/bucket combos).
+  // Eviction is opportunistic on insert -- O(1) amortised.
+  if (_breakdownCache.size >= 32) {
+    const firstKey = _breakdownCache.keys().next().value;
+    if (firstKey !== undefined) _breakdownCache.delete(firstKey);
+  }
+  _breakdownCache.set(key, result);
+  return result;
 }
 
 /**

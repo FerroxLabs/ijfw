@@ -154,13 +154,34 @@ export function getLatestModel(family, opts = {}) {
 // All three providers expose a list-models endpoint. We pick the latest
 // non-preview, non-deprecated entry that looks like a current reasoning
 // model. Heuristic, intentionally conservative.
+//
+// v1.5.0 audit-LOW-tok-L2: every probe is wrapped in an AbortController
+// with a hard timeout so a hung TLS handshake / TCP half-open can't keep
+// the event loop alive past process exit. Without this the Node runtime
+// would leak open sockets when getLatestModel() schedules a background
+// refresh and the host process tries to exit before the probes resolve.
+
+const PROBE_TIMEOUT_MS = 5000;
+
+// makeAbortable -> { signal, cancel } pair. Caller MUST call cancel() in
+// a finally{} so we always clear the timer (cancel() is a no-op once the
+// timeout has fired; we use it primarily to release the unref'd timer).
+function makeAbortable(timeoutMs = PROBE_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // unref so the timer alone never keeps the event loop alive.
+  if (typeof timer.unref === 'function') timer.unref();
+  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+}
 
 async function probeOpenAI(env, fetchImpl) {
   const key = env.OPENAI_API_KEY;
   if (!key) return null;
+  const { signal, cancel } = makeAbortable();
   try {
     const r = await fetchImpl('https://api.openai.com/v1/models', {
       headers: { 'Authorization': `Bearer ${key}` },
+      signal,
     });
     if (!r.ok) return null;
     const json = await r.json();
@@ -173,18 +194,22 @@ async function probeOpenAI(env, fetchImpl) {
     return candidates[0] ? { id: candidates[0].id } : null;
   } catch {
     return null;
+  } finally {
+    cancel();
   }
 }
 
 async function probeAnthropic(env, fetchImpl) {
   const key = env.ANTHROPIC_API_KEY;
   if (!key) return null;
+  const { signal, cancel } = makeAbortable();
   try {
     const r = await fetchImpl('https://api.anthropic.com/v1/models', {
       headers: {
         'x-api-key': key,
         'anthropic-version': '2023-06-01',
       },
+      signal,
     });
     if (!r.ok) return null;
     const json = await r.json();
@@ -197,15 +222,19 @@ async function probeAnthropic(env, fetchImpl) {
     return candidates[0] ? { id: candidates[0].id } : null;
   } catch {
     return null;
+  } finally {
+    cancel();
   }
 }
 
 async function probeGoogle(env, fetchImpl) {
   const key = env.GEMINI_API_KEY;
   if (!key) return null;
+  const { signal, cancel } = makeAbortable();
   try {
     const r = await fetchImpl(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
+      { signal },
     );
     if (!r.ok) return null;
     const json = await r.json();
@@ -221,6 +250,8 @@ async function probeGoogle(env, fetchImpl) {
     return pick ? { id: pick } : null;
   } catch {
     return null;
+  } finally {
+    cancel();
   }
 }
 
