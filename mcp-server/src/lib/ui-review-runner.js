@@ -166,11 +166,25 @@ function gradeColor({ spec, sourceScope, projectRoot }) {
   // Run the existing drift detector across the scope. `diffPaletteDrift`
   // returns an array of { type, value, severity, declared } findings. A
   // finding here means a color in source that the spec does NOT declare.
+  //
+  // v1.5.0 r20-HIGH fix: an error inside scanCodeForTailwind / diffPaletteDrift
+  // previously silently set drift=[] -- the color pillar would then PASS
+  // even though we never actually scanned. Surface the failure as a FLAG
+  // finding AND log to stderr; the pillar's verdict reflects real
+  // coverage instead of a false-positive PASS.
   let drift = [];
+  let driftError = null;
   try {
     const scan = scanCodeForTailwind(sourceScope, { projectRoot });
     drift = diffPaletteDrift(spec, scan);
-  } catch { drift = []; }
+  } catch (err) {
+    driftError = err && err.message ? err.message : String(err);
+    drift = [];
+    process.stderr.write(
+      `ijfw ui-review: gradeColor drift detection failed (${driftError}). ` +
+      `Color pillar will FLAG instead of PASS until the scan succeeds.\n`,
+    );
+  }
 
   const blockers = drift.filter((d) => d.severity === 'block');
   const flagsOnly = drift.filter((d) => d.severity === 'flag');
@@ -185,12 +199,20 @@ function gradeColor({ spec, sourceScope, projectRoot }) {
   let verdict = VERDICT_PASS;
   if (blockers.length > 0) verdict = VERDICT_BLOCK;
   else if (flagsOnly.length > 0) verdict = VERDICT_FLAG;
+  // r20-HIGH: when the scan itself failed, surface FLAG even with no
+  // drift findings so the user doesn't read a false-PASS.
+  if (driftError) {
+    verdict = VERDICT_FLAG;
+    findings.unshift({ severity: 'med', text: `drift scan failed: ${driftError}` });
+  }
 
   return {
     pillar: 'color',
     verdict,
     findings,
-    evidence: `${drift.length} drift findings (${blockers.length} block / ${flagsOnly.length} flag)`,
+    evidence: driftError
+      ? `scan failed (${driftError}); ${drift.length} drift findings observed before failure`
+      : `${drift.length} drift findings (${blockers.length} block / ${flagsOnly.length} flag)`,
     startedAt, finishedAt: Date.now(),
   };
 }
@@ -379,9 +401,19 @@ export async function runUiReview({
   // yields the microtask queue once, then runs to completion. With
   // Promise.all dispatch, all 7 graders enter their wrapper in the same
   // tick before any returns -- so `peakConcurrent === PILLARS.length`.
-  // A sequential implementation would peak at 1. This witness is
-  // deterministic regardless of grader work speed or wall-clock resolution
-  // (Date.now() ms precision was flaky on fast sync work).
+  // A sequential implementation would peak at 1.
+  //
+  // What this witness proves: Promise.all DISPATCH is concurrent — the 7
+  // grader wrappers all run their entry block in the same event-loop tick
+  // before any can exit. It does NOT prove that the (currently synchronous)
+  // grader BODIES execute interleaved on the event loop — sync work
+  // serializes by definition. If a grader gains a real async operation
+  // (e.g. a Lighthouse call), the witness already accommodates it: the
+  // yield ensures all peers register before any awaits. This is the
+  // semantic guarantee that matters; the lib design intentionally keeps
+  // grader bodies cheap + sync so the runner stays fast.
+  // (Replaces the earlier Date.now() ms-precision comparison which was
+  // flaky on fast sync work.)
   const graderArgs = { spec, sourceScope: scopes, files, projectRoot, peerInputs };
   const beforeAll = Date.now();
   let _inFlight = 0;

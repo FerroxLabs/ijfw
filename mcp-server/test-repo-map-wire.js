@@ -175,18 +175,31 @@ test('wire-W1.A: handleTruncationWithRepoMap prepends prefix to resume_with_alt_
 });
 
 test('wire-W1.A: handleTruncationWithRepoMap is byte-identical to handleTruncation when opt-in off', async () => {
+  // r20-MED fix: previously this test only checked the brief prefix +
+  // repoMapApplied flag; the "byte-identical" claim was unverified.
+  // Now we actually call handleTruncation() with the same inputs and
+  // compare both .brief strings character-by-character.
   const dir = makeTinyRepo();
   try {
-    const decision = await handleTruncationWithRepoMap({
+    const { handleTruncation } = await import('./src/orchestrator/runtime-loop.js');
+    const args = {
       parsed: { ai: 'claude' },
       ctx: { projectRoot: dir, originalSpec: 'do the thing', checkpoint: {} },
       available: ['claude', 'gemini', 'codex'],
-      env: {}, // opt-in off
-    });
-    assert.equal(decision.action, 'resume_with_alt_ai');
-    // Original brief untouched: starts with the spec, no prefix.
-    assert.equal(decision.brief.slice(0, 'do the thing'.length), 'do the thing');
-    assert.equal(decision.repoMapApplied, undefined);
+    };
+    const syncDecision  = handleTruncation(args);
+    const asyncDecision = await handleTruncationWithRepoMap({ ...args, env: {} });
+    assert.equal(syncDecision.action, 'resume_with_alt_ai');
+    assert.equal(asyncDecision.action, 'resume_with_alt_ai');
+    // Byte-identical brief between the two paths when opt-in is off.
+    assert.equal(
+      asyncDecision.brief,
+      syncDecision.brief,
+      'brief must be byte-identical to handleTruncation output when opt-in is off',
+    );
+    assert.equal(asyncDecision.repoMapApplied, undefined);
+    // toAI selection must also match.
+    assert.equal(asyncDecision.toAI, syncDecision.toAI);
   } finally {
     rmSync(dir, { recursive: true, force: true });
     restoreEnv();

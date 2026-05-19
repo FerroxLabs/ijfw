@@ -187,11 +187,20 @@ test('wire-W1.D: unauthorized color in source surfaces on color pillar', async (
       projectRoot: root,
       write: false,
     });
-    // Color verdict should be FLAG or BLOCK (depending on drift count).
-    assert.ok(['FLAG', 'BLOCK', 'PASS'].includes(r.pillarVerdicts.color));
-    // At minimum, the runner has visibility into the color pillar's evidence.
+    // r20-MED fix: an unauthorized color (pink-500) against a 3-token
+    // palette MUST surface drift (FLAG or BLOCK). PASS would mean the
+    // scan never observed the token — that's a regression.
+    assert.ok(
+      ['FLAG', 'BLOCK'].includes(r.pillarVerdicts.color),
+      `expected FLAG or BLOCK with unauthorized pink-500, got ${r.pillarVerdicts.color}`,
+    );
+    // Evidence + findings must mention the drift.
     const colorVerdict = r.verdicts.find((v) => v.pillar === 'color');
     assert.ok(colorVerdict);
+    assert.ok(
+      (colorVerdict.findings || []).length > 0,
+      'color pillar must produce at least one finding for the unauthorized token',
+    );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

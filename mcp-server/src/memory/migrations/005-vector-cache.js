@@ -48,6 +48,12 @@ const SQL_MODEL_IDX = (
 );
 
 export function up(db) {
+  // r20-MED fix: drop the table first to handle the case where a developer
+  // machine applied an earlier draft of migration 005 with the old
+  // memory_id-keyed schema. Since 005 was net-new in v1.5.0 (never shipped
+  // to npm), there are no production rows to preserve. The DROP is a no-op
+  // on a fresh db.
+  db.exec('DROP TABLE IF EXISTS memory_entry_vectors');
   db.exec(SQL_CREATE);
   db.exec(SQL_MODEL_IDX);
 }

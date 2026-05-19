@@ -1,0 +1,24 @@
+
+Note: target is 136.3 KB; auditors will see the first 64 KB and a truncation marker. Findings beyond that point will be missed.
+
+--chunk: splitting /tmp/v150-wireup-r20.patch into 3 chunks (≈58 KB each, 6 KB overlap).
+Trident dispatches: 3 × per-chunk audit. Cost scales linearly.
+
+[chunk 1/3] dispatching...
+[chunk 1/3] 3 finding(s) from 2 auditor(s).
+
+[chunk 2/3] dispatching...
+[chunk 2/3] 2 finding(s) from 2 auditor(s).
+
+[chunk 3/3] dispatching...
+[chunk 3/3] 2 finding(s) from 2 auditor(s).
+
+=== Chunked audit complete: 7 unique finding(s) across 3 chunks ===
+Auditors fired (union): codex, gemini
+  HIGH mcp-server/src/lib/ui-review-runner.js:170 — `gradeColor` passes the `scopes` array into `scanCodeForTailwind`, then swallows any thrown error and treats drift as empty.
+  MEDIUM mcp-server/src/cross-orchestrator-cli.js:410 — `cmdUiReview` supports `parsed.json`, and the help comment documents `--json`, but `parseArgsInner` never parses `--json`.
+  MEDIUM mcp-server/src/lib/ui-review-runner.js:394 — The `peakConcurrent` witness increments before the actual synchronous grader work, so `parallel.parallelism` can report true even though all grader bodies execute serially on the event loop.
+  MEDIUM mcp-server/src/server.js:855 — The lazy cache DB is skipped whenever opts.embedder is present, even if the caller did not supply opts.db.
+  MEDIUM mcp-server/src/memory/migrations/005-vector-cache.js:31 — Migration 005 uses CREATE TABLE IF NOT EXISTS after changing the schema from memory_id to cache_key, so an environment that already applied the earlier v5 migration keeps the incompatible old table.
+  MEDIUM mcp-server/test-ui-review-runner.js:196 — The unauthorized-color test claims the color pillar must FLAG or BLOCK, but the assertion explicitly accepts PASS.
+  MEDIUM mcp-server/test-repo-map-wire.js:184 — The byte-identical opt-out test does not compare against handleTruncation output and only checks the brief prefix plus repoMapApplied.

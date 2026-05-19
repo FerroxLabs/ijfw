@@ -857,10 +857,14 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   // the embedding cache backs the rerank. The default modelId mirrors
   // vectors.js DEFAULT_MODEL so first-call writes match cache reads from
   // the same process on later calls.
+  //
+  // r20-MED fix: previously the lazy-open was SKIPPED whenever opts.embedder
+  // was supplied (intended as a test-seam guard). That meant any caller
+  // passing a custom embedder (e.g. an HTTP-backed one) lost the cache.
+  // Now: always lazy-open when !opts.db. Tests that want to disable the
+  // cache pass opts.db = null explicitly.
   const rerankOpts = { ...opts };
-  if (!rerankOpts.db && opts.embedder !== undefined) {
-    // Tests inject an embedder + their own db (or none) -- never lazy-open.
-  } else if (!rerankOpts.db) {
+  if (!rerankOpts.db && rerankOpts.db !== null) {
     try {
       rerankOpts.db = await getMemoryDbForRerank();
     } catch { /* memory db unavailable -- skip cache, fall back to live embed */ }
