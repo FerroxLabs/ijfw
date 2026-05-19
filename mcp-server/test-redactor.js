@@ -157,3 +157,136 @@ test('handles empty and non-string input', () => {
   assert.equal(redactSecrets(undefined), '');
   assert.equal(redactSecrets(42), '');
 });
+
+// --- F-SEC-2 (v1.5.0 audit): 2026 secret-family coverage expansion ---
+
+test('redacts GitLab personal access tokens (glpat-)', () => {
+  const out = redactSecrets('GL_TOKEN=glpat-abcdefghij1234567890XY');
+  assert.match(out, /\[REDACTED:gitlab\]/);
+  assert.doesNotMatch(out, /glpat-abcd/);
+});
+
+test('does NOT redact unrelated "glpat" prose', () => {
+  // No hyphen + short suffix → not a token shape
+  const out = redactSecrets('the glpat algorithm and glpattern routine');
+  assert.equal(out, 'the glpat algorithm and glpattern routine');
+});
+
+test('redacts GitLab CI build tokens (glcbt-) and deploy tokens (gldt-)', () => {
+  const ci  = redactSecrets('JOB_TOKEN=glcbt-1A2B3C4D5E6F7G8H9I0J');
+  const dep = redactSecrets('DEPLOY=gldt-abcdefghijklmnopqrstuvw');
+  assert.match(ci,  /\[REDACTED:gitlab\]/);
+  assert.match(dep, /\[REDACTED:gitlab\]/);
+});
+
+test('redacts AWS secret access keys when contextualized', () => {
+  // 40-char base64-style synthetic, plus the AWS_SECRET_ACCESS_KEY= prefix
+  const fortyChars = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+  const out = redactSecrets(`AWS_SECRET_ACCESS_KEY=${fortyChars}`);
+  assert.match(out, /\[REDACTED:aws\]/);
+  assert.doesNotMatch(out, /wJalrXUtn/);
+});
+
+test('does NOT redact bare 40-char base64 without AWS context', () => {
+  // 40 chars but no AWS_SECRET_ACCESS_KEY prefix — must stay
+  const fortyChars = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+  const out = redactSecrets(`some hash ${fortyChars} not aws`);
+  assert.doesNotMatch(out, /\[REDACTED:aws\]/);
+});
+
+test('redacts Discord bot tokens (3-segment 24.6.27+)', () => {
+  // Synthetic, non-eyJ first segment so it does not collide with JWT shape
+  const tok = 'MTAyMzQ1Njc4OTAxMjM0NTY3.GhIjKl.MnOpQrStUvWxYz0123456789abcdef';
+  const out = redactSecrets(`DISCORD_BOT=${tok}`);
+  assert.match(out, /\[REDACTED:discord\]/);
+  assert.doesNotMatch(out, /MnOpQrStUv/);
+});
+
+test('does NOT misclassify a JWT as a Discord token', () => {
+  // Real JWT shape (eyJ header) must redact as jwt, not discord
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.abcdefghijklmnopqrstuvwxyz0123';
+  const out = redactSecrets(`token=${jwt}`);
+  assert.match(out, /\[REDACTED:jwt\]/);
+  assert.doesNotMatch(out, /\[REDACTED:discord\]/);
+});
+
+test('redacts bare JWT tokens (eyJ.eyJ.sig)', () => {
+  const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+  const out = redactSecrets(`Supabase: ${jwt}`);
+  assert.match(out, /\[REDACTED:jwt\]/);
+});
+
+test('does NOT misclassify "eyJ" prose as a JWT', () => {
+  const out = redactSecrets('the letters eyJ are common in base64 headers');
+  assert.equal(out, 'the letters eyJ are common in base64 headers');
+});
+
+test('redacts OpenAI organization IDs (org-...)', () => {
+  const out = redactSecrets('OpenAI org-abcdefghijklmnopqrstuvwx is mine');
+  assert.match(out, /\[REDACTED:openai-org\]/);
+});
+
+test('does NOT redact ordinary "org-" prose', () => {
+  // org-chart, org-wide etc. are shorter than 24 alphanumerics
+  const out = redactSecrets('Discuss org-chart and org-wide policy');
+  assert.equal(out, 'Discuss org-chart and org-wide policy');
+});
+
+test('redacts Vercel personal access tokens (vercel_pat_)', () => {
+  const out = redactSecrets('VERCEL_TOKEN=vercel_pat_AbCdEfGh1234567890XyZ');
+  assert.match(out, /\[REDACTED:vercel\]/);
+});
+
+test('redacts contextualized VERCEL_TOKEN=... env values', () => {
+  const out = redactSecrets('export VERCEL_API_TOKEN=ABCDEF1234567890abcdef12');
+  assert.match(out, /\[REDACTED:vercel\]/);
+});
+
+test('redacts Supabase project access tokens (sbp_)', () => {
+  const out = redactSecrets('SUPABASE_TOKEN=sbp_abcdefghijklmnopqrstuvwxyz0123456789ABCDEF');
+  assert.match(out, /\[REDACTED:supabase\]/);
+});
+
+test('redacts Notion integration secrets (secret_ + 43 chars)', () => {
+  // 43-char synthetic
+  const tok = 'A'.repeat(43);
+  const out = redactSecrets(`NOTION=secret_${tok}`);
+  assert.match(out, /\[REDACTED:notion\]/);
+});
+
+test('redacts Notion ntn_ tokens (2026 format)', () => {
+  const out = redactSecrets('NOTION_API_KEY=ntn_abcdefghijklmnopqrstuvwxyz0123456789ABCDEF');
+  assert.match(out, /\[REDACTED:notion\]/);
+});
+
+test('does NOT redact bare "secret_" prefix without 43 chars', () => {
+  // 10-char suffix, well below the 43-char min
+  const out = redactSecrets('field secret_short_val matters');
+  assert.doesNotMatch(out, /\[REDACTED:notion\]/);
+});
+
+test('redacts Linear API keys (lin_api_)', () => {
+  const out = redactSecrets('LINEAR_KEY=lin_api_abcdefghijklmnopqrstuvwxyz012345');
+  assert.match(out, /\[REDACTED:linear\]/);
+});
+
+test('redacts Linear OAuth keys (lin_oauth_)', () => {
+  const out = redactSecrets('OAUTH=lin_oauth_abcdefghijklmnopqrstuvwxyz012345');
+  assert.match(out, /\[REDACTED:linear\]/);
+});
+
+test('redacts Twilio Account SIDs (AC + 32 hex)', () => {
+  // Synthetic: 32 hex chars after AC
+  const out = redactSecrets('twilio sid AC0123456789abcdef0123456789abcdef now');
+  assert.match(out, /\[REDACTED:twilio\]/);
+});
+
+test('redacts Twilio auth tokens when contextualized', () => {
+  const out = redactSecrets('TWILIO_AUTH_TOKEN=0123456789abcdef0123456789abcdef');
+  assert.match(out, /\[REDACTED:twilio\]/);
+});
+
+test('does NOT redact bare 32-char hex without Twilio context', () => {
+  const out = redactSecrets('git sha 0123456789abcdef0123456789abcdef now');
+  assert.doesNotMatch(out, /\[REDACTED:twilio\]/);
+});
