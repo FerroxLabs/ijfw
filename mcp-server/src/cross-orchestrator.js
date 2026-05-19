@@ -26,14 +26,28 @@ import { RELEASE_BLOCKER_GATES, DegradedTridentError } from './trident/dispatch.
 
 // ---------------------------------------------------------------------------
 // Per-provider timeout defaults (ms). Codex cold-start can take 120s+ (U2).
+// r17.1 — bumped gemini 45s → 90s. The 45s budget was tuned for Gemini 2.x
+// which routinely returned in 10-20s; Gemini 3.x cold starts + larger context
+// windows mean a single audit on a 10KB target can exceed 45s end-to-end
+// (verified in cross-audit r16 on this codebase). 90s gives realistic
+// headroom without making a hung process feel hung.
 // ---------------------------------------------------------------------------
 const PROVIDER_TIMEOUT_MS = {
   codex:       120_000,
-  gemini:       45_000,
+  gemini:       90_000,
   anthropic:    60_000,
   'api-mode':   30_000,
 };
 const DEFAULT_TIMEOUT_MS = 90_000;
+
+// r17.1 — retry budget for transient timeouts. Gemini's API frequently returns
+// transient 502s and TCP hangs that resolve on a second attempt; codex more
+// often has a real cold-start problem that needs the longer first timeout
+// rather than a retry. Default: 1 retry, only for the gemini family. Per-
+// auditor `retryOnTimeout: true|false` in audit-roster.js overrides.
+const PROVIDER_RETRY_ON_TIMEOUT = {
+  gemini: true,
+};
 
 function timeoutForPick(pick, resolvedTimeoutSec) {
   if (resolvedTimeoutSec) return resolvedTimeoutSec * 1000;
@@ -258,14 +272,28 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
     return { stdout: '', stderr: apiResult.error, exitCode: null, status: 'failed', source: 'none', elapsedMs: elapsed() };
   }
 
-  const raw = await spawnCli(pick, request, timeoutMs, signal, env);
+  let raw = await spawnCli(pick, request, timeoutMs, signal, env);
 
   // Aborted by runAc
   if (raw && raw.aborted) {
     return { stdout: '', stderr: 'aborted', exitCode: null, status: 'aborted', source: 'none', elapsedMs: elapsed() };
   }
 
-  // Explicit timeout -- attempt API fallback before giving up.
+  // r17.1 — retry once on timeout if this provider/auditor opts in. Gemini's
+  // API has known transient 502/hang patterns that resolve on a second attempt.
+  // Codex more often has a real cold-start problem and benefits from the longer
+  // first timeout, not a retry. The retry happens BEFORE the api-fallback path
+  // so we still get a CLI result if the second attempt lands.
+  const retryEnabled = pick.retryOnTimeout !== false &&
+                       (pick.retryOnTimeout === true || PROVIDER_RETRY_ON_TIMEOUT[pick.id] === true);
+  if (raw && raw.timedOut && retryEnabled && !signal?.aborted) {
+    raw = await spawnCli(pick, request, timeoutMs, signal, env);
+    if (raw && raw.aborted) {
+      return { stdout: '', stderr: 'aborted-after-retry', exitCode: null, status: 'aborted', source: 'none', elapsedMs: elapsed() };
+    }
+  }
+
+  // Explicit timeout (after retry, if any) -- attempt API fallback before giving up.
   if (raw && raw.timedOut) {
     if (pick.apiFallback && isReachable(pick.id, env).api) {
       const { mode, angle, target } = extractApiParams();

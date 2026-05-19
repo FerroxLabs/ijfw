@@ -877,6 +877,15 @@ function cmdPurgeReceipts(projectDir) {
 // ranges, and non-existent paths pass through unchanged.
 const TARGET_FILE_SIZE_CAP = 64 * 1024; // 64 KB -- leaves prompt headroom
 
+// r17.1 — size thresholds for pre-flight advisory. Inputs under WARN are
+// silent; WARN..CAP get a one-line "this might be slow" advisory; CAP..MAX
+// get a "this WILL be truncated, consider chunking" warning before we fire
+// any auditor (so the user can cancel rather than burn wall time). Anything
+// over MAX would be silently truncated by resolveTarget anyway — the
+// pre-flight check makes that loud.
+const TARGET_FILE_SIZE_WARN = 32 * 1024;
+const TARGET_FILE_SIZE_MAX  = 256 * 1024; // beyond this, advise chunking explicitly
+
 export function resolveTarget(raw, opts = {}) {
   const cap = typeof opts.sizeCap === 'number' ? opts.sizeCap : TARGET_FILE_SIZE_CAP;
   if (typeof raw !== 'string' || !raw) return raw;
@@ -935,6 +944,29 @@ async function cmdCross({ mode, target, only, confirm, expand }) {
   // Issue #6 fix: substitute file contents for path string when target is a
   // regular file. Keep the raw target for the user-facing echo line.
   const rawTarget = target;
+
+  // r17.1 — pre-flight size advisory. Run BEFORE resolveTarget truncates,
+  // so the user sees the real number and can decide to abort + chunk the
+  // input themselves rather than getting a silently-truncated audit.
+  try {
+    if (typeof rawTarget === 'string' && rawTarget.length < 4096 && existsSync(rawTarget)) {
+      const st = statSync(rawTarget);
+      if (st.isFile()) {
+        if (st.size > TARGET_FILE_SIZE_MAX) {
+          console.log('');
+          console.log(`Heads up -- target is ${(st.size / 1024).toFixed(1)} KB, larger than the ${(TARGET_FILE_SIZE_MAX / 1024).toFixed(0)} KB recommended max.`);
+          console.log(`Auditors will see only the first ${(TARGET_FILE_SIZE_CAP / 1024).toFixed(0)} KB (truncated). For full coverage, chunk the target into smaller files and audit each, OR pass --chunk to auto-split (see \`ijfw cross --help\`).`);
+        } else if (st.size > TARGET_FILE_SIZE_CAP) {
+          console.log('');
+          console.log(`Note: target is ${(st.size / 1024).toFixed(1)} KB; auditors will see the first ${(TARGET_FILE_SIZE_CAP / 1024).toFixed(0)} KB and a truncation marker. Findings beyond that point will be missed.`);
+        } else if (st.size > TARGET_FILE_SIZE_WARN) {
+          console.log('');
+          console.log(`Note: target is ${(st.size / 1024).toFixed(1)} KB; expect a slower wall time (gemini in particular may push the 90s budget).`);
+        }
+      }
+    }
+  } catch { /* statSync failure is non-fatal; size advisory is best-effort */ }
+
   target = resolveTarget(target);
 
   // Polish 6: pre-flight reachability check. If no auditor is wired, give a
@@ -1006,6 +1038,18 @@ async function cmdCross({ mode, target, only, confirm, expand }) {
   printFindings(mode, merged);
 
   console.log('\nReceipt logged -- run `ijfw status` to see it.');
+
+  // r17.1 — structured exit code so CI scripts + orchestrator-LLM callers
+  // can detect degraded runs without scraping console output.
+  //   exit 0  — all picks contributed productively
+  //   exit 2  — at least one pick didn't contribute (timeout / failure / aborted)
+  //   exit 3  — zero picks contributed productively (INCONCLUSIVE verdict)
+  // exit 1 is reserved for argv / usage errors (already used above).
+  if (auditorResults && Array.isArray(auditorResults)) {
+    const productive = auditorResults.filter(r => r.counted === true || r.status === null || r.status === 'fallback-used');
+    if (productive.length === 0) process.exit(3);
+    if (productive.length < auditorResults.length) process.exit(2);
+  }
 }
 
 // ---------------------------------------------------------------------------

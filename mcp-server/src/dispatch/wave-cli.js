@@ -124,6 +124,91 @@ export const handlers = {
     return { ok: true, output: rows.join('\n') };
   },
 
+  // r17.1 (item 6): subagent "did anyone go silent?" check. Takes a wave id
+  // plus the list of subagent ids you EXPECTED to complete and reports which
+  // ones have a checkpoint receipt vs which are MIA. Closes the wayland-
+  // session pattern where 5 of 8 dispatched subagents went silent and the
+  // orchestrator (Claude) had no way to know without manually scanning.
+  //
+  // Usage:
+  //   ijfw wave-missing <waveId> <expectedId1> [<expectedId2> ...]
+  // Exits non-zero (via ctx-aware caller) when any expected id is missing.
+  //
+  // Why this is in IJFW vs a SKILL: the orchestrator harness doesn't notify
+  // Claude when an Agent subagent silently fails. IJFW can't fix that — only
+  // the harness can. What IJFW CAN do: give the orchestrator a deterministic,
+  // mechanical way to ask "are the receipts here?" without scraping the
+  // worktree filesystem by hand.
+  'wave-missing': async (args, ctx) => {
+    const tokens = tokenize(args);
+    const waveId = tokens[0];
+    const expected = tokens.slice(1);
+    if (!waveId || expected.length === 0) {
+      return {
+        ok: false,
+        error: 'Usage: ijfw wave-missing <waveId> <expectedSubId1> [<expectedSubId2> ...]',
+      };
+    }
+    const projectRoot = (ctx && ctx.projectRoot) || process.cwd();
+    const waveDir = join(projectRoot, '.ijfw', `${WAVE_DIR_PREFIX}${waveId}`);
+    let dirents = [];
+    try {
+      dirents = await readdir(waveDir, { withFileTypes: true });
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return {
+          ok: false,
+          output: `Wave ${waveId} has no .ijfw/wave-${waveId}/ directory. All ${expected.length} expected subagent(s) are MISSING.\nMissing: ${expected.join(', ')}`,
+        };
+      }
+      return { ok: false, error: `wave-missing: ${err.message}` };
+    }
+
+    // Two canonical receipt filename forms:
+    //   1. Wave-id-prefixed (Phase D synthesized + S01 CLI default):
+    //        subagent-<waveId>-<subId>.checkpoint.json
+    //   2. Bare runtime form (when ijfw checkpoint <waveId> <subId> ... runs
+    //      and the subId itself has no embedded dashes that collide):
+    //        subagent-<subId>.checkpoint.json
+    // We extract subId by stripping a leading "<waveId>-" if present, then
+    // taking everything before ".checkpoint.json". This avoids the regex-
+    // overlap bug where greedy captures double-counted a subId that happens
+    // to start with a word that resembles another subId.
+    const present = new Set();
+    const wavePrefix = `subagent-${waveId}-`;
+    const barePrefix = 'subagent-';
+    const suffix = '.checkpoint.json';
+    for (const ent of dirents) {
+      if (!ent.isFile()) continue;
+      const name = ent.name;
+      if (!name.startsWith(barePrefix) || !name.endsWith(suffix)) continue;
+      let subId;
+      if (name.startsWith(wavePrefix)) {
+        subId = name.slice(wavePrefix.length, name.length - suffix.length);
+      } else {
+        subId = name.slice(barePrefix.length, name.length - suffix.length);
+      }
+      if (subId.length > 0) present.add(subId);
+    }
+    const found = expected.filter(id => present.has(id));
+    const missing = expected.filter(id => !present.has(id));
+    const stray = [...present].filter(id => !expected.includes(id));
+
+    const lines = [
+      `Wave: ${waveId}`,
+      `Expected: ${expected.length} subagent(s)`,
+      `Present:  ${found.length} (${found.join(', ') || 'none'})`,
+      `Missing:  ${missing.length} (${missing.join(', ') || 'none'})`,
+    ];
+    if (stray.length > 0) {
+      lines.push(`Stray:    ${stray.length} (${stray.join(', ')}) — present but not expected`);
+    }
+    return {
+      ok: missing.length === 0,
+      output: lines.join('\n'),
+    };
+  },
+
   // v1.5.0-major S01: belt-and-suspenders drain of subagent checkpoints from
   // a worktree's .ijfw/wave-<id>/ into the parent project's .ijfw/wave-<id>/.
   // Run BEFORE `git worktree remove` so checkpoints survive cleanup even if
@@ -160,6 +245,8 @@ export const handlers = {
 export const subcommandHelp = {
   'wave-status': 'wave-status [<id>|latest] — print live state of a wave',
   'wave-list':   'wave-list — list all known waves (newest first)',
+  'wave-missing':
+    'wave-missing <waveId> <expectedId1> [<expectedId2> ...] — list any dispatched subagents that have no checkpoint receipt (catches silent-failure dispatches)',
   'worktree-drain':
     'worktree-drain <waveId> <worktreePath> — copy subagent checkpoints from a worktree to the parent before `git worktree remove` (v1.5.0 S01)',
 };
