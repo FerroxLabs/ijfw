@@ -27,6 +27,11 @@ import { join, dirname } from 'node:path';
 import https from 'node:https';
 
 import { withFsLock } from './fs-lock.js';
+import {
+  submitToRekor as _submitToRekor,
+  verifyRekorEntry as _verifyRekorEntry,
+  hasRekorClient as _hasRekorClient,
+} from './lib/rekor-bridge.js';
 
 // ---------------------------------------------------------------------------
 // Embedded meta-key — compiled-in trust root for registry signature verification.
@@ -133,7 +138,12 @@ function sortKeysDeep(v) {
 function registryCanonicalBytes(registry) {
   const shallow = {};
   for (const k of Object.keys(registry)) {
-    if (k === 'signature') continue;
+    // Exclude `signature` (carries the sig itself) and `rekor` (added AFTER
+    // signing as a transparency-log anchor — v1.5.0 audit-H5.7). Both must
+    // be excluded so sign-time and verify-time produce byte-identical input.
+    // Backcompat: pre-v1.5.0 registries have no `rekor` field, so this is
+    // a no-op for them.
+    if (k === 'signature' || k === 'rekor') continue;
     shallow[k] = registry[k];
   }
   return Buffer.from(JSON.stringify(sortKeysDeep(shallow)), 'utf8');
@@ -312,6 +322,27 @@ export function verifyRegistry(body, opts = {}) {
     return { valid: false, registry: null, reason: 'revoked must be an array' };
   }
 
+  // v1.5.0 audit-H5.7: when an embedded `rekor` anchor is present, validate
+  // its shape here (sync, applies to ALL signature paths including seed-mode).
+  // The actual network cross-check happens in `crossCheckRekor` (async).
+  if (parsed.rekor !== undefined && parsed.rekor !== null) {
+    const r = parsed.rekor;
+    if (
+      typeof r !== 'object' ||
+      Array.isArray(r) ||
+      typeof r.uuid !== 'string' ||
+      r.uuid.length === 0 ||
+      typeof r.logIndex !== 'number' ||
+      typeof r.integratedTime !== 'number'
+    ) {
+      return {
+        valid: false,
+        registry: null,
+        reason: 'rekor field malformed (expected {uuid, logIndex, integratedTime})',
+      };
+    }
+  }
+
   // Signature verification — null signature is only accepted in seed/bootstrap mode.
   if (parsed.signature === null) {
     const allowSeed = opts.allowSeed === true || process.env.IJFW_ALLOW_SEED_REGISTRY === '1';
@@ -359,6 +390,50 @@ export function verifyRegistry(body, opts = {}) {
 
   return { valid: true, registry: parsed, reason: 'ok' };
 }
+
+/**
+ * v1.5.0 audit-H5.7: optional Rekor transparency-log cross-check.
+ *
+ * Run AFTER `verifyRegistry` returns valid:true. When the registry has an
+ * embedded `rekor` field AND a Rekor client is available locally, this
+ * looks the entry up in the live log and confirms its payload hash matches
+ * the registry we just verified locally.
+ *
+ * Decision matrix:
+ *   - no `rekor` field           → returns { ok: true, reason: 'no rekor anchor' }
+ *                                  (backcompat — registries signed before this
+ *                                  lift still verify on Ed25519 alone).
+ *   - no Rekor client available  → returns { ok: true, reason: 'no rekor client' }
+ *                                  (offline clients accept Ed25519 alone).
+ *   - entry mismatch             → returns { ok: false, reason: 'rekor payload mismatch — REJECT' }
+ *                                  Caller MUST reject the registry; this is the
+ *                                  detection signal for meta-key compromise.
+ *   - entry matches              → returns { ok: true, reason: 'rekor cross-check ok' }
+ *
+ * @param {object} registry verified registry object (from verifyRegistry)
+ * @returns {Promise<{ ok: boolean, reason: string }>}
+ */
+export async function crossCheckRekor(registry) {
+  if (!registry || typeof registry !== 'object' || registry.rekor === undefined || registry.rekor === null) {
+    return { ok: true, reason: 'no rekor anchor' };
+  }
+  const hasClient = await _hasRekorClient();
+  if (!hasClient) {
+    return { ok: true, reason: 'no rekor client' };
+  }
+  const bytes = registryCanonicalBytes(registry);
+  const result = await _verifyRekorEntry({ uuid: registry.rekor.uuid, payload: bytes });
+  if (result === null) {
+    // Lookup failed (network error, malformed response). Be conservative but
+    // backcompat-friendly: accept on Ed25519 alone — same posture as offline.
+    return { ok: true, reason: 'rekor lookup unavailable — accepting on ed25519' };
+  }
+  if (result === false) {
+    return { ok: false, reason: 'rekor payload mismatch — REJECT' };
+  }
+  return { ok: true, reason: 'rekor cross-check ok' };
+}
+
 
 // ---------------------------------------------------------------------------
 // loadRegistrySources — read ~/.ijfw/registries.json or fall back to single-source.
@@ -1245,9 +1320,32 @@ export async function signRegistry(registryPath, opts = {}) {
 
   registry.updated_at = new Date().toISOString();
   delete registry.signature;
+  delete registry.rekor;
   const bytes = registryCanonicalBytes(registry);
   const sigBuf = cryptoSign(null, bytes, privKey);
-  registry.signature = `ed25519:${sigBuf.toString('base64')}`;
+  const signature = `ed25519:${sigBuf.toString('base64')}`;
+  registry.signature = signature;
+
+  // v1.5.0 audit-H5.7: anchor the signed registry to Sigstore Rekor when a
+  // client is available. The Rekor entry attests to {payload, signature,
+  // publicKey} — downstream verifiers cross-check the embedded uuid against
+  // the live log so a meta-key swap is detectable. Graceful no-op when the
+  // peer dep is absent.
+  try {
+    const publicKeyPem = createPublicKey(privKey)
+      .export({ type: 'spki', format: 'pem' })
+      .toString();
+    const rekorEntry = await _submitToRekor({
+      payload: bytes,
+      signature,
+      publicKey: publicKeyPem,
+    });
+    if (rekorEntry !== null) {
+      registry.rekor = rekorEntry;
+    }
+  } catch {
+    // submitToRekor never throws by contract; this guard is belt-and-braces.
+  }
 
   try {
     await writeFile(abs, JSON.stringify(registry, null, 2) + '\n', 'utf8');
@@ -1255,7 +1353,7 @@ export async function signRegistry(registryPath, opts = {}) {
     return { ok: false, error: `write failed: ${err.message}` };
   }
 
-  return { ok: true };
+  return { ok: true, rekor: registry.rekor || null };
 }
 
 export async function verifyRegistryFile(registryPath) {
