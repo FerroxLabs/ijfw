@@ -8,6 +8,19 @@ import { getTemplate } from './cross-dispatcher.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+// v1.5.0 audit-DISPUTED-1 — user-message cache_control threshold.
+//
+// Anthropic prompt-caching has a server-side minimum (~1024 tokens). We
+// gate the user-content-block split on a conservative 2KB byte cutoff so
+// short audits (which would never recover the cache-write overhead)
+// remain plain strings, while large diff/transcript targets (which DO
+// amortize the cache) get split into a cacheable prefix + ephemeral tail.
+//
+// Pairs with the H4.2 ordering invariant: cycleSummary (or any per-turn
+// content) MUST land AFTER the cacheable block so it never busts the
+// cache prefix. See ADJUDICATIONS.md DISPUTED-1.
+const CACHE_USER_THRESHOLD_BYTES = 2048;
+
 // ---------------------------------------------------------------------------
 // Provider request builders
 // ---------------------------------------------------------------------------
@@ -68,7 +81,7 @@ function buildGemini(system, user, model, key, timeoutMs, endpoint) {
 // Sonnet 4.5 prompt-caching threshold: 1024 tokens (rough: chars / 4).
 const CACHE_TOKEN_THRESHOLD = 1024;
 
-function buildAnthropic(system, user, model, key, timeoutMs) {
+function buildAnthropic(system, user, model, key, timeoutMs, cycleSummary = null) {
   const promptChars = system.length + user.length;
   const estimatedTokens = Math.floor(promptChars / 4);
   const cacheEligible = estimatedTokens >= CACHE_TOKEN_THRESHOLD;
@@ -76,6 +89,26 @@ function buildAnthropic(system, user, model, key, timeoutMs) {
   const systemBlock = cacheEligible
     ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
     : system;
+
+  // v1.5.0 audit-DISPUTED-1 — user-message cache_control.
+  //
+  // When the user content is large enough to amortize the cache-write
+  // overhead, split into a content-blocks array: the stable target gets
+  // cache_control:{type:'ephemeral'}, and any per-turn tail (cycleSummary)
+  // follows as a plain text block so it never busts the cache prefix.
+  //
+  // Below the threshold we keep the legacy plain-string form -- no need
+  // to spend cache-write tokens we can't recover.
+  const userBytes = Buffer.byteLength(user, 'utf8');
+  let userContent;
+  if (userBytes >= CACHE_USER_THRESHOLD_BYTES) {
+    const cacheableBlock = { type: 'text', text: user, cache_control: { type: 'ephemeral' } };
+    userContent = cycleSummary
+      ? [cacheableBlock, { type: 'text', text: cycleSummary }]
+      : [cacheableBlock];
+  } else {
+    userContent = user;
+  }
 
   return {
     url: 'https://api.anthropic.com/v1/messages',
@@ -91,7 +124,7 @@ function buildAnthropic(system, user, model, key, timeoutMs) {
         model,
         max_tokens: 4096,
         system: systemBlock,
-        messages: [{ role: 'user', content: user }],
+        messages: [{ role: 'user', content: userContent }],
       }),
       signal: AbortSignal.timeout(timeoutMs),
     },
@@ -138,9 +171,13 @@ function extractCacheStats(json, cacheEligible) {
 // Main export
 // ---------------------------------------------------------------------------
 
-// runViaApi(pick, mode, angle, target, env, timeoutMs?, abortSignal?)
+// runViaApi(pick, mode, angle, target, env, timeoutMs?, abortSignal?, opts?)
 // Returns { status: 'ok', raw, model } or { status: 'failed', error, model }.
-export async function runViaApi(pick, mode, angle, target, env = process.env, timeoutMs = DEFAULT_TIMEOUT_MS, abortSignal = null) {
+//
+// opts.cycleSummary (string|null): when set on Anthropic calls, lands in a
+// trailing ephemeral content block AFTER the cacheable user block so it
+// never busts the cache prefix. Ignored for non-Anthropic providers.
+export async function runViaApi(pick, mode, angle, target, env = process.env, timeoutMs = DEFAULT_TIMEOUT_MS, abortSignal = null, opts = {}) {
   const fb = pick.apiFallback;
   if (!fb) return { status: 'failed', error: 'no API fallback configured', model: '' };
 
@@ -149,6 +186,7 @@ export async function runViaApi(pick, mode, angle, target, env = process.env, ti
 
   const { system, format } = getTemplate(mode, angle);
   const user = `${format}\n\n## Target\n\n${target}`;
+  const cycleSummary = opts.cycleSummary ?? null;
 
   // Combine caller abort signal with our per-call timeout signal.
   const timeoutSig = AbortSignal.timeout(timeoutMs);
@@ -164,7 +202,7 @@ export async function runViaApi(pick, mode, angle, target, env = process.env, ti
   } else if (fb.provider === 'google') {
     req = buildGemini(system, user, fb.model, key, timeoutMs, fb.endpoint);
   } else if (fb.provider === 'anthropic') {
-    req = buildAnthropic(system, user, fb.model, key, timeoutMs);
+    req = buildAnthropic(system, user, fb.model, key, timeoutMs, cycleSummary);
   } else {
     return { status: 'failed', error: `unknown provider: ${fb.provider}`, model: fb.model };
   }
