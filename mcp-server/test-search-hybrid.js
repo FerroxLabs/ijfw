@@ -125,6 +125,45 @@ test('IJFW_VECTORS=on + no opts.embedder → calls getEmbedder() (no-op if trans
 });
 
 // ---------------------------------------------------------------------------
+// v1.5.0 audit MED #6 (memory-engine.md F-SPD-1): parallel batch embedding.
+// The old sequential `for (...await embed)` loop fired K+1 round-trips
+// strictly in series. Promise.all lets them dispatch concurrently. We
+// verify this by making each embed() resolve only AFTER all expected
+// calls have started -- a sequential implementation would deadlock.
+// ---------------------------------------------------------------------------
+
+test('Batch embed: query + K snippets dispatched in parallel (no sequential await)', async () => {
+  _resetVectorWarnGate();
+  const expectedCalls = 1 + BM25.length; // 1 query + K snippets
+  let startedCalls = 0;
+  let allStartedResolve;
+  const allStartedPromise = new Promise((res) => { allStartedResolve = res; });
+
+  const parallelEmbedder = {
+    available: true,
+    model: 'parallel-mock',
+    async embed(text) {
+      startedCalls++;
+      if (startedCalls === expectedCalls) allStartedResolve();
+      // Block until every expected call has begun. A sequential awaiter
+      // would never reach this satisfaction condition for call #2, so this
+      // test would hang and the runner would time it out.
+      await allStartedPromise;
+      const v = new Array(8).fill(0);
+      for (const ch of String(text)) v[ch.charCodeAt(0) % 8] += 1;
+      let norm = 0;
+      for (const x of v) norm += x * x;
+      norm = Math.sqrt(norm) || 1;
+      return v.map((x) => x / norm);
+    },
+  };
+
+  const out = await maybeRerankWithVectors('fruit', BM25, { embedder: parallelEmbedder });
+  assert.equal(startedCalls, expectedCalls, 'all embed calls were dispatched');
+  assert.equal(out.length, BM25.length);
+});
+
+// ---------------------------------------------------------------------------
 // Optional integration test: only runs when @xenova/transformers is installed.
 // Verifies the real embedder path end-to-end. Skipped otherwise so CI without
 // the optional dep stays green.
