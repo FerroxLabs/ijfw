@@ -20,6 +20,11 @@ if (process.env.IJFW_SKIP_PARSE === '1') process.exit(0);
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, unlinkSync, openSync, closeSync } from 'fs';
 import { homedir } from 'os';
 import { join, basename } from 'path';
+// Canonical pricing -- single source of truth. mcp-server is a sibling
+// of scripts/. Importing keeps the dashboard receipt surface in lockstep
+// with everything else (cross-dispatcher, /api/prices, computeCost in
+// readers). H4.8 audit fix.
+import { getTierRatesPerMillion, computeCost as computeTurnCost } from '../../mcp-server/src/cost/pricing.js';
 
 const HOME = homedir();
 const CLAUDE_PROJECTS = join(HOME, '.claude', 'projects');
@@ -77,12 +82,10 @@ function acquireLock() {
   return false;
 }
 
-// --- Pricing table (per million tokens) ---
-const PRICING = {
-  opus:   { in: 15,   out: 75,   cache_read: 1.50,  cache_creation: 18.75 },
-  sonnet: { in: 3,    out: 15,   cache_read: 0.30,  cache_creation: 3.75  },
-  haiku:  { in: 0.80, out: 4,    cache_read: 0.08,  cache_creation: 1.00  },
-};
+// --- Pricing (sourced canonically from mcp-server/src/cost/pricing.js) ---
+// Per-tier $/M view (opus/sonnet/haiku) is derived from the canonical
+// model_prices.json -- no hardcoded rates here. H4.8 audit fix.
+const PRICING = getTierRatesPerMillion();
 
 function getModelTier(model) {
   if (!model) return null;
@@ -100,7 +103,20 @@ function getModelFamily(model) {
   return model.replace(/-\d{8}$/, '');
 }
 
-function computeCost(tier, usage) {
+// Cost is computed against the canonical pricing module. We prefer the
+// per-model resolver (handles cache_create_5m vs 1h split correctly) and
+// fall back to the per-tier $/M table when the caller only knows the tier.
+function computeCost(tier, usage, model) {
+  // Prefer model-aware computation: it understands ephemeral 5m vs 1h
+  // cache_creation splits and uses the same path as the receipts surface.
+  if (model) {
+    return computeTurnCost(model, {
+      input_tokens: usage.input_tokens || 0,
+      output_tokens: usage.output_tokens || 0,
+      cache_create_tokens_5m: usage.cache_creation_input_tokens || 0,
+      cache_read_tokens: usage.cache_read_input_tokens || 0,
+    });
+  }
   if (!tier || !PRICING[tier]) return 0;
   const p = PRICING[tier];
   const M = 1_000_000;
@@ -186,7 +202,7 @@ function parseTranscript(filePath) {
     output_tokens: result.outputTokens,
     cache_read_input_tokens: result.cacheReadTokens,
     cache_creation_input_tokens: result.cacheCreationTokens,
-  });
+  }, result.model);
   result.cost = BILLING_MODE === 'max' ? 0 : result.theoreticalCost;
 
   if (malformed > 0) {

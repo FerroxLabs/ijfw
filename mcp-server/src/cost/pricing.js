@@ -116,6 +116,63 @@ export function computeCost(modelId, usage) {
   );
 }
 
+/**
+ * Per-tier dashboard view ($/M tokens).
+ * Single source of truth for any UI that wants to show Anthropic family
+ * rates without hardcoding numbers. Derived from the canonical model_prices
+ * table via the same getPricing() resolver everything else uses, so it
+ * cannot drift from receipt cost computation.
+ *
+ * Tiers are keyed by lowercase family name -- callers tier-match on
+ * model id substring (opus | sonnet | haiku). Values are USD per million
+ * tokens for input/output/cache_read/cache_creation.
+ */
+export function getTierRatesPerMillion() {
+  const M = 1_000_000;
+  const tiers = {
+    opus:   'claude-opus-4-1',
+    sonnet: 'claude-sonnet-4-5',
+    haiku:  'claude-haiku-4-5',
+  };
+  const out = {};
+  for (const [tier, modelId] of Object.entries(tiers)) {
+    const p = getPricing(modelId);
+    out[tier] = {
+      in:             p.in * M,
+      out:            p.out * M,
+      cache_read:     p.cache_read * M,
+      cache_creation: p.cache_create_5m * M,
+    };
+  }
+  return out;
+}
+
+/**
+ * Per-provider USD/token estimate for budget pre-flight (cross-dispatcher).
+ * One representative model per provider, resolved through the canonical
+ * pricing table so this cannot drift from receipt billing.
+ *
+ * Returns USD per *input* token (output is typically priced separately;
+ * pre-flight uses the conservative input-only estimate).
+ */
+const PROVIDER_DEFAULT_MODEL = {
+  claude:    'claude-sonnet-4-5',
+  anthropic: 'claude-sonnet-4-5',
+  codex:     'gpt-5',
+  opencode:  'gpt-5',
+  aider:     'gpt-5',
+  copilot:   'gpt-4o',
+  gemini:    'gemini/gemini-1.5-flash',
+};
+
+export function getProviderInputRate(providerId) {
+  const id = (providerId || '').toLowerCase().trim();
+  const modelId = PROVIDER_DEFAULT_MODEL[id];
+  if (!modelId) return null;
+  const p = getPricing(modelId);
+  return p.in;
+}
+
 /** Return the raw prices table for /api/prices transparency endpoint. */
 export function getPricesTable() {
   const prices = loadPrices();

@@ -381,18 +381,11 @@ function mergeCritique(responses) {
 // Budget guard (Step 10B.6)
 // ---------------------------------------------------------------------------
 
-// Rough per-token list prices (USD) for each provider family.
-// Used only for pre-flight estimation -- not for billing.
-// Prices are input-side costs at standard rates as of 2026.
-const PROVIDER_PRICE_PER_TOKEN = {
-  codex:     0.000_015,  // OpenAI o4-mini input ~$15/M
-  opencode:  0.000_015,
-  aider:     0.000_015,
-  gemini:    0.000_000_5, // Gemini 1.5 Flash input ~$0.50/M
-  copilot:   0.000_010,  // GPT-4o input ~$10/M (conservative)
-  claude:    0.000_003,  // Sonnet input ~$3/M
-  anthropic: 0.000_003,
-};
+// Per-provider input-token price (USD/token), sourced from the canonical
+// pricing module. Used only for pre-flight estimation -- not for billing.
+// Single source of truth = mcp-server/src/cost/pricing.js. H4.8 audit fix.
+import { getProviderInputRate } from './cost/pricing.js';
+
 const DEFAULT_PRICE_PER_TOKEN = 0.000_010; // fallback for unknown providers
 
 // estimateCost(target, picks) -- rough cost in USD for one runCrossOp call.
@@ -402,7 +395,7 @@ export function estimateCost(target, picks) {
   const tokens = charCount / 4;
   let total = 0;
   for (const pick of picks) {
-    const price = PROVIDER_PRICE_PER_TOKEN[pick.id] ?? DEFAULT_PRICE_PER_TOKEN;
+    const price = getProviderInputRate(pick.id) ?? DEFAULT_PRICE_PER_TOKEN;
     total += tokens * price;
   }
   return total;
