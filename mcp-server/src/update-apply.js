@@ -1,5 +1,14 @@
 // MCP tool: ijfw_update_apply
 //
+// @deprecated since v1.5.0; will be removed in v1.6.0 (F-FUN-3 / v1.5.0 audit-MED-M7).
+// `ijfw_update_check` already issues a confirmation token whose instruction tells
+// the user to type `ijfw update --confirm <token>` in their terminal directly.
+// The intermediate `ijfw_update_apply` step writes a pending sentinel, but the
+// terminal CLI does not require the sentinel to confirm — the token itself is
+// authoritative. The tool is retained for v1.5.0 back-compat (older skills that
+// still call it work unchanged) and slated for retirement in v1.6.0 to free the
+// MCP-tool slot (see CLAUDE.md "MCP server: ≤12 tools" cap).
+//
 // Does NOT execute the update. Validates the token, writes (or overwrites)
 // the pending sentinel, returns instruction telling the user to run the
 // terminal-side confirm command. Idempotent against a matching sentinel
@@ -10,6 +19,11 @@
 import { validateToken, writePendingSentinel } from './lib/token.js';
 import { isVersionStringValid } from './lib/npm-view.js';
 
+/**
+ * @deprecated since v1.5.0; scheduled for removal in v1.6.0. Callers should
+ * skip straight from `ijfw_update_check` to the terminal-side confirm command;
+ * the intermediate sentinel write is redundant given the token contract.
+ */
 export function ijfwUpdateApply(args = {}) {
   const { target_version, confirmation_token } = args || {};
   const sessionId = args.session_id || process.env.IJFW_SESSION_ID || 'default-session';
@@ -64,9 +78,11 @@ export function ijfwUpdateApply(args = {}) {
 export const TOOL_DEF = {
   name: 'ijfw_update_apply',
   description:
-    'Stage an IJFW update behind out-of-band terminal confirmation. Writes a pending sentinel; ' +
-    "actual update only runs when the user types 'ijfw update --confirm <token>' in their terminal. " +
-    'This MCP tool NEVER executes the update directly.',
+    '[DEPRECATED v1.5.0; removal in v1.6.0] Stage an IJFW update behind out-of-band terminal ' +
+    'confirmation. Writes a pending sentinel; actual update only runs when the user types ' +
+    "'ijfw update --confirm <token>' in their terminal. This MCP tool NEVER executes the " +
+    'update directly. Prefer calling ijfw_update_check and forwarding the returned ' +
+    "'ijfw update --confirm <token>' instruction directly to the user.",
   inputSchema: {
     type: 'object',
     required: ['target_version', 'confirmation_token'],

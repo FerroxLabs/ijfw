@@ -57,6 +57,7 @@ import {
   removeExtensionFromAgentsMd,
   uninstallExtensionSkillsFromPlatforms,
 } from '../../installer/src/install-helpers.js';
+import { recordDeployFailure } from './deploy-alerts.js';
 
 // --- constants -------------------------------------------------------------
 
@@ -1032,8 +1033,14 @@ export async function installExtension(source, opts = {}) {
     //    Project scope only — org/user scopes deploy lazily at session start
     //    via override-resolver. Failures here do NOT unwind the install (the
     //    extension is already registered); they surface as deploy_partial.
+    //
+    //    v1.5.0 audit-MED-update-M8 (F-REL-2): partial-deploy failures now also
+    //    persist to `~/.ijfw/state/deploy-failures.jsonl` so the next memory
+    //    prelude surfaces them. Without this, a half-deployed extension was
+    //    only visible in the immediate install reply.
     let deployInfo;
     let deployPartial = false;
+    const partialDeployFailures = [];
     if (opts.scope === 'project') {
       try {
         const skillList = Array.isArray(manifest.skills) ? manifest.skills : [];
@@ -1048,7 +1055,16 @@ export async function installExtension(source, opts = {}) {
           failed: d.failed,
           receiptPath: d.receiptPath,
         };
-        if (Array.isArray(d.failed) && d.failed.length > 0) deployPartial = true;
+        if (Array.isArray(d.failed) && d.failed.length > 0) {
+          deployPartial = true;
+          for (const f of d.failed) {
+            partialDeployFailures.push({
+              platform: f && f.platform ? String(f.platform) : 'unknown',
+              skillName: f && f.skillName ? String(f.skillName) : null,
+              error: f && f.error ? String(f.error) : 'unknown',
+            });
+          }
+        }
       } catch (err) {
         const msg = err && err.message ? err.message : String(err);
         process.stderr.write(
@@ -1056,6 +1072,7 @@ export async function installExtension(source, opts = {}) {
         );
         deployPartial = true;
         deployInfo = { deployed: [], failed: [{ platform: '*', skillName: '*', error: msg }] };
+        partialDeployFailures.push({ platform: '*', skillName: '*', error: msg });
       }
       try {
         await deployExtensionToAgentsMd(
@@ -1069,6 +1086,20 @@ export async function installExtension(source, opts = {}) {
           `[ijfw] extension-installer: AGENTS.md inject failed for ${manifest.name}: ${msg}\n`,
         );
         deployPartial = true;
+        partialDeployFailures.push({ platform: 'AGENTS.md', skillName: null, error: msg });
+      }
+    }
+
+    // M8 — surface partial-deploy state for the next prelude.
+    if (deployPartial && partialDeployFailures.length > 0) {
+      try {
+        await recordDeployFailure({
+          extension: manifest.name,
+          scope: opts.scope,
+          failures: partialDeployFailures,
+        });
+      } catch {
+        // Best-effort: alert path failure must not break install.
       }
     }
 

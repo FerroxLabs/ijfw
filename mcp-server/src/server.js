@@ -1524,6 +1524,19 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
     // Best-effort; never fail the prelude on memory-feedback issues.
   }
 
+  // v1.5.0 audit-MED-update-M8 (F-REL-2): surface the last-N partial-deploy
+  // alerts so a half-deployed extension is visible at next session-start.
+  // Wrapped in try/catch — alert read failure must NEVER fail the prelude.
+  try {
+    const { renderDeployAlertsForPrelude } = await import('./deploy-alerts.js');
+    const block = await renderDeployAlertsForPrelude({ limit: 10 });
+    if (block && typeof block === 'string' && block.length > 0) {
+      parts.push(block);
+    }
+  } catch {
+    // Best-effort; never fail the prelude on deploy-alert read issues.
+  }
+
   parts.push('</ijfw-memory>');
 
   const text = parts.join('\n');
