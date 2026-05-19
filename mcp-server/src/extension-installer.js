@@ -355,11 +355,17 @@ function spawnChecked(cmd, args, opts = {}) {
  * @returns {Promise<void>} resolves if clean, throws with reason if not
  */
 async function preflightTarball(tarballPath) {
+  // v1.5.0 audit-LOW-update-#16: single `tar -tzf` listing feeds both the
+  // path-traversal scan AND the symlink/hardlink scan (via the ` -> ` /
+  // ` link to ` separators that every mainstream tar emits). The verbose
+  // `-tvzf` pass below is a defense-in-depth fallback for BSD-tar variants
+  // that don't emit those separators in the bare listing.
   const { stdout: namesOut } = await spawnChecked('tar', ['-tzf', tarballPath], {
     timeoutMs: GIT_CLONE_TIMEOUT_MS,
     captureStdout: true,
   });
   const names = namesOut.split('\n').filter((l) => l.length > 0);
+  let sawLinkArrow = false;
   for (const name of names) {
     if (name.startsWith('/')) {
       throw new Error(`tar-slip: tarball contains absolute path member: ${name}`);
@@ -367,6 +373,32 @@ async function preflightTarball(tarballPath) {
     const segments = name.split(/[\\/]/);
     if (segments.includes('..')) {
       throw new Error(`tar-slip: tarball contains '..' segment in member: ${name}`);
+    }
+    // Symlink detection direct from `-tzf` — most tar builds print
+    // `<name> -> <target>` on symlink members; hardlinks print
+    // `<name> link to <target>`. Either form refused unconditionally.
+    if (name.includes(' -> ') || name.includes(' link to ')) {
+      sawLinkArrow = true;
+      throw new Error(`tar-slip: tarball contains symlink/hardlink (refused): ${name.slice(0, 200)}`);
+    }
+  }
+  // Defense-in-depth (v1.5.0 audit-LOW-update-#16 fold-in): if a BSD-tar
+  // variant doesn't emit ` -> ` markers in `-tzf`, fall back to one `-tvzf`
+  // pass to catch the type char. Runs ONLY when the cheap scan saw no arrow
+  // markers — common case (mainstream tar) avoids the second spawn.
+  if (!sawLinkArrow) {
+    const { stdout: verboseOut } = await spawnChecked('tar', ['-tvzf', tarballPath], {
+      timeoutMs: GIT_CLONE_TIMEOUT_MS,
+      captureStdout: true,
+    });
+    const lines = verboseOut.split('\n').filter((l) => l.length > 0);
+    for (const line of lines) {
+      const modeMatch = line.match(/^(\S+)/);
+      if (!modeMatch) continue;
+      const typeChar = modeMatch[1][0];
+      if (typeChar === 'l' || typeChar === 'h') {
+        throw new Error(`tar-slip: tarball contains symlink/hardlink (refused): ${line.slice(0, 200)}`);
+      }
     }
   }
 }

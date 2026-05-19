@@ -28,6 +28,8 @@ import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir as osHomedir } from 'node:os';
 import { createPublicKey } from 'node:crypto';
+// v1.5.0 audit-LOW-update-#13: shared tmp-suffix helper.
+import { tmpSuffix } from '../lib/tmp-suffix.js';
 
 import {
   loadRegistrySources,
@@ -70,7 +72,8 @@ async function readRegistriesFile(ctx) {
 async function writeRegistriesFile(ctx, doc) {
   const path = registriesConfigPath(ctx);
   await mkdir(join(homedir(ctx), '.ijfw'), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  // v1.5.0 audit-LOW-update-#13: consolidate tmp-suffix shape via helper.
+  const tmp = `${path}.tmp.${tmpSuffix()}`;
   await writeFile(tmp, JSON.stringify(doc, null, 2) + '\n', 'utf8');
   const { rename } = await import('node:fs/promises');
   await rename(tmp, path);

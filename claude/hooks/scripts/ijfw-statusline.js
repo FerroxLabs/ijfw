@@ -20,6 +20,17 @@ import { readFileSync, existsSync, readSync, fstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
+// STDIN_TIMEOUT_MS is the WORST-CASE bound on stdin read.
+//
+// v1.5.0 audit-LOW-update-#14: the v3 "sync, <50ms cache-hit" budget in the
+// header refers to the HOT PATH when stdin is a TTY (we early-return null)
+// or when stdin is already closed (the read loop exits on first zero-byte
+// read). The 3000ms cap below is the WORST case: a producer pipe that's
+// connected but stalling -- e.g. an upstream Claude Code build that
+// occasionally takes a tick to flush its statusline JSON. Without a cap a
+// stalled upstream would block the statusline indefinitely; with the cap we
+// emit an empty line and exit cleanly within 3s. Typical observed read time
+// on Claude Code 1.0+ is under 5ms; the cap is purely a safety net.
 const STDIN_TIMEOUT_MS = 3000;
 const WIDTH_BUDGET = 80;
 

@@ -10,9 +10,10 @@
 import { readFile, writeFile, unlink, mkdir, readdir, stat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 
 import { resetExtensionQuotas } from './extension-quota-tracker.js';
+// v1.5.0 audit-LOW-update-#13: shared tmp-suffix helper.
+import { tmpSuffix } from './lib/tmp-suffix.js';
 
 const STATE_PATH_REL = ['.ijfw', 'state', 'active-extension.json'];
 
@@ -103,7 +104,8 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
   const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
   const path = statePath(home);
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp.${randomBytes(4).toString('hex')}`;
+  // v1.5.0 audit-LOW-update-#13: tmpSuffix() replaces inline randomBytes call.
+  const tmp = `${path}.tmp.${tmpSuffix({ bytes: 4, includePid: false })}`;
   await writeFile(tmp, JSON.stringify(out, null, 2) + '\n', 'utf8');
   const { rename } = await import('node:fs/promises');
   await rename(tmp, path);
@@ -247,7 +249,8 @@ async function writeLastSeen(ideId, opts = {}) {
   try {
     await mkdir(dirname(path), { recursive: true });
     const body = JSON.stringify({ ide: ideId, last_seen_at: new Date().toISOString() }, null, 2) + '\n';
-    const tmp = `${path}.tmp.${randomBytes(4).toString('hex')}`;
+    // v1.5.0 audit-LOW-update-#13: tmpSuffix() replaces inline randomBytes call.
+    const tmp = `${path}.tmp.${tmpSuffix({ bytes: 4, includePid: false })}`;
     await writeFile(tmp, body, 'utf8');
     const { rename } = await import('node:fs/promises');
     await rename(tmp, path);

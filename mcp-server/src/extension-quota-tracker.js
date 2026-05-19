@@ -23,9 +23,10 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { randomBytes } from 'node:crypto';
 
 import { withFsLock } from './fs-lock.js';
+// v1.5.0 audit-LOW-update-#13: shared tmp-suffix helper.
+import { tmpSuffix } from './lib/tmp-suffix.js';
 
 const STATE_REL = ['.ijfw', 'state', 'extension-quotas.json'];
 
@@ -105,7 +106,8 @@ export async function writeQuotaState(home, state) {
   const h = home || homeFromOpts({});
   const path = statePath(h);
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp.${randomBytes(4).toString('hex')}`;
+  // v1.5.0 audit-LOW-update-#13: tmpSuffix() replaces inline randomBytes call.
+  const tmp = `${path}.tmp.${tmpSuffix({ bytes: 4, includePid: false })}`;
   await writeFile(tmp, JSON.stringify(state, null, 2) + '\n', 'utf8');
   await rename(tmp, path);
 }

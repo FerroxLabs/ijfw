@@ -71,7 +71,14 @@ const payload = await new Promise((r) => {
   process.stdin.on("end", () => r(buf));
 });
 let req;
-try { req = JSON.parse(payload); } catch { process.exit(0); }
+try {
+  req = JSON.parse(payload);
+} catch {
+  // v1.5.0 audit-LOW-update-#15: same advisory as the codex variant. Silent
+  // fail-open hides config drift across the Gemini stdin reshape pipeline.
+  process.stderr.write("[ijfw] gemini hook: malformed reshaped payload -- skipping permission check (fail-open)\n");
+  process.exit(0);
+}
 const tool = req.tool_name || "";
 const writes = new Set(active.permissions.writes || []);
 const reads = new Set(active.permissions.reads || []);
