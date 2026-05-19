@@ -37,6 +37,13 @@ import {
 } from './blackboard.js';
 import { createTeamAssembly, readTeamAssembly } from './team/generator.js';
 import {
+  addTeamRole,
+  checkTeamAssembly,
+  listTeamRoles,
+  removeTeamRole,
+  swapTeamRole,
+} from './team/modify.js';
+import {
   blockSwarmTask,
   buildSwarmPlan,
   completeSwarmTask,
@@ -2630,7 +2637,101 @@ function cmdTeam(sub) {
     process.exit(0);
   }
 
-  console.log('Usage: ijfw team init [--archetype <type>] [--name <team-name>] [--force] | status');
+  // F-FUN-4 (audit-MED-teams-#7): ijfw team list -- enumerate roles.
+  if (sub === 'list') {
+    const result = listTeamRoles(process.cwd());
+    if (!result.ok) {
+      console.error(`team list failed: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Team: ${result.team_name || '(unnamed)'}`);
+    if (result.project_archetypes.length) console.log(`Archetypes: ${result.project_archetypes.join(', ')}`);
+    console.log(`Roles (${result.roles.length}):`);
+    for (const role of result.roles) {
+      console.log(`  - ${role.name} [${role.role_type}] model=${role.model} effort=${role.effort}`);
+    }
+    process.exit(0);
+  }
+
+  // F-FUN-4: ijfw team add <role-name> --charter <path>
+  if (sub === 'add') {
+    const name = args[0] && !args[0].startsWith('--') ? args[0] : null;
+    const charterPath = optionValue(args, ['--charter', '-c']);
+    if (!charterPath) {
+      console.error('Usage: ijfw team add <role-name> --charter <path-to-role.json>');
+      process.exit(1);
+    }
+    const result = addTeamRole(process.cwd(), { charterPath });
+    if (!result.ok) {
+      console.error(`team add failed: ${result.error}`);
+      if (result.errors) result.errors.forEach((e) => console.error(`  - ${e}`));
+      process.exit(1);
+    }
+    console.log(`Added role: ${result.role.name}`);
+    if (name && name !== result.role.name) {
+      console.log(`  note: charter declared name "${result.role.name}", ignoring CLI argument "${name}"`);
+    }
+    if (result.codex?.ok) console.log(`Codex agents resynced: ${result.codex.count} (${result.codex.skipped ?? 0} unchanged)`);
+    process.exit(0);
+  }
+
+  // F-FUN-4: ijfw team remove <role-name>
+  if (sub === 'remove' || sub === 'rm') {
+    const name = args[0] && !args[0].startsWith('--') ? args[0] : null;
+    if (!name) {
+      console.error('Usage: ijfw team remove <role-name>');
+      process.exit(1);
+    }
+    const result = removeTeamRole(process.cwd(), { name });
+    if (!result.ok) {
+      console.error(`team remove failed: ${result.error}`);
+      if (result.errors) result.errors.forEach((e) => console.error(`  - ${e}`));
+      process.exit(1);
+    }
+    console.log(`Removed role: ${result.removed}`);
+    if (result.codex?.ok) console.log(`Codex agents resynced: ${result.codex.count} (${result.codex.skipped ?? 0} unchanged)`);
+    process.exit(0);
+  }
+
+  // F-FUN-4: ijfw team swap <old-role-name> --charter <path>
+  if (sub === 'swap') {
+    const oldName = args[0] && !args[0].startsWith('--') ? args[0] : null;
+    const charterPath = optionValue(args, ['--charter', '-c']);
+    if (!oldName || !charterPath) {
+      console.error('Usage: ijfw team swap <old-role-name> --charter <path-to-role.json>');
+      process.exit(1);
+    }
+    const result = swapTeamRole(process.cwd(), { oldName, charterPath });
+    if (!result.ok) {
+      console.error(`team swap failed: ${result.error}`);
+      if (result.errors) result.errors.forEach((e) => console.error(`  - ${e}`));
+      process.exit(1);
+    }
+    console.log(`Swapped ${result.swapped.old} -> ${result.swapped.new}`);
+    if (result.codex?.ok) console.log(`Codex agents resynced: ${result.codex.count} (${result.codex.skipped ?? 0} unchanged)`);
+    process.exit(0);
+  }
+
+  // F-FUN-5 (audit-MED-teams-#13): ijfw team check -- standalone validator.
+  if (sub === 'check' || sub === 'validate') {
+    const report = checkTeamAssembly(process.cwd());
+    if (report.ok) {
+      console.log(`Team assembly OK: ${report.role_count} role(s), ${report.artifact_count} artifact(s)`);
+      process.exit(0);
+    }
+    console.error('Team assembly has issues:');
+    if (!report.has_charter || !report.charter.ok) {
+      console.error('  charter.json:');
+      for (const err of report.charter.errors) console.error(`    - ${err}`);
+    }
+    if (!report.has_workflow || !report.workflow.ok) {
+      console.error('  workflow.json:');
+      for (const err of report.workflow.errors) console.error(`    - ${err}`);
+    }
+    process.exit(1);
+  }
+
+  console.log('Usage: ijfw team init [--archetype <type>] [--name <team-name>] [--force] | status | list | add <role> --charter <path> | remove <role> | swap <old> --charter <path> | check');
   process.exit(1);
 }
 
