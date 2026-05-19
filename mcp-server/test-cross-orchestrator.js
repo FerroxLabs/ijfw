@@ -319,15 +319,21 @@ test('buildSpawnEnv: gemini WITHOUT GEMINI_API_KEY leaves gcloud creds intact', 
   assert.equal(out.GOOGLE_CLOUD_PROJECT, 'real-project');
 });
 
-test('buildSpawnEnv: non-gemini auditors are not env-scrubbed', () => {
+// v1.5.0 audit-MED-trident-M2 (F-SEC-1): non-API-key env vars are preserved
+// for non-gemini auditors, but the per-pick API-key allowlist scrubs vendor
+// keys this pick has no business seeing. Replaces an earlier test that
+// expected GEMINI_API_KEY to leak into codex spawn env.
+test('buildSpawnEnv: non-gemini auditors preserve unrelated env (M2 contract)', () => {
   const baseEnv = {
-    GEMINI_API_KEY: 'sk-test-123',
     GOOGLE_APPLICATION_CREDENTIALS: '/tmp/creds.json',
+    PATH: '/usr/bin',
+    HOME: '/home/user',
   };
   for (const id of ['codex', 'claude', 'opencode', 'aider', 'copilot']) {
     const out = buildSpawnEnv({ id }, baseEnv);
-    assert.equal(out.GOOGLE_APPLICATION_CREDENTIALS, '/tmp/creds.json', `${id}: gcloud creds preserved`);
-    assert.equal(out.GEMINI_API_KEY, 'sk-test-123', `${id}: GEMINI_API_KEY preserved`);
+    assert.equal(out.GOOGLE_APPLICATION_CREDENTIALS, '/tmp/creds.json', `${id}: non-key env preserved`);
+    assert.equal(out.PATH, '/usr/bin', `${id}: PATH preserved`);
+    assert.equal(out.HOME, '/home/user', `${id}: HOME preserved`);
   }
 });
 
@@ -401,4 +407,49 @@ test('M8: timeout-path produces a status (not undefined / not null) under all br
       assert.ok(r === null || typeof r.elapsedMs === 'number', 'M8: elapsedMs always present on non-null results');
     }
   }
+});
+
+// v1.5.0 audit-MED-trident-M2 (F-SEC-1) — per-pick API-key allowlist tests.
+test('M2: buildSpawnEnv scrubs vendor API keys not on per-pick allowlist', () => {
+  const baseEnv = {
+    OPENAI_API_KEY:    'sk-openai',
+    ANTHROPIC_API_KEY: 'sk-anthropic',
+    GEMINI_API_KEY:    'sk-gemini',
+    DEEPSEEK_API_KEY:  'sk-deepseek',
+    DASHSCOPE_API_KEY: 'sk-qwen',
+    MOONSHOT_API_KEY:  'sk-kimi',
+    PATH: '/usr/bin',
+  };
+  // codex sees only OPENAI_API_KEY + PATH.
+  const codexEnv = buildSpawnEnv({ id: 'codex' }, baseEnv);
+  assert.equal(codexEnv.OPENAI_API_KEY, 'sk-openai', 'codex keeps OPENAI_API_KEY');
+  assert.equal(codexEnv.ANTHROPIC_API_KEY, undefined, 'codex drops ANTHROPIC_API_KEY');
+  assert.equal(codexEnv.GEMINI_API_KEY, undefined, 'codex drops GEMINI_API_KEY');
+  assert.equal(codexEnv.DEEPSEEK_API_KEY, undefined, 'codex drops DEEPSEEK_API_KEY');
+  assert.equal(codexEnv.PATH, '/usr/bin', 'codex keeps PATH');
+
+  // gemini sees only GEMINI_API_KEY + PATH.
+  const geminiEnv = buildSpawnEnv({ id: 'gemini' }, baseEnv);
+  assert.equal(geminiEnv.GEMINI_API_KEY, 'sk-gemini', 'gemini keeps GEMINI_API_KEY');
+  assert.equal(geminiEnv.OPENAI_API_KEY, undefined, 'gemini drops OPENAI_API_KEY');
+  assert.equal(geminiEnv.ANTHROPIC_API_KEY, undefined, 'gemini drops ANTHROPIC_API_KEY');
+
+  // claude sees only ANTHROPIC_API_KEY + PATH.
+  const claudeEnv = buildSpawnEnv({ id: 'claude' }, baseEnv);
+  assert.equal(claudeEnv.ANTHROPIC_API_KEY, 'sk-anthropic', 'claude keeps ANTHROPIC_API_KEY');
+  assert.equal(claudeEnv.OPENAI_API_KEY, undefined, 'claude drops OPENAI_API_KEY');
+  assert.equal(claudeEnv.GEMINI_API_KEY, undefined, 'claude drops GEMINI_API_KEY');
+
+  // deepseek sees only DEEPSEEK_API_KEY.
+  const dsEnv = buildSpawnEnv({ id: 'deepseek' }, baseEnv);
+  assert.equal(dsEnv.DEEPSEEK_API_KEY, 'sk-deepseek');
+  assert.equal(dsEnv.OPENAI_API_KEY, undefined);
+  assert.equal(dsEnv.GEMINI_API_KEY, undefined);
+
+  // unknown pick gets the conservative no-vendor-keys default.
+  const unknownEnv = buildSpawnEnv({ id: 'NEVER_SEEN' }, baseEnv);
+  assert.equal(unknownEnv.OPENAI_API_KEY, undefined);
+  assert.equal(unknownEnv.ANTHROPIC_API_KEY, undefined);
+  assert.equal(unknownEnv.GEMINI_API_KEY, undefined);
+  assert.equal(unknownEnv.PATH, '/usr/bin', 'unknown pick still keeps non-vendor env');
 });

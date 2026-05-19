@@ -55,6 +55,60 @@ const FAMILY_RETRY_ON_TIMEOUT = {
   google: true,
 };
 
+// v1.5.0 audit-MED-trident-M7 — per-(provider, path) retry matrix.
+// CLI cold-start failure modes (process startup, codex/gemini binary auth) are
+// different from API failure modes (transient 502s, network blips). A blanket
+// "no retry for codex" was wrong: codex CLI shouldn't retry (cold-start hits
+// the same wall), but codex *API* path absolutely should retry on transient
+// network noise. Resolves a finding where the api-fallback path inherited the
+// CLI's no-retry policy and gave up after one HTTP 502.
+//
+// Lookup precedence (most → least specific):
+//   1. pick.retryMatrix[path]  -- explicit per-auditor override
+//   2. PROVIDER_RETRY_PATH[id][path]
+//   3. FAMILY_RETRY_PATH[family][path]
+//   4. PROVIDER_RETRY_ON_TIMEOUT[id] / FAMILY_RETRY_ON_TIMEOUT[family]
+//      (legacy single-axis policy, kept for back-compat)
+//   5. default: false (CLI), true (API)
+const PROVIDER_RETRY_PATH = {
+  // codex CLI cold-start is real work; API is HTTP and benefits from retry.
+  codex:  { cli: false, api: true  },
+  gemini: { cli: true,  api: true  },
+};
+const FAMILY_RETRY_PATH = {
+  openai:    { cli: false, api: true },
+  google:    { cli: true,  api: true },
+  anthropic: { cli: false, api: true },
+};
+
+// shouldRetryOnTimeout(pick, path) -- path is 'cli' | 'api'.
+function shouldRetryOnTimeout(pick, path) {
+  // Explicit pick-level override.
+  if (pick && pick.retryMatrix && pick.retryMatrix[path] !== undefined) {
+    return pick.retryMatrix[path] === true;
+  }
+  // Per-provider, per-path.
+  const provider = pick && pick.id;
+  if (provider && PROVIDER_RETRY_PATH[provider] && PROVIDER_RETRY_PATH[provider][path] !== undefined) {
+    return PROVIDER_RETRY_PATH[provider][path] === true;
+  }
+  // Per-family, per-path.
+  const family = pick && pick.family;
+  if (family && FAMILY_RETRY_PATH[family] && FAMILY_RETRY_PATH[family][path] !== undefined) {
+    return FAMILY_RETRY_PATH[family][path] === true;
+  }
+  // Legacy single-axis fallback (preserves r17.1 behavior for non-matrixed picks).
+  if (pick && pick.retryOnTimeout === true)  return true;
+  if (pick && pick.retryOnTimeout === false) return false;
+  if (provider && PROVIDER_RETRY_ON_TIMEOUT[provider] === true) return true;
+  if (family   && FAMILY_RETRY_ON_TIMEOUT[family]    === true) return true;
+  // Default: API path retries on timeout; CLI does not.
+  return path === 'api';
+}
+
+// Exported for tests.
+export const _shouldRetryOnTimeout = shouldRetryOnTimeout;
+
 function timeoutForPick(pick, resolvedTimeoutSec) {
   if (resolvedTimeoutSec) return resolvedTimeoutSec * 1000;
   // v1.5.0 S7: roster-level override takes precedence over family default.
@@ -144,11 +198,72 @@ function angleFor(mode, id) {
 // silently pick up an unrelated gcloud project (cloudaicompanion.googleapis.com
 // billing collisions). Reproduced by Kat in issue #9.
 //
-// Precedence we enforce when GEMINI_API_KEY is set:
+// v1.5.0 audit-MED-trident-M2 (F-SEC-1): per-pick API-key allowlist.
+// Previously every cross-fired auditor inherited the FULL parent env --
+// codex saw GEMINI_API_KEY + DEEPSEEK_API_KEY + ANTHROPIC_API_KEY, gemini saw
+// OPENAI_API_KEY, etc. A prompt-injected auditor could egress every key the
+// host has loaded. We now whitelist the keys each auditor legitimately needs
+// (its own auth + minimal POSIX baseline) and drop everything else from the
+// inherited env. Non-secret config vars (PATH, HOME, LANG, IJFW_*, CODEX_*)
+// pass through; vendor API keys are filtered.
+//
+// Precedence we still enforce when GEMINI_API_KEY is set:
 //   GEMINI_API_KEY (kept) > GOOGLE_APPLICATION_CREDENTIALS (dropped)
 //                         > gcloud active-project env (dropped)
+
+// Vendor API-key env-vars that MUST NOT leak across auditor boundaries.
+// Any key matching this list is dropped unless explicitly re-added by the
+// per-pick allowlist below.
+const VENDOR_API_KEY_VARS = new Set([
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'DASHSCOPE_API_KEY',     // qwen / Alibaba
+  'MOONSHOT_API_KEY',      // kimi
+  'GROQ_API_KEY',
+  'XAI_API_KEY',           // grok
+  'MISTRAL_API_KEY',
+  'COHERE_API_KEY',
+  'PERPLEXITY_API_KEY',
+  'TOGETHER_API_KEY',
+  'OPENROUTER_API_KEY',
+  'AZURE_OPENAI_API_KEY',
+  'GH_COPILOT_TOKEN',
+  'GITHUB_TOKEN',
+]);
+
+// Per-pick API-key allowlist. Each auditor sees ONLY the keys it needs.
+// Unrecognized picks fall through to a conservative "no vendor keys" default
+// (still inherits PATH/HOME/LANG/etc via the broader env, just no API keys).
+const PER_PICK_API_KEY_ALLOWLIST = {
+  codex:    ['OPENAI_API_KEY'],
+  copilot:  ['OPENAI_API_KEY', 'GH_COPILOT_TOKEN', 'GITHUB_TOKEN'],
+  gemini:   ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+  claude:   ['ANTHROPIC_API_KEY'],
+  deepseek: ['DEEPSEEK_API_KEY'],
+  qwen:     ['DASHSCOPE_API_KEY'],
+  kimi:     ['MOONSHOT_API_KEY'],
+  opencode: [],
+  aider:    ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'], // aider routes to either
+};
+
 export function buildSpawnEnv(pick, baseEnv) {
   const env = { ...baseEnv };
+
+  // M2: strip every vendor API key, then re-inject only the ones this pick
+  // is on the allowlist for. The allowlist is keyed by pick.id; unknown ids
+  // get an empty allowlist (still safe — drops all vendor keys).
+  const pickId = pick && pick.id;
+  const allowed = PER_PICK_API_KEY_ALLOWLIST[pickId] || [];
+  const allowedSet = new Set(allowed);
+  for (const key of VENDOR_API_KEY_VARS) {
+    if (!allowedSet.has(key)) delete env[key];
+  }
+
+  // Issue #9-A guard remains: if gemini is the pick AND its own key is set,
+  // also scrub gcloud project env vars so they don't silently override.
   if (pick && pick.id === 'gemini' && env.GEMINI_API_KEY) {
     delete env.GOOGLE_APPLICATION_CREDENTIALS;
     delete env.GOOGLE_CLOUD_PROJECT;
@@ -285,38 +400,24 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
     return { stdout: '', stderr: 'aborted', exitCode: null, status: 'aborted', source: 'none', elapsedMs: elapsed() };
   }
 
-  // r17.1 — retry once on timeout if this provider/auditor opts in. Gemini's
-  // API has known transient 502/hang patterns that resolve on a second attempt.
-  // Codex more often has a real cold-start problem and benefits from the longer
-  // first timeout, not a retry. The retry happens BEFORE the api-fallback path
-  // so we still get a CLI result if the second attempt lands.
-  // r17-L1: explicit pick override > provider id default > family default.
-  // Order matters: a falsy explicit `retryOnTimeout: false` always wins.
-  const retryEnabled = pick.retryOnTimeout !== false && (
-    pick.retryOnTimeout === true ||
-    PROVIDER_RETRY_ON_TIMEOUT[pick.id] === true ||
-    FAMILY_RETRY_ON_TIMEOUT[pick.family] === true
-  );
-
-  // v1.5.0 audit-MED-tok-M8 — Parallel retry-vs-fallback race.
+  // v1.5.0 audit-MED-tok-M8 + audit-MED-trident-M7 — Parallel retry-vs-fallback
+  // race, gated by the path-aware retry matrix.
   //
-  // Pre-fix the path on timeout was sequential: `await retry()` (up to
-  // timeoutMs), THEN `await api-fallback()` (up to PROVIDER_TIMEOUT_MS.api-mode).
-  // Worst case for gemini at the bumped 90s timeout: 90s retry + 30s API =
-  // 120s wall-clock before the wave can finish.
+  // The retry policy is per-(provider,path) — CLI cold-start (path='cli') and
+  // API transient errors (path='api') are distinct failure modes with distinct
+  // retry profiles. shouldRetryOnTimeout() consults the matrix; an explicit
+  // `pick.retryMatrix[path] === false` or `pick.retryOnTimeout === false`
+  // always wins for caller opt-out.
   //
-  // Post-fix: when both a retry AND an api-fallback are eligible, RACE them.
-  // Whichever resolves first with a productive result wins; the loser is
-  // aborted via its own AbortController. This caps the timeout-recovery
-  // budget at max(retry-timeout, api-mode-timeout) = max(90s, 30s) = 90s
-  // for gemini — a ~25% wall-clock improvement on the unhappy path with
-  // zero correctness change (single-settlement guard still holds).
-  //
-  // When only one path is eligible (no retry OR no api-fallback) we fall
-  // back to the original sequential behaviour so the change is purely
-  // additive: same outcome whenever exactly one recovery channel exists.
+  // When BOTH a CLI retry AND an api-fallback are eligible, we RACE them
+  // concurrently and take the first productive result, capping the timeout-
+  // recovery budget at max(retry-timeout, api-mode-timeout) instead of the
+  // sequential sum (~25% wall-clock improvement on the gemini unhappy path).
+  // When only one channel is eligible, we fall back to sequential behaviour
+  // so the change is purely additive — same outcome whenever exactly one
+  // recovery channel exists.
   if (raw && raw.timedOut && !signal?.aborted) {
-    const canRetry    = retryEnabled;
+    const canRetry    = shouldRetryOnTimeout(pick, 'cli');
     const canFallback = Boolean(pick.apiFallback) && isReachable(pick.id, env).api;
 
     if (canRetry && canFallback) {
@@ -335,8 +436,16 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
         .then(r => ({ kind: 'retry', raw: r }));
 
       const { mode, angle, target } = extractApiParams();
-      const fallbackPromise = runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], fallbackAc.signal)
-        .then(r => ({ kind: 'fallback', api: r }));
+      // M7: api-path retry on transient timeout (separate from CLI policy).
+      // Wrapped in an async IIFE so the per-path retry happens inside the
+      // single racing promise.
+      const fallbackPromise = (async () => {
+        let api = await runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], fallbackAc.signal);
+        if (api.status !== 'ok' && shouldRetryOnTimeout(pick, 'api') && !fallbackAc.signal.aborted) {
+          api = await runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], fallbackAc.signal);
+        }
+        return { kind: 'fallback', api };
+      })();
 
       // We want the FIRST PRODUCTIVE result. Promise.race() returns whichever
       // settles first regardless of productivity, so we iterate manually:
@@ -404,7 +513,7 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
         return { stdout: '', stderr: 'timeout', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
       }
     } else if (canRetry) {
-      // Retry-only path (no api-fallback eligible): original sequential behaviour.
+      // Retry-only path (no api-fallback eligible): single sequential CLI retry.
       raw = await spawnCli(pick, request, timeoutMs, signal, env);
       if (raw && raw.aborted) {
         return { stdout: '', stderr: 'aborted-after-retry', exitCode: null, status: 'aborted', source: 'none', elapsedMs: elapsed() };
@@ -413,9 +522,13 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
         return { stdout: '', stderr: 'timeout', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
       }
     } else if (canFallback) {
-      // Fallback-only path (no retry eligible): same as original sequential.
+      // Fallback-only path (no CLI retry eligible): API fallback with M7
+      // path-aware retry on transient API timeout.
       const { mode, angle, target } = extractApiParams();
-      const apiResult = await runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], signal);
+      let apiResult = await runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], signal);
+      if (apiResult.status !== 'ok' && shouldRetryOnTimeout(pick, 'api') && !signal?.aborted) {
+        apiResult = await runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], signal);
+      }
       if (apiResult.status === 'ok') {
         return { stdout: apiResult.raw, stderr: '', exitCode: 0, status: 'fallback-used', source: 'api', elapsedMs: elapsed() };
       }
@@ -1053,8 +1166,19 @@ function buildCycleSummary(iteration, prior) {
 //   maxIterations  number (default 3; lock-in #43/#44 style)
 //   dispatch       async function (DI hook for tests/production)
 //   projectRoot    string (passed through to dispatch)
+//   totalTimeoutMs v1.5.0 audit-MED-trident-M6 — cumulative wall-clock cap.
+//                  When set, an AbortController fires at the deadline and
+//                  cancels remaining iterations. 3 iters × 3 lenses × 90s =
+//                  270s worst case without a cap; this lets a caller say
+//                  "no more than 4 minutes for the whole convergence".
+//                  Defaults to env IJFW_AUDIT_CONVERGE_TOTAL_TIMEOUT_SEC.
+//   perLensBudgetUsd  v1.5.0 audit-MED-trident-M5 — per-lens USD cap across
+//                     this convergence cycle. Aborts a lens once its
+//                     cumulative cost in this run exceeds the cap. Defaults
+//                     to env IJFW_AUDIT_BUDGET_USD_PER_LENS.
 // Returns:
-//   { verdict, iterations, findings, divergence?, stalled?, perIteration }
+//   { verdict, iterations, findings, divergence?, stalled?, perIteration,
+//     timedOutTotal?, lensesOverBudget?, lensCosts }
 export async function runPhaseEConverge({
   commitRange,
   lenses = DEFAULT_LENSES,
@@ -1063,6 +1187,9 @@ export async function runPhaseEConverge({
   projectRoot,
   projectDir,         // v1.5.0 audit-H4.5 — receipts destination (defaults to projectRoot)
   runStamp,           // v1.5.0 audit-H4.5 — caller-supplied stamp; auto if absent
+  totalTimeoutMs,     // v1.5.0 audit-MED-trident-M6 — cumulative timeout
+  perLensBudgetUsd,   // v1.5.0 audit-MED-trident-M5 — per-lens USD cap
+  env = process.env,
 } = {}) {
   if (typeof dispatch !== 'function') {
     throw new Error('runPhaseEConverge: dispatch function is required');
@@ -1097,7 +1224,59 @@ export async function runPhaseEConverge({
   const _resolvedProjectDir = projectDir ?? projectRoot ?? process.cwd();
   const _resolvedRunStamp = runStamp ?? new Date().toISOString();
 
+  // v1.5.0 audit-MED-trident-M6 — cumulative-timeout AbortController.
+  // Either an arg-supplied totalTimeoutMs or env var; >0 enables. The signal
+  // is checked between iterations + passed to dispatch (dispatchers that
+  // honor `signal` will tear down in-flight lens calls).
+  const _envTotalSec = env && env.IJFW_AUDIT_CONVERGE_TOTAL_TIMEOUT_SEC;
+  const _resolvedTotalMs = (typeof totalTimeoutMs === 'number' && totalTimeoutMs > 0)
+    ? totalTimeoutMs
+    : (Number.isFinite(Number(_envTotalSec)) && Number(_envTotalSec) > 0
+      ? Math.floor(Number(_envTotalSec) * 1000)
+      : null);
+  const _cycleAc = new AbortController();
+  let _totalTimedOut = false;
+  let _totalTimer = null;
+  if (_resolvedTotalMs) {
+    _totalTimer = setTimeout(() => {
+      _totalTimedOut = true;
+      try { _cycleAc.abort(); } catch { /* ignore */ }
+    }, _resolvedTotalMs);
+    // Don't keep the event loop alive purely for this timer.
+    if (typeof _totalTimer.unref === 'function') _totalTimer.unref();
+  }
+
+  // v1.5.0 audit-MED-trident-M5 — per-lens budget. Tracks cumulative cost
+  // attributed to each lens across this converge cycle; abort that lens once
+  // its accumulated cost > cap. Cost source priority on dispatch return:
+  //   1. result.cost_usd
+  //   2. result.usage?.cost_usd
+  //   3. 0 (unknown — counted as 0, can still hit cap via N iterations)
+  const _envPerLensCap = env && env.IJFW_AUDIT_BUDGET_USD_PER_LENS;
+  const _resolvedPerLensCap = (typeof perLensBudgetUsd === 'number' && perLensBudgetUsd > 0)
+    ? perLensBudgetUsd
+    : (Number.isFinite(Number(_envPerLensCap)) && Number(_envPerLensCap) > 0
+      ? Number(_envPerLensCap)
+      : null);
+  const _lensCosts = Object.create(null);
+  const _lensOverBudget = new Set();
+  for (const lens of lenses) _lensCosts[lens] = 0;
+
   function _finalize(returnVal) {
+    // Clear cumulative-timeout timer so the process can exit cleanly.
+    if (_totalTimer) {
+      clearTimeout(_totalTimer);
+      _totalTimer = null;
+    }
+    // M5/M6: surface lens-budget + total-timeout posture on the return value
+    // so callers can branch on partial-completion. lensCosts is always
+    // present (even when no cap was set) so observability is consistent.
+    const enriched = {
+      ...returnVal,
+      lensCosts: { ..._lensCosts },
+      ...(_lensOverBudget.size > 0 ? { lensesOverBudget: [..._lensOverBudget] } : {}),
+      ...(_totalTimedOut ? { timedOutTotal: true } : {}),
+    };
     // Build + write the converge receipt. Failure to write must NOT clobber
     // the orchestrator return value (defensive — receipts are observability,
     // not correctness).
@@ -1111,26 +1290,32 @@ export async function runPhaseEConverge({
         // Receipt-compatible auditor list (renderReceipt reads .id from each).
         auditors: lenses.map(id => ({ id })),
         // findings shape matches renderReceipt's array branch.
-        findings: { items: Array.isArray(returnVal.findings) ? returnVal.findings : [] },
+        findings: { items: Array.isArray(enriched.findings) ? enriched.findings : [] },
         duration_ms: Date.now() - _startMs,
         // Converge-specific fields (new — minimal addition; renderReceipt
         // ignores unknown keys, so existing receipt renderers keep working).
         converge: {
-          iterations: returnVal.iterations,
-          verdict: returnVal.verdict,
-          stalled: !!returnVal.stalled,
-          divergent: Array.isArray(returnVal.divergence) && returnVal.divergence.length > 0,
+          iterations: enriched.iterations,
+          verdict: enriched.verdict,
+          stalled: !!enriched.stalled,
+          divergent: Array.isArray(enriched.divergence) && enriched.divergence.length > 0,
           total_invocations: _totalInvocations,
           cycles: _receiptCycles,
           requested_max_iterations: requested,
           effective_max_iterations: cap,
+          // M5/M6 observability.
+          total_timeout_ms: _resolvedTotalMs,
+          timed_out_total: _totalTimedOut,
+          per_lens_budget_usd: _resolvedPerLensCap,
+          lens_costs: _lensCosts,
+          lenses_over_budget: [..._lensOverBudget],
         },
       };
       writeReceipt(_resolvedProjectDir, record);
     } catch {
       // Receipts are observability; never fail the converge run on a write error.
     }
-    return returnVal;
+    return enriched;
   }
 
   let cycleSummary = null;
@@ -1139,11 +1324,44 @@ export async function runPhaseEConverge({
   const perIteration = [];
 
   for (let iter = 1; iter <= cap; iter++) {
-    // Fire all lenses in parallel.
-    _totalInvocations += lenses.length;
-    const settlements = await Promise.all(lenses.map(lens =>
+    // M6: stop the loop if the cumulative wall-clock budget has elapsed.
+    if (_totalTimedOut || _cycleAc.signal.aborted) {
+      return _finalize({
+        verdict: VERDICT_CONSENSUS_FAIL,
+        iterations: Math.max(1, iter - 1),
+        findings: [],
+        perIteration,
+      });
+    }
+
+    // M5: filter out lenses that have exceeded the per-lens USD cap.
+    const activeLenses = lenses.filter(l => !_lensOverBudget.has(l));
+    if (activeLenses.length === 0) {
+      // All lenses budget-capped — return what we have with consensus_failed.
+      return _finalize({
+        verdict: VERDICT_CONSENSUS_FAIL,
+        iterations: Math.max(1, iter - 1),
+        findings: [],
+        perIteration,
+      });
+    }
+
+    // Fire all (still-active) lenses in parallel.
+    _totalInvocations += activeLenses.length;
+    const settlements = await Promise.all(activeLenses.map(lens =>
       Promise.resolve()
-        .then(() => dispatch({ lens, commitRange, iteration: iter, cycleSummary, projectRoot }))
+        .then(() => dispatch({
+          lens,
+          commitRange,
+          iteration: iter,
+          cycleSummary,
+          projectRoot,
+          // M6: pass the cumulative AbortController signal to dispatchers
+          // that honor it. Existing tests inject a dispatcher that ignores
+          // `signal`; production dispatchers should pass it through to
+          // fireExternal so in-flight CLI/API calls tear down on deadline.
+          signal: _cycleAc.signal,
+        }))
         .catch(err => ({
           lens,
           verdict: VERDICT_UNREACHABLE,
@@ -1152,12 +1370,56 @@ export async function runPhaseEConverge({
         }))
     ));
 
-    const lensResults = settlements.map((r, i) => ({
-      lens: r && r.lens ? r.lens : lenses[i],
-      verdict: r && r.verdict ? r.verdict : VERDICT_UNREACHABLE,
-      findings: r && Array.isArray(r.findings) ? r.findings : [],
-      ...(r && r.error ? { error: r.error } : {}),
-    }));
+    // M5: accrue per-lens cost + flag over-budget lenses for the next iter.
+    if (_resolvedPerLensCap) {
+      for (const s of settlements) {
+        if (!s || !s.lens) continue;
+        const cost = (typeof s.cost_usd === 'number' && Number.isFinite(s.cost_usd))
+          ? s.cost_usd
+          : (s.usage && typeof s.usage.cost_usd === 'number' ? s.usage.cost_usd : 0);
+        _lensCosts[s.lens] = (_lensCosts[s.lens] || 0) + cost;
+        if (_lensCosts[s.lens] > _resolvedPerLensCap) {
+          _lensOverBudget.add(s.lens);
+        }
+      }
+    } else {
+      // Even without a cap, still track cumulative cost for observability.
+      for (const s of settlements) {
+        if (!s || !s.lens) continue;
+        const cost = (typeof s.cost_usd === 'number' && Number.isFinite(s.cost_usd))
+          ? s.cost_usd
+          : (s.usage && typeof s.usage.cost_usd === 'number' ? s.usage.cost_usd : 0);
+        _lensCosts[s.lens] = (_lensCosts[s.lens] || 0) + cost;
+      }
+    }
+
+    // Map back to the full lens list: lenses we filtered out (budget-capped)
+    // synthesize a stub UNREACHABLE result so downstream divergence/stall
+    // detection sees the same lens set every iteration.
+    const settlementByLens = new Map();
+    for (let i = 0; i < settlements.length; i++) {
+      const r = settlements[i];
+      const lensId = r && r.lens ? r.lens : activeLenses[i];
+      settlementByLens.set(lensId, r);
+    }
+    const lensResults = lenses.map(lensId => {
+      const r = settlementByLens.get(lensId);
+      if (!r) {
+        // M5: budget-capped lens — present as UNREACHABLE with explanatory error.
+        return {
+          lens: lensId,
+          verdict: VERDICT_UNREACHABLE,
+          findings: [],
+          error: 'over per-lens budget',
+        };
+      }
+      return {
+        lens: r.lens || lensId,
+        verdict: r.verdict ? r.verdict : VERDICT_UNREACHABLE,
+        findings: Array.isArray(r.findings) ? r.findings : [],
+        ...(r.error ? { error: r.error } : {}),
+      };
+    });
 
     // Build per-lens findings map for stall detection.
     const perLensFindings = {};

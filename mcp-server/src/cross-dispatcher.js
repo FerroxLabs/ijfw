@@ -10,7 +10,44 @@
 // Internal templates
 // ---------------------------------------------------------------------------
 
+// v1.5.0 audit-MED-trident-M8 — single canonical severity taxonomy.
+// Findings use CRITICAL/HIGH/MEDIUM/LOW (security-style). Audit DISPOSITIONS
+// (PASS/CONDITIONAL/WARN/FLAG/FAIL) are a separate axis — they describe the
+// audit's *status*, not a finding's *severity*. mergeAudit normalizes any
+// disposition values that slip in as `severity` so they no longer sink to
+// the "unrecognized" bottom of the list.
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+
+// M8: map trident dispatch dispositions → finding severities. Used by
+// mergeAudit to coerce stray disposition-valued severities into the canonical
+// taxonomy before sorting. A finding tagged `severity:'warn'` is treated as
+// medium; `flag` as high; `fail` as critical; `pass` as low; `conditional`
+// as medium. Callers that legitimately want disposition values should put
+// them on a separate `disposition` field.
+const DISPOSITION_TO_SEVERITY = {
+  pass:        'low',
+  conditional: 'medium',
+  warn:        'medium',
+  flag:        'high',
+  fail:        'critical',
+};
+
+// Public exports so downstream callers (status renderers, dashboard) share
+// the same vocabulary. M8 closure.
+export const FINDING_SEVERITIES = Object.freeze(['critical', 'high', 'medium', 'low']);
+export const AUDIT_DISPOSITIONS = Object.freeze(['pass', 'conditional', 'warn', 'flag', 'fail']);
+
+// normaliseSeverity -- coerce any stray value (disposition or unknown) into
+// a canonical finding severity. Returns the original lower-cased string when
+// already canonical; maps dispositions per DISPOSITION_TO_SEVERITY; returns
+// null on unknown input.
+export function normaliseSeverity(raw) {
+  if (raw == null) return null;
+  const v = String(raw).toLowerCase().trim();
+  if (SEVERITY_ORDER[v] !== undefined) return v;
+  if (DISPOSITION_TO_SEVERITY[v]) return DISPOSITION_TO_SEVERITY[v];
+  return null;
+}
 
 // Format-contract footer shared by all templates -- tells auditors the exact
 // fenced block schema to use so parseResponse can extract it reliably.
@@ -306,12 +343,83 @@ export function mergeResponses(mode, responses) {
   throw new Error(`Unknown mode: ${mode}`);
 }
 
+// v1.5.0 audit-MED-trident-M3 — consensus / contested clustering.
+// Before: findings from N lenses appeared N times in the user-visible list
+// because mergeAudit just flattened + sorted. With Trident running 3 lenses
+// on the same target, a real bug got reported 3 times and looked like 3 bugs.
+//
+// After: lexical-bucket-cluster on a normalized signature (issue + location
+// when available; falls back to text/description). A cluster touched by ≥2
+// lenses is tagged `consensus: true`, `consensusCount: N`, and `consensusLenses`
+// (array of lens ids when discoverable). Single-lens findings carry
+// `consensus: false`. Order: CONSENSUS group first (by severity), single-lens
+// group second (by severity). Within each group, sort by canonical severity
+// (M8 — disposition values are coerced before sort).
+//
+// The clustering is intentionally LEXICAL only — same heuristic as
+// mergeResearch's normaliseClaim. Semantic clustering (paraphrases that mean
+// the same thing) is delegated to the optional synthesis pass.
+function _findingSignature(item) {
+  // Prefer (issue + location) when present. Fallback chain: counterArg, text,
+  // description, then a stringified blob so two identical objects still match.
+  const loc   = String(item.location || item.file || '').toLowerCase().trim();
+  const issue = String(item.issue || item.counterArg || item.text || item.description || '').toLowerCase().trim();
+  if (issue) return `${issue}::${loc}`.replace(/\s+/g, ' ');
+  // Last-resort signature: JSON of the item, sorted-keys.
+  try {
+    return JSON.stringify(item, Object.keys(item || {}).sort()).toLowerCase();
+  } catch {
+    return String(item).toLowerCase();
+  }
+}
+
+function _coercedSeverityRank(item) {
+  // M8: try canonical severity first, then disposition mapping, then 99.
+  const canon = normaliseSeverity(item.severity ?? item.level);
+  if (canon == null) return 99;
+  return SEVERITY_ORDER[canon] ?? 99;
+}
+
 function mergeAudit(responses) {
-  const all = responses.flatMap(r => (r && Array.isArray(r.items) ? r.items : []));
-  return all.slice().sort((a, b) => {
-    const sa = SEVERITY_ORDER[String(a.severity).toLowerCase()] ?? 99;
-    const sb = SEVERITY_ORDER[String(b.severity).toLowerCase()] ?? 99;
-    return sa - sb;
+  // Flatten with an auditor index so we can attribute consensus to lenses.
+  // responses may include an optional `_lens` / `auditorId` marker on each
+  // item (the orchestrator already stamps `_lens` in defaultConvergeDispatch
+  // merges). We honor it when present.
+  const buckets = new Map();
+  responses.forEach((r, auditorIdx) => {
+    const items = r && Array.isArray(r.items) ? r.items : [];
+    for (const item of items) {
+      const sig = _findingSignature(item);
+      if (!sig) continue;
+      if (!buckets.has(sig)) buckets.set(sig, []);
+      const lensId = item._lens || item.auditorId || String(auditorIdx);
+      buckets.get(sig).push({ item, lensId, auditorIdx });
+    }
+  });
+
+  const out = [];
+  for (const [, entries] of buckets) {
+    // Distinct lens count: a single lens can only contribute one vote to
+    // consensus (it may emit the same finding twice in its own list).
+    const distinctLenses = [...new Set(entries.map(e => e.lensId))];
+    const consensus = distinctLenses.length >= 2;
+    // Use the first entry as the representative finding (oldest wins);
+    // attach consensus metadata so consumers can group / highlight.
+    const rep = { ...entries[0].item };
+    if (consensus) {
+      rep.consensus = true;
+      rep.consensusCount = distinctLenses.length;
+      rep.consensusLenses = distinctLenses;
+    } else {
+      rep.consensus = false;
+    }
+    out.push(rep);
+  }
+
+  // Sort: consensus first, then by canonical severity (M8 disposition-coerce).
+  return out.sort((a, b) => {
+    if (a.consensus !== b.consensus) return a.consensus ? -1 : 1;
+    return _coercedSeverityRank(a) - _coercedSeverityRank(b);
   });
 }
 
@@ -371,9 +479,11 @@ function mergeCritique(responses) {
     const sa = scoreRebuttalSurvival(a);
     const sb = scoreRebuttalSurvival(b);
     if (sb !== sa) return sb - sa; // DESC survival
-    const ra = SEVERITY_ORDER[String(a.severity).toLowerCase()] ?? 99;
-    const rb = SEVERITY_ORDER[String(b.severity).toLowerCase()] ?? 99;
-    return ra - rb; // DESC severity (lower index = higher sev)
+    // M8: coerce dispositions (warn/flag/fail) to canonical severities so a
+    // counter-arg tagged `severity:'warn'` doesn't sink to bottom unranked.
+    const ra = _coercedSeverityRank(a);
+    const rb = _coercedSeverityRank(b);
+    return ra - rb; // ASC by canonical rank = DESC severity
   });
 }
 
