@@ -17,6 +17,15 @@ export const BLACKBOARD_VERSION = 1;
 // and via the `--ttl-min N` CLI flag on `ijfw swarm evict-orphans`.
 export const DEFAULT_CLAIM_TTL_MS = 30 * 60 * 1000;
 
+// v1.5.0 audit-LOW-teams-#16: hard cap on tasks.json + claims.json
+// serialized size. A runaway producer (bug or attacker) could otherwise
+// grow either file unboundedly and starve the project's disk + slow every
+// read of the cache to a crawl. 4MB is comfortably above any legitimate
+// swarm workload (thousands of tasks) but well below "fill up the disk"
+// territory; refusing the write here keeps the previous on-disk state
+// intact (atomic writes only swap on success, so the old file survives).
+export const MAX_BB_FILE_BYTES = 4_000_000;
+
 export function blackboardPaths(projectRoot = process.cwd()) {
   const root = resolve(projectRoot);
   const dir = join(root, '.ijfw', 'blackboard');
@@ -67,7 +76,21 @@ function readJson(path, fallback, validator) {
 
 function writeJson(path, data) {
   data.updated_at = nowIso();
-  return writeAtomic(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+  const serialized = `${JSON.stringify(data, null, 2)}\n`;
+  // v1.5.0 audit-LOW-teams-#16: enforce the size cap on the write path
+  // only -- existing readers (readBlackboard / pathsOverlap / etc.) are
+  // unaffected so a legacy oversized file remains readable. Throwing here
+  // preserves the previous on-disk state because writeAtomic only swaps
+  // after a successful tmp-write.
+  const bytes = Buffer.byteLength(serialized, 'utf8');
+  if (bytes > MAX_BB_FILE_BYTES) {
+    throw new Error(
+      `blackboard: refusing to write ${path} -- serialized size ${bytes} bytes ` +
+      `exceeds cap ${MAX_BB_FILE_BYTES} bytes (audit-LOW-teams-#16). Trim ` +
+      `tasks/claims (e.g. archive completed tasks) before retrying.`,
+    );
+  }
+  return writeAtomic(path, serialized, { mode: 0o600 });
 }
 
 function readJsonl(path, limit = 5) {
@@ -356,6 +379,90 @@ export function claimArtifact(projectRoot, input) {
       data: { paths: next.paths },
     }));
     return { ok: true, claim: next };
+  }).result ?? { ok: false, error: 'locked' };
+}
+
+/**
+ * v1.5.0 audit-LOW-teams-#17: bulk-claim API.
+ *
+ * Acquire claims for N artifacts under ONE lock + ONE writeJson, instead of
+ * N round-trips through `claimArtifact`. The dispatcher fanned-out batch case
+ * (e.g. wave fan-out reserves 10+ artifacts at once) previously hit the lock
+ * 10+ times with serialised disk writes between each.
+ *
+ * Semantics:
+ *   - All-or-nothing: any single conflict ABORTS the batch and reports the
+ *     conflicting artifact_id + the existing claim. No partial commits.
+ *   - Same conflict rules as claimArtifact (artifact_id equal OR paths
+ *     overlap, scoped to a different agent).
+ *   - Per-item agent override: each item may set its own `agent`. When
+ *     omitted, the top-level `agent` is used.
+ *
+ * @param {string} projectRoot
+ * @param {Array<{artifact_id: string, paths?: string[], agent?: string, ttlMs?: number, note?: string}>} items
+ * @param {{agent?: string}} [defaults]
+ * @returns {{ok: true, claims: object[]} | {ok: false, error: string, artifact_id?: string, conflicts?: object[]}}
+ */
+export function claimArtifacts(projectRoot, items, defaults = {}) {
+  const paths = blackboardPaths(projectRoot);
+  ensureDir(paths);
+  if (!Array.isArray(items) || items.length === 0) {
+    return { ok: false, error: 'items-required' };
+  }
+  return withLock(paths.lock, () => {
+    const current = readJson(paths.claims, defaultClaims, validClaims).data;
+    const accepted = [];
+    // Track NEW claims so they conflict-check against each other (same wave
+    // calling claim_a + claim_b where they overlap is still a conflict).
+    const pendingClaims = [];
+    for (const input of items) {
+      const artifactId = String(input.artifact_id || input.artifact || '').trim();
+      const agent = String(input.agent || defaults.agent || input.owner || '').trim();
+      const ttlMs = Number.isFinite(input.ttlMs) && input.ttlMs > 0
+        ? Math.floor(input.ttlMs)
+        : DEFAULT_CLAIM_TTL_MS;
+      const next = {
+        id: input.id || `${artifactId}:${agent}`,
+        artifact_id: artifactId,
+        agent,
+        paths: normalizePaths(input.paths),
+        status: 'active',
+        claimed_at: nowIso(),
+        ttl_ms: ttlMs,
+        heartbeat_at: null,
+        note: input.note ? String(input.note) : undefined,
+      };
+      if (!next.artifact_id) return { ok: false, error: 'artifact-required' };
+      if (!next.agent) return { ok: false, error: 'owner-required' };
+
+      // Conflict-check against existing AND already-accepted pending claims.
+      const combined = { claims: [...current.claims, ...pendingClaims] };
+      const conflicts = claimConflicts(combined, next);
+      if (conflicts.length) {
+        return { ok: false, error: 'conflict', artifact_id: next.artifact_id, conflicts };
+      }
+      pendingClaims.push(next);
+      accepted.push(next);
+    }
+    // Drop any prior duplicates (same artifact_id + agent) — matches
+    // claimArtifact semantics where a re-claim by the same agent is idempotent.
+    for (const next of accepted) {
+      current.claims = current.claims.filter(
+        (claim) => !(claimArtifactId(claim) === next.artifact_id && claimAgent(claim) === next.agent),
+      );
+      current.claims.push(next);
+    }
+    writeJson(paths.claims, current);
+    for (const next of accepted) {
+      appendJsonlUnlocked(paths.events, blackboardEventEntry({
+        type: 'claim.acquired',
+        actor: next.agent,
+        artifact_ids: [next.artifact_id],
+        message: `Claimed ${next.artifact_id} (bulk)`,
+        data: { paths: next.paths, bulk: true },
+      }));
+    }
+    return { ok: true, claims: accepted };
   }).result ?? { ok: false, error: 'locked' };
 }
 

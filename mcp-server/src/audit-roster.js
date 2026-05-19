@@ -179,9 +179,27 @@ export function detectSelf(env = process.env) {
 
 // Probe whether the auditor's CLI is on PATH. Cached per process.
 // Exported so tests can prime the cache for deterministic behavior.
+//
+// v1.5.0 audit-LOW-trident-L1: cache entries now carry a timestamp and
+// expire after 5 minutes. A long-running orchestrator session that installs
+// an auditor mid-session (e.g. `npm install -g @google/gemini-cli`) was
+// otherwise stuck with the stale "not installed" verdict for the rest of
+// the process lifetime. 5min is comfortably longer than a typical Trident
+// fan-out (which probes every auditor up front) but short enough that a
+// mid-session install is detected on the next round.
 export const _installedCache = new Map();
+const INSTALLED_CACHE_TTL_MS = 5 * 60 * 1000;
 export function isInstalled(id) {
-  if (_installedCache.has(id)) return _installedCache.get(id);
+  const cached = _installedCache.get(id);
+  if (cached !== undefined) {
+    // Legacy entries (primed by tests as a raw boolean) are honoured
+    // forever — tests rely on that contract. New entries carry {value, ts}.
+    if (typeof cached === 'boolean') return cached;
+    if (cached && typeof cached === 'object' && cached.ts + INSTALLED_CACHE_TTL_MS > Date.now()) {
+      return cached.value;
+    }
+    // expired — fall through to re-probe
+  }
   const entry = ROSTER.find(e => e.id === id);
   if (!entry) return false;
   // First word of invoke is the binary; the rest are args.
@@ -190,7 +208,7 @@ export function isInstalled(id) {
   // works reliably across macOS + Linux. spawnSync exit code = 0 → present.
   const r = spawnSync('bash', ['-lc', `command -v ${JSON.stringify(bin)} >/dev/null 2>&1`], { timeout: 2000 });
   const installed = r.status === 0;
-  _installedCache.set(id, installed);
+  _installedCache.set(id, { value: installed, ts: Date.now() });
   return installed;
 }
 

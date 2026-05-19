@@ -49,7 +49,18 @@ const payload = await new Promise((r) => {
   process.stdin.on("end", () => r(buf));
 });
 let req;
-try { req = JSON.parse(payload); } catch { process.exit(0); }
+try {
+  req = JSON.parse(payload);
+} catch {
+  // v1.5.0 audit-LOW-update-trust: fail-OPEN on parse failure (codex has
+  // its own sandbox tier, no need to double-deny here) but emit a stderr
+  // advisory so a malformed-payload regression isn't silent — the user
+  // sees the hook briefly noted "payload-parse-fail" before letting the
+  // call through. Mirrors the gemini hook's advisory UX without flipping
+  // codex from fail-open to fail-closed.
+  process.stderr.write("[ijfw] codex hook: malformed tool_use payload -- allowing (advisory only)\n");
+  process.exit(0);
+}
 const tool = req.tool_name || "";
 const writes = new Set(active.permissions.writes || []);
 const reads = new Set(active.permissions.reads || []);

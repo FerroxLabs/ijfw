@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendBlackboardEvent, listBlackboardTasks, updateBlackboardTask } from '../blackboard.js';
 import { createCheckpoint } from '../recovery/checkpoint.js';
 
@@ -29,12 +30,31 @@ export function createTaskWorktree(projectRoot, taskId, options = {}) {
 
   const baseRef = options.baseRef || 'HEAD';
   const worktreeDir = join(root, '.ijfw', 'worktrees');
-  const worktreePath = join(worktreeDir, safeTaskId(taskId));
-  if (existsSync(worktreePath)) return { ok: false, error: 'worktree-exists', path: worktreePath };
   mkdirSync(worktreeDir, { recursive: true, mode: 0o700 });
 
+  // v1.5.0 audit-LOW-teams-#15: safeTaskId collision detection.
+  // Two distinct taskIds that normalize to the same safe id (e.g. `task:1`
+  // and `task/1` both become `task-1`) would otherwise collide on the same
+  // worktree path AND the same branch name. Detect the collision by checking
+  // BOTH the worktree dir AND the existing branch list; if either is taken,
+  // suffix the safe id with a short content hash of the original taskId so
+  // distinct tasks get distinct worktrees + branches.
+  const baseSafeId = safeTaskId(taskId);
+  let safeId = baseSafeId;
+  let candidatePath = join(worktreeDir, safeId);
+  let candidateBranch = options.branch || `ijfw/${safeId}`;
+  const branchExists = (name) => git(root, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`]).status === 0;
+  if (!options.branch && (existsSync(candidatePath) || branchExists(candidateBranch))) {
+    const suffix = createHash('sha256').update(String(taskId)).digest('hex').slice(0, 7);
+    safeId = `${baseSafeId}-${suffix}`;
+    candidatePath = join(worktreeDir, safeId);
+    candidateBranch = `ijfw/${safeId}`;
+  }
+  const worktreePath = candidatePath;
+  if (existsSync(worktreePath)) return { ok: false, error: 'worktree-exists', path: worktreePath };
+
   createCheckpoint(root, 'before-worktree-create', { actor: 'ijfw', message: taskId });
-  const branch = options.branch || `ijfw/${safeTaskId(taskId)}`;
+  const branch = options.branch || candidateBranch;
   const result = git(root, ['worktree', 'add', '-b', branch, worktreePath, baseRef]);
   if (result.status !== 0) return { ok: false, error: 'worktree-add-failed', stderr: result.stderr, stdout: result.stdout };
 
@@ -81,7 +101,10 @@ export function integrateTaskWorktree(projectRoot, taskId, options = {}) {
   if (wtDirty.stdout.trim()) return { ok: false, error: 'worktree-has-uncommitted-changes', detail: wtDirty.stdout.trim().split('\n') };
 
   createCheckpoint(root, 'before-worktree-integrate', { actor: 'ijfw', message: taskId });
-  const merge = git(root, ['merge', '--no-ff', '--no-edit', validation.branch]);
+  // v1.5.0 audit-LOW-teams-#14: tag merge commits with task-id so
+  // `git log --grep="ijfw merge: <task-id>"` recovers the merge boundary
+  // even after history rewrites lose the branch label.
+  const merge = git(root, ['merge', '--no-ff', '-m', `ijfw merge: ${taskId}`, validation.branch]);
   if (merge.status !== 0) {
     updateBlackboardTask(root, taskId, {
       worktree: { ...wt, status: 'merge-blocked', last_error: merge.stderr || merge.stdout },

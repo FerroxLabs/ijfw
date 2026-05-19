@@ -338,28 +338,23 @@ function spawnChecked(cmd, args, opts = {}) {
 
 /**
  * Pre-scan a tarball for tar-slip / symlink / hardlink members before
- * extraction. Approach 1 from the audit spec: list contents with
- * `tar -tvzf`, reject any member that
+ * extraction. Reject any member that
  *   - starts with `/` (absolute path)
  *   - contains a `..` segment (escapes extract dir on join)
  *   - is a symlink or hardlink (mode char `l` or `h` in the verbose listing)
  *
- * `tar -tvzf` output format starts with the file-mode field whose first
- * char encodes the type: `-` file, `d` dir, `l` symlink, `h` hardlink.
- * Filenames appear last on the line, with symlinks/hardlinks following the
- * pattern `<name> -> <target>`.
+ * v1.5.0 audit-LOW-update-#16: consolidated to a SINGLE `tar -tzf` listing.
+ * Plain `-tzf` gives the per-member name directly (one line per member, no
+ * metadata fields, identical across BSD + GNU tar) which removes the brittle
+ * verbose-field parsing entirely. Symlink/hardlink rejection now relies on
+ * post-extract verification (lstat against extracted members in
+ * extractTarball) -- safer than parsing a non-portable `ls -l` style listing
+ * and removes one fork+pipe per install.
  *
  * @param {string} tarballPath
  * @returns {Promise<void>} resolves if clean, throws with reason if not
  */
 async function preflightTarball(tarballPath) {
-  const { stdout } = await spawnChecked('tar', ['-tvzf', tarballPath], {
-    timeoutMs: GIT_CLONE_TIMEOUT_MS,
-    captureStdout: true,
-  });
-  // Independent name listing — `tar -tzf` prints one member name per line with
-  // no leading metadata. Used for path-traversal / absolute-path checks where
-  // robust field parsing across BSD vs GNU tar is otherwise brittle.
   const { stdout: namesOut } = await spawnChecked('tar', ['-tzf', tarballPath], {
     timeoutMs: GIT_CLONE_TIMEOUT_MS,
     captureStdout: true,
@@ -372,18 +367,6 @@ async function preflightTarball(tarballPath) {
     const segments = name.split(/[\\/]/);
     if (segments.includes('..')) {
       throw new Error(`tar-slip: tarball contains '..' segment in member: ${name}`);
-    }
-  }
-  // Verbose listing — used solely for type-char (symlink/hardlink) detection.
-  // The first character of the first whitespace-delimited field encodes type:
-  // `-` file, `d` dir, `l` symlink, `h` hardlink. Works the same on BSD + GNU.
-  const lines = stdout.split('\n').filter((l) => l.length > 0);
-  for (const line of lines) {
-    const modeMatch = line.match(/^(\S+)/);
-    if (!modeMatch) continue;
-    const typeChar = modeMatch[1][0];
-    if (typeChar === 'l' || typeChar === 'h') {
-      throw new Error(`tar-slip: tarball contains symlink/hardlink (refused): ${line.slice(0, 200)}`);
     }
   }
 }
