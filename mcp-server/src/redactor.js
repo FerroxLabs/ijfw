@@ -137,7 +137,7 @@ export function redactSecrets(s) {
   return out;
 }
 
-// classify(value) -> { clean: boolean, redacted_kind: string | null }
+// classifyAnchored(value) -> { clean: boolean, redacted_kind: string | null }
 //
 // D-PILLAR-SPEC section 3 surface used by D2 entity extraction. Passes the
 // value through the same PATTERNS list redactSecrets uses; if any pattern
@@ -149,20 +149,30 @@ export function redactSecrets(s) {
 //
 // Important: PATTERNS are anchored implicitly via length minimums (e.g.
 // `sk-(?:proj-)?[A-Za-z0-9_-]{32,}`), but to avoid classifying a long file
-// path that happens to contain a token-shaped substring, classify() rejects
-// only when the pattern matches the FULL trimmed value. File paths and
-// function/identifier names are always shorter than the secret patterns'
+// path that happens to contain a token-shaped substring, classifyAnchored()
+// rejects only when the pattern matches the FULL trimmed value. File paths
+// and function/identifier names are always shorter than the secret patterns'
 // minimum lengths, so the conservative cut-line is "match must equal the
 // candidate" -- a substring match doesn't trigger classification.
-export function classify(value) {
+//
+// Naming (v1.5.0 audit LOW #13): renamed conceptually from `classify` to
+// `classifyAnchored` to signal the asymmetric contract -- callers must pass
+// the candidate as a discrete value, NOT a free-form text body that contains
+// the value somewhere inside. `classify` is retained as a back-compat alias.
+export function classifyAnchored(value) {
   if (typeof value !== 'string') return { clean: true, redacted_kind: null };
   const v = value.trim();
   if (!v) return { clean: true, redacted_kind: null };
   for (const { re, label } of PATTERNS) {
     // Build a fresh non-global RegExp per check; the source PATTERNS use /g
-    // for redactSecrets but classify needs a single full-value match.
+    // for redactSecrets but classifyAnchored needs a single full-value match.
     const r = new RegExp(`^(?:${re.source})$`, re.flags.replace('g', ''));
     if (r.test(v)) return { clean: false, redacted_kind: label };
   }
   return { clean: true, redacted_kind: null };
 }
+
+// Back-compat alias. New callers should prefer `classifyAnchored` so the
+// "value must be the whole candidate, not embedded in prose" contract is
+// obvious at the call site.
+export const classify = classifyAnchored;

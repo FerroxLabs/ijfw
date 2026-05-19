@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { redactSecrets } from './src/redactor.js';
+import { redactSecrets, classify, classifyAnchored } from './src/redactor.js';
 
 test('redacts OpenAI sk-proj- keys', () => {
   const out = redactSecrets('key is sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef');
@@ -327,4 +327,38 @@ test('redacts US-format phone with dashes', () => {
 test('does NOT redact short numeric prose like "page 123"', () => {
   const out = redactSecrets('open page 123 of report 456');
   assert.doesNotMatch(out, /\[REDACTED:phone\]/);
+});
+
+// --- v1.5.0 audit LOW #13: classifyAnchored alias contract ---
+
+test('classifyAnchored: detects whole-value secret', () => {
+  const r = classifyAnchored('sk_live_abcdefghijklmnopqrstuvwxyz123456');
+  assert.equal(r.clean, false);
+  assert.equal(r.redacted_kind, 'stripe');
+});
+
+test('classifyAnchored: substring match does NOT classify (anchored)', () => {
+  // A file path that *contains* a token-shaped substring must NOT classify.
+  const r = classifyAnchored('src/auth/sk_live_abcdefghijklmnopqrstuvwxyz123456.ts');
+  assert.equal(r.clean, true);
+  assert.equal(r.redacted_kind, null);
+});
+
+test('classifyAnchored: empty / non-string is clean', () => {
+  assert.deepEqual(classifyAnchored(''), { clean: true, redacted_kind: null });
+  assert.deepEqual(classifyAnchored(null), { clean: true, redacted_kind: null });
+  assert.deepEqual(classifyAnchored(42), { clean: true, redacted_kind: null });
+});
+
+test('classify is a back-compat alias for classifyAnchored', () => {
+  // Both must produce identical results.
+  const cases = [
+    'sk_live_abcdefghijklmnopqrstuvwxyz123456',
+    'src/auth/login.js',
+    '',
+    'ordinary prose',
+  ];
+  for (const c of cases) {
+    assert.deepEqual(classify(c), classifyAnchored(c), `mismatch for ${JSON.stringify(c)}`);
+  }
 });
