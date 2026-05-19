@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IJFW Live Design Preview</title>
+<!--
+  Minimal host page for live iframes provisioned via vercel:vercel-sandbox.
+
+  Reads ?url= and ?name= from the query string and renders the live preview
+  in a sandboxed iframe. All user-injected strings flow through esc() before
+  reaching the DOM -- same pattern audit-H3.1 standardized on the dashboard.
+
+  The iframe carries sandbox="allow-scripts allow-same-origin" so JS inside
+  the mockup runs but cannot escape to the host. The URL must be an absolute
+  https/http URL; anything else is rejected and a static message is shown
+  instead.
+-->
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;flex-direction:column}
+  header{padding:8px 14px;background:#1e293b;border-bottom:1px solid #334155;display:flex;gap:10px;align-items:center;font-size:13px}
+  header .name{font-weight:600;color:#f1f5f9}
+  header .badge{font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;letter-spacing:.04em;background:#15803d;color:#fff}
+  iframe{flex:1;width:100%;border:0;background:#fff}
+  .empty{flex:1;display:flex;align-items:center;justify-content:center;color:#94a3b8;padding:2rem;text-align:center}
+  .empty code{background:#1e293b;color:#7dd3fc;padding:.2em .5em;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <span class="name" id="name">Live preview</span>
+  <span class="badge">LIVE</span>
+</header>
+<div id="root"></div>
+<script>
+// esc(): mirrors scripts/dashboard/index.html post-audit-H3.1.
+// Escapes ampersand, angle brackets, double-quote AND single-quote so the
+// output is safe inside either attribute style.
+function esc(s){
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
+function isSafeUrl(u){
+  try {
+    var parsed = new URL(u);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (e) { return false; }
+}
+
+(function(){
+  var params = new URLSearchParams(location.search);
+  var url    = params.get('url')  || '';
+  var name   = params.get('name') || 'mockup';
+
+  // Header name -- always escaped
+  document.getElementById('name').textContent = name; // textContent is safe; no innerHTML
+
+  var root = document.getElementById('root');
+  if (!url || !isSafeUrl(url)) {
+    root.outerHTML = '<div class="empty">No live preview URL.<br>Pass <code>?url=...</code> with an absolute http/https URL.</div>';
+    return;
+  }
+  // Build iframe via innerHTML so we can apply the sandbox attribute;
+  // every interpolation flows through esc().
+  root.outerHTML =
+    '<iframe src="' + esc(url) + '" title="' + esc(name) +
+    '" sandbox="allow-scripts allow-same-origin" loading="lazy"></iframe>';
+})();
+</script>
+</body>
+</html>
