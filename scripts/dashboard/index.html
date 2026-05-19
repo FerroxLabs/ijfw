@@ -279,6 +279,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <div class="spacer"></div>
     <span class="platform-summary" id="platformSummary">Loading...</span>
     <span class="tier-pill">MAX 20x</span>
+    <!-- v1.5.0 N4.obs M5: cross-link to the MCP dashboard (port 37891). The MCP
+         dashboard runs out of mcp-server/src/dashboard-server.js and surfaces
+         wave / orchestrator / planning views the operator dashboard doesn't. -->
+    <a class="icon-btn" id="mcpDashLink" href="http://localhost:37891/" target="_blank" rel="noopener" title="Open MCP dashboard (wave + planning views)">MCP dashboard</a>
     <button class="icon-btn" id="themeBtn" aria-label="Toggle theme"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap:round;stroke-linejoin:round" style="vertical-align:middle;margin-right:4px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Theme</button>
     <span class="refresh-dot" id="refreshDot" title="Live -- refreshes every 10s"></span>
   </header>
@@ -314,6 +318,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         <div class="ctitle">Savings from IJFW <span style="font-size:11px;font-weight:400;color:var(--fg-dim);margin-left:8px">30-day estimate vs. running without IJFW</span></div>
         <div class="savings-ledger-tile" id="savingsLedgerTile">
           <div style="color:var(--fg-dim);font-size:13px">Loading...</div>
+        </div>
+      </div>
+
+      <!-- v1.5.0 N4.obs M4: daily cost anomaly tile. Hidden until /api/cost-anomaly
+           reports `anomalous:true` so the tile only appears when there's
+           something to flag. Operators can pivot to the MCP dashboard via the
+           "See in MCP dashboard" link (M5). -->
+      <div class="card" id="costAnomalyCard" style="display:none;border-left:3px solid var(--warning,#d97706)">
+        <div class="ctitle">Cost anomaly today <span id="costAnomalyFactor" style="font-size:11px;font-weight:400;color:var(--fg-dim);margin-left:8px"></span></div>
+        <div id="costAnomalyBody" style="font-size:13px;line-height:1.5"></div>
+        <div style="margin-top:8px;font-size:11px;color:var(--fg-dim)">
+          <a href="http://localhost:37891/" target="_blank" rel="noopener">See in MCP dashboard &rarr;</a>
         </div>
       </div>
 
@@ -649,6 +665,54 @@ function render(data){
   // C9.7: Trident lens-health tile fetches from its own endpoint -- it's
   // independent of the main /api/data payload because probes are async.
   fetchAndRenderLensHealth();
+  // v1.5.0 N4.obs M4: cost anomaly tile (own endpoint so the detector can be
+  // re-run cheaply without rebuilding /api/data).
+  fetchAndRenderCostAnomaly();
+}
+
+// v1.5.0 N4.obs M4: cost anomaly tile fetcher + renderer.
+function fetchAndRenderCostAnomaly(){
+  fetch('/api/cost-anomaly')
+    .then(function(r){ return r.json(); })
+    .then(renderCostAnomalyTile)
+    .catch(function(){
+      var card=document.getElementById('costAnomalyCard');
+      if(card) card.style.display='none';
+    });
+}
+
+function renderCostAnomalyTile(payload){
+  var card=document.getElementById('costAnomalyCard');
+  var body=document.getElementById('costAnomalyBody');
+  var factor=document.getElementById('costAnomalyFactor');
+  if(!card||!body) return;
+  // Hide quietly when nothing to flag -- this is a "noise-when-needed" tile.
+  if(!payload||!payload.anomalous){
+    card.style.display='none';
+    return;
+  }
+  card.style.display='block';
+  if(factor){
+    var factorTxt=(payload.factor!=null)?payload.factor.toFixed(1)+'x baseline':'';
+    factor.textContent=factorTxt;
+  }
+  // Build via textContent to avoid XSS even with esc() upstream.
+  body.textContent='';
+  var reasonRow=document.createElement('div');
+  reasonRow.textContent=payload.reason||'Cost above usual range.';
+  body.appendChild(reasonRow);
+  if(payload.topDriver&&payload.topDriver.name){
+    var driverRow=document.createElement('div');
+    driverRow.style.marginTop='6px';
+    driverRow.style.fontSize='12px';
+    driverRow.style.color='var(--fg-dim)';
+    driverRow.appendChild(document.createTextNode('Top driver: '));
+    var b=document.createElement('b');
+    b.textContent=payload.topDriver.name;
+    driverRow.appendChild(b);
+    driverRow.appendChild(document.createTextNode(' ('+payload.topDriver.sharePct+'% of today)'));
+    body.appendChild(driverRow);
+  }
 }
 
 // C9.7: Lens-health tile renderer.

@@ -213,6 +213,36 @@ function commonPrefixBeforeGlob(pattern) {
   return idx === -1 ? pattern : pattern.slice(0, idx);
 }
 
+// v1.5.0 N4.obs M7: explicit path-segment overlap detection.
+//
+// The old prefix check was `right.startsWith(lp)` which falsely overlapped
+// e.g. `src` with `srcfoo`. Real path containment requires either an exact
+// match OR a `/` separator immediately after the shorter prefix (so `src/`
+// is the prefix of `src/foo`, but `src` does NOT contain `srcfoo`).
+//
+// `commonPrefixBeforeGlob` is preserved for glob handling -- it returns the
+// literal head of a glob pattern (`src/*.js` -> `src/`). When that head
+// already ends with `/`, we compare directly; when it doesn't (no glob in
+// the pattern at all), we require a trailing-slash match below.
+//
+// Same-string comparison short-circuits at the top, so `src` vs `src`
+// remains overlap-true.
+function segmentOverlap(prefix, candidate) {
+  if (!prefix || !candidate) return false;
+  if (prefix === candidate) return true;
+  // Treat the prefix as a directory prefix: candidate must start with
+  // `prefix` AND the next character must be `/`. This rejects the
+  // `srcfoo`-vs-`src` false positive.
+  if (prefix.endsWith('/')) {
+    // Glob-derived prefix already includes the separator; plain prefix match
+    // is the right semantics.
+    return candidate === prefix.slice(0, -1) || candidate.startsWith(prefix);
+  }
+  return candidate.length > prefix.length
+    && candidate.startsWith(prefix)
+    && candidate.charAt(prefix.length) === '/';
+}
+
 function pathsOverlap(a, b) {
   if (!a.length || !b.length) return false;
   for (const left of a) {
@@ -220,8 +250,8 @@ function pathsOverlap(a, b) {
       if (left === right) return true;
       const lp = commonPrefixBeforeGlob(left);
       const rp = commonPrefixBeforeGlob(right);
-      if (lp && right.startsWith(lp)) return true;
-      if (rp && left.startsWith(rp)) return true;
+      if (segmentOverlap(lp, right)) return true;
+      if (segmentOverlap(rp, left)) return true;
     }
   }
   return false;

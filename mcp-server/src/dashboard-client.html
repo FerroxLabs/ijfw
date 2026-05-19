@@ -255,6 +255,10 @@ tr:hover td{background:var(--surface)}
     <div class="breadcrumb" id="breadcrumb"><span style="color:var(--fg-dim)">Overview</span> <b>Today</b></div>
     <div class="spacer"></div>
     <span class="tier-pill">MAX 20x</span>
+    <!-- v1.5.0 N4.obs M5: cross-link back to the operator dashboard (port
+         19747). Operators flip between MCP (wave/orchestrator views) and
+         operator (cost/memory views) so the link is reciprocal. -->
+    <a class="icon-btn" id="operatorDashLink" href="http://localhost:19747/" target="_blank" rel="noopener" title="Open operator dashboard (cost + memory views)">Operator dashboard</a>
     <button class="icon-btn" id="themeBtn" aria-label="Toggle theme">&#9790; Theme</button>
   </header>
 

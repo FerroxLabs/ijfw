@@ -24,6 +24,8 @@ import { execFileSync, spawnSync } from 'child_process';
 import { probeLenses, healthTileShape } from '../../mcp-server/src/trident/lens-health.js';
 // SECURITY (audit H3.3): redact secrets before serving raw memory/transcript content.
 import { redactSecrets } from '../../mcp-server/src/redactor.js';
+// v1.5.0 N4.obs M4: rolling-z anomaly detection on daily cost series.
+import { detectCostAnomaly } from '../../mcp-server/src/observability/cost-anomaly.js';
 
 // SECURITY (audit H3.2): strict Content-Security-Policy header applied to every
 // HTML response. `'unsafe-inline'` is required because the dashboard inlines
@@ -303,6 +305,14 @@ function buildAllMemory() {
 }
 
 // --- Claude memory files across all ~/.claude/projects/ (legacy shape for claudeProjectMemory) ---
+// v1.5.0 N4.obs M6: cap linear growth. Old machines with hundreds of stale
+// project dirs were paying ~O(N) readdir+stat+readFile per /api/data refresh.
+// Strategy: (1) hard cap of 200 projects per refresh; (2) prefer the 200 most
+// recently modified project dirs (so brand-new + active projects always show).
+// This trades exhaustive enumeration for a bounded refresh cost.
+const READ_ALL_CLAUDE_MEMORY_MAX_PROJECTS = 200;
+const READ_ALL_CLAUDE_MEMORY_RECENCY_DAYS = 90;
+
 function readAllClaudeMemory() {
   const claudeProjectsDir = join(HOME, '.claude', 'projects');
   if (!existsSync(claudeProjectsDir)) return [];
@@ -312,8 +322,30 @@ function readAllClaudeMemory() {
     process.stderr.write(`[ijfw-dashboard] readAllClaudeMemory(): ${err.message}\n`);
     return [];
   }
-  const results = [];
+
+  // M6: rank by directory mtime (newest first), keep the most recent 200, and
+  // additionally drop anything older than the recency window. This bounds
+  // refresh cost on machines with many stale project dirs without losing
+  // currently-active projects.
+  const cutoffMs = Date.now() - (READ_ALL_CLAUDE_MEMORY_RECENCY_DAYS * 24 * 3600 * 1000);
+  const ranked = [];
   for (const dir of dirs) {
+    const full = join(claudeProjectsDir, dir);
+    try {
+      const st = statSync(full);
+      if (!st.isDirectory()) continue;
+      // Drop projects untouched in the recency window.
+      if (st.mtimeMs && st.mtimeMs < cutoffMs) continue;
+      ranked.push({ dir, mtimeMs: st.mtimeMs || 0 });
+    } catch {
+      // Skip unreadable entries -- never abort the scan.
+    }
+  }
+  ranked.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const capped = ranked.slice(0, READ_ALL_CLAUDE_MEMORY_MAX_PROJECTS);
+
+  const results = [];
+  for (const { dir } of capped) {
     const memDir = join(claudeProjectsDir, dir, 'memory');
     if (!existsSync(memDir)) continue;
     try {
@@ -1789,6 +1821,59 @@ const server = createServer((req, res) => {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       res.end(`wave-intervention.html error: ${err.message}`);
+    }
+    return;
+  }
+
+  // v1.5.0 N4.obs M4 — daily-cost anomaly tile.
+  //   GET /api/cost-anomaly  -> { anomalous, today, baseline, factor, z,
+  //                               topDriver, reason, mcpDashboard, operatorDashboard }
+  // The series comes from the same `dailyTrend` the dashboard already builds
+  // from codeburn's 30-day daily breakdown. Top-driver attribution is currently
+  // best-effort (top model by 30-day cost) until per-tool cost is wired through
+  // costData in a future milestone.
+  if (url === '/api/cost-anomaly' && (req.method === 'GET' || req.method === 'HEAD')) {
+    try {
+      const codeburn = findCodburn();
+      const cb30d = codeburn?.periods?.['30 Days'] ?? null;
+      const cbToday = codeburn?.periods?.['Today'] ?? null;
+      const dailyTrend = (cb30d?.daily ?? []).map((d) => ({
+        date: d['Date'],
+        cost: d['Cost (USD)'] ?? 0,
+      }));
+      // Append today's row (if different from last 30d entry) so the detector
+      // sees the freshest day at the tail.
+      if (cbToday?.daily?.length) {
+        for (const d of cbToday.daily) {
+          dailyTrend.push({ date: d['Date'], cost: d['Cost (USD)'] ?? 0 });
+        }
+      }
+      // Best-effort top-driver: which model accounted for the most spend today.
+      const todayModels = (cbToday?.models ?? []).map((m) => ({
+        name: m['Model'] || 'unknown',
+        cost: m['Cost (USD)'] ?? 0,
+      }));
+      const verdict = detectCostAnomaly({ daily: dailyTrend, todayDrivers: todayModels });
+      const payload = {
+        ...verdict,
+        // v1.5.0 N4.obs M5 -- cross-dashboard links so operators can pivot
+        // between the operator dashboard (port 19747) and the MCP dashboard
+        // (port 37891). The MCP port is fixed (no port-walk fallback echoed
+        // here; the canonical entry is enough for the link).
+        links: {
+          mcp_dashboard: 'http://localhost:37891/',
+          operator_dashboard: 'http://localhost:19747/',
+        },
+      };
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(JSON.stringify(payload));
+    } catch (err) {
+      process.stderr.write(`[ijfw-dashboard] /api/cost-anomaly error: ${err && err.stack}\n`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'cost-anomaly compute failed' }));
     }
     return;
   }
