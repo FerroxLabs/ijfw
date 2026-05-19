@@ -2,6 +2,8 @@
 // Codex U1 caveat: delta is NEVER fabricated. If real data is insufficient,
 // the delta suffix is omitted entirely.
 
+import { getPricing, getPricesTable } from './cost/pricing.js';
+
 // Format duration in whole seconds (or ms if <1000ms total).
 function fmtDuration(ms) {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -29,8 +31,85 @@ function countFindings(f) {
   return { total: consensus + contested + unique, consensus };
 }
 
-// Anthropic cache-read savings rate: full input $3/M, cache-read $0.30/M -> $2.70/M saved.
-const CACHE_SAVINGS_PER_TOKEN = 2.70 / 1_000_000;
+// Anthropic cache-read savings rate FALLBACK (Sonnet): full input $3/M,
+// cache-read $0.30/M -> $2.70/M saved. Used when a receipt has no model id
+// (or its model is unknown). Per-receipt rates come from cost/pricing.js so
+// Opus/Haiku users see the correct dollar figure.
+const SONNET_FALLBACK_SAVINGS_PER_TOKEN = 2.70 / 1_000_000;
+
+// Known-model detector: mirrors pricing.js's match-then-fuzzy-then-family
+// logic but answers a yes/no question instead of returning a price entry.
+// We need this because getPricing() silently falls back to Sonnet for unknown
+// ids, so we cannot tell "Opus matched" from "garbage -> Sonnet fallback" by
+// looking at the returned rate alone.
+function isKnownModel(modelId) {
+  if (!modelId || typeof modelId !== 'string') return false;
+  let table;
+  try {
+    table = getPricesTable()?.models || {};
+  } catch {
+    return false;
+  }
+  const id = modelId.toLowerCase().trim();
+  if (table[id] || table[modelId]) return true;
+  for (const key of Object.keys(table)) {
+    const k = key.toLowerCase();
+    if (k.startsWith(id) || id.startsWith(k)) return true;
+  }
+  // Family prefixes (must mirror pricing.js fallbacks table).
+  const familyPrefixes = [
+    'claude-opus-4', 'claude-sonnet-4', 'claude-haiku-4',
+    'claude-3-5-sonnet', 'claude-3-5-haiku', 'claude-3-opus',
+    'gpt-5', 'gpt-4o', 'o3', 'o4', 'gemini-2', 'gemini-1.5',
+  ];
+  for (const prefix of familyPrefixes) {
+    if (id.includes(prefix)) return true;
+  }
+  return false;
+}
+
+// Compute per-token cache-read savings for a given model id by consulting
+// the vendored pricing table. Returns { perToken, isFallback, model }.
+// Falls back to Sonnet rate when the model is missing/unknown.
+function cacheSavingsForModel(modelId) {
+  if (!modelId || typeof modelId !== 'string') {
+    return { perToken: SONNET_FALLBACK_SAVINGS_PER_TOKEN, isFallback: true, model: modelId || null };
+  }
+  if (!isKnownModel(modelId)) {
+    return { perToken: SONNET_FALLBACK_SAVINGS_PER_TOKEN, isFallback: true, model: modelId };
+  }
+  try {
+    const p = getPricing(modelId);
+    const perToken = Math.max(0, (p?.in || 0) - (p?.cache_read || 0));
+    if (perToken > 0) {
+      return { perToken, isFallback: false, model: modelId };
+    }
+    return { perToken: SONNET_FALLBACK_SAVINGS_PER_TOKEN, isFallback: true, model: modelId };
+  } catch {
+    return { perToken: SONNET_FALLBACK_SAVINGS_PER_TOKEN, isFallback: true, model: modelId };
+  }
+}
+
+// One-time-per-session stderr advisory for unknown-model fallbacks.
+// Reset only by reloading the module, which matches "per session" semantics
+// for the CLI entrypoint and MCP server.
+let _unknownModelWarned = false;
+export function _resetUnknownModelWarningForTests() {
+  _unknownModelWarned = false;
+}
+function warnUnknownModelOnce(modelId) {
+  if (_unknownModelWarned) return;
+  _unknownModelWarned = true;
+  try {
+    const label = modelId ? `"${modelId}"` : '(missing)';
+    process.stderr.write(
+      `[ijfw hero-line] unknown model ${label} on receipt -- falling back to Sonnet cache-savings rate. ` +
+      `Set receipt.model to a known id for accurate dollar figures.\n`
+    );
+  } catch {
+    // stderr write failures are non-fatal.
+  }
+}
 
 // renderHeroLine(receipts, sessions?)
 //   receipts -- array of cross-runs.jsonl records
@@ -53,7 +132,7 @@ export function renderHeroLine(receipts, sessions = []) {
   let totalConsensus = 0;
   let receiptsInputTokens = 0;
   let hasReceiptsTokens = true;
-  let totalCacheReadTokens = 0;
+  let totalCacheSavings = 0; // dollars, computed per-receipt using its model
 
   for (const r of receipts) {
     if (Array.isArray(r.auditors)) {
@@ -72,7 +151,9 @@ export function renderHeroLine(receipts, sessions = []) {
     }
     const crt = r.cache_stats?.cache_read_input_tokens;
     if (typeof crt === 'number' && crt > 0) {
-      totalCacheReadTokens += crt;
+      const { perToken, isFallback } = cacheSavingsForModel(r.model);
+      if (isFallback) warnUnknownModelOnce(r.model);
+      totalCacheSavings += crt * perToken;
     }
   }
 
@@ -81,7 +162,7 @@ export function renderHeroLine(receipts, sessions = []) {
 
   // Cache savings suffix (10D.4): append only when cache reads produced a
   // visible saving (>= $0.01). A sub-cent figure reads as anti-value.
-  const rawSaved = totalCacheReadTokens * CACHE_SAVINGS_PER_TOKEN;
+  const rawSaved = totalCacheSavings;
   const cacheSuffix = rawSaved >= 0.01
     ? ` (prompt cache hit -- ~$${rawSaved.toFixed(2)} saved)`
     : '';
