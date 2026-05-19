@@ -76,7 +76,10 @@ export function escHtml(s) {
  * renders a live `<iframe src="...">` running in an isolated Firecracker
  * microVM. When absent, the viewer falls back to a static `<iframe srcdoc>`
  * with the html inlined. Either way the iframe carries
- * `sandbox="allow-scripts allow-same-origin"` to prevent top-window escape.
+ * `sandbox="allow-scripts"` to prevent top-window escape (v1.5.0 Trident r19
+ * dropped allow-same-origin; the combination is a documented MDN sandbox
+ * escape — JS still runs in the mockup but the embedded document can't reach
+ * window.parent to remove its own sandbox attribute).
  *
  * All user-controlled strings (mockup name, iframe url) flow through
  * `escHtml()` -- the same pattern dashboard `esc()` uses post-audit-H3.1.
@@ -99,9 +102,14 @@ export function buildMockupViewer({ mockups = [], title = 'IJFW Design Mockups' 
     .map((m, i) => {
       const name = escHtml(m && m.name ? m.name : `mockup-${i + 1}`);
       const isLive = m && typeof m.iframeUrl === 'string' && m.iframeUrl;
+      // v1.5.0 Trident r19 fix: drop allow-same-origin. With both allow-scripts
+      // AND allow-same-origin set, the embedded document can programmatically
+      // remove the sandbox attribute via window.parent.document (MDN sandbox
+      // escape). allow-scripts alone keeps the mockup dynamic while preventing
+      // any cross-origin reach into the host viewer.
       const inner = isLive
-        ? `<iframe class="preview" src="${escHtml(m.iframeUrl)}" title="${name}" sandbox="allow-scripts allow-same-origin" loading="lazy"></iframe>`
-        : `<iframe class="preview" srcdoc="${escHtml(m && m.html ? m.html : '<!doctype html><meta charset=utf-8><p>(no preview)</p>')}" title="${name}" sandbox="allow-scripts allow-same-origin" loading="lazy"></iframe>`;
+        ? `<iframe class="preview" src="${escHtml(m.iframeUrl)}" title="${name}" sandbox="allow-scripts" loading="lazy"></iframe>`
+        : `<iframe class="preview" srcdoc="${escHtml(m && m.html ? m.html : '<!doctype html><meta charset=utf-8><p>(no preview)</p>')}" title="${name}" sandbox="allow-scripts" loading="lazy"></iframe>`;
       const badge = isLive
         ? '<span class="badge live" title="Provisioned via vercel:vercel-sandbox">LIVE</span>'
         : '<span class="badge static" title="Static srcdoc preview -- install vercel CLI or set IJFW_VERCEL_SANDBOX_URL for live sandbox">STATIC</span>';

@@ -11,8 +11,11 @@
   in a sandboxed iframe. All user-injected strings flow through esc() before
   reaching the DOM -- same pattern audit-H3.1 standardized on the dashboard.
 
-  The iframe carries sandbox="allow-scripts allow-same-origin" so JS inside
-  the mockup runs but cannot escape to the host. The URL must be an absolute
+  The iframe carries sandbox="allow-scripts" (only) so JS inside the mockup
+  runs but the embedded document CANNOT reach the host: dropping
+  allow-same-origin closes the documented MDN sandbox escape where scripts
+  + same-origin together let the embedded document remove its own sandbox
+  attribute via window.parent.document. The URL must be an absolute
   https/http URL; anything else is rejected and a static message is shown
   instead.
 -->
@@ -69,9 +72,15 @@ function isSafeUrl(u){
   }
   // Build iframe via innerHTML so we can apply the sandbox attribute;
   // every interpolation flows through esc().
+  // v1.5.0 Trident r19 fix: drop allow-same-origin from the sandbox attribute.
+  // With both allow-scripts AND allow-same-origin set, the embedded document
+  // can programmatically remove the sandbox attribute via window.parent.document
+  // (documented MDN sandbox escape). allow-scripts alone is sufficient for the
+  // mockup to render dynamically while keeping it cross-origin-isolated from
+  // the host preview page.
   root.outerHTML =
     '<iframe src="' + esc(url) + '" title="' + esc(name) +
-    '" sandbox="allow-scripts allow-same-origin" loading="lazy"></iframe>';
+    '" sandbox="allow-scripts" loading="lazy"></iframe>';
 })();
 </script>
 </body>

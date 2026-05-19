@@ -129,7 +129,8 @@ test('buildMockupViewer renders static srcdoc when iframeUrl is null', () => {
   });
   assert.match(viewer, /<!DOCTYPE html>/i);
   assert.match(viewer, /<iframe[^>]+srcdoc=/, 'must use srcdoc when no live URL');
-  assert.match(viewer, /sandbox=&quot;allow-scripts allow-same-origin&quot;|sandbox="allow-scripts allow-same-origin"/);
+  // v1.5.0 Trident r19: dropped allow-same-origin (sandbox escape risk).
+  assert.match(viewer, /sandbox=&quot;allow-scripts&quot;|sandbox="allow-scripts"/);
   // option-a name appears as tab and pane header
   assert.match(viewer, /option-a/);
   // Static badge wording
@@ -144,7 +145,8 @@ test('buildMockupViewer renders <iframe src> when iframeUrl is present', () => {
     ],
   });
   assert.match(viewer, /<iframe[^>]+src="https:\/\/example\.test\/preview\/x"/);
-  assert.match(viewer, /sandbox="allow-scripts allow-same-origin"/);
+  // v1.5.0 Trident r19: dropped allow-same-origin (sandbox escape risk).
+  assert.match(viewer, /sandbox="allow-scripts"/);
   assert.match(viewer, /LIVE/);
   // Must NOT use srcdoc when we have a live URL
   assert.doesNotMatch(viewer, /<iframe[^>]+srcdoc=/);
