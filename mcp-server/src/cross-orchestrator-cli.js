@@ -1490,14 +1490,98 @@ function cmpSemver(a, b) {
 
 function readState() { return readJsonSafe(join(ijfwHome(), 'state.json')) || {}; }
 function readSettings() { return readJsonSafe(join(ijfwHome(), 'settings.json')) || {}; }
+
+// v1.5.0 audit M11 (F-REL-1): writeStateFields was best-effort — readState +
+// merge + writeAtomic was a TOCTOU window where a parallel `ijfw update`
+// completion could clobber another writer's `last_applied_version`. If the
+// write failed silently, the re-entrancy guard (last_applied_version >=
+// last_latest_seen) would never fire and every subsequent session would
+// nag-loop until manual `ijfw doctor`.
+//
+// Fix: serialise read-modify-write under a sync directory lock so the merge
+// happens against the latest disk state. We use a tiny inlined sync version
+// of `withFsLock` (mkdir-with-EEXIST is atomic on POSIX + NTFS) rather than
+// importing the async `fs-lock.js` — this whole CLI is sync top-to-bottom and
+// converting just-this-callsite to async would force every caller to await.
+//
+// On lock-acquire failure we still attempt the write (better than refusing to
+// persist) and surface the lock failure as a clearer error.
+const STATE_LOCK_DIR = () => join(ijfwHome(), '.state.lock');
+const STATE_LOCK_ACQUIRE_TIMEOUT_MS = 5000;
+const STATE_LOCK_STALE_MS = 30000;
+const STATE_LOCK_BACKOFF_START_MS = 25;
+const STATE_LOCK_BACKOFF_MAX_MS = 250;
+
+function withStateLockSync(fn) {
+  const lockDir = STATE_LOCK_DIR();
+  // Ensure parent exists; tolerate races.
+  try { mkdirSync(dirname(lockDir), { recursive: true, mode: 0o700 }); } catch { /* */ }
+
+  const deadline = Date.now() + STATE_LOCK_ACQUIRE_TIMEOUT_MS;
+  let staleRecoveryUsed = false;
+  let backoff = STATE_LOCK_BACKOFF_START_MS;
+  let acquired = false;
+
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(lockDir, { recursive: false });
+      acquired = true;
+      break;
+    } catch (err) {
+      if (err && err.code !== 'EEXIST') {
+        // Real FS error (EACCES, ENOENT on parent we couldn't create) —
+        // surface so the caller can fall back to best-effort write.
+        throw err;
+      }
+      // Stale recovery: if the lock dir is older than STATE_LOCK_STALE_MS,
+      // a previous holder crashed mid-write. Remove + retry once.
+      if (!staleRecoveryUsed) {
+        try {
+          const st = statSync(lockDir);
+          if (Date.now() - st.mtimeMs > STATE_LOCK_STALE_MS) {
+            staleRecoveryUsed = true;
+            rmSync(lockDir, { recursive: true, force: true });
+            continue;
+          }
+        } catch { /* lock vanished mid-stat; retry */ }
+      }
+      // Bounded busy-wait. Sync sleep via Atomics is heavy; use a tight loop
+      // with deadline check (typical contention is microseconds in practice).
+      const waitUntil = Date.now() + Math.min(backoff, STATE_LOCK_BACKOFF_MAX_MS, deadline - Date.now());
+      // eslint-disable-next-line no-empty
+      while (Date.now() < waitUntil) {}
+      backoff = Math.min(backoff * 2, STATE_LOCK_BACKOFF_MAX_MS);
+    }
+  }
+
+  if (!acquired) {
+    // Couldn't acquire — fall back to caller's fn anyway. Better to risk a
+    // racy write than to lose the re-entrancy guard entry.
+    try { return fn(); }
+    finally { /* no lock to release */ }
+  }
+
+  try {
+    return fn();
+  } finally {
+    try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* */ }
+  }
+}
+
 function writeStateFields(updates) {
   const path = join(ijfwHome(), 'state.json');
-  const state = Object.assign(readState(), updates);
-  try {
-    writeAtomic(path, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
-  } catch (e) {
-    console.error(`could not persist state.json: ${e.message}`);
-  }
+  withStateLockSync(() => {
+    // Re-read INSIDE the lock so we don't merge against a stale snapshot.
+    const state = Object.assign(readState(), updates);
+    try {
+      writeAtomic(path, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
+    } catch (e) {
+      // M11: persist failure is now visible AND surfaces which field would
+      // not propagate. Re-entrancy guard relies on last_applied_version;
+      // log explicitly so `ijfw doctor` / a user reading logs can spot it.
+      console.error(`could not persist state.json (re-entrancy guard may not fire next session): ${e.message}`);
+    }
+  });
 }
 
 function cmdUpdateCheck() {

@@ -70,3 +70,71 @@ Symlinks are refused at write targets (`writeAtomic` checks before overwriting).
 - Rollback tarballs (not justified by failure data yet)
 - Telemetry (local-first forever)
 - Rules-file rewriting (deferred from 1.1.6 due to supply-chain risk)
+
+## Trust chain overview (v1.4.x +)
+
+IJFW's supply-chain trust chain has four layers, each independently verifiable:
+
+1. **Embedded meta-key** -- a single Ed25519 public key compiled into `mcp-server/src/extension-registry.js` (`IJFW_REGISTRY_META_KEY_PEM`). Rotation requires a new v1.4.x release with a new key inlined. This is the trust root: every other key in the system is signed by this one.
+2. **Federated publisher registry** -- `~/.ijfw/registries.json` lists priority-ordered registry sources. Each source serves a signed `publishers/v1.json` blob (one keypair per source, all rooted in the meta-key). Higher-priority sources override lower; ANY source's revocation revokes globally.
+3. **Per-publisher Ed25519 keys** -- registered publishers sign extension manifests + tarballs. Verified on install.
+4. **Rekor transparency log (optional, F-SEC-7 second factor)** -- registry blobs are submitted to a Rekor instance; clients can cross-verify the registry signature against the public log to detect a compromised publisher pushing a re-signed registry.
+
+The first two layers run on every `ijfw trust-registry` invocation. Layers 3-4 run on `ijfw install <ext>`.
+
+## Sandbox threat model (`ijfw_run` -- F-SEC-5)
+
+**Risk class:** any caller of the `ijfw_run` MCP tool can execute arbitrary shell commands as the user.
+
+The `ijfw_run` MCP tool implementation (`mcp-server/src/sandbox.js`) spawns child processes with `shell: true` and the raw command string from the tool arguments. This is by design -- the feature IS shell execution. But the security implication is explicit:
+
+> **Access to the `ijfw_run` MCP tool is functionally equivalent to a remote-shell capability.** A model with access to `ijfw_run` can run any shell command the IJFW process can run.
+
+This matters because:
+
+- **Prompt injection** -- malicious content in fetched docs, stored memory, or user-supplied text can convince the model to invoke `ijfw_run` with attacker-chosen commands. The model is not a security boundary.
+- **Active-extension permission gating** -- the tier-1 mediator at `runtime-mediator.js` maps `ijfw_run` calls to the `tool:ijfw_run` permission. Extensions that do not declare `writes: ["tool:ijfw_run"]` (or the broader `writes: ["*"]`) have their `ijfw_run` calls rejected. **The default bundled-context policy is `*`**, which preserves UX for the user's own commands but means any model running under the bundled context can spawn shell.
+- **No sandbox** -- `ijfw_run` is NOT a containment boundary. It does not run commands in a chroot, namespace, or container. The command runs with the full privileges of the IJFW process.
+
+### Recommended posture
+
+- For shared-MCP setups (multi-tenant), require `ijfw_run` permission to be explicitly opted into per extension.
+- Treat any model with `tool:ijfw_run` permission as having shell access to the host.
+- The IJFW dashboard's recent-commands tile (`scripts/dashboard/`) surfaces every `ijfw_run` invocation; review periodically.
+- For agents that should NEVER run shell, declare `writes: []` in the extension manifest -- this is the only safe policy.
+
+## Active-extension permission model
+
+Permissions are declared in each extension's `manifest.json` under `permissions`:
+
+```json
+{
+  "permissions": {
+    "reads": ["memory:*", "tool:ijfw_memory_search"],
+    "writes": ["memory:project:notes", "tool:ijfw_memory_store"]
+  }
+}
+```
+
+The vocabulary is documented in `docs/EXTENSION-SECURITY.md`. Key categories:
+
+- `memory:*` -- read/write memory entries by scope.
+- `tool:<tool-name>` -- invoke a specific MCP tool. `tool:ijfw_run` is the shell-execution permission described above.
+- `run:<subject>` -- coarse-grained subject prefix for `ijfw_run` invocations (e.g. `run:git:*` to allow only git subcommands).
+- `*` -- all permissions (bundled context only; not recommended for third-party extensions).
+
+The runtime mediator (`runtime-mediator.js`) enforces these on every MCP call. Mediation runs INSIDE the MCP server, so platforms that re-export IJFW's tools (Claude, Codex, Cursor, Windsurf, Copilot, Gemini, Hermes, Wayland) all share the same enforcement.
+
+## Compromised meta-key recovery
+
+The embedded meta-key is the trust root. If it is compromised:
+
+1. **Generate a new keypair** -- the IJFW maintainer creates a fresh Ed25519 keypair via `ijfw trust-keygen`.
+2. **Rotate the inlined constant** -- update `IJFW_REGISTRY_META_KEY_PEM` in `mcp-server/src/extension-registry.js` with the new public key.
+3. **Re-sign the registry** -- sign `publishers/v1.json` with the new private key and publish to all federated registry endpoints.
+4. **Ship a patch release** -- cut v1.5.x with the new compiled-in key. Existing installs continue to trust the old key until they update; the patch release IS the rotation event.
+5. **Publish the rotation notice** -- announce the compromise + the patch version in the public CHANGELOG so users can prioritise the update.
+
+There is no in-band key-revocation mechanism for the meta-key itself (intentional -- that would create a recursive trust problem). The OOB update flow described above IS the recovery primitive.
+
+For publisher-key compromise (a downstream Ed25519 key, not the meta-key), the registry's `revoked` field is the standard channel -- revocations propagate within `REVOCATION_TTL_MS` (5 minutes by default).

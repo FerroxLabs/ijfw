@@ -21,7 +21,7 @@
  */
 
 import { createPublicKey, createHash, verify as cryptoVerify } from 'node:crypto';
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, readdir, stat, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import https from 'node:https';
@@ -703,13 +703,104 @@ async function atomicWriteJson(filePath, payload) {
   await rename(tmp, filePath);
 }
 
+// ---------------------------------------------------------------------------
+// Federated per-source cache quota (v1.5.0 audit M10 / F-PRF-2).
+//
+// Per-source caches live at `~/.ijfw/state/registry-cache-<name>.json`. With
+// the 1 MiB MAX_REGISTRY_BYTES per-body cap and N federated sources, the disk
+// footprint can grow unbounded as users add/remove sources over time (orphan
+// caches for deactivated sources are never cleaned up). We enforce two caps:
+//
+//   - IJFW_FEDERATED_CACHE_MAX_SOURCES (default 32) — file count
+//   - IJFW_FEDERATED_CACHE_MAX_BYTES   (default 64 MiB) — total bytes
+//
+// On overflow we LRU-evict (mtime ascending) until we're under both caps.
+// Eviction skips the file we're about to write so a fresh write never
+// self-evicts; this is a soft contract for the caller — the next overflow
+// pass will re-evaluate.
+// ---------------------------------------------------------------------------
+
+const REGISTRY_CACHE_PREFIX = 'registry-cache-';
+const REGISTRY_CACHE_SUFFIX = '.json';
+const DEFAULT_FEDERATED_CACHE_MAX_SOURCES = 32;
+const DEFAULT_FEDERATED_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+
+function envIntCap(name, fallback) {
+  const raw = process.env[name];
+  if (typeof raw !== 'string' || raw.length === 0) return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
+async function listSourceCacheFiles() {
+  const dir = ijfwStateDir();
+  let names;
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (!name.startsWith(REGISTRY_CACHE_PREFIX)) continue;
+    if (!name.endsWith(REGISTRY_CACHE_SUFFIX)) continue;
+    // Skip the legacy single-source cache (no source name infix).
+    if (name === 'registry-cache.json') continue;
+    const filePath = join(dir, name);
+    let st;
+    try {
+      st = await stat(filePath);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+    out.push({ path: filePath, name, size: st.size, mtimeMs: st.mtimeMs });
+  }
+  return out;
+}
+
+/**
+ * Enforce the federated cache quota by evicting oldest-mtime cache files until
+ * both the file-count and total-bytes caps are satisfied. `protectPath` is
+ * excluded from eviction so a freshly-written cache survives its own pass.
+ *
+ * Returns the list of evicted file paths (for observability / tests).
+ */
+export async function enforceFederatedCacheQuota({ protectPath = null } = {}) {
+  const maxSources = envIntCap('IJFW_FEDERATED_CACHE_MAX_SOURCES', DEFAULT_FEDERATED_CACHE_MAX_SOURCES);
+  const maxBytes = envIntCap('IJFW_FEDERATED_CACHE_MAX_BYTES', DEFAULT_FEDERATED_CACHE_MAX_BYTES);
+  const files = await listSourceCacheFiles();
+  if (files.length === 0) return [];
+
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs); // oldest first
+  let totalBytes = files.reduce((acc, f) => acc + f.size, 0);
+  let count = files.length;
+  const evicted = [];
+
+  for (const f of files) {
+    if (count <= maxSources && totalBytes <= maxBytes) break;
+    if (protectPath && f.path === protectPath) continue;
+    try {
+      await unlink(f.path);
+      evicted.push(f.path);
+      totalBytes -= f.size;
+      count -= 1;
+    } catch {
+      // Best-effort: failure to unlink is non-fatal; the next pass retries.
+    }
+  }
+  return evicted;
+}
+
 /**
  * Mutate the per-source cache inside an exclusive fs-lock.
  * @param {object} source — entry from loadRegistrySources()
  * @param {(cache: object) => object|Promise<object>} mutator
  */
 export async function withSourceCache(source, mutator) {
-  return withFsLock(perSourceLockPath(source.name), async () => {
+  const targetPath = perSourceCachePath(source.name);
+  const result = await withFsLock(perSourceLockPath(source.name), async () => {
     const { cache, corrupt, reason } = await readSourceCache(source);
     if (corrupt) {
       // The mutator still gets a fresh empty cache to write into. We surface
@@ -717,16 +808,26 @@ export async function withSourceCache(source, mutator) {
       const next = await mutator({ ...cache, _corruptReason: reason });
       if (next && typeof next === 'object') {
         delete next._corruptReason;
-        await atomicWriteJson(perSourceCachePath(source.name), next);
+        await atomicWriteJson(targetPath, next);
       }
       return { corrupt: true, reason };
     }
     const next = await mutator(cache);
     if (next && typeof next === 'object') {
-      await atomicWriteJson(perSourceCachePath(source.name), next);
+      await atomicWriteJson(targetPath, next);
     }
     return { corrupt: false };
   });
+  // v1.5.0 audit M10: enforce the federated cache quota AFTER the write
+  // releases its per-source lock. We exclude the just-written file so a fresh
+  // write never self-evicts. Failures here are non-fatal — caller already has
+  // a consistent on-disk cache.
+  try {
+    await enforceFederatedCacheQuota({ protectPath: targetPath });
+  } catch {
+    // Silent: quota is a hygiene knob, not a correctness gate.
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1044,20 +1145,38 @@ export async function refreshTrustFromAllRegistries(opts = {}) {
 
   const appliedSources = [];
 
-  for (const source of sources) {
+  // v1.5.0 audit M9 (F-SPD-3): parallelise the per-source pipeline. Previously
+  // this was a sequential `for await` loop — with the 10s fetch timeout and N
+  // federated sources, worst-case wait was N×10s (50s for 5 sources). The
+  // network-bound and cache-IO phases for each source are independent, so we
+  // fan out with Promise.all and process results in priority order afterward
+  // (preserves deterministic warning order + applyMultiRegistry input order).
+  //
+  // Per-source failures are caught inside the worker so one slow/throwing
+  // source can never block the others; the worker returns a result envelope
+  // with `error` set, and the post-merge loop converts it into the same
+  // skip-with-warning shape the old sequential code produced.
+  async function processSource(source) {
     const fetchImpl = typeof opts.fetchImpl === 'function'
       ? (url, part) => opts.fetchImpl(url, source, part)
       : null;
 
     let cache;
     let corruptReason = null;
-    const cacheRead = await readSourceCache(source);
-    cache = cacheRead.cache;
-    if (cacheRead.corrupt) {
-      corruptReason = cacheRead.reason;
-      const msg = `[ijfw] WARNING: cache for source '${source.name}' corrupt (${cacheRead.reason}) — ignored; falling back to network`;
-      process.stderr.write(msg + '\n');
-      warnings.push(msg);
+    let workerWarnings = [];
+    try {
+      const cacheRead = await readSourceCache(source);
+      cache = cacheRead.cache;
+      if (cacheRead.corrupt) {
+        corruptReason = cacheRead.reason;
+        workerWarnings.push(`[ijfw] WARNING: cache for source '${source.name}' corrupt (${cacheRead.reason}) — ignored; falling back to network`);
+      }
+    } catch (err) {
+      // Defensive: readSourceCache should always return; if it throws treat as
+      // corrupt so we still fetch network and try to recover.
+      cache = emptySourceCache(source);
+      corruptReason = `read_throw:${err.message}`;
+      workerWarnings.push(`[ijfw] WARNING: cache for source '${source.name}' read threw (${err.message}) — falling back to network`);
     }
 
     const now = Date.now();
@@ -1069,33 +1188,70 @@ export async function refreshTrustFromAllRegistries(opts = {}) {
     let mergedRegistry = null;
     let fetchError = null;
 
-    // Always fetch the full registry when we want publishers (the response is
-    // the source of truth for both parts). When ONLY revocation is stale we
-    // still issue a fetch (server returns the same JSON; CDN can cache
-    // separately if it cares about ?part=revoked).
     if (wantPublishers || wantRevocation) {
       const part = wantPublishers ? 'all' : 'revoked';
-      const fetched = await fetchRegistry(source.url, { fetchImpl, part });
-      if (!fetched.ok) {
-        fetchError = fetched.error;
-      } else {
-        const verified = verifyRegistry(fetched.body, {
-          metaKeyPem: source.meta_key_pem,
-          allowSeed: opts.allowSeed,
-        });
-        if (!verified.valid) {
-          fetchError = `verify failed: ${verified.reason}`;
+      try {
+        const fetched = await fetchRegistry(source.url, { fetchImpl, part });
+        if (!fetched.ok) {
+          fetchError = fetched.error;
         } else {
-          if (verified.warnings) {
-            for (const w of verified.warnings) {
-              const wMsg = `[ijfw] WARNING (source=${source.name}): ${w}`;
-              process.stderr.write(wMsg + '\n');
-              warnings.push(wMsg);
+          const verified = verifyRegistry(fetched.body, {
+            metaKeyPem: source.meta_key_pem,
+            allowSeed: opts.allowSeed,
+          });
+          if (!verified.valid) {
+            fetchError = `verify failed: ${verified.reason}`;
+          } else {
+            if (verified.warnings) {
+              for (const w of verified.warnings) {
+                workerWarnings.push(`[ijfw] WARNING (source=${source.name}): ${w}`);
+              }
             }
+            mergedRegistry = verified.registry;
           }
-          mergedRegistry = verified.registry;
         }
+      } catch (err) {
+        // Worker-level catch — if fetchRegistry/verifyRegistry throws we
+        // surface it as a regular fetch error so the cache-fallback path
+        // below can run, instead of poisoning the whole Promise.all batch.
+        fetchError = `fetch threw: ${err.message}`;
       }
+    }
+
+    return {
+      source,
+      cache,
+      corruptReason,
+      wantPublishers,
+      wantRevocation,
+      mergedRegistry,
+      fetchError,
+      workerWarnings,
+    };
+  }
+
+  // Promise.all — N×10s worst case collapses to ~10s. safe-by-construction:
+  // every worker catches its own errors and returns a result envelope.
+  const processed = await Promise.all(sources.map((s) => processSource(s)));
+
+  // Post-merge: walk results in original priority order so warnings + cache
+  // writes + appliedSources accumulate deterministically. This is the same
+  // sequence the old `for` loop produced; only the network/cache I/O phase
+  // moved to parallel.
+  for (const result of processed) {
+    const {
+      source,
+      cache,
+      corruptReason,
+      wantPublishers,
+      mergedRegistry,
+      fetchError,
+      workerWarnings,
+    } = result;
+
+    for (const w of workerWarnings) {
+      process.stderr.write(w + '\n');
+      warnings.push(w);
     }
 
     // Decide what cache to write + which registry to apply.
