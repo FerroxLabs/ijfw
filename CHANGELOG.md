@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Workflow-engine MED batch (v1.5.0 audit close-out, 2026-05-19)
+
+- **M1** `selectResumeAI` now reads `.ijfw/swarm.json::resume_preference` (falls back to the built-in claude/gemini/codex matrix). Rosters with `opencode`, `aider`, `copilot` etc. get cross-AI resume routing instead of escalating to user. `loadResumePreference()` + `_resetResumePrefCache()` helpers exported from `runtime-loop.js`.
+- **M2** `validatePlan({checkWaveOverlap: true})` runs `buildManifest` inside the plan-checker; sub-wave file overlaps surface as INFO findings at plan-review time instead of being a dispatch-time surprise.
+- **M3** New `mcp-server/src/orchestrator/termination.js`: composable termination conditions — `MaxAttempts`, `WallClockTimeout`, `TokenBudget`, `FindingSeverity`, with `or` / `and` / `not` combinators (AutoGen-style API). `runtime-loop.js::runLoop` accepts an optional `termination:` predicate; default behaviour stays `MaxAttempts(3)` so all existing callers are unaffected.
+- **M4** New `ijfw wave-expected <id> <subId> ...` subcommand writes `.ijfw/wave-<id>/expected.json`; `ijfw wave-missing <id>` (without an expected-list argv) now self-configs from that file. Closes the "orchestrator forgot which subagents it dispatched" failure mode. argv still wins for backwards compat.
+- **M7** `reviewTask({bothStages: true})` now runs the code-quality reviewer even after a spec FAIL, surfacing quality findings with `[INFO]` downgrade prefixes on `result.qualityFindings`. The outer `ok`/`stage` still mirrors the spec verdict; the optional pass is advisory-only so the iron-law isn't softened.
+- **M8** **COMPLETION_PATTERNS policy** — explicit documentation that lowercase `done`/`complete`/`pass(?:es)?` no longer trigger the strict iron-law gate, after r13-M-01 + r13-M-04 dropped them for firing on neutral language ("not yet complete", "to be done in v1.5", "pass the context"). The strict gate now keys on protocol-literal `DONE`, deliberate-verb `completed`/`shipped`, verdict-literal `PASS`, `✅`, and explicit phrases ("all tests pass" / "build succeeded" / "deployed" / "ready to ship"). New low-confidence tier (`LOW_CONFIDENCE_PATTERNS` + `checkVerificationGateLowConfidence`) keeps the old word-list available for ADVISE-mode-only callers that want drift detection without blocking.
+- **M9** `loadPopulateBlackboardBlock` (wave-state.js) replaced the `_s4LoadAttempted` boolean + sync mutation pattern with a Promise singleton — concurrent callers now share one resolved import without a race window. `_resetPopulateBlackboardBlockSingleton()` exported for tests.
+- **M10** `ijfw-workflow` SKILL.md trimmed from 528→≤200 LOC: POST-BRAINSTORM workflow modules + DEEP-mode optional modules moved to `claude/skills/ijfw-workflow/references/`. Core SKILL keeps the workflow spine + skill-routing pointers.
+
 ## [1.5.0] -- 2026-05-19 (MAJOR — "The All-in-One That Just Fucking Works") — RETAGGED
 
 ### Post-tag deep-dive audit pass (2026-05-19) — 20 commits closing ~35 audit findings

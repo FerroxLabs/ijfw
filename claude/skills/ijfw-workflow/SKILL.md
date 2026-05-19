@@ -18,16 +18,12 @@ Donahoe Loop: BRAINSTORM -> PLAN -> EXECUTE -> VERIFY -> SHIP -> MEASURE
               |<--- Trident cross-audit on request --->|
 ```
 
+> **Detailed downstream procedure** (PLAN / EXECUTE / VERIFY / SHIP, including wave dispatch, post-DONE pipeline, Phase-E cross-audit): see `references/post-brainstorm-workflow.md`.
+> **Deep-mode optional modules** (EXTERNAL BRIEF / ANTI-SCOPE / TRIDENT CROSS-CRITIQUE): see `references/deep-mode-optional.md`.
+
 ## RUNTIME BOOTSTRAP AND FALLBACKS
 
-Before the first workflow write or command invocation, inspect whether
-`.ijfw/memory/` exists so the auto-picker and empty-state opener can use that
-signal accurately. Then ensure `.ijfw/memory/` and `.planning/` exist before
-writing artifacts. If the `ijfw` CLI is unavailable in this session, continue
-with markdown files and visible chat checklists, then state the exact CLI
-command the user can run later. Optional commands such as `ijfw cross`,
-`ijfw design`, `ijfw recover`, `ijfw blackboard`, `ijfw team`, and `ijfw swarm`
-must degrade to explicit written artifacts instead of blocking the workflow.
+Before the first workflow write or command invocation, inspect whether `.ijfw/memory/` exists so the auto-picker and empty-state opener can use that signal accurately. Then ensure `.ijfw/memory/` and `.planning/` exist before writing artifacts. If the `ijfw` CLI is unavailable in this session, continue with markdown files and visible chat checklists, then state the exact CLI command the user can run later. Optional commands such as `ijfw cross`, `ijfw design`, `ijfw recover`, `ijfw blackboard`, `ijfw team`, and `ijfw swarm` must degrade to explicit written artifacts instead of blocking the workflow.
 
 ---
 
@@ -93,364 +89,89 @@ This is the single biggest superpower IJFW delivers. Never skip the attempt. If 
 
 # QUICK MODE -- 5 moves, 3-5 min
 
-For focused work. Picks up from current context. Each move has ONE input slot.
+For focused work. Each move has ONE input slot.
 
 ### Move 1 -- FRAME (45s)
 
-- Assistant parses the goal from the ask or asks: `Goal in one line.`
-- Memory hook fires. Assistant pastes up to 3 related recalls inline.
-- **Rewrite vague asks into verifiable goals before echoing back:**
-  - "Add validation" -> "Write tests for invalid inputs (empty, malformed, oversized), then make them pass."
-  - "Fix the bug" -> "Write a failing test that reproduces the reported symptom, then make it pass."
-  - "Refactor X" -> "Existing test suite passes before and after. No public API changes."
-  - "Make it faster" -> "Benchmark the hot path, identify the bottleneck with profiling, change it, show the benchmark improved."
-  - "Clean up the code" -> "Pick one specific smell. Fix only that. Diff fits in one commit message."
+- Parse the goal from the ask or ask: `Goal in one line.`
+- Memory hook fires. Paste up to 3 related recalls inline.
+- Rewrite vague asks into verifiable goals before echoing back. Examples: "Add validation" → "Tests for invalid inputs, then make them pass"; "Fix the bug" → "Failing repro test, then make it pass"; "Refactor X" → "Suite passes before and after, no public API changes"; "Make it faster" → "Profile hot path, change it, show the bench improved"; "Clean up the code" → "Pick one smell, fix only that, one-commit diff".
 - If the ask cannot be reduced to a checkable outcome, surface that gap before proceeding.
-- Assistant echoes: `So: <concise goal>. Yes?`
-- User confirms or edits.
+- Echo: `So: <concise goal>. Yes?` User confirms or edits.
 
 ### Move 2 -- WHY (30s)
 
-- Assistant asks: `Why does this matter? What's broken if we don't ship it?`
-- Single 5-Whys drill -- one follow-up question if the answer stays surface.
-- Assistant surfaces the root motivation: `Root: <X>. That means we should <design implication>.`
+Ask: `Why does this matter? What's broken if we don't ship it?` One 5-Whys drill if surface. Surface the root: `Root: <X>. That means we should <design implication>.`
 
 ### Move 3 -- SHAPE (60s)
 
-- Assistant proposes **3 approaches**, each as 1 line + 1 tradeoff:
-  > A: <approach> -- tradeoff: <cost>
-  > B: <approach> -- tradeoff: <cost>
-  > C: <approach> -- tradeoff: <cost>
-- User picks, hybrids, or overrides. No blank page, ever.
+Propose **3 approaches**, each 1 line + 1 tradeoff. User picks, hybrids, or overrides. No blank page.
 
 ### Move 4 -- STRESS (30s)
 
-- Assistant runs a pre-mortem flash: `Top risk: <concrete scenario>. Mitigation: <concrete fix>.`
-- User confirms mitigation or swaps.
-- Sutherland wow: the risk the user hadn't thought of.
+Pre-mortem flash: `Top risk: <concrete scenario>. Mitigation: <concrete fix>.` Sutherland wow: the risk the user hadn't thought of.
 
 ### Move 5 -- LOCK (15s)
 
-- Assistant pastes the brief in-chat (max 6 lines: goal / root / approach / risk / mitigation / success).
-- User says one word: `lock` / `fix <X>` / `go deeper`.
-- On `lock`: write `.ijfw/memory/brief.md`. Route straight to PLAN.
-  - Invoke `ijfw-agents-md` skill with intent context (brief.md) to seed AGENTS.md if missing; create platform adapter (e.g. CLAUDE.md) from template if detected IDE file is absent.
+- Paste the brief in-chat (max 6 lines: goal / root / approach / risk / mitigation / success).
+- One word: `lock` / `fix <X>` / `go deeper`.
+- On `lock`: write `.ijfw/memory/brief.md`. Route straight to PLAN (see `references/post-brainstorm-workflow.md`).
+- Invoke `ijfw-agents-md` skill with intent context (brief.md) to seed AGENTS.md if missing; create platform adapter (e.g. CLAUDE.md) from template if detected IDE file is absent.
 
-**Quick-mode closer:** `You went from <original-ask> to locked brief with <N> risks mitigated in <M> minutes.` Receipt for the work.
+**Quick-mode closer:** `You went from <original-ask> to locked brief with <N> risks mitigated in <M> minutes.`
 
 ---
 
 # DEEP MODE -- 6 required modules + 3 optional
 
-For substantial projects. Modules are a spine, not a checklist. Every module has a memory hook, a visible artifact, and a one-word commit.
-
-## Required spine
+Modules are a spine, not a checklist. Every module has a memory hook, a visible artifact, and a one-word commit.
 
 ### Module 1 -- FRAME (3 min)
-
-- Memory recall on the goal keywords.
-- Socratic arc: problem -> users -> constraints -> scope (in and out).
-- One question per turn. Echo back every 3 turns to confirm understanding.
-- Exit: `Brief draft ready to review. Paste now? (y/edit)`
-- Artifact: `.ijfw/memory/brief-draft.md` (30 lines max). Promote to `.ijfw/memory/brief.md` only after LOCK.
+Memory recall on goal keywords. Socratic arc: problem → users → constraints → scope. One question per turn. Echo back every 3 turns. Artifact: `.ijfw/memory/brief-draft.md` (≤30 lines); promote to `brief.md` only after LOCK.
 
 ### Module 2 -- RECON (5-10 min)
-
-- State the research questions in-chat first: `I want to answer X, Y, Z -- okay?`
-- Dispatch scout / Explore agents with those questions (parallel where independent). If the current runtime has no agent-dispatch capability, do the research locally in separate labeled passes and record the limitation in `.ijfw/memory/research.md`.
-- When agents return, paste synthesis in-chat: **ask** + **answer** + **contradictions** + **plan implications**.
-- User reacts. Follow up if they push back.
-- Artifact: `.ijfw/memory/research.md` (cleaned-up synthesis, not raw agent output).
+State research questions in-chat first. Dispatch scout / Explore agents (parallel where independent), or do passes locally and record the limitation. Paste synthesis: **ask** + **answer** + **contradictions** + **plan implications**. Artifact: `.ijfw/memory/research.md`.
 
 ### Module 3 -- HMW (3 min)
-
-- Assistant proposes 2-3 "How Might We" reframings based on FRAME + RECON.
-- User picks one, rejects, or edits.
-- The chosen HMW anchors DIVERGE.
+Propose 2-3 "How Might We" reframings based on FRAME + RECON. User picks, rejects, or edits. Chosen HMW anchors DIVERGE.
 
 ### Module 4 -- DIVERGE (8 min)
-
-- Assistant sketches **4-5 approaches** as 2-line bullets (shape + key tradeoff).
-- User picks 2, rejects, or says `hybrid A + C`.
-- No blank page. If user wants a 6th sketch, Assistant generates it on demand.
+Sketch **4-5 approaches** as 2-line bullets (shape + tradeoff). User picks 2, rejects, or `hybrid A + C`. Generate a 6th on demand.
 
 ### Module 5 -- CONVERGE (5 min)
-
-- Assistant drafts success metrics / acceptance criteria from the chosen approach.
-- Pre-mortem pass: Assistant generates 4-5 plausible failure scenarios.
-- User picks top 2 risks. Assistant proposes mitigation for each.
-- Artifact: metrics + risks + mitigations appended to brief.md.
+Draft success metrics / acceptance criteria. Pre-mortem: 4-5 plausible failures. User picks top 2 risks; propose mitigations. Append metrics + risks + mitigations to brief.md.
 
 ### Module 6 -- LOCK (2 min)
+Paste the full brief (goal / HMW / approach / metrics / risks / mitigations). Optional Trident cross-critique fires here if ENABLED. User says `lock` / `fix <X>` / `skip Trident` / `route to plan`. On `lock`: promote brief-draft.md → brief.md, route to PLAN, invoke `ijfw-agents-md` skill.
 
-- Assistant pastes the full brief (goal / HMW / approach / metrics / risks / mitigations) in-chat.
-- Optional Trident cross-critique fires here if ENABLED (see below).
-- User says `lock` / `fix <X>` / `skip Trident` / `route to plan`.
-- On `lock`: promote `.ijfw/memory/brief-draft.md` to `.ijfw/memory/brief.md` or write the confirmed brief there, then route to PLAN phase.
-  - Invoke `ijfw-agents-md` skill with intent context (brief.md) to seed AGENTS.md if missing; create platform adapter (e.g. CLAUDE.md) from template if detected IDE file is absent.
-
-## Optional modules (auto-triggered)
-
-### EXTERNAL BRIEF (5 min) -- mini PR/FAQ
-Auto-triggers when: project has end-users, public launch, marketing surface, or user says "product".
-Writes a 2-paragraph press-release + 5-question FAQ. Forces customer-POV thinking.
-
-### ANTI-SCOPE (2 min) -- "what we won't do"
-Auto-triggers when: 5+ candidate features surfaced in DIVERGE, or domain is feature-heavy (CRM, dashboards, admin panels).
-Assistant lists 5 things we could build but won't. User confirms or pulls one back in.
-
-### TRIDENT CROSS-CRITIQUE (~2 min) -- external model challenge
-Auto-triggers when: new project, major refactor, public launch, or LOCK on brief > 20 lines.
-Fires `ijfw cross critique <brief>` in background. Surfaces consensus + contested findings. User decides.
-User override: `skip Trident` or `force Trident` at any LOCK.
+**Optional modules:** EXTERNAL BRIEF, ANTI-SCOPE, TRIDENT CROSS-CRITIQUE — see `references/deep-mode-optional.md` for triggers + procedure.
 
 ---
 
-# POST-BRAINSTORM WORKFLOW
+# POST-BRAINSTORM WORKFLOW (overview)
 
-After LOCK, the brief drives every downstream phase. Same discipline, same memory hooks, same positive framing.
+After LOCK, the brief drives every downstream phase. Same discipline, same memory hooks, same positive framing. **Full procedure:** `references/post-brainstorm-workflow.md`.
 
-## PLAN (after LOCK)
-
-- Memory hook: recall past similar plans.
-- Assistant drafts `.ijfw/memory/plan.md` (max 15 tasks for Quick, 30 for Deep).
-- Each task: what / how-to-verify / file paths.
-- User reviews. One-word commit: `approve` / `trim` / `expand`.
-
-**Design auto-fire** -- if plan mentions UI, dashboard, component, page, layout, CSS, styles, content layout, brand system, document design, diagram, presentation, marketing surface, or another visual artifact:
-- Deep mode: dispatch `ijfw-design` automatically before writing tasks. Log observation via `bash scripts/design-pass.sh`.
-- Quick mode: offer `I'll run a design pass first. Say "show me" to open it, or "skip" to continue.` Wait for the user's next turn before starting visual companion work.
-- Use `ijfw design init` when no `DESIGN.md` exists or the existing contract is stale.
-- Use `ijfw design plan` before implementation tasks so the plan has durable visual scope, constraints, and success criteria.
-- Use `ijfw design audit` or `ijfw design critique` at LOCK or before EXECUTE when visual quality, accessibility, brand fit, hierarchy, or audience fit carries risk.
-- Use `ijfw design polish`, `ijfw design normalize`, `ijfw design bolder`, or `ijfw design quieter` during refinement, depending on whether the artifact needs quality pass, drift correction, stronger expression, or restraint.
-- Use `ijfw design handoff` before VERIFY/SHIP when visual decisions need to survive context loss or platform handoff.
-- Live companion commands (`ijfw design start/open/status/stop/push/clear`) are transient preview. `DESIGN.md` plus the durable design commands are the design memory.
-- On completion: write `.ijfw/design-pass.json` sentinel for preflight gate.
-
-**Plan audit** -- run `ijfw plan-check` or follow inline checklist, not silent:
-- Every task has a verify step.
-- No unstated assumptions.
-- Scope matches brief (nothing new).
-- Destructive ops flagged.
-- User confirms before EXECUTE.
-
-## EXECUTE
-
-<!-- IJFW-A1-DISPATCH-START -->
-### Wave Dispatch
-
-Wave dispatch resolves each sub-wave's isolation mode via `dispatch-planner.js`.
-Full contract: `claude/skills/ijfw-workflow/lib/dispatch-helpers.md`.
-
-**Dispatch steps (inside Execute, before agent launch):**
-1. Parse `.ijfw/memory/plan.md` with `parsePlan()` + `buildManifest()`.
-2. For each sub-wave: `mode === 'worktree'` → `Agent({ isolation: 'worktree' })`, else no isolation flag.
-3. Branch naming: `wave/<wave-id>/<sub-id>` (e.g. `wave/W10-A1/dispatch`).
-4. Worktree agents: brief them to run `cd mcp-server && npm install --no-audit --no-fund` first.
-
-**Every implementer prompt must end with this exact block (orchestrator parses it):**
-```
-Status: DONE
-Branch: wave/<wave-id>/<sub-id>
-Commit: <full SHA>
-Tests: <N> pass / <M> fail
-```
-
-**handleStatus action table** (from `orchestrator/status-protocol.js`):
-
-| Status reported | handleStatus action | Next step |
-|---|---|---|
-| `DONE` | `proceed_to_review` | Hand commit_sha to W10-A2 review |
-| `DONE` (stale commit) | `redispatch_needs_context` | Re-prompt with `missing: commit-before-report` |
-| `DONE_WITH_CONCERNS` | `proceed_with_flag` | Proceed to review; surface `Concerns:` to user |
-| `NEEDS_CONTEXT` | `redispatch_with_context` | Re-prompt agent; append `Missing:` field to context |
-| `BLOCKED` | `escalate_to_user` | Surface `Reason:` + `Tried:` to user; halt wave |
-
-Alternative status strings (append below the standard block as needed):
-`DONE_WITH_CONCERNS` + `Concerns:`; `NEEDS_CONTEXT` + `Missing:`; `BLOCKED` + `Reason:` + `Tried:`.
-No other status strings are valid.
-
-**Deviation rules + 3-attempt cap (v1.5.0-major S07):** dispatched implementer subagents follow `claude/agents/ijfw-executor.md`'s deviation taxonomy (Rules 1-3 auto-fix bugs / missing critical things / blockers; Rule 4 STOPs on architectural change) + a per-issue 3-attempt fix cap. The orchestrator-LLM should brief implementers using ijfw-executor's PROCESS + DEVIATION RULES sections. After-DONE, an `Attempts: N` line in the Status block is parsed by `ijfw_subagent_post_done` MCP tool — N≥3 routes to `escalate_to_user` with `reason: '3-attempt-cap-hit'` regardless of reported status. The field is opt-in: reports without an `Attempts:` line default to 0 and behave exactly as before.
-<!-- IJFW-A1-DISPATCH-END -->
-
-**Phase banner** -- emit at every phase transition (Brainstorm, Plan, Execute, Verify, Ship):
-```
-IJFW > BRAINSTORM (Quick mode, step 2 of 5)
-IJFW > PLAN (Deep mode, module 3 of 6)
-IJFW > EXECUTE (Wave 2 of 4)
-```
-
-**Team announcement** -- at plan→execute transition, emit before dispatching agents:
-```
-Assembling team: [Opus] Architect, 2x [Sonnet] Builders, [Haiku] Scout
-Dispatching Wave 1...
-```
-
-**Swarm preparation (Deep mode or 2+ parallel agents):**
-- Before using swarm commands, run `ijfw recover status` to surface any existing checkpoint and `ijfw blackboard init` when the project has no blackboard yet.
-- If no team exists, run `ijfw team init` first. Use `--archetype <type>` when the project type is known.
-- In Codex-heavy projects, run `ijfw codex doctor` after team setup to confirm plugin metadata, hooks, MCP config, skills, AGENTS.md memory, and custom-agent surfaces are ready.
-- Run `ijfw codex sync-agents` when `.codex/agents/*.toml` needs to be regenerated from the current Team Assembly charter.
-- Run `ijfw swarm plan` to explain artifact owners, parallel/review/blocked waves, and verification.
-- Run `ijfw swarm prepare` before dispatch, or `ijfw swarm prepare --reviews` when review tasks should be queued immediately. This writes `.ijfw/blackboard/tasks.json`.
-- Run `ijfw swarm tasks` to list prepared task IDs. Tasks may represent code, design, research, writing, business artifacts, or other project work.
-- Run `ijfw swarm status` and surface ready/blocked counts before assigning agents.
-- Dispatch only tasks marked `ready`. For each dispatched task, run `ijfw swarm start <task-id>` before work begins.
-- Generate a scoped dispatch brief before spawning a worker: `ijfw swarm prompt <task-id>`, or `ijfw swarm prompt <task-id> --codex` when the worker is a Codex subagent. Paste the generated prompt into the worker so artifact scope, allowed paths, dependencies, blackboard commands, verification, and non-revert rules travel with the task.
-- Codex runtime caveat: some tool-backed Codex sessions expose only a generic `spawn_agent` interface, without direct named custom-agent invocation. IJFW still generates `.codex/agents/*.toml`; when named agents are not callable, paste the `ijfw swarm prompt <task-id> --codex` output into the built-in worker or explorer agent.
-- On completion, run `ijfw swarm complete <task-id>`. If a task is blocked, run `ijfw swarm block <task-id> --message <why>` and escalate the blocker through claims, scope adjustment, or user decision.
-- At each transition, create a durable safety point with `ijfw memory checkpoint <label>`. Use labels like `after-team-init`, `after-swarm-prepare`, `after-wave-1`, `before-worktree-integrate`, and `before-ship`.
-- If context is lost, run `ijfw recover status` first, then `ijfw recover latest` for the last checkpoint body.
-
-- **Conservative worktree support (code-heavy tasks only by default):**
-  - Worktrees are optional execution isolation, not the coordination model. Use blackboard claims for writing, design, research, business, strategy, and other non-code artifacts.
-  - Create a task worktree only after `ijfw swarm start <task-id>` has succeeded: `ijfw swarm worktree create <task-id>`.
-  - Inspect active task worktrees with `ijfw swarm worktree list` before assigning or integrating parallel code work.
-  - Before integration, run task verification in the worktree and create `ijfw memory checkpoint before-worktree-integrate`.
-  - Integrate one completed task at a time with `ijfw swarm worktree integrate <task-id>`, then run wave-level verification in the main worktree.
-  - Clean up only successful, verified integrations with `ijfw swarm worktree cleanup <task-id>`.
-  - Preserve failed or blocked worktrees for inspection. Do not clean them up automatically.
-  - Never auto-resolve merge conflicts. On any conflict, stop, record `ijfw swarm block <task-id> --message <why>`, and escalate to the user or lead agent.
-
-- Dispatch per workflow manifest and blackboard task records.
-- Use blackboard claims before parallel artifact edits: `ijfw blackboard claim --artifact <id> --owner <agent> --paths <globs>`.
-- When the platform has a native task tracker, create one visible task per prepared blackboard task and keep it synchronized with `start` / `complete` / `block`.
-- Mid-step pings for operations > 30s: `<agent> in progress (~<estimate>).`
-- After each task: task micro-audit (6 points).
-- Post-wave: update blackboard tasks/findings/blockers. Integrate worktrees only when worktrees were used. Conflicts halt + escalate without auto-resolution.
-- **No auto-advance to VERIFY.** User confirms all tasks done.
-
-**Task micro-audit** -- one line per task:
-- Criteria met, scope clean, tests pass, no new assumptions.
-
-<!-- IJFW-A2-REVIEW-START -->
-**Post-DONE pipeline (v1.5.0-major S02 — MANDATORY MCP tool call, NOT advisory text):**
-
-After every subagent finishes (any `Status:` value), the orchestrator MUST call the `ijfw_subagent_post_done` MCP tool with `reportText` + `dispatchTimestamp` (Unix seconds at dispatch) + `branch`. The tool returns `{routeDecision, postDone}`. Act on `routeDecision.action`:
-
-- `proceed_to_review` → tool already ran two-stage review + verification-gate scan. Inspect `postDone.verdict`. If approved, mark task complete in blackboard. If findings, re-dispatch implementer (max `REVIEW_MAX_ITERATIONS = 3`).
-- `redispatch_needs_context` → re-dispatch with `routeDecision.missing` as added context.
-- `redispatch_with_context` → re-dispatch with `routeDecision.missing` as the NEEDS_CONTEXT field.
-- `escalate_to_user` → surface to human with `routeDecision.reason` + `routeDecision.tried`.
-- `proceed_with_flag` → mark complete; note `routeDecision.concerns` in wave SUMMARY.
-
-This is wired runtime contract, NOT honor-system markdown. Behind the tool: `runtime-loop.js::reviewSubagentReport` + `post-done-runner.js::runPostDone`. Combined into one MCP tool to stay under the ≤10-tool cap. The two-stage review (spec-reviewer.md then quality-reviewer.md) + verification-gate scan are now invoked automatically; skipping the tool call silently no-ops these v1.4.4 N3 + N5 features.
-
-Reviewer subagents are SEPARATE from the implementer (no self-review). Both use `isolation: 'none'` (read-only on the implementer's branch).
-<!-- IJFW-A2-REVIEW-END -->
-
-<!-- IJFW-A3-SPECIALISTS-START -->
-<!-- Wave 10 v1.4.4 W10-A3: specialist roster awareness — 5 new ijfw-* agents (doc-verifier, pattern-mapper, security-auditor, integration-checker, nyquist-auditor). Reserved for any workflow-side hook the agent owner judges necessary; primary edits land in ijfw-agents-md SKILL.md + claude/agents/*. Insert here only if needed. -->
-<!-- IJFW-A3-SPECIALISTS-END -->
-
-**Phase audit** -- at wave/milestone boundaries:
-- Brief still accurate? Speed respectful? Security invisible? Memory updated?
-
-### LIVE VISUAL COMPANION (UI/design projects, opt-in)
-
-For visual software work -- HTML, app UI, dashboards, interfaces, landing
-pages, components, design systems -- offer a live preview before SHAPE:
-`This is visual. Want me to open a live preview while we brainstorm?`
-
-`yes` runs `ijfw design start`, writes/pushes real HTML mockups with
-`ijfw design push <file.html> [more.html ...]`, and keeps `http://localhost:<port>/design`
-open while options evolve. Use this for brainstorm variants, design choices,
-and implementation review. Durable visual identity still belongs in `DESIGN.md`;
-the live companion is the fast feedback loop.
-
-For architecture-only visuals, use Mermaid in `.ijfw/visual/<phase>.md`.
-Skip visual companion for non-visual work where the brief and plan carry enough
-structure.
-
-## VERIFY
-
-- Audit the result against the **brief**, not the plan. (Tasks can pass while brief goals miss.)
-- Functional + UX + Security + Quality checklists.
-- Optional Trident cross-audit on the diff: `ijfw cross audit <diff>`.
-- User confirms: `verified` / `gap: <X>` / `ship it`.
-
-<!-- IJFW-B1-PHASE-E-START -->
-## Cross-Audit Phase (Phase E — auto-fired after VERIFY, before SHIP)
-
-After VERIFY completes and the user confirms, the orchestrator **automatically**
-fires a Trident cross-audit before any ship action.
-
-### How it fires
-
-```js
-const result = await runCrossOp({
-  mode: 'phase-e-auto',
-  target: '<current-phase>',   // e.g. 'v1.4.4' or wave label
-  projectDir,
-});
-// result: { verdict: 'PASS'|'CONDITIONAL'|'FAIL', findings: [...], outputPath }
-```
-
-### Auditor selection
-
-1. Reads `.ijfw/swarm.json` for `auditors: string[]` (roster IDs).
-2. Falls back to `['codex', 'gemini', 'claude']` when the field is absent.
-3. Each ID is probed via `audit-roster.isReachable()`:
-   - CLI present → use CLI.
-   - CLI missing + `apiFallback` key set in env → use API fallback.
-   - CLI missing + no `apiFallback` → **skip with NOTE** (never fails the run).
-
-### Output
-
-Writes synthesis to `.planning/<phase>/CROSS-AUDIT-r<N>.md` where N is
-auto-incremented from existing files in that directory.
-
-### Verdict routing
-
-| Verdict | Action |
-|---|---|
-| `PASS` | Proceed to SHIP immediately. |
-| `CONDITIONAL` | Surface findings to user; user says `ship` or `fix <X>`. |
-| `FAIL` (HIGH+ finding) | Loop back to fix-wave; re-enter EXECUTE with findings as brief addendum. |
-
-### User overrides
-
-- `skip cross-audit` at VERIFY — bypasses Phase E (recorded in memory).
-- `force cross-audit` at any step — fires Phase E immediately.
-<!-- IJFW-B1-PHASE-E-END -->
-
-## SHIP
-
-- Atomic commit with the brief's one-liner as the title, only after explicit user approval to commit.
-- Optional Trident final critique: `ijfw cross critique HEAD~1..HEAD` (background).
-- Before any tag, release, deploy, or publish action, read AGENTS.md/CLAUDE.md memory for release cautions and require explicit user approval.
-- Tag / release notes / CHANGELOG entry only when this is a public ship and the release gate is clear.
-- Memory write: decision + pattern + learning.
-- Announcement copy -- user owns the channels, IJFW provides talking points.
-
-**Ship gate** -- single pass:
-- Diff matches brief. Tests green. Changelog updated. Memory stored. Trident receipt logged.
+Quick reference:
+- **PLAN** → write `.ijfw/memory/plan.md`; design auto-fire on visual artifacts; `ijfw plan-check` audit.
+- **EXECUTE** → wave dispatch via `dispatch-planner.js`; status-block protocol; mandatory `ijfw_subagent_post_done` MCP call after every subagent; task micro-audit.
+- **VERIFY** → audit against brief, not plan; Functional + UX + Security + Quality checklists; optional `ijfw cross audit <diff>`.
+- **Cross-Audit Phase (Phase E)** → auto-fires after VERIFY; reads `.ijfw/swarm.json::auditors` or falls back to `[codex, gemini, claude]`; PASS / CONDITIONAL / FAIL routes.
+- **SHIP** → atomic commit, explicit user approval before tag/release/publish, memory write, ship gate.
 
 ---
 
 # NARRATION (every transition)
 
-One sentence at every phase entry and mid-step ping. Format:
+One sentence at every phase entry and mid-step ping. Format: `Phase <name> -- Move <n> -- <what's happening>.`
 
-> `Phase <name> -- Move <n> -- <what's happening>.`
-
-Examples:
-- `Brainstorm Quick -- Move 3 SHAPE -- proposing three approaches.`
-- `Brainstorm Deep -- RECON -- dispatching two research agents.`
-- `Plan -- drafting 12 tasks from brief.`
-- `Execute -- wave 1/3 in progress (~4 min).`
-- `Ship -- Trident critique running in background.`
-
-**Model routing (mandatory):** Before every agent dispatch, name the actual platform/model or role tier available in the current runtime, for example `Routing to builder for implementation` or `Routing to Sonnet for this build` when Claude tiers are available. Never dispatch silently.
-
-No hardcoded phase numbers. Narration tracks the current workflow step, not historical plan-doc coordinates.
+**Model routing (mandatory):** Before every agent dispatch, name the actual platform/model or role tier available, e.g. `Routing to builder for implementation` or `Routing to Sonnet for this build`. Never dispatch silently. No hardcoded phase numbers — narration tracks the current workflow step.
 
 ---
 
 # POSITIVE FRAMING (enforced everywhere)
 
-Replace negatives with reframes for brainstorming, planning, and ordinary user-facing progress. Do not rewrite exact failure terminology in audit, CI, preflight, security, exception, test, or log contexts where precise status words are required.
+Replace negatives with reframes for brainstorming, planning, and ordinary user-facing progress. Do NOT rewrite exact failure terminology in audit, CI, preflight, security, exception, test, or log contexts.
 
 | Never | Always |
 |---|---|
@@ -461,23 +182,13 @@ Replace negatives with reframes for brainstorming, planning, and ordinary user-f
 | "not supported" | "standing by" |
 | "broken" | "needs a sharpening pass" |
 
-End-of-phase closer is a receipt, not a report:
-
-> `You went from <input> to <outcome> in <time>.`
+End-of-phase closer is a receipt: `You went from <input> to <outcome> in <time>.`
 
 ---
 
 # USER OVERRIDES (one-word commits)
 
-The skill accepts these at any prompt:
-
-- `lock` -- commit current artifact, advance.
-- `go deeper` -- escalate Quick to Deep at the equivalent module.
-- `just quick` -- collapse remaining Deep modules into one LOCK.
-- `skip <module>` -- drop an optional module (Trident / External Brief / Anti-scope).
-- `force Trident` -- run Trident cross-critique even on low-stakes LOCK.
-- `rollback` -- revert to the prior module's artifact.
-- `help` -- where am I + what's next.
+`lock` / `go deeper` / `just quick` / `skip <module>` / `force Trident` / `rollback` / `help`.
 
 ---
 
@@ -485,17 +196,9 @@ The skill accepts these at any prompt:
 
 When the platform exposes native task tracking, create one task per specialist or prepared swarm task before dispatch. Mark `in_progress` when work starts, then `completed` or `blocked` as soon as each worker reports back. If no native tracker exists, use `.ijfw/blackboard/tasks.json` plus concise progress updates.
 
-**[Model] prefix required** -- every task title includes the model tier:
-```
-[Haiku] Scout: explore auth module
-[Sonnet] Build: implement login flow
-[Opus] Audit: cross-audit Wave 1
-```
+**[Model] prefix required** -- every task title includes the model tier: `[Haiku] Scout: ...`, `[Sonnet] Build: ...`, `[Opus] Audit: ...`.
 
-The user must see real-time progress in the platform's native form. Use strikethrough task lists where supported; otherwise use concise status updates plus `.ijfw/blackboard/tasks.json`. Silent dispatch is a workflow violation.
-
-Quick-mode minimum: 5 tasks (one per move).
-Deep-mode minimum: one per module + one per specialist + one per audit gate + ship gate. ~12-18 tasks per full run.
+Quick-mode minimum: 5 tasks (one per move). Deep-mode minimum: one per module + one per specialist + one per audit gate + ship gate. Silent dispatch is a workflow violation.
 
 ---
 
@@ -509,20 +212,8 @@ Specialist swarm members (code-reviewer, silent-failure-hunter, pr-test-analyzer
 
 # STATE FILE (Deep Mode)
 
-Write `.ijfw/state/workflow.json` at every transition:
-
-```json
-{
-  "mode": "deep",
-  "module": "HMW",
-  "last_commit": "lock",
-  "artifacts": ["brief.md", "research.md"],
-  "next": "DIVERGE"
-}
-```
-
-On session resume: read this file, echo the current state, offer `continue` / `restart`. Memory recall also fires on resume so context is live.
+Write `.ijfw/state/workflow.json` at every transition with `{mode, module, last_commit, artifacts, next}`. On session resume: read this file, echo the current state, offer `continue` / `restart`. Memory recall also fires on resume.
 
 ---
 
-**Invariant:** every move the user experiences should make them feel smarter and more in control -- memory recall surfaces forgotten context, Assistant proposes before the user has to, Trident challenges before they commit, one word advances. Anything that makes them feel stupid or stuck is a workflow bug.
+**Invariant:** every move should make the user feel smarter and more in control -- memory surfaces forgotten context, Assistant proposes before the user has to, Trident challenges before they commit, one word advances. Anything that makes them feel stupid or stuck is a workflow bug.
