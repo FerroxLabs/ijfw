@@ -55,10 +55,29 @@ export class VerificationGateViolation extends Error {
 // protocol literal `DONE`, `completed`/`shipped` (deliberate completion verbs),
 // uppercase `PASS` (verdict literal), `✅` emoji, and explicit completion phrases
 // ("all tests pass" / "build succeeded" / "deployed" / "ready to ship").
+//
+// v1.5.0 audit-MED-work-M8: documented the rationale + introduced a SECOND
+// "low-confidence" tier (LOW_CONFIDENCE_PATTERNS) intended for advise-mode-
+// only callers. The strict-by-default gate (enforceVerificationGate) keeps
+// using COMPLETION_PATTERNS so the existing iron-law stays unchanged; tools
+// that want to surface "you might have claimed completion" without blocking
+// can call `checkVerificationGateLowConfidence`. See CHANGELOG v1.5.0 for
+// the policy entry.
 const COMPLETION_PATTERNS = [
   /\b(?:DONE|completed|shipped|PASS)\b/,
   /✅/,
   /\b(?:all tests pass|build succeeded|deployed|ready to ship)\b/i,
+];
+
+/**
+ * Low-confidence completion signals — words that USED to be in
+ * COMPLETION_PATTERNS but were removed in r13-M-01 / r13-M-04 because they
+ * fired on neutral language. These should NEVER block (strict-mode default
+ * uses COMPLETION_PATTERNS only), but advise-mode callers can use them to
+ * nudge an agent that's drifting toward a claim without evidence.
+ */
+export const LOW_CONFIDENCE_PATTERNS = [
+  /\b(?:done|complete|passes|works|finished)\b/i,
 ];
 
 // Bash tool calls that count as fresh verification evidence.
@@ -123,6 +142,38 @@ export function checkVerificationGate(message, toolCallsInMessage) {
     };
   }
 
+  return { ok: true };
+}
+
+/**
+ * Low-confidence advisory variant of `checkVerificationGate`. Uses the
+ * LOW_CONFIDENCE_PATTERNS list (lowercase `done`/`complete`/etc.) so callers
+ * can detect drift toward completion claims that the strict gate (rightly)
+ * ignores. ADVISORY ONLY — never wired into the iron-law enforcement path.
+ *
+ * Returns the same shape as `checkVerificationGate`. Skipping evidence here
+ * is NOT a violation in the strict-enforcement sense; callers decide what
+ * to do (typically: surface as INFO finding to the operator).
+ *
+ * @param {string} message
+ * @param {Array<{tool: string, input?: {command?: string}}>} toolCallsInMessage
+ * @returns {{ ok: true } | { ok: false, violation: string, claim: string, lowConfidence: true }}
+ */
+export function checkVerificationGateLowConfidence(message, toolCallsInMessage) {
+  const claims = LOW_CONFIDENCE_PATTERNS.flatMap((p) => message.match(p) ?? []);
+  if (claims.length === 0) return { ok: true };
+
+  const verificationCalls = (Array.isArray(toolCallsInMessage) ? toolCallsInMessage : []).filter(
+    (t) => t.tool === 'Bash' && isVerificationCommand(t.input?.command ?? ''),
+  );
+  if (verificationCalls.length === 0) {
+    return {
+      ok: false,
+      violation: `Low-confidence completion signal "${claims[0]}" without fresh verification (advisory)`,
+      claim: claims[0],
+      lowConfidence: true,
+    };
+  }
   return { ok: true };
 }
 

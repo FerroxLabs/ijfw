@@ -17,16 +17,38 @@ import { readBlackboard } from '../blackboard.js';
 // Lazy S4 loader. Top-level `await import` would break `node:test` (unsettled
 // top-level await). Resolves on first checkpointWave call instead. Missing
 // module is non-fatal (silent fail — populateBlackboardBlock stays null).
-let _populateBlackboardBlock = null;
-let _s4LoadAttempted = false;
-async function loadPopulateBlackboardBlock() {
-  if (_s4LoadAttempted) return _populateBlackboardBlock;
-  _s4LoadAttempted = true;
-  try {
-    const mod = await import('./agents-md-blackboard.js');
-    _populateBlackboardBlock = mod.populateBlackboardBlock ?? null;
-  } catch { /* S4 not landed — advisory only */ }
-  return _populateBlackboardBlock;
+//
+// v1.5.0 audit-MED-work-M9: previously this used a `_s4LoadAttempted` boolean
+// + a sync `_populateBlackboardBlock` mutation. That had a race window: two
+// concurrent callers entering before the `await import` settled would BOTH
+// fire `import()` (cheap on resolved-module cache, but the race-condition
+// taxonomy still flagged it as a singleton smell). Replaced with a Promise
+// singleton: the first caller stores the promise; subsequent callers await
+// the same promise. No double-import, no race on the result variable.
+let _populateBlackboardBlockPromise = null;
+function loadPopulateBlackboardBlock() {
+  if (_populateBlackboardBlockPromise === null) {
+    _populateBlackboardBlockPromise = (async () => {
+      try {
+        const mod = await import('./agents-md-blackboard.js');
+        return mod.populateBlackboardBlock ?? null;
+      } catch {
+        // S4 not landed — advisory only
+        return null;
+      }
+    })();
+  }
+  return _populateBlackboardBlockPromise;
+}
+
+/**
+ * Test-only helper: reset the populateBlackboardBlock promise singleton so a
+ * test can simulate "first call after process start" semantics. Internal.
+ *
+ * @internal
+ */
+export function _resetPopulateBlackboardBlockSingleton() {
+  _populateBlackboardBlockPromise = null;
 }
 
 // ---------------------------------------------------------------------------

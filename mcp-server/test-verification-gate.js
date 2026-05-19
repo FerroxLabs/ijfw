@@ -354,3 +354,47 @@ test('v1.5.0 H4.3: recordViolation failure does NOT throw (posture stays advisor
   assert.equal(threw, false,
     'recordViolation must NEVER throw — it remains advisory in posture');
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-MED-work-M8 — low-confidence advisory tier
+// ---------------------------------------------------------------------------
+import {
+  checkVerificationGateLowConfidence,
+  LOW_CONFIDENCE_PATTERNS,
+} from './src/orchestrator/verification-gate.js';
+
+test('M8: LOW_CONFIDENCE_PATTERNS exported', () => {
+  assert.ok(Array.isArray(LOW_CONFIDENCE_PATTERNS));
+  assert.ok(LOW_CONFIDENCE_PATTERNS.length >= 1);
+});
+
+test('M8: strict gate does NOT fire on lowercase "done" (preserves r13-M-01 fix)', () => {
+  const result = checkVerificationGate('not yet done with this work', []);
+  assert.equal(result.ok, true);
+});
+
+test('M8: low-confidence variant DOES fire on lowercase "done"', () => {
+  const result = checkVerificationGateLowConfidence(
+    'I am done with the patch',
+    [],
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.lowConfidence, true);
+  assert.match(result.violation, /advisory/i);
+});
+
+test('M8: low-confidence variant passes when verification command present', () => {
+  const result = checkVerificationGateLowConfidence(
+    'I am done with the patch',
+    [{ tool: 'Bash', input: { command: 'npm test' } }],
+  );
+  assert.equal(result.ok, true);
+});
+
+test('M8: low-confidence variant returns ok when no low-confidence signal', () => {
+  const result = checkVerificationGateLowConfidence(
+    'just thinking out loud here',
+    [],
+  );
+  assert.equal(result.ok, true);
+});
