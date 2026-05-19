@@ -200,7 +200,7 @@ Cap set in CLAUDE.md. Additions beyond this must displace an existing tool.
 
 ### Context Management
 - Auto-generate CLAUDE.md if none exists (via ijfw-summarize skill, max 50 lines)
-- Auto-compress bloated CLAUDE.md (backup original, ~40-50% savings)
+- Auto-compress bloated CLAUDE.md (backup original; per-artifact measured savings reported per run)
 - Headroom management: graduated thresholds at 40/60/70/80%
 - Smart compaction guidance: PreCompact hook tells agent what to preserve vs drop
 - Tiered CLAUDE.md loading: small always-load core, reference sections on-demand

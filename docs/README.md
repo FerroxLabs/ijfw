@@ -96,7 +96,7 @@ Switch: `/mode fast` or just say "go fast" / "think deeper"
 | Command | What it does |
 |---------|-------------|
 | `/mode` | Switch between smart/fast/deep/manual |
-| `/compress <file>` | Compress a file into terse form (saves 40-50% tokens) |
+| `/compress <file>` | Compress a file into terse form (per-artifact measured savings reported per run) |
 | `/ijfw-status` | Show current mode, routing, memory, context health |
 | `/handoff` | Create or resume a session handoff |
 | `/consolidate` | Run memory dream cycle (promote, prune, reconcile) |
