@@ -8,6 +8,7 @@ import {
   crossProjectSearch,
   aggregatePortfolioFindings,
   _resetSkipLog,
+  _resetCorpusCache,
 } from './src/cross-project-search.js';
 
 // --- Shared fixture: spin up real project dirs in tmp so realpathSync passes,
@@ -319,6 +320,78 @@ test('F-SEC-1: reader receives canonical path, not raw symlink path', () => {
     assert.equal(docs[0].meta.projectPath, real);
   } finally {
     process.stderr.write = orig;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- v1.5.0 audit MED #10: mtime-keyed corpus cache ---------------------
+
+test('mtime cache: second buildCorpus call hits the cache (no second reader invocation)', () => {
+  _resetCorpusCache();
+  const { root, alpha } = makeProjectDirs();
+  try {
+    // Write the .ijfw/memory files so the signature can stat them.
+    const memDir = join(alpha, '.ijfw', 'memory');
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(join(memDir, 'knowledge.md'), 'alpha decision about caching\n');
+
+    let readerCalls = 0;
+    const reader = () => { readerCalls++; return { knowledge: 'alpha decision about caching' }; };
+
+    const PROJECTS = [{ path: alpha }];
+    const first = buildCorpus(PROJECTS, reader, { allowedRoots: [root] });
+    const second = buildCorpus(PROJECTS, reader, { allowedRoots: [root] });
+    assert.equal(readerCalls, 1, 'second call hits cache, reader not re-invoked');
+    assert.deepEqual(first.length, second.length);
+    assert.equal(first[0].id, second[0].id, 'cached docs equal first-call docs');
+  } finally {
+    _resetCorpusCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('mtime cache: file modification busts the cache', () => {
+  _resetCorpusCache();
+  const { root, alpha } = makeProjectDirs();
+  try {
+    const memDir = join(alpha, '.ijfw', 'memory');
+    mkdirSync(memDir, { recursive: true });
+    const kbPath = join(memDir, 'knowledge.md');
+    writeFileSync(kbPath, 'first version\n');
+
+    let readerCalls = 0;
+    const reader = () => { readerCalls++; return { knowledge: 'first version' }; };
+    const PROJECTS = [{ path: alpha }];
+
+    buildCorpus(PROJECTS, reader, { allowedRoots: [root] });
+    // Bump mtime by writing different content. utimesSync would also work
+    // but writing a real new size makes the signature shift more obviously.
+    writeFileSync(kbPath, 'second version with more bytes\n');
+    buildCorpus(PROJECTS, reader, { allowedRoots: [root] });
+    assert.equal(readerCalls, 2, 'reader re-invoked after mtime change');
+  } finally {
+    _resetCorpusCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('mtime cache: useCache=false bypasses the cache (consistency runs)', () => {
+  _resetCorpusCache();
+  const { root, alpha } = makeProjectDirs();
+  try {
+    const memDir = join(alpha, '.ijfw', 'memory');
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(join(memDir, 'knowledge.md'), 'alpha\n');
+
+    let readerCalls = 0;
+    const reader = () => { readerCalls++; return { knowledge: 'alpha' }; };
+    const PROJECTS = [{ path: alpha }];
+
+    buildCorpus(PROJECTS, reader, { allowedRoots: [root], useCache: false });
+    buildCorpus(PROJECTS, reader, { allowedRoots: [root], useCache: false });
+    assert.equal(readerCalls, 2, 'useCache=false invokes reader every time');
+  } finally {
+    _resetCorpusCache();
     rmSync(root, { recursive: true, force: true });
   }
 });

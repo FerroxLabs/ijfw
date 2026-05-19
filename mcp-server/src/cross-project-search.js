@@ -22,10 +22,73 @@
 // home directory will be caught by step 1+2. Plain `isAbsolute()` was
 // the only prior validation and was insufficient.
 
-import { basename, resolve } from 'node:path';
-import { realpathSync } from 'node:fs';
+import { basename, resolve, join } from 'node:path';
+import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { searchCorpus } from './search-bm25.js';
+
+// v1.5.0 audit MED #10 (memory-engine.md F-SPD-2): per-project corpus
+// cache keyed on (canonicalProjectPath, signature) where `signature` is
+// the joined mtimes of the project's memory files. As long as nothing
+// has changed under .ijfw/memory the cache hits and we skip the
+// readProjectMemory() call entirely. Cache is module-local; tests can
+// reset via _resetCorpusCache(). Cap at 64 entries (LRU-ish via Map
+// insertion order) so a long-lived dashboard process can't OOM the cache.
+const CORPUS_CACHE = new Map();
+const CORPUS_CACHE_CAP = 64;
+
+/** Reset the corpus mtime cache. Test-only. */
+export function _resetCorpusCache() {
+  CORPUS_CACHE.clear();
+}
+
+// Files that participate in the cache signature. Match the readers used
+// by readProjectMemory in server.js so an edit to any of them busts the
+// cache. Missing files contribute "0" -- creation of a previously-missing
+// file is a cache-bust on its own.
+const CACHE_SIGNATURE_FILES = [
+  ['.ijfw', 'memory', 'knowledge.md'],
+  ['.ijfw', 'memory', 'project-journal.md'],
+  ['.ijfw', 'memory', 'handoff.md'],
+  ['.ijfw', 'memory', 'team-knowledge.md'],
+];
+
+function computeProjectSignature(canonicalProjectPath) {
+  let sig = '';
+  for (const parts of CACHE_SIGNATURE_FILES) {
+    const p = join(canonicalProjectPath, ...parts);
+    try {
+      const s = statSync(p);
+      sig += `${s.mtimeMs.toFixed(3)}:${s.size}|`;
+    } catch {
+      sig += '0|';
+    }
+  }
+  return sig;
+}
+
+function getCachedDocs(canonicalProjectPath) {
+  const sig = computeProjectSignature(canonicalProjectPath);
+  const cached = CORPUS_CACHE.get(canonicalProjectPath);
+  if (cached && cached.sig === sig) {
+    // LRU touch: re-insert at the end of the Map iteration order.
+    CORPUS_CACHE.delete(canonicalProjectPath);
+    CORPUS_CACHE.set(canonicalProjectPath, cached);
+    return cached.docs;
+  }
+  return null;
+}
+
+function setCachedDocs(canonicalProjectPath, docs) {
+  const sig = computeProjectSignature(canonicalProjectPath);
+  CORPUS_CACHE.set(canonicalProjectPath, { sig, docs });
+  // Trim oldest entry if we're over the cap. Map iteration is insertion
+  // order so the first key is the oldest.
+  if (CORPUS_CACHE.size > CORPUS_CACHE_CAP) {
+    const oldestKey = CORPUS_CACHE.keys().next().value;
+    if (oldestKey !== undefined) CORPUS_CACHE.delete(oldestKey);
+  }
+}
 
 // Module-level dedup set for "skipped offender" stderr noise control.
 // Keyed by the raw entry.path (the attacker-controlled string) so the same
@@ -124,24 +187,37 @@ export function buildCorpus(projects, readProjectMemory, opts = {}) {
     if (!entry || typeof entry !== 'object') continue;
     const canonical = safeResolveProjectPath(entry.path, allowedRoots);
     if (canonical === null) continue;  // skipped (symlink-escape or missing)
+
+    // v1.5.0 audit MED #10: try the mtime cache before re-reading.
+    // The cache is opt-out via opts.useCache=false (tests / consistency runs).
+    const useCache = opts.useCache !== false;
+    let projectDocs = useCache ? getCachedDocs(canonical) : null;
+    if (projectDocs) {
+      for (const d of projectDocs) docs.push(d);
+      continue;
+    }
+
     const tag = basename(canonical);
     // Pass the CANONICAL path to the reader, not the raw one — so a reader
     // that joins with `.ijfw/memory/...` walks the canonical tree, not a
     // possibly-spoofed symlink chain.
     const mem = readProjectMemory(canonical) || {};
+    projectDocs = [];
     for (const [source, content] of Object.entries(mem)) {
       if (typeof content !== 'string' || content.length === 0) continue;
       const lines = content.split('\n');
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (line.trim().length === 0) continue;
-        docs.push({
+        projectDocs.push({
           id: `${tag}:${source}:${i + 1}`,
           text: line,
           meta: { project: tag, projectPath: canonical, source, lineNo: i + 1 },
         });
       }
     }
+    if (useCache) setCachedDocs(canonical, projectDocs);
+    for (const d of projectDocs) docs.push(d);
   }
   return docs;
 }

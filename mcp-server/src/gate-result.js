@@ -14,7 +14,7 @@
  *   - Receipt writes MUST NOT throw — the gate's hot path is the priority.
  */
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, stat, unlink, appendFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import {
@@ -155,6 +155,18 @@ export async function makeReceipt(gateResult, opts = {}) {
     await mkdir(dirname(receiptPath), { recursive: true });
     const body = JSON.stringify(gateResult, null, 2) + '\n';
     await writeFile(receiptPath, body, 'utf8');
+
+    // v1.5.0 audit MED #9 (memory-engine.md F-PRF-2): bounded LRU on the
+    // gate-receipts dir. Without eviction this directory grew unbounded
+    // (one file per gate run forever); on long-lived projects this hit
+    // hundreds of MB and slowed the memory-feedback scan in
+    // ijfw_memory_prelude. We keep the newest N=1000 *.json files and
+    // append the rest to .archive.jsonl (one JSON line per old receipt),
+    // then unlink the originals. Atomic-ish: we write the archive line
+    // before unlinking so a crash mid-eviction leaves the data preserved
+    // in the archive *and* the receipt -- worst case is a single dup
+    // entry in .archive.jsonl, never data loss.
+    await evictOldReceipts(dirname(receiptPath));
   } catch (err) {
     // Fire-and-forget: log and move on. The gate hot path must not fail.
     const msg = err && err.message ? err.message : String(err);
@@ -173,6 +185,88 @@ export async function makeReceipt(gateResult, opts = {}) {
 // suffix. Used by makeReceipt() to refuse poisoned gate_id values before any
 // filesystem call.
 const RECEIPT_GATE_ID_PATTERN = /^[a-z][a-z0-9-]+$/;
+
+// v1.5.0 audit MED #9 -- bounded LRU constants. Pulled out so tests can
+// dial the cap down to keep the test fixtures cheap.
+export const RECEIPTS_KEEP = 1000;
+export const RECEIPTS_ARCHIVE = '.archive.jsonl';
+
+/**
+ * evictOldReceipts(dir, opts) -- bounded LRU on the gate-receipts directory.
+ *
+ * Keeps the newest `keep` *.json files; older files are appended to
+ * `.archive.jsonl` as JSONL and then unlinked. Never throws -- the gate's
+ * hot path is the priority and a logging-channel directory should not
+ * propagate I/O errors into the gate result.
+ *
+ * @param {string} dir
+ * @param {{keep?: number}} [opts]
+ * @returns {Promise<{evicted: number}>}
+ */
+export async function evictOldReceipts(dir, opts = {}) {
+  const keep = Number.isFinite(opts.keep) && opts.keep > 0 ? opts.keep | 0 : RECEIPTS_KEEP;
+  try {
+    let entries;
+    try {
+      entries = await readdir(dir);
+    } catch {
+      return { evicted: 0 };
+    }
+    const jsonFiles = entries.filter((f) => f.endsWith('.json'));
+    if (jsonFiles.length <= keep) return { evicted: 0 };
+
+    // Stat each candidate; sort by mtime descending (newest first).
+    const stamped = [];
+    for (const f of jsonFiles) {
+      const full = join(dir, f);
+      try {
+        const s = await stat(full);
+        stamped.push({ full, name: f, mtimeMs: s.mtimeMs });
+      } catch {
+        // Cannot stat -- treat as oldest so it gets evicted/cleaned up.
+        stamped.push({ full, name: f, mtimeMs: 0 });
+      }
+    }
+    stamped.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const toEvict = stamped.slice(keep);
+    if (toEvict.length === 0) return { evicted: 0 };
+
+    const archivePath = join(dir, RECEIPTS_ARCHIVE);
+    let evicted = 0;
+    for (const victim of toEvict) {
+      try {
+        // Read + append to archive *before* unlinking so a mid-eviction crash
+        // leaves the receipt either intact OR in the archive (never lost).
+        let body;
+        try {
+          const { readFile } = await import('node:fs/promises');
+          body = await readFile(victim.full, 'utf8');
+        } catch {
+          // Already gone -- skip without inflating the evicted counter.
+          continue;
+        }
+        // Normalize: archive entries are one JSON object per line. The
+        // receipt body is pretty-printed JSON -- collapse via parse/stringify.
+        let archiveLine;
+        try {
+          archiveLine = JSON.stringify(JSON.parse(body)) + '\n';
+        } catch {
+          // Malformed body -- preserve raw bytes inside a wrapper line so
+          // operators can still inspect what was there.
+          archiveLine = JSON.stringify({ raw: body, evicted_from: victim.name }) + '\n';
+        }
+        await appendFile(archivePath, archiveLine, 'utf8');
+        await unlink(victim.full);
+        evicted++;
+      } catch {
+        // Per-file failures don't abort the eviction -- next call retries.
+      }
+    }
+    return { evicted };
+  } catch {
+    return { evicted: 0 };
+  }
+}
 
 async function resolveProjectType(projectRoot) {
   try {

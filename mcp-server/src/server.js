@@ -413,8 +413,11 @@ function readOr(filepath, fallback = '') {
 // --- Append helper (atomic for entries < PIPE_BUF; append-only growth) ---
 //
 // We rely on POSIX O_APPEND atomicity for entries under 4KB. Sanitized
-// entries are bounded at MAX_STORE_LENGTH=5000 chars, but the entry header
-// keeps each *line* well under 4KB after sanitization (single-line collapse).
+// entries are bounded at MAX_STORE_LENGTH=4096 chars (CAP_CONTENT in caps.js),
+// but the entry header keeps each *line* well under 4KB after sanitization
+// (single-line collapse). Audit MED #8 / F-COR-1: doc-vs-code parity fix --
+// the prior text said 5000, which had drifted from the actual cap.
+
 function appendLine(filepath, line) {
   try {
     if (!existsSync(filepath)) {
@@ -783,13 +786,32 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   }
 
   const sources = [
-    { name: 'team',          content: readTeamKnowledge(),                          boost: 1.25 },
-    { name: 'knowledge',     content: readKnowledgeBase(),                          boost: 1.15 },
-    { name: 'journal',       content: readOr(join(MEMORY_DIR, 'project-journal.md')), boost: 1.0  },
-    { name: 'handoff',       content: readHandoff(),                                boost: 1.1  },
-    { name: 'global',        content: readGlobalKnowledge(),                        boost: 0.95 },
-    { name: 'claude-native', content: readNativeClaudeMemory(),                     boost: 0.95 },
+    { name: 'team',          content: readTeamKnowledge(),                          boost: 1.25, path: join(MEMORY_DIR, 'team-knowledge.md') },
+    { name: 'knowledge',     content: readKnowledgeBase(),                          boost: 1.15, path: join(MEMORY_DIR, 'knowledge.md') },
+    { name: 'journal',       content: readOr(join(MEMORY_DIR, 'project-journal.md')), boost: 1.0,  path: join(MEMORY_DIR, 'project-journal.md') },
+    { name: 'handoff',       content: readHandoff(),                                boost: 1.1,  path: join(MEMORY_DIR, 'handoff.md') },
+    { name: 'global',        content: readGlobalKnowledge(),                        boost: 0.95, path: null },
+    { name: 'claude-native', content: readNativeClaudeMemory(),                     boost: 0.95, path: null },
   ];
+
+  // v1.5.0 audit MED #12 (memory-engine.md F-FUN-5): recency decay on the
+  // boosted map. Each source file has an mtime; per-result age (days since
+  // mtime) feeds Math.exp(-ageDays / 90), so a 90-day-old source decays
+  // by ~1/e (0.37) and a 1-year-old source by ~0.018. Fresh entries
+  // (< 1 day) stay essentially unchanged (~0.99). Sources without a file
+  // (global, claude-native) get no decay (multiplier 1.0).
+  const RECENCY_HALFLIFE_DAYS = 90;
+  const nowMs = Date.now();
+  const sourceDecay = new Map();
+  for (const src of sources) {
+    if (!src.path) { sourceDecay.set(src.name, 1); continue; }
+    let ageDays = 0;
+    try {
+      const st = statSync(src.path);
+      ageDays = Math.max(0, (nowMs - st.mtimeMs) / 86400000);
+    } catch { ageDays = 0; }
+    sourceDecay.set(src.name, Math.exp(-ageDays / RECENCY_HALFLIFE_DAYS));
+  }
 
   const docs = [];
   const meta = new Map();
@@ -815,11 +837,12 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
 
   const boosted = reranked.map(r => {
     const m = meta.get(r.id);
+    const decay = sourceDecay.get(m.source) ?? 1;
     return {
       source: m.source,
       line: m.line,
       content: (r.snippet || '').substring(0, 200),
-      score: r.score * (m.boost || 1),
+      score: r.score * (m.boost || 1) * decay,
     };
   });
   boosted.sort((a, b) => b.score - a.score);
@@ -917,7 +940,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        content: { type: 'string', description: 'Full statement of what to remember. Max 5000 chars. Sanitised on storage.' },
+        content: { type: 'string', description: 'Full statement of what to remember. Max 4096 chars. Sanitised on storage.' },
         type: { type: 'string', enum: VALID_MEMORY_TYPES, description: 'Memory tier: decision or pattern -> knowledge base (frontmatter). handoff -> overwrites handoff.md. preference -> project-namespaced global. observation -> journal only.' },
         summary: { type: 'string', description: 'Optional 1-line summary (≤80 chars). Used as the frontmatter name for decisions/patterns.' },
         why: { type: 'string', description: 'Optional rationale -- why this decision was made. Populates the Why section in the knowledge base entry.' },
@@ -1507,6 +1530,25 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
   if (text.length < 60) {
     return { text: 'Fresh project -- no memory stored yet. Proceed normally.' };
   }
+
+  // v1.5.0 audit MED #11 (memory-engine.md F-FUN-7): abstention.
+  // If memory exists but the body content is thin AND there are no recent
+  // journal entries, surface an honest abstention so the LLM doesn't try
+  // to over-fit a half-page of stale frontmatter to the user's prompt.
+  // Threshold: total content chars below MIN_CONTENT_CHARS for the
+  // knowledge/team/handoff sources combined AND zero recent journal lines.
+  const MIN_CONTENT_CHARS = 200;
+  const knowledgeChars = (knowledge ? knowledge.length : 0) + (team ? team.length : 0) + (handoff ? handoff.length : 0);
+  const recentLines = recent ? recent.split('\n').filter(l => l.trim()).length : 0;
+  if (knowledgeChars < MIN_CONTENT_CHARS && recentLines === 0) {
+    const abstain = [
+      '<ijfw-memory>',
+      'Memory present but nothing relevant to your prompt -- proceed and I\'ll store any decisions you make.',
+      '</ijfw-memory>',
+    ].join('\n');
+    return { text: abstain };
+  }
+
   return { text };
 }
 
