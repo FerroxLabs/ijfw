@@ -15,6 +15,21 @@
  * Fail-closed invariant: if the file exists but is unparseable / malformed,
  * the caller MUST treat it as a deny. A corrupted state file is not a free
  * pass -- that would defeat the sandbox.
+ *
+ * ## Cross-platform enforcement boundary
+ * This module is the single tier-2 enforcement point for platforms without
+ * a native pre-tool hook lifecycle: Gemini CLI, Cursor, Windsurf, and
+ * Copilot (VS Code). All MCP tool calls from those platforms pass through
+ * `checkPermission()` at `server.js:98` BEFORE any handler executes.
+ * Hook-lifecycle platforms (Claude Code, Codex, Hermes, Wayland) get
+ * parallel enforcement via their own pre-tool-use hook scripts in addition
+ * to this MCP boundary.
+ *
+ * Coverage:
+ *   - `test-runtime-mediator.js`         unit-level primitives
+ *   - `test-mcp-gate-integration.js`     integration through the exported
+ *                                        `gatePermissionAndQuota` (server.js:98)
+ *                                        — locks in the four no-hook platforms.
  */
 
 import { readFile, mkdir, appendFile, rename, stat } from 'node:fs/promises';
