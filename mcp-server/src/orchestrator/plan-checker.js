@@ -9,7 +9,15 @@
  * the mechanically-checkable rules (the prose-reasoning ones stay in the skill).
  *
  * No I/O, no network — operates on plan text passed in by caller.
+ *
+ * v1.5.0 audit-MED-work-M2: this module now optionally composes with
+ * `dispatch-planner.js::buildManifest` to surface wave-table file-overlap
+ * findings at plan-review time instead of dispatch time. Pass
+ * `{ checkWaveOverlap: true }` to opt in. Findings are INFO severity by
+ * default (advisory — overlap forces worktree-isolation, not failure).
  */
+
+import { parsePlan, buildManifest } from '../dispatch-planner.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -196,11 +204,12 @@ function findEmptySteps(body, bodyLineOffset) {
  * where placeholder text in a "ready to dispatch" plan is a hard failure).
  *
  * @param {string} planText
- * @param {{strict?: boolean}} [opts]
+ * @param {{strict?: boolean, checkWaveOverlap?: boolean}} [opts]
  * @returns {{ok: boolean, findings: Finding[]}}
  */
 function validatePlan(planText, opts = {}) {
   const strict = !!opts.strict;
+  const checkWaveOverlap = !!opts.checkWaveOverlap;
   /** @type {Finding[]} */
   const findings = [];
 
@@ -300,6 +309,43 @@ function validatePlan(planText, opts = {}) {
           `line ${block.lineStart}: ${block.header}`,
         ),
       );
+    }
+  }
+
+  // ---- Check 7: wave-table file-overlap (M2 composition, opt-in) ---------
+  // Runs `buildManifest` on the plan to surface any sub-waves that would be
+  // routed to worktree isolation because they declare overlapping `Files:`
+  // lines. These are INFO findings, not BLOCK — overlap is RECOVERABLE
+  // (dispatch-planner just isolates), but planners benefit from seeing the
+  // overlap during review instead of being surprised at dispatch time.
+  if (checkWaveOverlap) {
+    try {
+      const subwaves = parsePlan(planText);
+      const manifest = buildManifest(subwaves);
+      for (const m of manifest) {
+        if (m.mode === 'worktree' && m.overlaps_with && m.overlaps_with.length > 0) {
+          findings.push(
+            mkFinding(
+              'INFO',
+              'PC-WAVE-OVERLAP',
+              `Sub-wave "${m.id}" overlaps file(s) with peer(s): ${m.overlaps_with.join(', ')} — will be dispatched to worktree isolation`,
+              `sub-wave ${m.id} (wave ${m.wave})`,
+            ),
+          );
+        } else if (m.mode === 'worktree' && m.reason === 'no-files-declared') {
+          findings.push(
+            mkFinding(
+              'INFO',
+              'PC-WAVE-NO-FILES',
+              `Sub-wave "${m.id}" declares no Files: line — will default to worktree isolation`,
+              `sub-wave ${m.id} (wave ${m.wave})`,
+            ),
+          );
+        }
+      }
+    } catch {
+      // dispatch-planner is best-effort here; a parse failure is not a
+      // plan-check failure — fall through silently.
     }
   }
 

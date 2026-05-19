@@ -168,3 +168,58 @@ test('task with "implement the thing" empty step → WARN (PC-EMPTY-STEP)', () =
   assert(!severities(result).includes('BLOCK'), 'no BLOCK severities expected');
   assert.equal(result.ok, true);
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-MED-work-M2 — wave-overlap composition with dispatch-planner
+// ---------------------------------------------------------------------------
+
+test('M2: checkWaveOverlap surfaces PC-WAVE-OVERLAP INFO for overlapping sub-waves', () => {
+  // Two sub-waves under wave 12A that both touch src/lib/foo.js → overlap.
+  const plan = `
+## Task t1: stage one
+- Acceptance: build green
+
+### Wave 12A-impl
+Files: src/lib/foo.js, src/lib/bar.js
+
+### Wave 12A-fix
+Files: src/lib/foo.js, src/lib/baz.js
+`;
+  const result = validatePlan(plan, { checkWaveOverlap: true });
+  const overlaps = findingsOfCode(result, 'PC-WAVE-OVERLAP');
+  assert.ok(overlaps.length >= 1, `expected ≥1 PC-WAVE-OVERLAP, got ${overlaps.length}`);
+  assert.equal(overlaps[0].severity, 'INFO');
+  // INFO is non-blocking
+  assert.equal(result.ok, true);
+});
+
+test('M2: checkWaveOverlap default OFF — overlap finding absent without opt-in', () => {
+  const plan = `
+## Task t1: stage one
+- Acceptance: build green
+
+### Wave 12A-impl
+Files: src/lib/foo.js
+
+### Wave 12A-fix
+Files: src/lib/foo.js
+`;
+  const result = validatePlan(plan);
+  assert.equal(findingsOfCode(result, 'PC-WAVE-OVERLAP').length, 0);
+});
+
+test('M2: checkWaveOverlap surfaces PC-WAVE-NO-FILES when sub-wave omits Files:', () => {
+  const plan = `
+## Task t1: stage one
+- Acceptance: green
+
+### Wave 12A-impl
+(no files declared)
+
+### Wave 12A-fix
+Files: src/lib/baz.js
+`;
+  const result = validatePlan(plan, { checkWaveOverlap: true });
+  const nofiles = findingsOfCode(result, 'PC-WAVE-NO-FILES');
+  assert.ok(nofiles.length >= 1);
+});
