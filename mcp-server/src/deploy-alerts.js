@@ -68,7 +68,12 @@ export async function recordDeployFailure(record) {
     extension: record.extension,
     scope: record.scope || 'project',
     failures: record.failures.map((f) => ({
-      platform: typeof f && f.platform ? String(f.platform) : 'unknown',
+      // v1.5.0 wire-W2.design-misc — was `typeof f && f.platform`, which is
+      // effectively `f.platform` because `typeof f` is always a truthy string
+      // (even for null/undefined). That meant a null entry in the failures
+      // array threw a TypeError instead of falling back to 'unknown'. The
+      // adjacent skillName + error fields already use the correct guard.
+      platform: f && f.platform ? String(f.platform) : 'unknown',
       skillName: f && f.skillName ? String(f.skillName) : null,
       error: f && f.error ? String(f.error).slice(0, 500) : 'unknown',
     })),
