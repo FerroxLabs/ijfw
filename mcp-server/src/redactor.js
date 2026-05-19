@@ -94,6 +94,18 @@ const PATTERNS = [
   { re: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/g, label: 'webhook' },
   { re: /https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+/g,           label: 'webhook' },
   { re: /https:\/\/[\w-]+\.webhook\.office\.com\/webhookb2\/[\w@/-]+/g,                  label: 'webhook' },
+  // v1.5.0 audit-LOW-tok-L1: PII patterns.
+  // Email -- conservative RFC-ish match. Bounds local-part to 1-64 chars,
+  // domain to a label.label pattern with TLD ≥2 chars. Avoids matching
+  // bare `@handle` references in prose.
+  { re: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}(?![A-Za-z0-9])/g, label: 'email' },
+  // Phone -- E.164 international form (+CCNNNNNNNNNN, 10-15 digits total)
+  // plus common US/EU formats with separators. Anchored to word boundaries
+  // and a digit-density threshold to avoid eating commit SHAs / version
+  // strings. Conservative: requires either a leading `+` or one of
+  // `(NNN)`, `NNN-NNN-NNNN`, `NNN.NNN.NNNN` shapes.
+  { re: /(?<![\d+])\+[1-9]\d{1,3}[\s.-]?\d{2,4}[\s.-]?\d{2,4}[\s.-]?\d{2,4}(?![\d])/g, label: 'phone' },
+  { re: /(?<![\d-])(?:\(\d{3}\)\s?|\d{3}[.-])\d{3}[.-]\d{4}(?![\d-])/g, label: 'phone' },
 ];
 
 // INLINE rules match `key=value` style assignments. Value regex excludes

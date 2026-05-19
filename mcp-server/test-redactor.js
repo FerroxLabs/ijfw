@@ -290,3 +290,41 @@ test('does NOT redact bare 32-char hex without Twilio context', () => {
   const out = redactSecrets('git sha 0123456789abcdef0123456789abcdef now');
   assert.doesNotMatch(out, /\[REDACTED:twilio\]/);
 });
+
+// --- v1.5.0 audit-LOW-tok-L1: PII (email + phone) ---
+
+test('redacts email addresses', () => {
+  const out = redactSecrets('contact alice@example.com today');
+  assert.match(out, /\[REDACTED:email\]/);
+  assert.doesNotMatch(out, /alice@example/);
+});
+
+test('redacts emails with plus addressing + subdomains', () => {
+  const out = redactSecrets('user+tag@mail.sub.example.co.uk');
+  assert.match(out, /\[REDACTED:email\]/);
+});
+
+test('does NOT redact bare @handle prose like "@alice"', () => {
+  const out = redactSecrets('hey @alice ping me');
+  assert.doesNotMatch(out, /\[REDACTED:email\]/);
+});
+
+test('redacts E.164 phone numbers', () => {
+  const out = redactSecrets('call +14155551234 anytime');
+  assert.match(out, /\[REDACTED:phone\]/);
+});
+
+test('redacts US-format phone with parens', () => {
+  const out = redactSecrets('reach (415) 555-1234 anytime');
+  assert.match(out, /\[REDACTED:phone\]/);
+});
+
+test('redacts US-format phone with dashes', () => {
+  const out = redactSecrets('reach 415-555-1234 anytime');
+  assert.match(out, /\[REDACTED:phone\]/);
+});
+
+test('does NOT redact short numeric prose like "page 123"', () => {
+  const out = redactSecrets('open page 123 of report 456');
+  assert.doesNotMatch(out, /\[REDACTED:phone\]/);
+});
