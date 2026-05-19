@@ -100,6 +100,11 @@ export function fromImage(imagePath, opts = {}) {
         typography: '<derive from image: read visible heading/body weights and sizes>',
         color: '<derive from image: enumerate distinct colours; record hex values>',
         spacing: '<derive from image: rough px spacing scale between visible elements>',
+        // v1.5.0 audit-LOW-design-#16: motion / interactions hints. Static
+        // images cannot reveal motion design, but the stub still ships an
+        // empty `interactions:` block so the user fills it in rather than
+        // forgets it.
+        interactions: defaultInteractionsBlock('image: motion not visible — declare durations + easing tokens'),
       },
     },
     error: null,
@@ -153,6 +158,10 @@ export async function fromFigma(figmaUrl, opts = {}) {
       typography: '<read text styles from Figma local-styles>',
       color: '<read fill styles from Figma local-styles>',
       spacing: '<read auto-layout gap/padding values from frames>',
+      // v1.5.0 audit-LOW-design-#16: motion / interactions hints.
+      // Figma prototypes carry transition + easing on connections — the
+      // hint here directs the user to extract them.
+      interactions: defaultInteractionsBlock('figma: read prototype transitions from connection settings + Smart Animate easing'),
     },
   };
 
@@ -227,6 +236,65 @@ export function parseIntakeFlags(argv) {
     }
   }
   return { fromImage: fromImageVal, fromFigma: fromFigmaVal, rest };
+}
+
+// ---------------------------------------------------------------------------
+// Public helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * v1.5.0 audit-LOW-design-#16: canonical interactions block for the
+ * UI-SPEC schema.
+ *
+ * The 7th UI-SPEC pillar (interaction & motion) covers transition
+ * durations, easing tokens, and view-transitions usage. Prior to v1.5.0
+ * these were tacit; now every UI-SPEC stub carries an explicit
+ * `interactions:` block the user can fill in, and the ui-auditor's
+ * Interaction pillar checks that source code values match the declared
+ * tokens.
+ *
+ * Returns a structured object with sensible empty-string defaults so the
+ * downstream renderer can serialise it directly into YAML/markdown.
+ * `hint` is an optional one-liner explaining how to derive the values
+ * from the current intake source (image vs figma vs blank).
+ */
+export function defaultInteractionsBlock(hint = null) {
+  return {
+    hint: hint || '<fill from spec source — see UI-SPEC §interactions>',
+    transitions: {
+      // Spec format: duration tokens (e.g. {fast: '120ms', base: '200ms'})
+      durations: {
+        fast: '',
+        base: '',
+        slow: '',
+      },
+      // Spec format: easing tokens (cubic-bezier or named timing function)
+      easings: {
+        standard: '',
+        decelerate: '',
+        accelerate: '',
+      },
+    },
+    // View Transitions API usage. Whitelist surfaces; "all" prohibited
+    // unless explicitly justified in the rationale field.
+    view_transitions: {
+      enabled: false,
+      surfaces: [],
+      rationale: '',
+    },
+    // Reduced-motion fallback policy. Every transition above MUST collapse
+    // to no-op or instant when prefers-reduced-motion: reduce is set.
+    reduced_motion: {
+      fallback: 'instant',
+      rationale: 'respect user OS-level motion preferences (WCAG 2.3.3)',
+    },
+    // Motion budget: the maximum simultaneous animated properties on
+    // screen at any time. Defaults to 3 to keep dashboards readable.
+    motion_budget: {
+      max_concurrent: 3,
+      excluded_surfaces: [],
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
