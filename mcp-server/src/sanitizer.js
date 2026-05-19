@@ -20,6 +20,15 @@ export function sanitizeContent(s) {
   // U+200B-U+200F, U+202A-U+202E, U+2066-U+2069, U+FEFF
   out = out.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
 
+  // 2b. Strip Unicode tag-block chars (U+E0000-U+E007F) \u2014 the "ASCII Smuggler"
+  // prompt-injection vector. These codepoints are invisible to humans but map
+  // 1:1 to printable ASCII (U+E0041 = "A", U+E0061 = "a", etc.) and many LLMs
+  // interpret them as the corresponding text. An attacker can hide an
+  // instruction like "ignore all prior" inside otherwise-benign memory content.
+  // v1.5.1 H1.4 (audit memory-engine.md F-SEC-3).
+  // Ref: https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/
+  out = out.replace(/[\u{E0000}-\u{E007F}]/gu, '');
+
   // 3. Defang ANY heading prefix (1+ hashes, optional whitespace) -- entry must
   // never produce a structural ## section that mimics a journal timestamp.
   out = out.replace(/^[ \t]*#+[ \t]+/gm, '> ');
