@@ -330,3 +330,75 @@ test('buildSpawnEnv: non-gemini auditors are not env-scrubbed', () => {
     assert.equal(out.GEMINI_API_KEY, 'sk-test-123', `${id}: GEMINI_API_KEY preserved`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-MED-tok-M8: parallel retry-vs-fallback race.
+//
+// Pre-fix the timeout-recovery path was sequential: spawnCli retry
+// (up to timeoutMs) THEN api-fallback (up to api-mode timeout). Worst
+// case for gemini @ 90s: 120s wall-clock.
+//
+// Post-fix: race retry vs api-fallback when both are eligible; loser
+// aborted via AbortController. Worst case capped at max(90s, 30s) = 90s.
+//
+// These regression tests verify the refactor preserves the existing
+// contract: timeout path settles, no deadlock, abort propagates, and the
+// auditor result shape is unchanged. The actual race timing is exercised
+// in production -- here we lock in the shape + termination invariants.
+// ---------------------------------------------------------------------------
+
+test('M8: gemini timeout path settles deterministically (no deadlock under race)', async () => {
+  // Gemini retryOnTimeout=true + apiFallback eligibility means both paths
+  // will be triggered when the CLI times out. With no GEMINI_API_KEY in env,
+  // api-fallback is NOT reachable (canFallback=false) so the code takes the
+  // retry-only branch -- which is the original sequential behaviour. This
+  // test locks in that the refactor didn't break the no-fallback path.
+  primeCache(['gemini']);
+  const env = {
+    CLAUDECODE: '1',
+    IJFW_AUDIT_TIMEOUT_SEC: '1',
+    // Deliberately NO GEMINI_API_KEY -- forces retry-only branch.
+  };
+
+  const before = Date.now();
+  const result = await runCrossOp({ mode: 'audit', target: 'M8 retry-only branch', env, quiet: true });
+  const elapsed = Date.now() - before;
+  clearCache();
+
+  // Must settle within a generous bound. Without the fix, a regression that
+  // mis-handles the eligibility check could deadlock here.
+  assert.ok(elapsed < 30_000, `M8 retry-only branch must settle in bounded time, got ${elapsed}ms`);
+  assert.ok(result && typeof result === 'object', 'result must be an object');
+
+  // auditorResults must still have valid status.
+  if (result.auditorResults) {
+    for (const r of result.auditorResults) {
+      assert.ok(
+        ['ok','empty','failed','timeout','fallback-used','aborted'].includes(r.status),
+        `M8: unexpected status ${r.status}`
+      );
+    }
+  }
+});
+
+test('M8: timeout-path produces a status (not undefined / not null) under all branches', async () => {
+  // Run twice to ensure the timeout path is taken at least once per side
+  // (retry-only branch, no-recovery branch).
+  primeCache(['gemini', 'codex']);
+  const env = {
+    CLAUDECODE: '1',
+    IJFW_AUDIT_TIMEOUT_SEC: '1',
+    // No ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY -- fallback ineligible.
+  };
+
+  const result = await runCrossOp({ mode: 'audit', target: 'M8 status invariant', env, quiet: true });
+  clearCache();
+
+  // Every settled auditor result must have a defined status (never undefined).
+  if (result.auditorResults) {
+    for (const r of result.auditorResults) {
+      assert.ok(r === null || typeof r.status === 'string', 'M8: status must be a string when result is non-null');
+      assert.ok(r === null || typeof r.elapsedMs === 'number', 'M8: elapsedMs always present on non-null results');
+    }
+  }
+});

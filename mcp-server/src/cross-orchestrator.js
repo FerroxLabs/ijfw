@@ -297,23 +297,133 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
     PROVIDER_RETRY_ON_TIMEOUT[pick.id] === true ||
     FAMILY_RETRY_ON_TIMEOUT[pick.family] === true
   );
-  if (raw && raw.timedOut && retryEnabled && !signal?.aborted) {
-    raw = await spawnCli(pick, request, timeoutMs, signal, env);
-    if (raw && raw.aborted) {
-      return { stdout: '', stderr: 'aborted-after-retry', exitCode: null, status: 'aborted', source: 'none', elapsedMs: elapsed() };
-    }
-  }
 
-  // Explicit timeout (after retry, if any) -- attempt API fallback before giving up.
-  if (raw && raw.timedOut) {
-    if (pick.apiFallback && isReachable(pick.id, env).api) {
+  // v1.5.0 audit-MED-tok-M8 — Parallel retry-vs-fallback race.
+  //
+  // Pre-fix the path on timeout was sequential: `await retry()` (up to
+  // timeoutMs), THEN `await api-fallback()` (up to PROVIDER_TIMEOUT_MS.api-mode).
+  // Worst case for gemini at the bumped 90s timeout: 90s retry + 30s API =
+  // 120s wall-clock before the wave can finish.
+  //
+  // Post-fix: when both a retry AND an api-fallback are eligible, RACE them.
+  // Whichever resolves first with a productive result wins; the loser is
+  // aborted via its own AbortController. This caps the timeout-recovery
+  // budget at max(retry-timeout, api-mode-timeout) = max(90s, 30s) = 90s
+  // for gemini — a ~25% wall-clock improvement on the unhappy path with
+  // zero correctness change (single-settlement guard still holds).
+  //
+  // When only one path is eligible (no retry OR no api-fallback) we fall
+  // back to the original sequential behaviour so the change is purely
+  // additive: same outcome whenever exactly one recovery channel exists.
+  if (raw && raw.timedOut && !signal?.aborted) {
+    const canRetry    = retryEnabled;
+    const canFallback = Boolean(pick.apiFallback) && isReachable(pick.id, env).api;
+
+    if (canRetry && canFallback) {
+      // Race retry against api-fallback. Each path runs with its own abort
+      // controller; the loser is aborted as soon as we have a winner.
+      const retryAc    = new AbortController();
+      const fallbackAc = new AbortController();
+      // Honour the parent runAc abort by cascading into both.
+      const onParentAbort = () => { retryAc.abort(); fallbackAc.abort(); };
+      if (signal) {
+        if (signal.aborted) onParentAbort();
+        else signal.addEventListener('abort', onParentAbort, { once: true });
+      }
+
+      const retryPromise = spawnCli(pick, request, timeoutMs, retryAc.signal, env)
+        .then(r => ({ kind: 'retry', raw: r }));
+
+      const { mode, angle, target } = extractApiParams();
+      const fallbackPromise = runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], fallbackAc.signal)
+        .then(r => ({ kind: 'fallback', api: r }));
+
+      // We want the FIRST PRODUCTIVE result. Promise.race() returns whichever
+      // settles first regardless of productivity, so we iterate manually:
+      // if the first to resolve is "unproductive" (retry timed out, fallback
+      // errored), we await the other.
+      const settled = { retry: null, fallback: null };
+      let winner = null;
+
+      // Helper: did this kind produce a usable result?
+      const isProductive = (kind) => {
+        if (kind === 'retry') {
+          const r = settled.retry;
+          return Boolean(r && !r.aborted && !r.timedOut && r.exitCode === 0);
+        }
+        if (kind === 'fallback') {
+          return settled.fallback && settled.fallback.status === 'ok';
+        }
+        return false;
+      };
+
+      // Resolve as soon as ONE side returns a productive result, OR both have settled.
+      await new Promise((resolve) => {
+        let pending = 2;
+        let done = false;
+        const finish = (kind) => {
+          if (done) return;
+          if (isProductive(kind)) {
+            done = true;
+            winner = kind;
+            // Abort the loser so it stops consuming budget.
+            if (kind === 'retry') fallbackAc.abort();
+            else retryAc.abort();
+            resolve();
+            return;
+          }
+          if (--pending === 0) {
+            done = true;
+            resolve();
+          }
+        };
+        retryPromise.then(({ raw: r }) => { settled.retry = r; finish('retry'); })
+                    .catch(() => { settled.retry = null;       finish('retry'); });
+        fallbackPromise.then(({ api: a }) => { settled.fallback = a; finish('fallback'); })
+                       .catch(() => { settled.fallback = null;       finish('fallback'); });
+      });
+
+      // Detach parent-abort listener if it didn't already fire.
+      if (signal) {
+        try { signal.removeEventListener('abort', onParentAbort); } catch {}
+      }
+
+      // Decision matrix on the raced outcome.
+      if (winner === 'fallback' && settled.fallback && settled.fallback.status === 'ok') {
+        return { stdout: settled.fallback.raw, stderr: '', exitCode: 0, status: 'fallback-used', source: 'api', elapsedMs: elapsed() };
+      }
+      if (winner === 'retry' && settled.retry && settled.retry.exitCode === 0) {
+        // CLI second attempt landed -- use it as if it were the original.
+        raw = settled.retry;
+      } else {
+        // Neither path produced a productive result. Prefer the most-informative
+        // failure status: an explicit fallback error beats a bare timeout.
+        if (settled.fallback && settled.fallback.status !== 'ok' && settled.fallback.error) {
+          return { stdout: '', stderr: 'timeout-and-fallback-failed', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
+        }
+        return { stdout: '', stderr: 'timeout', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
+      }
+    } else if (canRetry) {
+      // Retry-only path (no api-fallback eligible): original sequential behaviour.
+      raw = await spawnCli(pick, request, timeoutMs, signal, env);
+      if (raw && raw.aborted) {
+        return { stdout: '', stderr: 'aborted-after-retry', exitCode: null, status: 'aborted', source: 'none', elapsedMs: elapsed() };
+      }
+      if (raw && raw.timedOut) {
+        return { stdout: '', stderr: 'timeout', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
+      }
+    } else if (canFallback) {
+      // Fallback-only path (no retry eligible): same as original sequential.
       const { mode, angle, target } = extractApiParams();
       const apiResult = await runViaApi(pick, mode, angle, target, env, PROVIDER_TIMEOUT_MS['api-mode'], signal);
       if (apiResult.status === 'ok') {
         return { stdout: apiResult.raw, stderr: '', exitCode: 0, status: 'fallback-used', source: 'api', elapsedMs: elapsed() };
       }
+      return { stdout: '', stderr: 'timeout', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
+    } else {
+      // Neither retry nor fallback eligible: nothing more we can do.
+      return { stdout: '', stderr: 'timeout', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
     }
-    return { stdout: '', stderr: 'timeout', exitCode: null, status: 'timeout', source: 'none', elapsedMs: elapsed() };
   }
 
   // CLI failed -- try API fallback
