@@ -34,7 +34,11 @@ export function chunkText(text, opts = {}) {
   if (typeof text !== 'string' || text.length === 0) return [];
 
   const chunkSize = Math.max(1024, opts.chunkSize ?? DEFAULT_CHUNK_SIZE);
-  const overlap   = Math.max(0, opts.overlap ?? DEFAULT_OVERLAP);
+  // r17-M1: clamp overlap to <= chunkSize/2 so the advance step is always
+  // strictly forward. Without this, opts.chunkSize=500 + default overlap
+  // (~6553) would set start to max(start+1, cutEnd - 6553) and the loop
+  // would advance one char per iteration on small chunks.
+  const overlap   = Math.min(Math.floor(chunkSize / 2), Math.max(0, opts.overlap ?? DEFAULT_OVERLAP));
 
   // Tiny text: one chunk.
   if (text.length <= chunkSize) {

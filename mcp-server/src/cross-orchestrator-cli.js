@@ -948,9 +948,18 @@ async function cmdCross({ mode, target, only, confirm, expand }) {
   // r17.1 — pre-flight size advisory. Run BEFORE resolveTarget truncates,
   // so the user sees the real number and can decide to abort + chunk the
   // input themselves rather than getting a silently-truncated audit.
+  // r17-M3: resolve relative paths against cwd FIRST, matching the same
+  // resolution resolveTarget() uses. Without this, `ijfw cross audit foo.md`
+  // (a relative path that exists) would skip the advisory because
+  // existsSync(rawTarget) probes against the wrong cwd-anchor.
   try {
-    if (typeof rawTarget === 'string' && rawTarget.length < 4096 && existsSync(rawTarget)) {
-      const st = statSync(rawTarget);
+    let probePath = null;
+    if (typeof rawTarget === 'string' && rawTarget.length < 4096) {
+      const resolved = isAbsolute(rawTarget) ? rawTarget : resolve(process.cwd(), rawTarget);
+      if (existsSync(resolved)) probePath = resolved;
+    }
+    if (probePath) {
+      const st = statSync(probePath);
       if (st.isFile()) {
         if (st.size > TARGET_FILE_SIZE_MAX) {
           console.log('');

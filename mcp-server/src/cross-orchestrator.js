@@ -45,8 +45,14 @@ const DEFAULT_TIMEOUT_MS = 90_000;
 // often has a real cold-start problem that needs the longer first timeout
 // rather than a retry. Default: 1 retry, only for the gemini family. Per-
 // auditor `retryOnTimeout: true|false` in audit-roster.js overrides.
+// r17-L1 closure: also keyed by `family` so any future google-family auditor
+// (e.g. a "gemini-fast" id) inherits the family retry policy without us
+// having to add every id explicitly.
 const PROVIDER_RETRY_ON_TIMEOUT = {
   gemini: true,
+};
+const FAMILY_RETRY_ON_TIMEOUT = {
+  google: true,
 };
 
 function timeoutForPick(pick, resolvedTimeoutSec) {
@@ -284,8 +290,13 @@ async function fireExternal(pick, request, timeoutMs, env = process.env, signal 
   // Codex more often has a real cold-start problem and benefits from the longer
   // first timeout, not a retry. The retry happens BEFORE the api-fallback path
   // so we still get a CLI result if the second attempt lands.
-  const retryEnabled = pick.retryOnTimeout !== false &&
-                       (pick.retryOnTimeout === true || PROVIDER_RETRY_ON_TIMEOUT[pick.id] === true);
+  // r17-L1: explicit pick override > provider id default > family default.
+  // Order matters: a falsy explicit `retryOnTimeout: false` always wins.
+  const retryEnabled = pick.retryOnTimeout !== false && (
+    pick.retryOnTimeout === true ||
+    PROVIDER_RETRY_ON_TIMEOUT[pick.id] === true ||
+    FAMILY_RETRY_ON_TIMEOUT[pick.family] === true
+  );
   if (raw && raw.timedOut && retryEnabled && !signal?.aborted) {
     raw = await spawnCli(pick, request, timeoutMs, signal, env);
     if (raw && raw.aborted) {

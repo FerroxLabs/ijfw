@@ -78,3 +78,33 @@ test('wave-missing: subcommandHelp entry exists', async () => {
   const m = await import('./src/dispatch/wave-cli.js');
   assert.ok(m.subcommandHelp['wave-missing'], 'subcommandHelp must include wave-missing');
 });
+
+// r17-M2 regression: waveId / expected-id traversal attempts must be refused
+// before any filesystem access.
+test('wave-missing r17-M2: waveId with .. is refused (path traversal block)', async () => {
+  const r = await handlers['wave-missing']('../escape a b', { projectRoot: '/tmp' });
+  assert.equal(r.ok, false);
+  assert.match(r.error || '', /invalid waveId/);
+});
+
+test('wave-missing r17-M2: waveId with slash is refused', async () => {
+  const r = await handlers['wave-missing']('foo/bar a b', { projectRoot: '/tmp' });
+  assert.equal(r.ok, false);
+  assert.match(r.error || '', /invalid waveId/);
+});
+
+test('wave-missing r17-M2: expected id with .. is refused', async () => {
+  const r = await handlers['wave-missing']('W12-X a ../escape b', { projectRoot: '/tmp' });
+  assert.equal(r.ok, false);
+  assert.match(r.error || '', /invalid expected id/);
+});
+
+test('wave-missing r17-M2: valid waveId with dots (version-style) accepted', async () => {
+  // e.g. wave-1.5.0 should be valid (dots allowed; no .. sequence).
+  const { dir, cleanup } = mkProject();
+  try {
+    seedReceipt(dir, '1.5.0', 'a');
+    const r = await handlers['wave-missing']('1.5.0 a', { projectRoot: dir });
+    assert.equal(r.ok, true);
+  } finally { cleanup(); }
+});

@@ -107,3 +107,22 @@ test('CHUNKER_DEFAULTS exposes the same values used by chunkText', () => {
   assert.ok(CHUNKER_DEFAULTS.overlap > 0);
   assert.ok(CHUNKER_DEFAULTS.dedupeThreshold > 0 && CHUNKER_DEFAULTS.dedupeThreshold <= 1);
 });
+
+// r17-M1 regression: explicit small chunkSize + omitted overlap must not
+// produce an infinite-ish loop. Pre-fix the default overlap (~6553) would
+// exceed a chunkSize of 500 and the loop would advance one char per step.
+test('chunkText r17-M1: small chunkSize + default overlap stays bounded', () => {
+  const text = 'x'.repeat(5_000);
+  // chunkSize 500 with NO overlap passed — the default would be ~6553.
+  // Post-fix: overlap is clamped to floor(chunkSize/2) = 250.
+  const chunks = chunkText(text, { chunkSize: 500 });
+  // Sanity: at least 5 chunks, well under 5000 (the pathological 1-char-
+  // advance bug would produce ~5000 chunks).
+  assert.ok(chunks.length >= 5, 'must split a 5KB string at 500 char chunkSize');
+  assert.ok(chunks.length < 100, `pathological advance check: got ${chunks.length} chunks for 5KB at 500 chunkSize (expected <100)`);
+  // Each advance is at least chunkSize/2 = 250 chars (chunkSize - clamped overlap).
+  for (let i = 1; i < chunks.length; i++) {
+    const advance = chunks[i].start - chunks[i - 1].start;
+    assert.ok(advance >= 1, 'loop must advance at least 1 char per chunk');
+  }
+});

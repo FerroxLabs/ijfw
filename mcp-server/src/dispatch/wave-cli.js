@@ -149,6 +149,20 @@ export const handlers = {
         error: 'Usage: ijfw wave-missing <waveId> <expectedSubId1> [<expectedSubId2> ...]',
       };
     }
+    // r17-M2: validate waveId so it can't traverse out of .ijfw/. The wave
+    // directory format is `wave-<id>` and ids are expected to be a small set
+    // of safe chars (alnum, dash, dot for versions, underscore).
+    if (!/^[A-Za-z0-9._-]+$/.test(waveId) || waveId.includes('..')) {
+      return { ok: false, error: `wave-missing: invalid waveId "${waveId}" (must match [A-Za-z0-9._-] and not contain "..")` };
+    }
+    // Also validate expected ids — they're echoed back to the user but
+    // also used in regex construction inside the present-set match. Safe-char
+    // gate prevents both reflection of garbage and any future use as paths.
+    for (const id of expected) {
+      if (!/^[A-Za-z0-9._-]+$/.test(id) || id.includes('..')) {
+        return { ok: false, error: `wave-missing: invalid expected id "${id}" (must match [A-Za-z0-9._-] and not contain "..")` };
+      }
+    }
     const projectRoot = (ctx && ctx.projectRoot) || process.cwd();
     const waveDir = join(projectRoot, '.ijfw', `${WAVE_DIR_PREFIX}${waveId}`);
     let dirents = [];
