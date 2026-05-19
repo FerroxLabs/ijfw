@@ -46,6 +46,15 @@ import { sanitizeContent } from './sanitizer.js';
 // Both are pure-JS, zero-LLM, deterministic.
 import { extractFacts, factToJsonl } from './memory/fact-extractor.js';
 import { findNearDuplicate, readDedupConfig } from './memory/dedup.js';
+// v1.5.0 audit H5.4 — Graphiti-style bi-temporal validity. Lets storing a
+// contradictory fact close the prior's valid_to instead of accumulating.
+import {
+  openTemporalDbSync,
+  storeFactBitemporal,
+  getValidAt as temporalGetValidAt,
+  getHistory as temporalGetHistory,
+  getAllFactsWithWindows as temporalGetAllFactsWithWindows,
+} from './memory/temporal.js';
 // 1.1.6: update tools (cap 8 -> 10) -- token-issuance + OOB terminal confirm.
 // Per CLAUDE.md policy: future growth triggers retirement review, not raise.
 import { ijfwUpdateCheck, TOOL_DEF as UPDATE_CHECK_TOOL } from './update-check.js';
@@ -647,6 +656,61 @@ function appendFactsToSidecar(facts, meta) {
   }
 }
 
+// v1.5.0 audit H5.4 — sibling SQL store for bi-temporal facts. Lives next to
+// facts.jsonl so the JSONL sidecar (append-only timeline log) and the SQL
+// table (queryable point-in-time view) stay co-located. Lazy-opened on first
+// use so a project that never stores a memory never pays the better-sqlite3
+// load cost.
+const FACTS_DB_FILE = join(MEMORY_DIR, 'facts.db');
+let _factsDbHandle = null;
+function getFactsDb() {
+  if (_factsDbHandle) return _factsDbHandle;
+  try {
+    _factsDbHandle = openTemporalDbSync(FACTS_DB_FILE);
+    return _factsDbHandle;
+  } catch (err) {
+    // Non-fatal. JSONL sidecar still gets written; we just lose the bi-temporal
+    // SQL view for this process. Surface via stderr so operators see the
+    // degradation but the user-facing store result still says "ok".
+    try {
+      process.stderr.write(`[ijfw temporal] facts.db unavailable (${err.code || err.message}); SQL fact view degraded\n`);
+    } catch { /* stderr may be detached */ }
+    return null;
+  }
+}
+
+// writeFactsBitemporal -- for each extracted fact, close any prior currently-
+// valid fact with the same (subject, predicate) but different object, then
+// insert the new fact. Wrapped in a per-fact transaction inside temporal.js's
+// storeFactBitemporal helper. Best-effort: a SQL failure logs to stderr but
+// never breaks the journal-or-JSONL path.
+function writeFactsBitemporal(facts, meta) {
+  if (!Array.isArray(facts) || facts.length === 0) return { ok: true, written: 0, invalidated: 0 };
+  const db = getFactsDb();
+  if (!db) return { ok: false, code: 'ENOFACTSDB', written: 0, invalidated: 0 };
+  let written = 0;
+  let invalidated = 0;
+  for (const f of facts) {
+    try {
+      const r = storeFactBitemporal(db, {
+        subject: f.subject,
+        predicate: f.predicate,
+        object: f.object,
+        confidence: f.confidence,
+        memory_id: meta && meta.memory_id,
+        source: meta && meta.source,
+      }, meta && meta.ts);
+      invalidated += r.invalidated;
+      if (!r.deduped) written += 1;
+    } catch (err) {
+      try {
+        process.stderr.write(`[ijfw temporal] storeFactBitemporal failed: ${err.message}\n`);
+      } catch { /* stderr may be detached */ }
+    }
+  }
+  return { ok: true, written, invalidated };
+}
+
 // --- Cross-project registry (Phase 3) ---
 //
 // Registry lines look like: <abs-path> | <sha256-12> | <first-seen-iso>
@@ -1035,10 +1099,78 @@ function handleRecall({ context_hint, detail_level = 'standard', from_project })
     return { text: getRecentJournalEntries(10) || 'No decisions recorded yet.' };
   }
 
-  // H5.5 — structured facts feed. Returns raw facts.jsonl so callers (other
-  // agents, dashboard panels) can build a knowledge graph over time.
-  if (context_hint === 'facts') {
+  // H5.5 / v1.5.0 H5.4 — structured facts feed.
+  //   context_hint === 'facts'         -> only currently-valid facts (SQL
+  //                                       getValidAt(now)); fallback to raw
+  //                                       facts.jsonl if the SQL table is
+  //                                       empty/unavailable (back-compat for
+  //                                       pre-H5.4 installations).
+  //   context_hint === 'facts:history' -> full timeline including invalidated
+  //                                       rows (with their valid_from/valid_to
+  //                                       windows). If the hint is followed by
+  //                                       ":subject/predicate" we narrow to
+  //                                       that pair; otherwise return every
+  //                                       row.
+  if (context_hint === 'facts' || (typeof context_hint === 'string' && context_hint.startsWith('facts:history'))) {
+    const isHistory = typeof context_hint === 'string' && context_hint.startsWith('facts:history');
     try {
+      const db = getFactsDb();
+      if (db) {
+        if (isHistory) {
+          // Optional ":subject/predicate" narrow-down. Spec: "if subject+
+          // predicate keys can be inferred from the recall query; else return
+          // all facts with their validity windows".
+          const tail = context_hint.slice('facts:history'.length).replace(/^:/, '').trim();
+          let rows;
+          if (tail) {
+            const [subj, pred] = tail.split('/').map(s => s && s.trim()).filter(Boolean);
+            if (subj && pred) {
+              rows = temporalGetHistory(db, subj, pred);
+            } else {
+              rows = temporalGetAllFactsWithWindows(db);
+            }
+          } else {
+            rows = temporalGetAllFactsWithWindows(db);
+          }
+          if (!rows || rows.length === 0) {
+            return { text: 'No structured facts extracted yet. Store memories with key:value lines, "X uses Y", or "decided to ..." phrases to populate.' };
+          }
+          const lines = rows.map(r => JSON.stringify({
+            subject: r.subject,
+            predicate: r.predicate,
+            object: r.object,
+            confidence: r.confidence,
+            valid_from: r.valid_from,
+            valid_to: r.valid_to,
+            memory_id: r.memory_id,
+            source: r.source,
+          }));
+          if (detail_level === 'summary') {
+            const tailLines = lines.slice(-5).join('\n');
+            return { text: `## Fact history (${lines.length} rows)\n${tailLines}` };
+          }
+          return { text: `## Fact history (${lines.length} rows)\n${lines.join('\n')}` };
+        }
+        // Default: currently-valid facts only.
+        const rows = temporalGetValidAt(db, new Date().toISOString());
+        if (rows && rows.length > 0) {
+          const lines = rows.map(r => JSON.stringify({
+            subject: r.subject,
+            predicate: r.predicate,
+            object: r.object,
+            confidence: r.confidence,
+            valid_from: r.valid_from,
+            memory_id: r.memory_id,
+            source: r.source,
+          }));
+          if (detail_level === 'summary') {
+            const tail = lines.slice(-5).join('\n');
+            return { text: `## Currently-valid facts (${lines.length})\n${tail}` };
+          }
+          return { text: `## Currently-valid facts (${lines.length})\n${lines.join('\n')}` };
+        }
+        // SQL table empty -- fall through to JSONL back-compat path below.
+      }
       if (!existsSync(FACTS_FILE)) {
         return { text: 'No structured facts extracted yet. Store memories with key:value lines, "X uses Y", or "decided to ..." phrases to populate.' };
       }
@@ -1052,7 +1184,7 @@ function handleRecall({ context_hint, detail_level = 'standard', from_project })
       }
       return { text: raw || 'No structured facts extracted yet.' };
     } catch (err) {
-      return { text: `Facts sidecar unreadable: ${err.code || err.message}`, isError: true };
+      return { text: `Facts feed unreadable: ${err.code || err.message}`, isError: true };
     }
   }
 
@@ -1144,6 +1276,12 @@ function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
   };
   const facts = extractFacts(safeContent);
   appendFactsToSidecar(facts, factMeta);
+  // v1.5.0 audit H5.4 — mirror to bi-temporal SQL store. For each fact,
+  // closes any prior currently-valid fact with the same (subject, predicate)
+  // but different object before inserting. Same-object stores are a no-op.
+  // Wrapped in a per-fact transaction inside temporal.js. Best-effort: any
+  // failure is logged to stderr but never breaks the journal-or-JSONL path.
+  writeFactsBitemporal(facts, factMeta);
 
   // 2. Type-specific secondary writes. Each tracked so we report partial
   // success accurately rather than lying about "stored."
@@ -1872,5 +2010,6 @@ process.on('unhandledRejection', (err) => {
 export {
   sanitizeContent, atomicWrite, readMarkdownFile, PROJECT_HASH,
   handleStore, handleRecall,
-  MEMORY_DIR, FACTS_FILE,
+  MEMORY_DIR, FACTS_FILE, FACTS_DB_FILE,
+  getFactsDb,
 };
