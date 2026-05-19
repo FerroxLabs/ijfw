@@ -15,9 +15,16 @@ Do not treat every team as a code-generation swarm. Generate the agents plus
 the operating contracts that let those agents coordinate around artifacts,
 claims, reviews, and handoffs.
 
-CLI entry point: `ijfw team init [--archetype <type>] [--name <team-name>]`.
+CLI entry point: `ijfw team init [--archetype <type>] [--name <team-name>] [--brief <text>]`.
 `ijfw team` is the skill/workflow trigger; `ijfw team init` is the concrete
 command that writes `.ijfw/team/`, `.ijfw/agents/`, and Codex agent files.
+
+Programmatic entry: `createTeamAssembly(projectRoot, { brief, archetype, teamName })`.
+When `brief` is provided and contains explicit domain signal
+(`book`/`novel`/`chapter`, `marketing`/`campaign`/`launch`,
+`research`/`paper`/`study`, `software`/`app`/`api`, etc.) the brief score
+outweighs filesystem-only detection. This is the wire that closes the
+"Receive project brief from Discovery stage" flow below.
 
 ---
 

@@ -8,6 +8,7 @@ import {
   detectTeamArchetype,
   loadTeamTemplate,
   readTeamAssembly,
+  scoreBrief,
 } from './src/team/generator.js';
 
 function makeTmp() {
@@ -83,6 +84,95 @@ test('createTeamAssembly can detect a software project from package.json', () =>
     const result = createTeamAssembly(dir, { maxFiles: 20 });
     assert.equal(result.ok, true);
     assert.equal(result.archetype, 'software');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// --- F-FUN-1 (H2.1): brief-aware archetype routing ----------------------
+
+test('detectTeamArchetype routes a book brief to book even from an empty dir', () => {
+  const dir = makeTmp();
+  try {
+    const brief = 'I want to write a novel about a chef. Five chapters, first-person prose.';
+    assert.equal(detectTeamArchetype(dir, { brief }), 'book');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('detectTeamArchetype routes a research brief to research', () => {
+  const dir = makeTmp();
+  try {
+    const brief = 'Research paper on quantum entanglement with a literature review and methodology.';
+    assert.equal(detectTeamArchetype(dir, { brief }), 'research');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('detectTeamArchetype routes a campaign brief to content', () => {
+  const dir = makeTmp();
+  try {
+    const brief = 'Launch marketing campaign with blog posts, social media, and SEO copy.';
+    assert.equal(detectTeamArchetype(dir, { brief }), 'content');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('detectTeamArchetype defaults a software project with no brief from filesystem signal', () => {
+  const dir = makeTmp();
+  try {
+    writeFileSync(join(dir, 'package.json'), '{"name":"x"}\n');
+    // No brief -- filesystem must drive. Manifest -> software.
+    assert.equal(detectTeamArchetype(dir, { maxFiles: 20 }), 'software');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('detectTeamArchetype brief outweighs filesystem when both have signal', () => {
+  const dir = makeTmp();
+  try {
+    // Filesystem says software (package.json), brief says book.
+    // F-FUN-1 contract: brief wins when brief has explicit signal.
+    writeFileSync(join(dir, 'package.json'), '{"name":"x"}\n');
+    const brief = 'Write a book about chefs. Five chapters of literary fiction prose.';
+    assert.equal(detectTeamArchetype(dir, { brief, maxFiles: 20 }), 'book');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('scoreBrief returns per-domain scores and handles empty briefs', () => {
+  // Empty brief: all zeros.
+  const empty = scoreBrief('');
+  assert.equal(empty.software, 0);
+  assert.equal(empty.book, 0);
+  // Domain-explicit phrase scores at least the flip threshold (>= 2).
+  const bookScore = scoreBrief('I want to write a book about cooking.');
+  assert.ok(bookScore.book >= 2, `expected book>=2, got ${bookScore.book}`);
+  // Ambiguous brief shouldn't pick a winner from a single token alone.
+  const ambig = scoreBrief('research');
+  // "research" alone is just 1 token-hit; below the flip threshold.
+  assert.equal(ambig.research, 1);
+});
+
+test('normalizeArchetype canonicalizes detector language labels to software', () => {
+  // F-FUN-1 mapping fix: typescript/javascript/python aren't in
+  // SUPPORTED_ARCHETYPES but they're software in every meaningful sense.
+  // The detector calling path goes through detectTeamArchetype's explicit
+  // archetype option -- that's the public surface that exercises the mapping.
+  const dir = makeTmp();
+  try {
+    assert.equal(detectTeamArchetype(dir, { archetype: 'typescript' }), 'software');
+    assert.equal(detectTeamArchetype(dir, { archetype: 'javascript' }), 'software');
+    assert.equal(detectTeamArchetype(dir, { archetype: 'python' }), 'software');
+    assert.equal(detectTeamArchetype(dir, { archetype: 'campaign' }), 'content');
+    assert.equal(detectTeamArchetype(dir, { archetype: 'novel' }), 'book');
+    // Unknown still collapses to mixed.
+    assert.equal(detectTeamArchetype(dir, { archetype: 'martian-poetry-slam' }), 'mixed');
   } finally {
     cleanup(dir);
   }

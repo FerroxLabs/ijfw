@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,9 +9,12 @@ import {
   blackboardPaths,
   blackboardStatus,
   claimArtifact,
+  DEFAULT_CLAIM_TTL_MS,
+  evictOrphanedClaims,
   initBlackboard,
   readBlackboard,
   releaseClaim,
+  updateClaimHeartbeat,
   writeHandoff,
 } from './src/blackboard.js';
 
@@ -163,6 +166,154 @@ test('writeHandoff stores markdown handoff', () => {
     const result = writeHandoff(dir, '# Handoff\n\nWave 1 complete.');
     assert.equal(result.ok, true);
     assert.match(readFileSync(blackboardPaths(dir).handoff, 'utf8'), /Wave 1 complete/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// --- F-REL-1 (H5.3): claim TTL + heartbeat + orphan eviction ----------
+
+test('claimArtifact records a default 30-minute TTL on creation', () => {
+  const dir = makeTmp();
+  try {
+    initBlackboard(dir);
+    const res = claimArtifact(dir, { artifact: 'a1', owner: 'agent-a' });
+    assert.equal(res.ok, true);
+    assert.equal(res.claim.ttl_ms, DEFAULT_CLAIM_TTL_MS);
+    assert.equal(res.claim.heartbeat_at, null);
+    assert.ok(res.claim.claimed_at);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('evictOrphanedClaims releases a stale claim whose anchor exceeds TTL', () => {
+  const dir = makeTmp();
+  try {
+    initBlackboard(dir);
+    const res = claimArtifact(dir, { artifact: 'stale', owner: 'silent-agent', ttlMs: 1000 });
+    assert.equal(res.ok, true);
+    // Advance now beyond the per-claim TTL.
+    const future = Date.now() + 10_000;
+    const evicted = evictOrphanedClaims(dir, { nowMs: future });
+    assert.equal(evicted.ok, true);
+    assert.equal(evicted.count, 1);
+    assert.deepEqual(evicted.evicted_ids, [res.claim.id]);
+    // Status is now 'expired', not 'active'.
+    const state = readBlackboard(dir);
+    const claim = state.claims.data.claims.find((c) => c.id === res.claim.id);
+    assert.equal(claim.status, 'expired');
+    assert.equal(claim.eviction_reason, 'ttl-exceeded');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('updateClaimHeartbeat extends the freshness anchor and prevents eviction', () => {
+  const dir = makeTmp();
+  try {
+    initBlackboard(dir);
+    const res = claimArtifact(dir, { artifact: 'living', owner: 'live-agent', ttlMs: 5000 });
+    assert.equal(res.ok, true);
+    // Heartbeat at t+4s (still inside TTL).
+    const hb = updateClaimHeartbeat(dir, { claim_id: res.claim.id });
+    assert.equal(hb.ok, true);
+    assert.ok(hb.claim.heartbeat_at);
+    // Now eviction at t+8s (4s after heartbeat) -- inside the 5s TTL anchored on heartbeat.
+    const hbMs = Date.parse(hb.claim.heartbeat_at);
+    const evicted = evictOrphanedClaims(dir, { nowMs: hbMs + 4000 });
+    assert.equal(evicted.count, 0);
+    // But at heartbeat+6s (past TTL) it does evict.
+    const evicted2 = evictOrphanedClaims(dir, { nowMs: hbMs + 6000 });
+    assert.equal(evicted2.count, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('evictOrphanedClaims returns evicted IDs and leaves fresh claims active', () => {
+  const dir = makeTmp();
+  try {
+    initBlackboard(dir);
+    const stale = claimArtifact(dir, { artifact: 'old', owner: 'a', ttlMs: 1000 });
+    const fresh = claimArtifact(dir, { artifact: 'new', owner: 'b', ttlMs: 60_000 });
+    assert.equal(stale.ok, true);
+    assert.equal(fresh.ok, true);
+    const future = Date.now() + 5000;
+    const result = evictOrphanedClaims(dir, { nowMs: future });
+    assert.equal(result.count, 1);
+    assert.deepEqual(result.evicted_ids, [stale.claim.id]);
+    // Fresh claim still active.
+    const state = readBlackboard(dir);
+    const freshClaim = state.claims.data.claims.find((c) => c.id === fresh.claim.id);
+    assert.equal(freshClaim.status, 'active');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('evictOrphanedClaims TTL is configurable via options.ttlMs (fallback for legacy claims)', () => {
+  const dir = makeTmp();
+  try {
+    initBlackboard(dir);
+    // Write a legacy-shape claim (no ttl_ms) directly. Simulates pre-H5.3 data.
+    const paths = blackboardPaths(dir);
+    const legacy = {
+      version: 1,
+      claims: [
+        {
+          id: 'legacy:agent-a',
+          artifact_id: 'legacy',
+          agent: 'agent-a',
+          paths: [],
+          status: 'active',
+          claimed_at: new Date(Date.now() - 60_000).toISOString(),
+        },
+      ],
+      updated_at: new Date().toISOString(),
+    };
+    writeFileSync(paths.claims, JSON.stringify(legacy, null, 2));
+    // With a 10s TTL fallback, the 60s-old legacy claim should evict.
+    const result = evictOrphanedClaims(dir, { ttlMs: 10_000 });
+    assert.equal(result.count, 1);
+    assert.equal(result.evicted_ids[0], 'legacy:agent-a');
+    // With a 1h TTL fallback, it survives.
+    initBlackboard(dir);
+    writeFileSync(paths.claims, JSON.stringify(legacy, null, 2));
+    const survived = evictOrphanedClaims(dir, { ttlMs: 60 * 60 * 1000 });
+    assert.equal(survived.count, 0);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('evictOrphanedClaims records a claim.evicted event per orphan', () => {
+  const dir = makeTmp();
+  try {
+    initBlackboard(dir);
+    const res = claimArtifact(dir, { artifact: 'logme', owner: 'agent-c', ttlMs: 500 });
+    assert.equal(res.ok, true);
+    const future = Date.now() + 5000;
+    const result = evictOrphanedClaims(dir, { nowMs: future });
+    assert.equal(result.count, 1);
+    const events = readBlackboard(dir).recent.events;
+    const evict = events.find((e) => e.type === 'claim.evicted');
+    assert.ok(evict, 'expected a claim.evicted event');
+    assert.equal(evict.task_id, null);
+    assert.deepEqual(evict.artifact_ids, ['logme']);
+    assert.equal(evict.data.id, res.claim.id);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('updateClaimHeartbeat fails cleanly on missing claim', () => {
+  const dir = makeTmp();
+  try {
+    initBlackboard(dir);
+    const result = updateClaimHeartbeat(dir, { claim_id: 'does-not-exist' });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, 'claim-not-found');
   } finally {
     cleanup(dir);
   }

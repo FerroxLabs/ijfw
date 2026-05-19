@@ -10,6 +10,12 @@ import { writeAtomic, readSafe, withLock } from './lib/atomic-io.js';
 
 export const BLACKBOARD_VERSION = 1;
 
+// F-REL-1 (H5.3): default claim TTL = 30 minutes. Subagents that go silent
+// (the wayland 5/8-subagent failure mode) leave their claims forever
+// without this. Configurable via the `ttlMs` option on evictOrphanedClaims
+// and via the `--ttl-min N` CLI flag on `ijfw swarm evict-orphans`.
+export const DEFAULT_CLAIM_TTL_MS = 30 * 60 * 1000;
+
 export function blackboardPaths(projectRoot = process.cwd()) {
   const root = resolve(projectRoot);
   const dir = join(root, '.ijfw', 'blackboard');
@@ -236,6 +242,9 @@ export function claimArtifact(projectRoot, input) {
     const current = readJson(paths.claims, defaultClaims, validClaims).data;
     const artifactId = String(input.artifact_id || input.artifact || '').trim();
     const agent = String(input.agent || input.owner || '').trim();
+    const ttlMs = Number.isFinite(input.ttlMs) && input.ttlMs > 0
+      ? Math.floor(input.ttlMs)
+      : DEFAULT_CLAIM_TTL_MS;
     const next = {
       id: input.id || `${artifactId}:${agent}`,
       artifact_id: artifactId,
@@ -243,6 +252,13 @@ export function claimArtifact(projectRoot, input) {
       paths: normalizePaths(input.paths),
       status: 'active',
       claimed_at: nowIso(),
+      // F-REL-1: TTL is stored on the claim so per-claim overrides survive
+      // a config reload and the evictor doesn't need the original config.
+      ttl_ms: ttlMs,
+      // heartbeat_at is OPTIONAL -- subagents that don't ping fall back to
+      // claimed_at as the freshness anchor. Initialised null so the field
+      // always exists in the JSON shape (no schema migration needed).
+      heartbeat_at: null,
       note: input.note ? String(input.note) : undefined,
     };
     if (!next.artifact_id) return { ok: false, error: 'artifact-required' };
@@ -293,6 +309,97 @@ export function releaseClaim(projectRoot, input) {
     }
     return { ok: true, released };
   }).result ?? { ok: false, error: 'locked' };
+}
+
+/**
+ * F-REL-1 (H5.3): heartbeat ping. Subagents call this to extend their claim
+ * TTL without releasing + reclaiming. Heartbeat is matched by claim id
+ * (preferred) or by (artifact_id, agent) tuple. Returns the updated claim
+ * so the caller can verify the new heartbeat_at.
+ */
+export function updateClaimHeartbeat(projectRoot, input) {
+  const paths = blackboardPaths(projectRoot);
+  ensureDir(paths);
+  return withLock(paths.lock, () => {
+    const current = readJson(paths.claims, defaultClaims, validClaims).data;
+    const claimId = input.claim_id || input.id ? String(input.claim_id || input.id).trim() : null;
+    const artifactId = input.artifact_id || input.artifact ? String(input.artifact_id || input.artifact).trim() : null;
+    const agent = input.agent || input.owner ? String(input.agent || input.owner).trim() : null;
+    if (!claimId && !(artifactId && agent)) {
+      return { ok: false, error: 'claim-or-tuple-required' };
+    }
+    let updated = null;
+    current.claims = current.claims.map((claim) => {
+      if (claim.status !== 'active') return claim;
+      const matchesById = claimId && claim.id === claimId;
+      const matchesByTuple = !claimId && claimArtifactId(claim) === artifactId && claimAgent(claim) === agent;
+      if (!matchesById && !matchesByTuple) return claim;
+      updated = { ...claim, heartbeat_at: nowIso() };
+      return updated;
+    });
+    if (!updated) return { ok: false, error: 'claim-not-found' };
+    writeJson(paths.claims, current);
+    return { ok: true, claim: updated };
+  }).result ?? { ok: false, error: 'locked' };
+}
+
+/**
+ * F-REL-1 (H5.3): orphan evictor. Walks active claims, releases any whose
+ * freshness anchor (max(claimed_at, heartbeat_at)) is older than ttlMs.
+ * Returns evicted claim IDs so the caller can log + report. Default TTL is
+ * 30 minutes, matching DEFAULT_CLAIM_TTL_MS.
+ *
+ * Per-claim ttl_ms (recorded at claim time) is honoured when present; the
+ * options.ttlMs is a fallback for legacy claims written before the TTL
+ * field existed.
+ */
+export function evictOrphanedClaims(projectRoot, options = {}) {
+  const paths = blackboardPaths(projectRoot);
+  ensureDir(paths);
+  const fallbackTtl = Number.isFinite(options.ttlMs) && options.ttlMs > 0
+    ? Math.floor(options.ttlMs)
+    : DEFAULT_CLAIM_TTL_MS;
+  const now = Number.isFinite(options.nowMs) ? Number(options.nowMs) : Date.now();
+  return withLock(paths.lock, () => {
+    const current = readJson(paths.claims, defaultClaims, validClaims).data;
+    const evicted = [];
+    current.claims = current.claims.map((claim) => {
+      if (claim.status !== 'active') return claim;
+      const claimedAt = parseIso(claim.claimed_at);
+      const heartbeatAt = parseIso(claim.heartbeat_at);
+      const anchor = Math.max(claimedAt || 0, heartbeatAt || 0);
+      if (!anchor) return claim; // unparseable timestamps -- leave alone, don't false-evict
+      const ttl = Number.isFinite(claim.ttl_ms) && claim.ttl_ms > 0 ? claim.ttl_ms : fallbackTtl;
+      if (now - anchor <= ttl) return claim;
+      evicted.push({
+        id: claim.id,
+        artifact_id: claimArtifactId(claim),
+        agent: claimAgent(claim),
+        age_ms: now - anchor,
+        ttl_ms: ttl,
+      });
+      return { ...claim, status: 'expired', expired_at: nowIso(), eviction_reason: 'ttl-exceeded' };
+    });
+    if (evicted.length > 0) {
+      writeJson(paths.claims, current);
+      for (const item of evicted) {
+        appendJsonlUnlocked(paths.events, blackboardEventEntry({
+          type: 'claim.evicted',
+          actor: 'ijfw',
+          artifact_ids: [item.artifact_id],
+          message: `Evicted orphan claim ${item.id} (age ${Math.round(item.age_ms / 1000)}s > ttl ${Math.round(item.ttl_ms / 1000)}s)`,
+          data: { id: item.id, agent: item.agent, age_ms: item.age_ms, ttl_ms: item.ttl_ms },
+        }));
+      }
+    }
+    return { ok: true, evicted, evicted_ids: evicted.map((item) => item.id), count: evicted.length };
+  }).result ?? { ok: false, error: 'locked' };
+}
+
+function parseIso(value) {
+  if (!value || typeof value !== 'string') return 0;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 export function addBlackboardNote(projectRoot, input) {

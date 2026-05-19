@@ -26,9 +26,12 @@ import {
   addBlackboardNote,
   blackboardStatus,
   claimArtifact,
+  DEFAULT_CLAIM_TTL_MS,
+  evictOrphanedClaims,
   initBlackboard,
   readBlackboard,
   releaseClaim,
+  updateClaimHeartbeat,
   writeHandoff,
 } from './blackboard.js';
 import { createTeamAssembly, readTeamAssembly } from './team/generator.js';
@@ -2534,8 +2537,11 @@ function cmdTeam(sub) {
   if (sub === 'init' || sub === 'create') {
     const archetype = optionValue(args, ['--archetype', '--type', '-t']);
     const teamName = optionValue(args, ['--name']);
+    // F-FUN-1: --brief lets the Discovery hand-off carry domain signal
+    // when filesystem detection would otherwise collapse to mixed/unknown.
+    const brief = optionValue(args, ['--brief', '-b']) || '';
     const force = args.includes('--force');
-    const result = createTeamAssembly(process.cwd(), { archetype, teamName, force });
+    const result = createTeamAssembly(process.cwd(), { archetype, teamName, brief, force });
     if (!result.ok) {
       if (result.error === 'exists') {
         console.error('Team assembly already exists. Re-run with --force to replace .ijfw/team/charter.json and workflow.json.');
@@ -2895,7 +2901,45 @@ function cmdSwarm(sub) {
     process.exit(0);
   }
 
-  console.log('Usage: ijfw swarm plan | prepare [--append] [--reviews] | tasks | prompt <task-id> [--codex] | start <task-id> [--owner <agent>] | complete <task-id> [--message <text>] | block <task-id> --message <why> | ready <task-id> | status');
+  // F-REL-1 (H5.3): orphan eviction. Walks active claims and releases any
+  // whose freshness anchor (claimed_at or heartbeat_at) is older than the
+  // TTL. Default TTL is 30 minutes; override with --ttl-min N.
+  if (sub === 'evict-orphans' || sub === 'evict') {
+    const minRaw = optionValue(args, ['--ttl-min', '--ttl', '-t']);
+    const min = Number.parseFloat(minRaw);
+    const ttlMs = Number.isFinite(min) && min > 0 ? Math.floor(min * 60 * 1000) : DEFAULT_CLAIM_TTL_MS;
+    const result = evictOrphanedClaims(process.cwd(), { ttlMs });
+    if (!result.ok) {
+      console.log(`Swarm evict halted: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Evicted ${result.count} orphan claim(s) (TTL ${Math.round(ttlMs / 60000)}min)`);
+    for (const item of result.evicted) {
+      console.log(`  ${item.id} (${item.agent} -> ${item.artifact_id}, age ${Math.round(item.age_ms / 1000)}s)`);
+    }
+    process.exit(0);
+  }
+
+  // F-REL-1 (H5.3): manual heartbeat ping. Subagents normally invoke this
+  // via the programmatic surface (updateClaimHeartbeat); the CLI form is
+  // for forensic dogfooding from tests + the dashboard preview.
+  if (sub === 'heartbeat') {
+    const taskOrClaim = args[0];
+    const owner = optionValue(args.slice(1), ['--owner', '-o']);
+    const claimId = optionValue(args.slice(1), ['--claim', '--id']);
+    const input = claimId
+      ? { claim_id: claimId }
+      : { artifact_id: taskOrClaim, agent: owner };
+    const result = updateClaimHeartbeat(process.cwd(), input);
+    if (!result.ok) {
+      console.log(`Heartbeat halted: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Heartbeat ${result.claim.id} at ${result.claim.heartbeat_at}`);
+    process.exit(0);
+  }
+
+  console.log('Usage: ijfw swarm plan | prepare [--append] [--reviews] | tasks | prompt <task-id> [--codex] | start <task-id> [--owner <agent>] | complete <task-id> [--message <text>] | block <task-id> --message <why> | ready <task-id> | status | evict-orphans [--ttl-min N] | heartbeat <artifact-id> --owner <agent>');
   process.exit(1);
 }
 
