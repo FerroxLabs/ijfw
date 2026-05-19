@@ -15,7 +15,7 @@
  */
 
 import { createServer } from 'http';
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync, mkdirSync, realpathSync, renameSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, realpathSync, renameSync } from 'fs';
 import { homedir } from 'os';
 import { join, dirname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -1370,6 +1370,163 @@ const BRAINSTORM_WAITING_HTML = BRAINSTORM_DARK_WRAPPER('', '', `
 // Guarded so importing this module (e.g. from tests) doesn't launch the
 // server or process.exit(). Only the direct `node server.js` invocation
 // triggers the bootstrap below.
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-H5.8 — per-extension permission audit log
+//
+// The runtime-mediator + hermes/wayland Python hooks append events to
+// ~/.ijfw/state/permission-events.jsonl. The runtime-mediator rotates the
+// file to .0 at ROTATION_LINE_CAP (10_000) lines. The dashboard surfaces the
+// last N events, filterable by extension name and since-timestamp.
+//
+// SECURITY:
+//  - lstatSync refuses symlinked events files (H1.3 pattern). A symlink at
+//    the events path is suspicious — refuse to read it and emit a stderr
+//    advisory so the operator notices.
+//  - DoS cap on limit (5000) to bound memory + serialized response size.
+//  - Malformed JSONL lines are tolerated (skipped + stderr warn).
+//  - Render helpers escape every user-content cell (esc() pattern, H3.1).
+// ---------------------------------------------------------------------------
+
+const AUDIT_LOG_LIMIT_CAP = 5000;
+const AUDIT_LOG_DEFAULT_LIMIT = 200;
+
+function _auditEventsPath(home) {
+  return join(home, '.ijfw', 'state', 'permission-events.jsonl');
+}
+
+/**
+ * Read one events file (current or .0 rotated). Returns array of events or
+ * empty array. Refuses symlinks (security). Tolerates malformed lines.
+ *
+ * Exported for test access.
+ */
+export function readPermissionEventsFile(filePath) {
+  if (!existsSync(filePath)) return [];
+  let st;
+  try {
+    st = lstatSync(filePath);
+  } catch {
+    return [];
+  }
+  if (st.isSymbolicLink && st.isSymbolicLink()) {
+    process.stderr.write(
+      `[ijfw-dashboard] refusing to read symlinked permission-events file at ${filePath}\n`,
+    );
+    return [];
+  }
+  let raw;
+  try {
+    raw = readFileSync(filePath, 'utf8');
+  } catch (err) {
+    process.stderr.write(`[ijfw-dashboard] ${filePath}: read error: ${err.message}\n`);
+    return [];
+  }
+  const lines = raw.split('\n');
+  const out = [];
+  let malformed = 0;
+  for (const line of lines) {
+    if (!line) continue;
+    try {
+      const ev = JSON.parse(line);
+      if (ev && typeof ev === 'object') out.push(ev);
+    } catch {
+      malformed++;
+    }
+  }
+  if (malformed > 0) {
+    process.stderr.write(`[ijfw-dashboard] ${filePath}: ${malformed} malformed line(s) skipped\n`);
+  }
+  return out;
+}
+
+/**
+ * Read both the current events file and any .0 rotated file. Apply optional
+ * ext / since filters. Return up to `limit` events in reverse-chronological
+ * order. Limit is capped at AUDIT_LOG_LIMIT_CAP for DoS protection.
+ *
+ * @param {object} opts
+ * @param {string} [opts.homeDir] - override $HOME (test injection)
+ * @param {string} [opts.ext]     - filter by event.extension === ext
+ * @param {string} [opts.since]   - ISO8601; keep events with timestamp >= since
+ * @param {number} [opts.limit]   - default 200, capped at 5000
+ * @returns {{events: object[], truncated: boolean, total_read: number}}
+ */
+export function readPermissionEvents(opts = {}) {
+  const home = opts.homeDir || process.env.HOME || homedir();
+  const current = _auditEventsPath(home);
+  const rotated = current + '.0';
+  // Read rotated first (older), then current (newer); concat so we can sort.
+  const evs = [...readPermissionEventsFile(rotated), ...readPermissionEventsFile(current)];
+  let sinceMs = null;
+  if (opts.since) {
+    const t = Date.parse(opts.since);
+    if (!Number.isNaN(t)) sinceMs = t;
+  }
+  const ext = typeof opts.ext === 'string' && opts.ext ? opts.ext : null;
+  const filtered = [];
+  for (const ev of evs) {
+    if (ext && ev.extension !== ext) continue;
+    if (sinceMs !== null) {
+      const ts = Date.parse(ev.timestamp || ev.time || '');
+      if (Number.isNaN(ts) || ts < sinceMs) continue;
+    }
+    filtered.push(ev);
+  }
+  // Sort reverse-chronological by timestamp; events without a parseable
+  // timestamp sink to the bottom.
+  filtered.sort((a, b) => {
+    const ta = Date.parse(a.timestamp || a.time || '') || 0;
+    const tb = Date.parse(b.timestamp || b.time || '') || 0;
+    return tb - ta;
+  });
+  let limit = Number.isFinite(+opts.limit) ? Math.floor(+opts.limit) : AUDIT_LOG_DEFAULT_LIMIT;
+  if (limit < 1) limit = 1;
+  if (limit > AUDIT_LOG_LIMIT_CAP) limit = AUDIT_LOG_LIMIT_CAP;
+  const truncated = filtered.length > limit;
+  return {
+    events: filtered.slice(0, limit),
+    truncated,
+    total_read: evs.length,
+  };
+}
+
+/**
+ * Server-side HTML escape — must match the client-side esc() used in
+ * index.html so server-rendered snippets are XSS-safe. Exported for the
+ * XSS-escape test.
+ */
+export function escAuditCell(s) {
+  if (s === null || s === undefined || s === '') return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Render a single audit row to an HTML <tr>. Every user-content cell goes
+ * through escAuditCell(). Exported so the XSS-escape test can assert raw
+ * payload bytes become escaped entities.
+ */
+export function renderAuditRow(ev) {
+  const ts = escAuditCell(ev && ev.timestamp);
+  const extension = escAuditCell(ev && ev.extension);
+  const tool = escAuditCell(ev && ev.tool);
+  const allowed = ev && ev.allowed === true ? 'allowed' : 'denied';
+  const reason = escAuditCell(ev && ev.reason);
+  return (
+    '<tr>' +
+    '<td>' + ts + '</td>' +
+    '<td>' + extension + '</td>' +
+    '<td>' + tool + '</td>' +
+    '<td>' + allowed + '</td>' +
+    '<td>' + reason + '</td>' +
+    '</tr>'
+  );
+}
+
 const _entrypoint = (() => {
   try {
     const argv1 = process.argv[1] || '';
@@ -1632,6 +1789,29 @@ const server = createServer((req, res) => {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       res.end(`wave-intervention.html error: ${err.message}`);
+    }
+    return;
+  }
+
+  // v1.5.0 audit-H5.8 — per-extension permission audit log.
+  // GET /api/extension-audit-log?ext=<name>&limit=200&since=<iso8601>
+  if (url === '/api/extension-audit-log' && (req.method === 'GET' || req.method === 'HEAD')) {
+    try {
+      const qs = new URLSearchParams(req.url.split('?')[1] || '');
+      const ext = qs.get('ext') || undefined;
+      const since = qs.get('since') || undefined;
+      const limitRaw = qs.get('limit');
+      const limit = limitRaw ? Number(limitRaw) : undefined;
+      const result = readPermissionEvents({ ext, since, limit });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      process.stderr.write(`[ijfw-dashboard] /api/extension-audit-log error: ${err && err.stack}\n`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'audit log read failed' }));
     }
     return;
   }

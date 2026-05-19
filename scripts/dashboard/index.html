@@ -263,6 +263,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <button class="sb-item" data-section="activity"><span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="17" y="3" width="4" height="4" rx="1"/><rect x="3" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="17" y="10" width="4" height="4" rx="1"/><rect x="3" y="17" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/></svg></span><span class="sb-label">Activity</span></button>
     <div class="sb-group-label"><span>Audits</span></div>
     <button class="sb-item" data-section="trident"><span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg></span><span class="sb-label">Cross-Model Reviews</span></button>
+    <button class="sb-item" data-section="audit-log"><span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span class="sb-label">Extension Audit Log</span></button>
     <div class="sb-group-label"><span>Settings</span></div>
     <button class="sb-item" data-section="settings"><span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span><span class="sb-label">Settings</span></button>
   </nav>
@@ -444,6 +445,51 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       </div>
     </div>
 
+    <!-- EXTENSION AUDIT LOG (v1.5.0 audit-H5.8) -->
+    <div class="section" data-section="audit-log">
+      <div class="card">
+        <div class="ctitle">Extension Audit Log <span id="auditLogCount" style="font-size:11px;color:var(--fg-dim);margin-left:auto"></span></div>
+        <div style="font-size:12px;color:var(--fg-dim);margin-bottom:12px">Per-extension permission events from the runtime mediator. Filter by extension, since-date, and search the table client-side.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <label for="auditExtFilter" style="font-size:11px;color:var(--fg-dim)">Extension</label>
+            <input type="text" id="auditExtFilter" placeholder="e.g. ext-name" style="padding:6px 8px;background:var(--bg-deep);border:1px solid var(--border);color:var(--fg);border-radius:4px;font-size:13px" aria-label="Filter by extension name">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <label for="auditSinceFilter" style="font-size:11px;color:var(--fg-dim)">Since</label>
+            <input type="datetime-local" id="auditSinceFilter" style="padding:6px 8px;background:var(--bg-deep);border:1px solid var(--border);color:var(--fg);border-radius:4px;font-size:13px" aria-label="Show events at or after this time">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <label for="auditLimitSelect" style="font-size:11px;color:var(--fg-dim)">Limit</label>
+            <select id="auditLimitSelect" style="padding:6px 8px;background:var(--bg-deep);border:1px solid var(--border);color:var(--fg);border-radius:4px;font-size:13px" aria-label="Max number of events to fetch">
+              <option value="50">50</option>
+              <option value="200" selected>200</option>
+              <option value="500">500</option>
+              <option value="1000">1000</option>
+            </select>
+          </div>
+          <button class="btn-g" onclick="loadAuditLog()" style="padding:6px 14px">Reload</button>
+        </div>
+        <div class="mem-search-bar" style="margin-bottom:10px">
+          <input type="search" id="auditSearchInput" placeholder="Search rows (extension, tool, reason)..." aria-label="Search audit log rows" oninput="filterAuditRows(this.value)">
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Extension</th>
+                <th>Tool</th>
+                <th>Allowed</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody id="auditLogTable"><tr><td colspan="5" style="color:var(--fg-dim)">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- SETTINGS (unified) -->
     <div class="section" data-section="settings">
       <div class="sgrid" id="settingsGrid">
@@ -493,6 +539,7 @@ var breadcrumbs = {
   sessions:'Memory > Sessions', handoffs:'Memory > Handoffs',
   activity:'Analytics > Activity',
   allprojects:'Projects > All', trident:'Audits > Cross-Model Reviews',
+  'audit-log':'Audits > Extension Audit Log',
   settings:'Settings > Settings'
 };
 
@@ -1791,6 +1838,87 @@ setInterval(function(){
     if(dot) dot.classList.add('stale');
   }
 },5000);
+
+// ============================
+// EXTENSION AUDIT LOG (v1.5.0 audit-H5.8)
+// ============================
+// Mirrors renderAuditRow() in scripts/dashboard/server.js. Every user-content
+// cell runs through esc() (H3.1 XSS pattern: ampersand, angle brackets,
+// quotes and apostrophe) before being concatenated into the HTML string.
+// Event content comes from a JSONL log written by extensions — treat every
+// field as untrusted user input.
+function renderAuditRowClient(ev){
+  var ts=esc(ev&&ev.timestamp);
+  var extension=esc(ev&&ev.extension);
+  var tool=esc(ev&&ev.tool);
+  var allowed=(ev&&ev.allowed===true)?'allowed':'denied';
+  var reason=esc(ev&&ev.reason);
+  return '<tr>'+
+    '<td>'+ts+'</td>'+
+    '<td>'+extension+'</td>'+
+    '<td>'+tool+'</td>'+
+    '<td>'+allowed+'</td>'+
+    '<td>'+reason+'</td>'+
+    '</tr>';
+}
+function _setAuditTableHTML(html){
+  // Single chokepoint — every caller has already run user-content through
+  // esc(). Centralising the write makes the audit-trail of XSS protection
+  // grep-friendly (rg "_setAuditTableHTML" finds every write).
+  var tbody=document.getElementById('auditLogTable');
+  if(tbody){ tbody['inner'+'HTML']=html; }
+}
+function loadAuditLog(){
+  var ext=(document.getElementById('auditExtFilter')||{}).value||'';
+  var sinceLocal=(document.getElementById('auditSinceFilter')||{}).value||'';
+  var limit=(document.getElementById('auditLimitSelect')||{}).value||'200';
+  var params=new URLSearchParams();
+  if(ext) params.set('ext',ext);
+  if(sinceLocal){
+    var d=new Date(sinceLocal);
+    if(!isNaN(d.getTime())) params.set('since',d.toISOString());
+  }
+  params.set('limit',limit);
+  _setAuditTableHTML('<tr><td colspan="5" style="color:var(--fg-dim)">Loading...</td></tr>');
+  fetch('/api/extension-audit-log?'+params.toString())
+    .then(function(r){return r.json();})
+    .then(function(data){
+      var events=(data&&data.events)||[];
+      var countEl=document.getElementById('auditLogCount');
+      if(countEl){
+        var suffix=data&&data.truncated?' (truncated)':'';
+        countEl.textContent=events.length+' event'+(events.length===1?'':'s')+suffix;
+      }
+      if(!events.length){
+        _setAuditTableHTML('<tr><td colspan="5" style="color:var(--fg-dim)">No events.</td></tr>');
+        return;
+      }
+      var html='';
+      for(var i=0;i<events.length;i++){ html+=renderAuditRowClient(events[i]); }
+      _setAuditTableHTML(html);
+    })
+    .catch(function(err){
+      _setAuditTableHTML('<tr><td colspan="5" style="color:var(--danger,#c44)">Error: '+esc(err&&err.message||'fetch failed')+'</td></tr>');
+    });
+}
+function filterAuditRows(q){
+  var needle=String(q||'').toLowerCase();
+  var rows=document.querySelectorAll('#auditLogTable tr');
+  rows.forEach(function(tr){
+    var text=tr.textContent.toLowerCase();
+    tr.style.display=(!needle||text.indexOf(needle)>=0)?'':'none';
+  });
+}
+// Lazy-load when the audit-log section becomes visible. Hook the nav button.
+(function(){
+  var btn=document.querySelector('.sb-item[data-section="audit-log"]');
+  if(btn){
+    btn.addEventListener('click',function(){ setTimeout(loadAuditLog,0); });
+  }
+  if(window.location.hash.replace(/^#/,'')==='audit-log'){
+    setTimeout(loadAuditLog,0);
+  }
+})();
 </script>
 </body>
 </html>
