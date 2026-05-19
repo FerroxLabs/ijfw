@@ -137,12 +137,22 @@ function acquireLock() {
 // model_prices.json -- no hardcoded rates here. H4.8 audit fix.
 const PRICING = getTierRatesPerMillion();
 
+// v1.5.0 audit-LOW-obs-L3: defensive tier dispatch.
+//
+// The previous implementation used three substring checks in priority order
+// (opus / sonnet / haiku). That works for current Anthropic model IDs but
+// would silently misclassify a future model whose ID happens to contain one
+// of those substrings as a non-tier marker (e.g. an "opus-research-tool"
+// model). We now require the marker to appear as a hyphen-delimited segment
+// of the model ID — the canonical Anthropic shape (claude-<tier>-<gen>...).
+// Falls back to null so callers explicitly handle the unknown-tier path
+// rather than getting a silent miscategorisation.
 function getModelTier(model) {
-  if (!model) return null;
-  const m = model.toLowerCase();
-  if (m.includes('opus'))   return 'opus';
-  if (m.includes('sonnet')) return 'sonnet';
-  if (m.includes('haiku'))  return 'haiku';
+  if (typeof model !== 'string' || !model) return null;
+  const segments = model.toLowerCase().split(/[-_/.]/);
+  if (segments.includes('opus'))   return 'opus';
+  if (segments.includes('sonnet')) return 'sonnet';
+  if (segments.includes('haiku'))  return 'haiku';
   return null;
 }
 

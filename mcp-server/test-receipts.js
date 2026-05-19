@@ -292,6 +292,38 @@ test('renderHeroLine: cache savings accumulate across multiple receipts', () => 
   assert.ok(out.includes('$2.70 saved'), `expected $2.70 saved, got: ${out}`);
 });
 
+// v1.5.0 audit-LOW-obs-L5: cover the cache_eligible:false branch of
+// renderReceipt -- prior tests only exercised the cache-hit path, so a
+// regression there could land silently.
+test('renderReceipt: cache_eligible:false emits "cache-eligible: false" line with reason', async () => {
+  const { renderReceipt } = await import('./src/receipts.js');
+  const r = {
+    timestamp: '2026-05-19T12:00:00.000Z',
+    mode: 'cross',
+    duration_ms: 1200,
+    cache_stats: { cache_eligible: false, cache_eligible_reason: 'prompt < 1024 tokens' },
+  };
+  const out = renderReceipt(r);
+  assert.ok(out.includes('cache-eligible: false'), `expected ineligible line, got: ${out}`);
+  assert.ok(out.includes('prompt < 1024 tokens'), `expected reason, got: ${out}`);
+  // ensure no "cache created" / "cache read" lines leaked from the eligible branch
+  assert.ok(!out.includes('cache created'), 'should NOT emit cache-created line on ineligible');
+  assert.ok(!out.includes('cache read'), 'should NOT emit cache-read line on ineligible');
+});
+
+test('renderReceipt: cache_eligible:false with no reason uses default', async () => {
+  const { renderReceipt } = await import('./src/receipts.js');
+  const r = {
+    timestamp: '2026-05-19T12:00:00.000Z',
+    mode: 'cross',
+    duration_ms: 1200,
+    cache_stats: { cache_eligible: false }, // no reason supplied
+  };
+  const out = renderReceipt(r);
+  assert.ok(out.includes('cache-eligible: false'), `expected ineligible line, got: ${out}`);
+  assert.ok(out.includes('prompt < 1024 tokens'), `expected default reason, got: ${out}`);
+});
+
 test('renderHeroLine: cache suffix appended after delta when both present', () => {
   const r = makeReceipt({ input_tokens: 12000, cache_stats: { cache_eligible: true, cache_read_input_tokens: 1_000_000 } });
   const sessions = [

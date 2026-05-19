@@ -55,8 +55,27 @@ export function purgeReceipts(projectDir) {
   return count;
 }
 
-// Anthropic cache-read savings rate (mirrors hero-line.js constant).
-const CACHE_SAVINGS_PER_TOKEN = 2.70 / 1_000_000;
+// v1.5.0 audit-LOW-obs-L2: per-tier cache-read savings rate.
+//
+// Anthropic prompt caching: a cached read costs ~10% of an uncached input
+// token. Savings are computed as (uncached_input_rate - cached_read_rate),
+// which collapses to (0.9 * input_rate) per cached-read token. Values are
+// derived from the canonical pricing table (mcp-server/src/cost/pricing.js).
+//
+// Default tier remains sonnet (matches the prior single-constant behaviour
+// and is the dominant model on the hero-line surface), but cache_stats
+// records that carry a `model` field now dispatch to the right rate.
+const SONNET_CACHE_SAVINGS_PER_TOKEN = 2.70 / 1_000_000;
+const OPUS_CACHE_SAVINGS_PER_TOKEN   = 13.50 / 1_000_000;
+const HAIKU_CACHE_SAVINGS_PER_TOKEN  = 0.72 / 1_000_000;
+
+function cacheSavingsPerTokenFor(model) {
+  if (typeof model !== 'string' || !model) return SONNET_CACHE_SAVINGS_PER_TOKEN;
+  const m = model.toLowerCase();
+  if (m.includes('opus'))  return OPUS_CACHE_SAVINGS_PER_TOKEN;
+  if (m.includes('haiku')) return HAIKU_CACHE_SAVINGS_PER_TOKEN;
+  return SONNET_CACHE_SAVINGS_PER_TOKEN;
+}
 
 // renderReceipt(record, phaseWave?, stepNum?)
 //   phaseWave -- caller-supplied label for the narration header. Default is
@@ -110,7 +129,11 @@ export function renderReceipt(record, phaseWave = 'Trident', stepNum = 1) {
         lines.push(`Step ${stepNum}.4 -- cache created: ${cs.cache_creation_input_tokens} tokens`);
       }
       if (typeof cs.cache_read_input_tokens === 'number') {
-        const saved = cs.cache_read_input_tokens * CACHE_SAVINGS_PER_TOKEN;
+        // v1.5.0 audit-LOW-obs-L2: dispatch on cache_stats.model when set;
+        // fall back to receipt-level model; finally fall back to sonnet.
+        const modelForRate = cs.model || record.model || null;
+        const rate = cacheSavingsPerTokenFor(modelForRate);
+        const saved = cs.cache_read_input_tokens * rate;
         const savedStr = saved >= 0.01 ? ` (~$${saved.toFixed(2)} saved)` : '';
         lines.push(`Step ${stepNum}.5 -- cache read: ${cs.cache_read_input_tokens} tokens${savedStr}`);
       }

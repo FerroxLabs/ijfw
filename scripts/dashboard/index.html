@@ -238,6 +238,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 </style>
 </head>
 <body>
+<noscript>
+  <!-- v1.5.0 audit-LOW-obs-L4: JS-disabled fallback. The cockpit needs JS
+       to render -- without it, a blank page is worse than telling the user
+       what to do. -->
+  <div style="padding:32px;max-width:640px;margin:48px auto;background:#121216;color:#EDEDEF;border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.6">
+    <h1 style="margin:0 0 12px;font-size:20px;font-weight:700">IJFW Cockpit needs JavaScript</h1>
+    <p style="margin:0 0 16px;color:#8A8F98">The live dashboard fetches cost, memory, and platform data from <code>/api/data</code> every 10s and renders it dynamically. Without JavaScript, there is nothing to render.</p>
+    <p style="margin:0 0 8px;color:#8A8F98">If you can't enable JS, you can still consume the raw data:</p>
+    <ul style="margin:0 0 16px 20px;padding:0;color:#EDEDEF">
+      <li><a href="/api/data" style="color:#5E6AD2">/api/data</a> — full snapshot JSON</li>
+      <li><a href="/api/savings" style="color:#5E6AD2">/api/savings</a> — cost + savings breakdown</li>
+      <li><a href="/api/memory" style="color:#5E6AD2">/api/memory</a> — memory + observation index</li>
+    </ul>
+    <p style="margin:0;color:#8A8F98;font-size:12px">All endpoints are JSON and CORS-restricted to localhost. No tracking, no analytics.</p>
+  </div>
+</noscript>
 <div class="shell">
 <aside class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
   <div class="sb-header">
