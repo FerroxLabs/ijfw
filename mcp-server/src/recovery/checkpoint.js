@@ -4,10 +4,15 @@
 // not a replacement for IJFW memory, but they make recovery possible when chat
 // context or a generated memory summary goes missing.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { writeAtomic } from '../lib/atomic-io.js';
-import { appendBlackboardEvent, blackboardStatus, readBlackboard } from '../blackboard.js';
+import {
+  appendBlackboardEvent,
+  blackboardPaths,
+  blackboardStatus,
+  readBlackboard,
+} from '../blackboard.js';
 import { readTeamAssembly } from '../team/generator.js';
 import { buildSwarmPlan } from '../swarm/planner.js';
 
@@ -89,13 +94,43 @@ export function listCheckpoints(projectRoot = process.cwd()) {
     .map((file) => join(paths.dir, file));
 }
 
+// v1.5.0 audit-LOW-work-L2: memoise buildSnapshot per (projectRoot, ms).
+// Snapshot construction reads team + plan + blackboard, which are themselves
+// I/O-heavy reads. The bb mtime cache already shortcuts the inner reads, but
+// when a caller does back-to-back createCheckpoint() calls (e.g. on a wave
+// boundary) we still re-build the wrapper N times. Memo is keyed on the
+// project root + blackboard mtimes + ts so any state change invalidates;
+// hot-path cache size is capped at 8 entries to stay tiny.
+const SNAPSHOT_CACHE = new Map();
+const SNAPSHOT_CACHE_MAX = 8;
+
+function snapshotCacheKey(projectRoot, ts) {
+  const paths = blackboardPaths(projectRoot);
+  let tasksMtime = 0, claimsMtime = 0;
+  try { tasksMtime = statSync(paths.tasks).mtimeMs; } catch { /* default 0 */ }
+  try { claimsMtime = statSync(paths.claims).mtimeMs; } catch { /* default 0 */ }
+  return `${paths.root}::${ts}::${tasksMtime}::${claimsMtime}`;
+}
+
 function buildSnapshot(projectRoot, meta) {
+  const cacheKey = snapshotCacheKey(projectRoot, meta.ts);
+  const cached = SNAPSHOT_CACHE.get(cacheKey);
+  if (cached) {
+    // Cached body is independent of meta.id / meta.label / meta.message;
+    // those are reapplied from the current call.
+    return {
+      ...cached,
+      id: meta.id,
+      label: meta.label,
+      message: meta.message || null,
+    };
+  }
   const blackboard = readBlackboard(projectRoot);
   const team = readTeamAssembly(projectRoot);
   const plan = buildSwarmPlan(projectRoot);
   const status = blackboardStatus(projectRoot);
   const tasks = blackboard.tasks.data.tasks || [];
-  return {
+  const snapshot = {
     schema_version: 'ijfw-checkpoint/v1',
     id: meta.id,
     label: meta.label,
@@ -122,6 +157,24 @@ function buildSnapshot(projectRoot, meta) {
     recent: blackboard.recent,
     next: recommendedNext(team, plan, tasks),
   };
+  // Stash a meta-agnostic copy in the cache (id/label/message reapplied on hit).
+  SNAPSHOT_CACHE.set(cacheKey, {
+    ...snapshot,
+    id: null,
+    label: null,
+    message: null,
+  });
+  // Narrow LRU: cap the cache size and drop the oldest insertion when over.
+  if (SNAPSHOT_CACHE.size > SNAPSHOT_CACHE_MAX) {
+    const firstKey = SNAPSHOT_CACHE.keys().next().value;
+    if (firstKey !== undefined) SNAPSHOT_CACHE.delete(firstKey);
+  }
+  return snapshot;
+}
+
+// Exposed for tests / cache invalidation hooks.
+export function _resetSnapshotCache() {
+  SNAPSHOT_CACHE.clear();
 }
 
 function renderCheckpoint(snapshot) {

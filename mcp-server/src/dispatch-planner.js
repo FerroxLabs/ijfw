@@ -54,7 +54,25 @@ export function parsePlan(markdown) {
         .split(/[,\s]+/)
         .map((s) => s.replace(/^`|`$/g, '').trim())
         .filter(Boolean);
-      for (const a of add) if (!target.files.includes(a)) target.files.push(a);
+      for (const a of add) {
+        // v1.5.0 audit-LOW-work-L7: refuse the universal glob `**` (and its
+        // common forms `**/*`, `./**`). It declares "every file under the
+        // repo," which guarantees overlap with every peer sub-wave and forces
+        // them all into worktree isolation — which is almost always a
+        // planner mistake, not a real declaration. Catch it at parse time
+        // with a clear message instead of letting it silently neutralise
+        // the wave-routing algorithm.
+        const norm = a.replace(/^\.\//, '');
+        if (norm === '**' || norm === '**/*' || norm === '*' || norm === '*/**') {
+          throw new Error(
+            `dispatch-planner: refusing universal glob "${a}" in Files: line ` +
+            `(declares every file in repo, forces every peer sub-wave into ` +
+            `worktree isolation — almost always a planner mistake). ` +
+            `Use specific path prefixes instead.`,
+          );
+        }
+        if (!target.files.includes(a)) target.files.push(a);
+      }
     }
   }
   push(currentSub);

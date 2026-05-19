@@ -281,7 +281,25 @@ function validatePlan(planText, opts = {}) {
 
   // ---- Check 5: dependency sanity (dangling refs) -------------------------
   const declaredIds = extractTaskIds(planText);
+  // Build dependency adjacency map keyed by the FIRST task_id we can derive
+  // from each block header (mirrors extractTaskIds heuristic). We collect
+  // refs first so the cycle pass below can use the same map.
+  /** @type {Map<string, string[]>} */
+  const depGraph = new Map();
+  /** @type {Map<string, string>} */
+  const blockHeaderById = new Map();
+  /** @type {Map<string, number>} */
+  const blockLineById = new Map();
   for (const block of taskBlocks) {
+    // Extract the task id this block declares (best-effort; mirrors
+    // extractTaskIds). Without an id we can't participate in cycle detection
+    // -- skip silently rather than fabricate a synthetic id.
+    let blockId = null;
+    const idMatch = block.header.match(/^#{2,3}\s+Task[:\s]+([A-Za-z0-9_\-.]+)/i)
+      || block.body.match(/^\s*task_id\s*:\s*([A-Za-z0-9_\-.]+)/im)
+      || block.body.match(/^\s*id\s*:\s*([A-Za-z0-9_\-.]+)/im);
+    if (idMatch) blockId = idMatch[1];
+
     const refs = extractDependencyRefs(block.body);
     for (const ref of refs) {
       if (!declaredIds.has(ref)) {
@@ -294,6 +312,57 @@ function validatePlan(planText, opts = {}) {
           ),
         );
       }
+    }
+    if (blockId) {
+      depGraph.set(blockId, refs.filter((r) => declaredIds.has(r)));
+      blockHeaderById.set(blockId, block.header);
+      blockLineById.set(blockId, block.lineStart);
+    }
+  }
+
+  // ---- Check 5b: dependency cycles (DFS three-coloring) -------------------
+  // v1.5.0 audit-LOW-work-L5: catch dep cycles at plan-review time so they
+  // don't deadlock the executor at fan-out. Standard DFS with white/gray/black
+  // coloring; a back-edge into a `gray` node is a cycle.
+  // BLOCK severity because a cycle is a hard structural break, not a smell.
+  {
+    const WHITE = 0, GRAY = 1, BLACK = 2;
+    const color = new Map();
+    for (const id of depGraph.keys()) color.set(id, WHITE);
+    /** @type {Set<string>} */
+    const cyclesReported = new Set();
+    const visit = (id, stack) => {
+      color.set(id, GRAY);
+      stack.push(id);
+      const neighbours = depGraph.get(id) || [];
+      for (const n of neighbours) {
+        if (!depGraph.has(n)) continue; // dangling — already reported above
+        const c = color.get(n) ?? WHITE;
+        if (c === GRAY) {
+          // Found a back-edge: extract the cycle from the stack.
+          const startIdx = stack.indexOf(n);
+          const cycle = stack.slice(startIdx).concat(n);
+          const key = [...cycle].sort().join('|');
+          if (!cyclesReported.has(key)) {
+            cyclesReported.add(key);
+            findings.push(
+              mkFinding(
+                'BLOCK',
+                'PC-DEP-CYCLE',
+                `Dependency cycle detected: ${cycle.join(' -> ')}`,
+                blockHeaderById.has(n) ? `line ${blockLineById.get(n)}: ${blockHeaderById.get(n)}` : undefined,
+              ),
+            );
+          }
+        } else if (c === WHITE) {
+          visit(n, stack);
+        }
+      }
+      stack.pop();
+      color.set(id, BLACK);
+    };
+    for (const id of depGraph.keys()) {
+      if ((color.get(id) ?? WHITE) === WHITE) visit(id, []);
     }
   }
 

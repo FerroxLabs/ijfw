@@ -179,6 +179,41 @@ function adaptProjectScaleNudge(prompt) {
   return `This sounds like a project. Want me to ${verb} with you? I'll ask a few questions, do some research, and come back with recommendations.`;
 }
 
+/**
+ * detectIntent — deterministic keyword → skill router.
+ *
+ * Resolution order (v1.5.0 audit-LOW-work-L6, documented for op-clarity):
+ *
+ *   1. **Priority (DESC).** Each intent entry declares a numeric `priority`.
+ *      Higher numbers beat lower numbers. Reserved bands:
+ *        - 10 : cross-* analytic intents (cross-research / cross-critique /
+ *               cross-audit). These are explicit operator commands and should
+ *               override any prose-pattern match.
+ *        - 8  : brainstorm (primary workflow entry point).
+ *        - 7  : project-scale (length-based fallback for brainstorm).
+ *        - 5  : ship / review / remember / recall / handoff / mode (default
+ *               band for everyday skills).
+ *        - 1  : critique (broad-pattern; intentionally lowest so it never
+ *               steals a more specific intent).
+ *      Adding a new intent? Pick the band, don't invent a new one.
+ *
+ *   2. **Match length (DESC).** If two intents tie on priority, the one
+ *      whose regex matched a longer substring wins. Rationale: longer match
+ *      = more specific signal. (Skills that use `check()` instead of regex
+ *      patterns report matchLen=0 and lose this tiebreak by design — their
+ *      `check()` already encodes the specificity.)
+ *
+ *   3. **Declaration order (ASC).** Final stable tiebreak: the intent listed
+ *      earlier in the INTENTS array wins. This makes the resolution fully
+ *      deterministic — no Map/Set ordering surprises across Node versions.
+ *
+ * Bypass: a prompt with a leading `*` or containing `ijfw off` returns null
+ * without entering the resolver. This is the documented escape hatch for
+ * users who want to suppress all routing for one prompt.
+ *
+ * @param {string} prompt
+ * @returns {{intent: string, skill: string, nudge: string} | null}
+ */
 export function detectIntent(prompt) {
   if (typeof prompt !== 'string' || !prompt) return null;
   // Skip if user explicitly bypasses (leading * or `ijfw off`).

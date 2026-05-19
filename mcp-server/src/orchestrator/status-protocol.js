@@ -106,8 +106,16 @@ export function parseAgentReport(reportText) {
  * regex injection through `field` is not a concern — but we keep this comment
  * as a tripwire: if you ever pass a user-controlled string here, escape it.
  */
+// v1.5.0 audit-LOW-work-L1: defensive escapeRegExp around the field name.
+// Today callers only pass static field names (Commit, Branch, Tests, etc.) so
+// regex injection is impossible -- but the previous comment was a tripwire,
+// not a guard. This makes the function safe even if a future caller forgets.
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function extract(text, field) {
-  const matches = [...text.matchAll(new RegExp(`^${field}:\\s*(.+?)\\s*$`, 'gm'))];
+  const matches = [...text.matchAll(new RegExp(`^${escapeRegExp(field)}:\\s*(.+?)\\s*$`, 'gm'))];
   const last = matches[matches.length - 1];
   return last ? last[1] : undefined;
 }
@@ -134,14 +142,21 @@ function extract(text, field) {
 function verifyFreshCommit(sha, branch, dispatchTimestamp, ctx) {
   if (!sha) return false;
   try {
-    // 1. Freshness check (r13-M-02: 1s tolerance for clock skew).
+    // 1. Freshness check.
+    //    r13-M-02: 1s tolerance for clock skew.
+    //    v1.5.0 audit-LOW-work-L4: bumped to 2s to close the Windows-share
+    //    mtime-granularity edge case (FAT/SMB filesystems report 2s
+    //    resolution; a 1s window can false-reject a genuinely-fresh commit
+    //    when the orchestrator clock and the worktree filesystem disagree
+    //    by ~1s). 2s is still tight enough that the original "stale commit
+    //    that happens to match the time window" attack stays out of reach.
     const tsOut = execFileSync(
       'git',
       ['log', '-1', '--format=%ct', sha],
       { cwd: ctx.projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
     const commitTs = parseInt(tsOut, 10);
-    if (!Number.isFinite(commitTs) || commitTs < dispatchTimestamp - 1) return false;
+    if (!Number.isFinite(commitTs) || commitTs < dispatchTimestamp - 2) return false;
 
     // 2. v1.5.0 S3: branch-tuple check. Closes the "stale commit from main passes
     //    as fresh because the time window happens to match" bypass that r13-M-N2

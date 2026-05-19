@@ -245,25 +245,36 @@ export async function drainCheckpoints(waveId, worktreePath, projectRoot) {
     return { ok: false, reason: `readdir ${sourceDir}: ${err.message}` };
   }
 
-  let drained = 0;
   await mkdir(destDir, { recursive: true });
-  for (const name of entries) {
+
+  // v1.5.0 audit-LOW-work-L3: parallelise the per-file copy. The previous
+  // sequential await pinned us to O(N * disk-latency); on a wave with 20+
+  // subagents this is the difference between ~1s and "feels instant".
+  // Each entry has independent src/dst paths so there's no ordering
+  // requirement and no shared state to coordinate.
+  const tasks = entries.map(async (name) => {
     const m = name.match(/^subagent-(.+)\.checkpoint\.json$/);
-    if (!m) continue;
+    if (!m) return 0;
     const subId = m[1];
-    if (!SUB_ID_PATTERN.test(subId)) continue;
+    if (!SUB_ID_PATTERN.test(subId)) return 0;
 
     const src = join(sourceDir, name);
     const dst = join(destDir, name);
     try {
       const srcStat = await stat(src);
-      if (!srcStat.isFile()) continue;
+      if (!srcStat.isFile()) return 0;
     } catch {
-      continue;
+      return 0;
     }
-    await copyFile(src, dst);
-    drained += 1;
-  }
+    try {
+      await copyFile(src, dst);
+      return 1;
+    } catch {
+      return 0;
+    }
+  });
+  const counts = await Promise.all(tasks);
+  const drained = counts.reduce((a, b) => a + b, 0);
 
   return { ok: true, drained };
 }
