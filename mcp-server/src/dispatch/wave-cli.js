@@ -13,7 +13,7 @@
  * snapshot-based per lock-in #31 — no daemon, no subscriptions.
  */
 
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, stat, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { readWaveState } from '../orchestrator/wave-state.js';
@@ -142,7 +142,24 @@ export const handlers = {
   'wave-missing': async (args, ctx) => {
     const tokens = tokenize(args);
     const waveId = tokens[0];
-    const expected = tokens.slice(1);
+    let expected = tokens.slice(1);
+
+    // v1.5.0 audit-MED-work-M4: when the operator omits the expected list,
+    // try to read `.ijfw/wave-<id>/expected.json` (written at fan-out by the
+    // orchestrator). Closes the "orchestrator forgot to call wave-missing
+    // with the right argv" failure mode. argv list still wins when present.
+    if (waveId && expected.length === 0) {
+      const projectRoot = (ctx && ctx.projectRoot) || process.cwd();
+      try {
+        const f = join(projectRoot, '.ijfw', `${WAVE_DIR_PREFIX}${waveId}`, 'expected.json');
+        const raw = await readFile(f, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.expected)) {
+          expected = parsed.expected.filter((x) => typeof x === 'string' && x.length > 0);
+        }
+      } catch { /* no expected.json — fall through to usage error below */ }
+    }
+
     if (!waveId || expected.length === 0) {
       return {
         ok: false,
@@ -223,6 +240,44 @@ export const handlers = {
     };
   },
 
+  // v1.5.0 audit-MED-work-M4: write `.ijfw/wave-<id>/expected.json` so a
+  // later `ijfw wave-missing <id>` call can self-config from disk and the
+  // orchestrator-LLM doesn't have to remember the expected subagent list at
+  // fan-in time. Usage:
+  //   ijfw wave-expected <waveId> <expectedSubId1> [<expectedSubId2> ...]
+  'wave-expected': async (args, ctx) => {
+    const tokens = tokenize(args);
+    const waveId = tokens[0];
+    const expected = tokens.slice(1);
+    if (!waveId || expected.length === 0) {
+      return {
+        ok: false,
+        error: 'Usage: ijfw wave-expected <waveId> <expectedSubId1> [<expectedSubId2> ...]',
+      };
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(waveId) || waveId.includes('..')) {
+      return { ok: false, error: `wave-expected: invalid waveId "${waveId}" (must match [A-Za-z0-9._-] and not contain "..")` };
+    }
+    for (const id of expected) {
+      if (!/^[A-Za-z0-9._-]+$/.test(id) || id.includes('..')) {
+        return { ok: false, error: `wave-expected: invalid expected id "${id}" (must match [A-Za-z0-9._-] and not contain "..")` };
+      }
+    }
+    const projectRoot = (ctx && ctx.projectRoot) || process.cwd();
+    const waveDir = join(projectRoot, '.ijfw', `${WAVE_DIR_PREFIX}${waveId}`);
+    try {
+      await mkdir(waveDir, { recursive: true });
+      const payload = JSON.stringify(
+        { wave_id: waveId, expected, recorded_at: new Date().toISOString() },
+        null, 2,
+      ) + '\n';
+      await writeFile(join(waveDir, 'expected.json'), payload, 'utf8');
+      return { ok: true, output: `ok: recorded ${expected.length} expected subagent(s) for ${waveId}` };
+    } catch (err) {
+      return { ok: false, error: `wave-expected: ${err && err.message ? err.message : String(err)}` };
+    }
+  },
+
   // v1.5.0-major S01: belt-and-suspenders drain of subagent checkpoints from
   // a worktree's .ijfw/wave-<id>/ into the parent project's .ijfw/wave-<id>/.
   // Run BEFORE `git worktree remove` so checkpoints survive cleanup even if
@@ -260,7 +315,9 @@ export const subcommandHelp = {
   'wave-status': 'wave-status [<id>|latest] — print live state of a wave',
   'wave-list':   'wave-list — list all known waves (newest first)',
   'wave-missing':
-    'wave-missing <waveId> <expectedId1> [<expectedId2> ...] — list any dispatched subagents that have no checkpoint receipt (catches silent-failure dispatches)',
+    'wave-missing <waveId> [<expectedId1> ...] — list any dispatched subagents that have no checkpoint receipt (catches silent-failure dispatches). When expected ids are omitted, reads from .ijfw/wave-<id>/expected.json (written by `ijfw wave-expected`).',
+  'wave-expected':
+    'wave-expected <waveId> <expectedId1> [<expectedId2> ...] — record the expected subagent ids for a wave so `ijfw wave-missing <id>` can self-config (v1.5.0 audit-MED-work-M4)',
   'worktree-drain':
     'worktree-drain <waveId> <worktreePath> — copy subagent checkpoints from a worktree to the parent before `git worktree remove` (v1.5.0 S01)',
 };

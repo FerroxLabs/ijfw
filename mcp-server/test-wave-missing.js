@@ -108,3 +108,65 @@ test('wave-missing r17-M2: valid waveId with dots (version-style) accepted', asy
     assert.equal(r.ok, true);
   } finally { cleanup(); }
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-MED-work-M4 — self-config via expected.json
+// ---------------------------------------------------------------------------
+
+test('M4: wave-expected writes expected.json under .ijfw/wave-<id>/', async () => {
+  const { dir, cleanup } = mkProject();
+  try {
+    const r = await handlers['wave-expected']('W12-M4 a b c', { projectRoot: dir });
+    assert.equal(r.ok, true);
+    const { readFileSync } = await import('node:fs');
+    const raw = readFileSync(join(dir, '.ijfw', 'wave-W12-M4', 'expected.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    assert.equal(parsed.wave_id, 'W12-M4');
+    assert.deepEqual(parsed.expected, ['a', 'b', 'c']);
+  } finally { cleanup(); }
+});
+
+test('M4: wave-expected refuses invalid waveId / expected id (security)', async () => {
+  const r1 = await handlers['wave-expected']('../escape a', { projectRoot: '/tmp' });
+  assert.equal(r1.ok, false);
+  const r2 = await handlers['wave-expected']('W12-X a ../escape', { projectRoot: '/tmp' });
+  assert.equal(r2.ok, false);
+});
+
+test('M4: wave-missing without argv expected list reads from expected.json', async () => {
+  const { dir, cleanup } = mkProject();
+  try {
+    // Record expected list.
+    await handlers['wave-expected']('W12-M4 alpha beta gamma', { projectRoot: dir });
+    // Seed receipts for 2 of 3.
+    seedReceipt(dir, 'W12-M4', 'alpha');
+    seedReceipt(dir, 'W12-M4', 'beta');
+    // Call wave-missing with NO argv expected list.
+    const r = await handlers['wave-missing']('W12-M4', { projectRoot: dir });
+    // gamma should be reported missing
+    assert.equal(r.ok, false);
+    assert.match(r.output, /gamma/);
+    assert.match(r.output, /Missing: {2}1/);
+  } finally { cleanup(); }
+});
+
+test('M4: argv expected list still wins over expected.json (backcompat)', async () => {
+  const { dir, cleanup } = mkProject();
+  try {
+    await handlers['wave-expected']('W12-M4 alpha beta gamma', { projectRoot: dir });
+    seedReceipt(dir, 'W12-M4', 'alpha');
+    seedReceipt(dir, 'W12-M4', 'beta');
+    // Override: only check alpha + beta from argv.
+    const r = await handlers['wave-missing']('W12-M4 alpha beta', { projectRoot: dir });
+    assert.equal(r.ok, true);
+  } finally { cleanup(); }
+});
+
+test('M4: wave-missing with no argv and no expected.json returns usage error', async () => {
+  const { dir, cleanup } = mkProject();
+  try {
+    const r = await handlers['wave-missing']('W12-M4', { projectRoot: dir });
+    assert.equal(r.ok, false);
+    assert.match(r.error || '', /Usage: ijfw wave-missing/);
+  } finally { cleanup(); }
+});

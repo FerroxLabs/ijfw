@@ -102,3 +102,64 @@ test('shouldReReview returns false for PASS regardless of iteration', () => {
 test('REVIEW_MAX_ITERATIONS is 3', () => {
   assert.equal(REVIEW_MAX_ITERATIONS, 3);
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-MED-work-M7 — bothStages opt-in surfaces quality findings on spec FAIL
+// ---------------------------------------------------------------------------
+
+function failSpecPassQuality(specFindings = ['spec gap'], qualityFindings = ['null-check missing']) {
+  return async (kind) => {
+    if (kind === 'spec-compliance') return { verdict: 'FAIL', findings: specFindings };
+    return { verdict: 'PASS', findings: qualityFindings };
+  };
+}
+
+test('M7: bothStages=false (default) — spec FAIL means quality stage is skipped', async () => {
+  const calls = [];
+  const dispatch = async (kind) => {
+    calls.push(kind);
+    if (kind === 'spec-compliance') return { verdict: 'FAIL', findings: [] };
+    return { verdict: 'PASS', findings: [] };
+  };
+  const r = await reviewTask({ ...BASE, dispatch });
+  assert.deepEqual(calls, ['spec-compliance']);
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'spec');
+  assert.equal(r.qualityFindings, undefined);
+});
+
+test('M7: bothStages=true — spec FAIL still runs quality + returns qualityFindings (INFO-prefixed)', async () => {
+  const r = await reviewTask({
+    ...BASE,
+    bothStages: true,
+    dispatch: failSpecPassQuality(['Missing X'], ['No input sanitisation']),
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'spec');           // outer verdict still keys off spec
+  assert.deepEqual(r.findings, ['Missing X']);
+  assert.ok(Array.isArray(r.qualityFindings));
+  assert.equal(r.qualityFindings.length, 1);
+  // INFO downgrade prefix applied
+  assert.match(r.qualityFindings[0], /^\[INFO\] /);
+  assert.match(r.qualityFindings[0], /No input sanitisation/);
+});
+
+test('M7: bothStages=true — pre-prefixed [INFO] findings are not double-prefixed', async () => {
+  const r = await reviewTask({
+    ...BASE,
+    bothStages: true,
+    dispatch: failSpecPassQuality(['Missing X'], ['[INFO] already labelled']),
+  });
+  assert.equal(r.qualityFindings[0], '[INFO] already labelled');
+});
+
+test('M7: bothStages=true — quality dispatch error falls through to spec-only result', async () => {
+  const dispatch = async (kind) => {
+    if (kind === 'spec-compliance') return { verdict: 'FAIL', findings: ['x'] };
+    throw new Error('quality reviewer offline');
+  };
+  const r = await reviewTask({ ...BASE, bothStages: true, dispatch });
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'spec');
+  assert.equal(r.qualityFindings, undefined);
+});
