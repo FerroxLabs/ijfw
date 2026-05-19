@@ -78,3 +78,4 @@ mcp-server/test/fixtures/longmemeval-s/longmemeval_oracle.json
 # The corresponding constant is inlined into mcp-server/src/extension-registry.js by W8-A1.
 # Private key lives at ~/.ijfw/meta-keypair/<fp>.priv.pem (mode 0600).
 mcp-server/src/.registry-meta-key.pem
+.playwright-mcp/

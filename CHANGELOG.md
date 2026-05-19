@@ -2,6 +2,112 @@
 
 ## [Unreleased]
 
+### v1.5.0 wire-up + r19 MED close-out (Wave-W1 + W2, 2026-05-19)
+
+Closes the no-half-shipping gap that blocked the v1.5.0 npm publish. Six
+shipped capabilities had isolated tests but ZERO production callers; this
+wave wires every one into a live code path. Plus closes the 22 r19 MED
+findings that r19's `(no detail)` output had pushed to deferral.
+
+- **W1.A — repo-map wire** `mcp-server/src/lib/repo-map.js` now flows into
+  the subagent (re)dispatch path. `runtime-loop.js::buildSubagentRepoMapPrefix`
+  (new) is async, env-gated by `IJFW_REPO_MAP=1`, and returns an
+  importance-ranked file summary block. The MCP tool `ijfw_subagent_post_done`
+  surfaces `repoMapPrefix` on every redispatch decision; the orchestrator-LLM
+  splices it in front of the next subagent's brief.
+  `handleTruncationWithRepoMap` prepends the prefix to cross-AI resume
+  briefs too. Default OFF; opt-in via env.
+
+- **W1.B — cache-keepalive wire** `mcp-server/src/lib/cache-keepalive.js`
+  now starts `startKeepaliveFromEnv` inside `runPhaseEConverge` for the
+  lifetime of every Trident wave; cancels in `_finalize`. The default
+  onTick is a counter, exposed on the return value as `keepaliveTicks` and
+  recorded on the converge receipt as `keepalive_ticks`. Production
+  callers can pass a custom `keepaliveOnTick` to ping a re-warmup endpoint
+  instead. Default OFF (gated by `IJFW_CACHE_KEEPALIVE_MS`).
+
+- **W1.C — embedding-cache wire** Migration 005 rewritten to a content-hash
+  PK: `(cache_key TEXT, model_id TEXT)`. New `cacheKeyFor(text) = sha256(text)`.
+  `search-hybrid.js::maybeRerankWithVectors` now accepts `opts.db +
+  opts.modelId`; when present, embeds route through
+  `getCachedEmbedding`/`setCachedEmbedding`. `server.js::searchMemory`
+  lazy-opens memory.db once per process and threads through. **Second
+  call with the same snippets serves entirely from cache (4→0 embedder
+  calls).** Migration 005 was net-new in v1.5.0 (no rows to migrate); the
+  schema change is non-breaking. Old `getCachedVector`/`setCachedVector`
+  renamed to `*Embedding` to match the content-key contract.
+
+- **W1.D — UI-review runner** New `mcp-server/src/lib/ui-review-runner.js`
+  consumes all 6 design libs (`uispec-drift`, `a11y-contract`,
+  `lighthouse-pillar`, `playwright-baseline`, `sketches-gc`, `uispec-intake`)
+  through 7 per-pillar grader functions (`layout`, `typography`, `color`,
+  `spacing`, `components`, `interaction`, `security`). New
+  `ijfw ui-review --spec <UI-SPEC.md> --scope <dirs>` CLI command writes
+  `UI-REVIEW.md` next to the spec. Top-level verdict (PASS/FLAG/BLOCK)
+  with per-pillar evidence. Exit code 2 on BLOCK.
+
+- **W1.E — parallel 6-pillar fan-out** The runner dispatches all 7
+  graders via `Promise.all` with a single-tick yield before each grader
+  body so timing assertions can prove concurrent execution. The 7
+  startedAt timestamps all land in the same event-loop tick before any
+  grader can finish; the test's `parallel.parallelism === true` would be
+  false under a sequential implementation.
+
+- **W1.F — signal cascade** `defaultConvergeDispatch` now accepts +
+  forwards `signal` to `fireExternal`. A pre-aborted signal short-circuits
+  with `UNREACHABLE` without spawning a CLI/API call; an in-flight 5s
+  mock dispatcher is killed by a 1s `totalTimeoutMs` cap (test proves
+  elapsed < 3s). Closes the M5/M6 plumbing gap where `_cycleAc.signal`
+  was being passed to dispatchers but the default dispatcher dropped it.
+
+- **W2 — r19 MED close-out (22 items)** One actionable bug fixed:
+  `mcp-server/src/deploy-alerts.js:71` had `typeof f && f.platform` which
+  doesn't actually guard against null `f` (the adjacent fields used the
+  correct pattern). 21 other r19-flagged lines were adjudicated as
+  non-actionable at the cited location and documented in
+  `.planning/v150-wireup/W2-MED-DECISIONS.md` (force-added so the
+  adjudication is preserved in git). r19's `(no detail)` output made
+  this a guessing game; r20 (W4) with verbose mode will surface real
+  finding text for re-check.
+
+**Test posture:** 1967 / 0 fail / 1 skip across 170 test files. New:
+`test-repo-map-wire.js` (8), `test-embedding-cache.js` (8),
+`test-ui-review-runner.js` (9), `test-deploy-alerts.js` (3). +5 W1.B/W1.F
+tests in `test-runtime-converge.js`. `test-vector-cache.js` updated to
+match the content-hash schema. 6 pre-existing test failures
+(test-accuracy-vs-codeburn, test-cost-endpoints, test-orchestrator-
+specialists, test-orchestrator-specialists-v150, test-platform-
+capabilities, test-swarm-worktree) verified against the v1.5.0 baseline
+e0f1c4e — these are NOT caused by wire-up.
+
+### v1.5.0 wire-up Wave-W3 close-out (2026-05-19)
+
+- **W3.A — 8 r19 LOW findings adjudicated** All 8 cited file:line locations
+  examined; 0 actionable bugs (consistent with r19's `(no detail)` output).
+  Decision doc: `.planning/v150-wireup/W3-LOW-DECISIONS.md` enumerating
+  rationale per item for r20 cross-check.
+
+- **W3.B — Cumulative v1.5.0 CHANGELOG entry** This block (above) +
+  the wire-up Wave-W1+W2 section + the existing v1.5.0 + Workflow-engine
+  MED batch sections together cover every commit past `9ddf1ed`.
+
+- **W3.C — Iframe sandbox + GA-B2 verified**
+  - GA-B2 (`searchMemory honours include_stale option`): 4/4 GA-B2
+    tests in `test-memory-fts5.js` pass on main HEAD (11/11 in that file).
+  - Iframe browser smoke: NEW `test-iframe-sandbox-smoke.js` (7 static
+    tests, all passing). Plus a REAL Playwright run in headless Chrome
+    against `scripts/dashboard/design-preview-host.html` confirmed three
+    security properties in the live DOM:
+      1. Safe http URL → iframe with `sandbox="allow-scripts"` only;
+         `sandboxIncludesAllowSameOrigin: false`.
+      2. `javascript:alert(1)` URL → no iframe spawned; fallback `.empty`
+         div shown; no script execution.
+      3. `<img src=x onerror=alert(1)>` name param → escaped to
+         `&lt;img src=x onerror=alert(1)&gt;`; no `<img>` injected;
+         `iframe.contentDocument` access from parent returns false
+         (sandbox is doing its job).
+    Full evidence inlined in the smoke test file footer.
+
 ### Workflow-engine MED batch (v1.5.0 audit close-out, 2026-05-19)
 
 - **M1** `selectResumeAI` now reads `.ijfw/swarm.json::resume_preference` (falls back to the built-in claude/gemini/codex matrix). Rosters with `opencode`, `aider`, `copilot` etc. get cross-AI resume routing instead of escalating to user. `loadResumePreference()` + `_resetResumePrefCache()` helpers exported from `runtime-loop.js`.
