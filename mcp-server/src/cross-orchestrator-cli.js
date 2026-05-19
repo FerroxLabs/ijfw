@@ -14,6 +14,7 @@ import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { writeAtomic } from './lib/atomic-io.js';
 import { runCrossOp } from './cross-orchestrator.js';
+import { chunkText, mergeFindings, CHUNKER_DEFAULTS } from './cross-audit-chunker.js';
 import { readReceipts, purgeReceipts } from './receipts.js';
 import { renderHeroLine } from './hero-line.js';
 import { ROSTER, isInstalled, isReachable } from './audit-roster.js';
@@ -274,17 +275,19 @@ function parseCrossAlias(mode, args) {
   let only = null;
   let confirm = false;
   let expand = false;
+  let chunk = false;
   const positional = [];
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--confirm') confirm = true;
     else if (arg === '--expand') expand = true;
+    else if (arg === '--chunk') chunk = true; // v1.5.1 H1.6 — wire chunker
     else if (arg === '--with' && args[i + 1]) only = args[++i];
     else if (arg.startsWith('--with=')) only = arg.slice('--with='.length);
     else if (!arg.startsWith('--')) positional.push(arg);
   }
   const target = mode === 'research' ? positional.join(' ').trim() : positional[0];
-  return { cmd: 'cross', mode, target: target || undefined, only, confirm, expand };
+  return { cmd: 'cross', mode, target: target || undefined, only, confirm, expand, chunk };
 }
 
 function parseCommandAlias(args) {
@@ -464,14 +467,16 @@ function parseArgsInner(args) {
     let only = null;
     let confirm = false;
     let expand = false;
+    let chunk = false;
 
     for (let i = 3; i < args.length; i++) {
       if (args[i] === '--confirm') { confirm = true; }
       else if (args[i] === '--expand') { expand = true; }
+      else if (args[i] === '--chunk') { chunk = true; } // v1.5.1 H1.6 — wire chunker
       else if (args[i] === '--with' && args[i + 1]) { only = args[++i]; }
     }
 
-    return { cmd: 'cross', mode, target, only, confirm, expand };
+    return { cmd: 'cross', mode, target, only, confirm, expand, chunk };
   }
 
   return { cmd: 'unknown', raw: args[0] };
@@ -930,7 +935,44 @@ export function resolveTarget(raw, opts = {}) {
   return `File: ${raw}\n\n${contents}`;
 }
 
-async function cmdCross({ mode, target, only, confirm, expand }) {
+// v1.5.1 H1.6 — chunked-dispatch helpers (audit finding token-optimization.md
+// HIGH-H4 + trident.md HIGH-1, 2/2 consensus). The chunker has shipped (with
+// tests) since r17.1 but was never wired into the CLI. `--chunk` now triggers
+// per-chunk dispatch through runCrossOp + a final Jaccard-dedupe merge.
+
+/**
+ * Decide whether a target absolute path is large enough to benefit from
+ * chunking. Exported for unit-tests.
+ */
+export function shouldChunkFile(absPath, opts = {}) {
+  const threshold = typeof opts.threshold === 'number' ? opts.threshold : TARGET_FILE_SIZE_CAP;
+  try {
+    const st = statSync(absPath);
+    if (!st.isFile()) return false;
+    return st.size > threshold;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read a file and produce the per-chunk target strings the auditors will see.
+ * Each chunk is annotated with its index so cross-chunk findings can be
+ * reconciled. Exported for unit-tests.
+ */
+export function buildChunkedTargets(absPath, rawTarget, opts = {}) {
+  const content = readFileSync(absPath, 'utf8');
+  const chunks = chunkText(content, opts);
+  return chunks.map((c, i) => ({
+    chunkIndex: i,
+    total: chunks.length,
+    bytesStart: c.start,
+    bytesEnd: c.end,
+    target: `File: ${rawTarget} [chunk ${i + 1}/${chunks.length}, bytes ${c.start}-${c.end}]\n\n${c.text}`,
+  }));
+}
+
+async function cmdCross({ mode, target, only, confirm, expand, chunk }) {
   const VALID_MODES = ['audit', 'research', 'critique'];
   if (!mode || !VALID_MODES.includes(mode)) {
     console.error(`ijfw cross requires a mode: ${VALID_MODES.join(', ')}. Example: ijfw cross audit <file>`);
@@ -975,6 +1017,76 @@ async function cmdCross({ mode, target, only, confirm, expand }) {
       }
     }
   } catch { /* statSync failure is non-fatal; size advisory is best-effort */ }
+
+  // v1.5.1 H1.6 — chunked dispatch path. When --chunk is set AND the target
+  // is a file larger than the size cap, split via the cross-audit-chunker
+  // (boundary-aware, 10% overlap, Jaccard-dedupe merge) and dispatch each
+  // chunk through runCrossOp separately. Merge findings at the end. Opt-in
+  // because cost scales linearly with chunk count.
+  if (chunk) {
+    let absPath = null;
+    try {
+      if (typeof rawTarget === 'string' && rawTarget.length < 4096) {
+        const resolved = isAbsolute(rawTarget) ? rawTarget : resolve(process.cwd(), rawTarget);
+        if (existsSync(resolved) && statSync(resolved).isFile()) absPath = resolved;
+      }
+    } catch { /* */ }
+
+    if (!absPath) {
+      console.log('');
+      console.log('--chunk requires a file target. Topics, git ranges, and missing paths cannot be chunked.');
+      // Fall through to normal path -- --chunk silently no-ops for non-files
+    } else if (!shouldChunkFile(absPath)) {
+      console.log('');
+      console.log(`--chunk: target is ${(statSync(absPath).size / 1024).toFixed(1)} KB, under the ${(TARGET_FILE_SIZE_CAP / 1024).toFixed(0)} KB chunk threshold; running single-pass audit instead.`);
+      // Fall through to normal path
+    } else {
+      const chunks = buildChunkedTargets(absPath, rawTarget);
+      console.log('');
+      console.log(`--chunk: splitting ${rawTarget} into ${chunks.length} chunks (≈${(CHUNKER_DEFAULTS.chunkSize / 1024).toFixed(0)} KB each, ${(CHUNKER_DEFAULTS.overlap / 1024).toFixed(0)} KB overlap).`);
+      console.log(`Trident dispatches: ${chunks.length} × per-chunk audit. Cost scales linearly.`);
+
+      const perChunkResults = [];
+      const auditorIds = new Set();
+      const projectDir = process.cwd();
+      let firedAny = false;
+      for (const { chunkIndex, total, target: chunkTarget } of chunks) {
+        console.log('');
+        console.log(`[chunk ${chunkIndex + 1}/${total}] dispatching...`);
+        try {
+          const r = await runCrossOp({
+            mode, target: chunkTarget, projectDir,
+            runStamp: new Date().toISOString(), only, confirm, expand,
+          });
+          const findings = Array.isArray(r.merged) ? r.merged : [];
+          perChunkResults.push({ chunkIndex, findings });
+          for (const p of (r.picks || [])) auditorIds.add(p.id);
+          if ((r.picks || []).length > 0) firedAny = true;
+          console.log(`[chunk ${chunkIndex + 1}/${total}] ${findings.length} finding(s) from ${(r.picks || []).length} auditor(s).`);
+        } catch (err) {
+          console.log(`[chunk ${chunkIndex + 1}/${total}] dispatch error: ${err.message}`);
+          perChunkResults.push({ chunkIndex, findings: [] });
+        }
+      }
+
+      const merged = mergeFindings(perChunkResults);
+      console.log('');
+      console.log(`=== Chunked audit complete: ${merged.length} unique finding(s) across ${chunks.length} chunks ===`);
+      console.log(`Auditors fired (union): ${[...auditorIds].join(', ') || '(none)'}`);
+      if (!firedAny) {
+        console.log('No auditors fired -- run `ijfw doctor` to see the install hints.');
+        process.exit(2); // r17.1 — degraded exit code
+      }
+      for (const f of merged) {
+        const sev = (f.severity || 'note').toUpperCase();
+        const cluster = f.clusterSize > 1 ? ` [×${f.clusterSize}]` : '';
+        const tgt = f.target ? ` ${f.target} —` : '';
+        const text = f.finding || f.text || '(no detail)';
+        console.log(`  ${sev}${cluster}${tgt} ${text}`);
+      }
+      return;
+    }
+  }
 
   target = resolveTarget(target);
 
