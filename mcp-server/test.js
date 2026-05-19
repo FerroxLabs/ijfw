@@ -98,16 +98,31 @@ async function runTest() {
     console.log('\nTools:');
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     resp = await waitForResponse(2);
-    assert(resp.result?.tools?.length === 10, 'Lists exactly 10 tools (1.1.6: +ijfw_update_check, +ijfw_update_apply)');
+    // updated 2026-05-19 v1.5.0 (tool cap raised 10→12 in v1.5.0-major):
+    // slot 11 = ijfw_subagent_post_done (S02 runtime contracts),
+    // slot 12 = ijfw_cross_audit_converge (N03 Trident-as-a-service).
+    // CLAUDE.md fixes the cap at 12 — if a 13th appears, this assertion forces
+    // an explicit, intentional update rather than silent drift.
+    const CANONICAL_TOOLS_V150 = [
+      'ijfw_memory_recall',
+      'ijfw_memory_store',
+      'ijfw_memory_search',
+      'ijfw_memory_prelude',
+      'ijfw_prompt_check',
+      'ijfw_metrics',
+      'ijfw_cross_project_search',
+      'ijfw_update_check',
+      'ijfw_update_apply',
+      'ijfw_run',
+      'ijfw_subagent_post_done',
+      'ijfw_cross_audit_converge',
+    ];
+    assert(resp.result?.tools?.length === CANONICAL_TOOLS_V150.length,
+      `Lists exactly ${CANONICAL_TOOLS_V150.length} tools (v1.5.0 cap; got ${resp.result?.tools?.length})`);
     const toolNames = resp.result?.tools?.map(t => t.name) || [];
-    assert(toolNames.includes('ijfw_memory_recall'), 'Has recall tool');
-    assert(toolNames.includes('ijfw_memory_store'), 'Has store tool');
-    assert(toolNames.includes('ijfw_memory_search'), 'Has search tool');
-    assert(toolNames.includes('ijfw_update_check'), 'Has update-check tool (1.1.6)');
-    assert(toolNames.includes('ijfw_update_apply'), 'Has update-apply tool (1.1.6)');
-    assert(toolNames.includes('ijfw_run'), 'Has ijfw_run tool');
-    assert(toolNames.includes('ijfw_memory_prelude'), 'Has prelude tool');
-    assert(toolNames.includes('ijfw_cross_project_search'), 'Has cross-project-search tool');
+    for (const name of CANONICAL_TOOLS_V150) {
+      assert(toolNames.includes(name), `Has ${name} tool`);
+    }
 
     // --- Test 4: Resources list (empty, but shouldn't error) ---
     console.log('\nProtocol compliance:');
@@ -346,10 +361,16 @@ async function runTest() {
   // user's ~/.ijfw. Two project dirs (primary + secondary), both registered,
   // each seeded with distinct knowledge.
   console.log('\nCross-project search:');
+  // updated 2026-05-19 v1.5.0 audit-H3.4 (memory-engine.md F-SEC-1):
+  // cross-project-search.js now realpath-resolves + containment-checks every
+  // registry entry against allowedRoots (default: $HOME). Projects MUST live
+  // under FAKE_HOME or the safety guard silently skips them and scope:'all'
+  // returns "No matches". Previously projects were siblings of FAKE_HOME under
+  // HARNESS — that pattern is no longer valid against the live server.
   const HARNESS = join(tmpdir(), `ijfw-xproj-${process.pid}`);
   const FAKE_HOME = join(HARNESS, 'home');
-  const PROJ_A = join(HARNESS, 'project-alpha');
-  const PROJ_B = join(HARNESS, 'project-beta');
+  const PROJ_A = join(FAKE_HOME, 'project-alpha');
+  const PROJ_B = join(FAKE_HOME, 'project-beta');
   if (existsSync(HARNESS)) rmSync(HARNESS, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   mkdirSync(join(FAKE_HOME, '.ijfw'), { recursive: true });
   mkdirSync(join(PROJ_A, '.ijfw', 'memory'), { recursive: true });
