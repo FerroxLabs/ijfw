@@ -63,14 +63,35 @@ const COMPLETION_PATTERNS = [
 
 // Bash tool calls that count as fresh verification evidence.
 //
-// v1.5.1 H1 (audit finding HIGH-S2): the bare `build` substring let
-// non-build commands like `Bash("ls build/")` or `Bash("echo 'build trust'")`
-// clear the Iron Law without running tests. Fix: require the verify verb at
-// command-start (start-of-string OR after a shell separator: whitespace,
-// `;`, `&&`, `||`, `|`), and replace the bare `build` with an explicit
-// allowlist of build invocations.
-const VERIFICATION_COMMAND_RE =
-  /(?:^|[\s;&|])(?:npm test|node --test|cargo test|pytest|preflight|ijfw preflight|npm run build|yarn build|pnpm build|bun build|cargo build|tsc --build|tsc -b|make(?=\s|$))/i;
+// v1.5.1 H1.1 (audit HIGH-S2): the bare `build` substring let non-build
+// commands like `Bash("ls build/")` clear the Iron Law without running tests.
+//
+// v1.5.1 H1.1-followup (Trident r18 finding): the first cut used `[\s;&|]`
+// as a command-start marker, but plain whitespace inside arguments still let
+// `echo npm test` and `printf 'npm run build'` satisfy the gate. The fix is
+// structural, not regex-stretching: split the bash command into chain-
+// segments on real shell separators (`;`, `&&`, `||`, `|`) and require a
+// verify verb at the START of at least one segment (after an optional
+// env-var prefix like `NODE_ENV=production`).
+const VERIFY_VERB_RE =
+  /^(?:[A-Z_][A-Z0-9_]*=\S+\s+)*(?:npm test|node --test|cargo test|pytest|preflight|ijfw preflight|npm run build|yarn build|pnpm build|bun build|cargo build|tsc --build|tsc -b|make(?:\s|$))/i;
+
+const SHELL_SEGMENT_SPLIT_RE = /\s*(?:&&|\|\||;|\|)\s*/;
+
+/**
+ * Return true iff `command` runs a recognized test/build verb as the head of
+ * at least one chain-segment. `echo npm test` does NOT match (echo is the
+ * head); `cd foo && npm test` DOES (the second segment is `npm test`).
+ * Exported for unit-tests of the bash-segment splitter.
+ */
+export function isVerificationCommand(command) {
+  if (typeof command !== 'string' || !command) return false;
+  const segments = command.trim().split(SHELL_SEGMENT_SPLIT_RE);
+  for (const seg of segments) {
+    if (VERIFY_VERB_RE.test(seg.trim())) return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Core gate
@@ -91,9 +112,7 @@ export function checkVerificationGate(message, toolCallsInMessage) {
   if (claims.length === 0) return { ok: true };
 
   const verificationCalls = toolCallsInMessage.filter(
-    (t) =>
-      t.tool === 'Bash' &&
-      VERIFICATION_COMMAND_RE.test(t.input?.command ?? ''),
+    (t) => t.tool === 'Bash' && isVerificationCommand(t.input?.command ?? ''),
   );
 
   if (verificationCalls.length === 0) {

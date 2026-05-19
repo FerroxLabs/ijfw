@@ -28,22 +28,33 @@ export function writeAtomic(targetPath, data, opts = {}) {
   // Refuse symlinks at target -- supply-chain hygiene per v3 sec 1.
   //
   // v1.5.1 H1.3 (audit update-install-trust.md F-COR-1): was `statSync`, which
-  // follows symlinks and returns the stat of the TARGET. On a symlink target's
-  // stat, `isSymbolicLink()` always returns false, so this check was dead code.
-  // Fixed to `lstatSync` which returns the stat of the link itself.
+  // follows symlinks. On a symlink target's stat, `isSymbolicLink()` always
+  // returns false, so the check was dead code. Fixed to `lstatSync`.
+  //
+  // v1.5.1 H1.3-followup (Trident r18): the throw was nested inside a try/
+  // catch that string-matched `e.message.startsWith('refusing')` to decide
+  // whether to rethrow. Functionally correct but fragile — if the message
+  // string ever changes the catch swallows the symlink refusal. Restructured
+  // so the throw is OUTSIDE any try/catch: only the lstatSync probe is
+  // try-wrapped (to tolerate a race where the file vanishes between
+  // existsSync and lstatSync), and the refusal throw runs unconditionally
+  // when isSymbolicLink() is true.
   //
   // NB: the rename pattern below (write tmp, rename to abs) is already
   // symlink-safe at the POSIX `rename(2)` level — rename replaces a symlink
   // rather than writing through it. This check is defense-in-depth: it makes
   // symlink-replacement an explicit refusal instead of a silent overwrite.
   if (existsSync(abs)) {
+    let st = null;
     try {
-      const st = lstatSync(abs);
-      if (st.isSymbolicLink && st.isSymbolicLink()) {
-        throw new Error(`refusing to overwrite symlink at ${abs}`);
-      }
-    } catch (e) {
-      if (e.message.startsWith('refusing')) throw e;
+      st = lstatSync(abs);
+    } catch {
+      // Race: file vanished between existsSync and lstatSync. Tolerate —
+      // the subsequent rename will either succeed cleanly or surface its own
+      // error. We do NOT silently allow a symlink overwrite via this path.
+    }
+    if (st && st.isSymbolicLink && st.isSymbolicLink()) {
+      throw new Error(`refusing to overwrite symlink at ${abs}`);
     }
   }
 

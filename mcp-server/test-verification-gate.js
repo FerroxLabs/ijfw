@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   checkVerificationGate,
+  isVerificationCommand,
   recordViolation,
 } from './src/orchestrator/verification-gate.js';
 
@@ -150,6 +151,70 @@ test('v1.5.1 H1: chained-after-separator verify commands still satisfy', () => {
     const result = checkVerificationGate('DONE — verified.', toolCalls);
     assert.equal(result.ok, true,
       `chained verify command must still satisfy gate: ${cmd}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// v1.5.1 H1.1-followup (Trident r18 finding): the first cut still let
+// `echo npm test` and `printf 'npm run build'` satisfy the gate because plain
+// whitespace inside an argument was treated as a "command boundary." Fix:
+// segment-split on real shell separators and require the verb at the HEAD of
+// at least one segment (after an optional env-var prefix).
+// ---------------------------------------------------------------------------
+
+test('v1.5.1 H1.1-followup: echo "npm test" does NOT satisfy verification', () => {
+  // The Trident-found bug: echo's argument contained the verb. With the first
+  // cut's `[\s;&|]` marker, the space after `echo` matched, so the gate cleared.
+  const toolCalls = [{ tool: 'Bash', input: { command: 'echo npm test' } }];
+  const result = checkVerificationGate('DONE — shipping.', toolCalls);
+  assert.equal(result.ok, false,
+    'echoing the verb name must not clear the Iron Law');
+});
+
+test('v1.5.1 H1.1-followup: printf "npm run build" does NOT satisfy', () => {
+  const toolCalls = [{ tool: 'Bash', input: { command: "printf 'npm run build'" } }];
+  const result = checkVerificationGate('DONE — shipping.', toolCalls);
+  assert.equal(result.ok, false,
+    'printf of a verb-shaped argument must not clear the Iron Law');
+});
+
+test('v1.5.1 H1.1-followup: real env-prefixed commands still satisfy', () => {
+  // The fix must NOT regress env-prefixed real commands.
+  const envs = [
+    'NODE_ENV=production npm run build',
+    'NODE_ENV=test CI=1 npm test',
+    'DEBUG=* node --test',
+  ];
+  for (const cmd of envs) {
+    const toolCalls = [{ tool: 'Bash', input: { command: cmd } }];
+    const result = checkVerificationGate('DONE — verified.', toolCalls);
+    assert.equal(result.ok, true,
+      `env-prefixed verify command must satisfy gate: ${cmd}`);
+  }
+});
+
+test('v1.5.1 H1.1-followup: isVerificationCommand splitter handles real chains', () => {
+  // Direct test of the new function. Each example chains a non-verify command
+  // with a verify command and must return true.
+  for (const cmd of [
+    'cd mcp-server && npm test',
+    'mkdir build && cargo build --release',
+    'rm -rf node_modules; npm test',
+    'something || pytest',
+    'echo "starting" && NODE_ENV=test node --test',
+  ]) {
+    assert.equal(isVerificationCommand(cmd), true, `must accept: ${cmd}`);
+  }
+  // These must NOT match.
+  for (const cmd of [
+    'echo npm test',
+    "printf 'cargo build'",
+    'mkdir build',
+    'ls build/',
+    'cat package.json | grep test',  // grep test isn't npm test
+    'sleep 60',
+  ]) {
+    assert.equal(isVerificationCommand(cmd), false, `must reject: ${cmd}`);
   }
 });
 
