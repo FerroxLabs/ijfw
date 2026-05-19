@@ -22,6 +22,19 @@ import { fileURLToPath } from 'url';
 import { execFileSync, spawnSync } from 'child_process';
 // C9.7: Trident lens-health probes for the dashboard tile.
 import { probeLenses, healthTileShape } from '../../mcp-server/src/trident/lens-health.js';
+// SECURITY (audit H3.3): redact secrets before serving raw memory/transcript content.
+import { redactSecrets } from '../../mcp-server/src/redactor.js';
+
+// SECURITY (audit H3.2): strict Content-Security-Policy header applied to every
+// HTML response. `'unsafe-inline'` is required because the dashboard inlines
+// styles + scripts in index.html; everything else is locked to same-origin.
+// `default-src 'self'` blocks foreign script/iframe injection even if XSS slips through.
+const CSP_HEADER = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'";
+
+// SECURITY (audit H3.3): refuse to redact files larger than 5 MiB. Streaming
+// regex replace across multi-MB files is both slow and risks splitting a
+// secret across chunk boundaries; bounce with 413 instead.
+const MEMORY_FILE_MAX_BYTES = 5 * 1024 * 1024;
 
 // Probe sqlite3 binary once at startup. All callers check this before querying.
 const SQLITE3_AVAILABLE = (() => {
@@ -1614,7 +1627,7 @@ const server = createServer((req, res) => {
   if (url === '/wave-intervention' || url === '/wave-intervention.html') {
     try {
       const html = readFileSync(join(__dirname, 'wave-intervention.html'), 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Security-Policy': CSP_HEADER });
       res.end(html);
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -1630,7 +1643,23 @@ const server = createServer((req, res) => {
 
     function serveMemoryContent(fp, displayName) {
       try {
-        const content = readFileSync(fp, 'utf8');
+        // SECURITY (audit H3.3): hard cap file size before reading. The
+        // memory-file route can serve raw transcript JSONL which has no schema
+        // ceiling; without the cap a 1 GiB file would OOM the dashboard.
+        try {
+          const st = statSync(fp);
+          if (st.size > MEMORY_FILE_MAX_BYTES) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'file too large', max_bytes: MEMORY_FILE_MAX_BYTES, actual_bytes: st.size }));
+            return;
+          }
+        } catch { /* fall through; readFileSync will surface ENOENT */ }
+        const rawContent = readFileSync(fp, 'utf8');
+        // SECURITY (audit H3.3): redact secrets (API keys, tokens, JWTs, etc.)
+        // before serving raw memory/transcript content to the dashboard.
+        // The transcript JSONL files frequently contain tool-call output that
+        // echoes user-supplied secrets back into the conversation.
+        const content = redactSecrets(rawContent);
         const result = { name: displayName, content, path: fp };
         if (content.length > 5000) {
           // Split on --- frontmatter separators or ## headings
@@ -1735,7 +1764,7 @@ const server = createServer((req, res) => {
   if (url === '/brainstorm') {
     const files = listBrainstormFiles();
     if (!files.length) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Security-Policy': CSP_HEADER });
       res.end(BRAINSTORM_WAITING_HTML);
       return;
     }
@@ -1749,14 +1778,14 @@ const server = createServer((req, res) => {
         const withRefresh = raw.includes('http-equiv="refresh"') || raw.includes("http-equiv='refresh'")
           ? raw
           : raw.replace(/(<head[^>]*>)/i, '$1\n<meta http-equiv="refresh" content="2">');
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Security-Policy': CSP_HEADER });
         res.end(withRefresh);
       } else {
         // Fragment -- wrap in dark themed shell
         const navLinks = files.map((f, i) =>
           `<a href="/brainstorm?file=${encodeURIComponent(f)}" class="${i === 0 ? 'active' : ''}">${f}</a>`
         ).join('\n');
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Security-Policy': CSP_HEADER });
         res.end(BRAINSTORM_DARK_WRAPPER(files[0], navLinks, raw, true));
       }
     } catch (err) {
@@ -1769,7 +1798,7 @@ const server = createServer((req, res) => {
   // Default: serve dashboard HTML
   try {
     const html = readFileSync(htmlPath, 'utf8');
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CSP_HEADER });
     res.end(html);
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'text/plain' });

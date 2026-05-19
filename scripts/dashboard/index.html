@@ -567,7 +567,11 @@ function fmtTs(iso){
 }
 function esc(s){
   if(!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // SECURITY (audit H3.1): escape single quotes too — esc() output is sometimes
+  // interpolated into single-quoted JS strings inside onclick attributes
+  // (e.g. mem-card-header). Without &#39; escaping, a memory file named
+  // `evil');alert(1);//.md` would break out of the JS string and execute.
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function platformBadges(hasClaude,hasCodex,hasGemini){
   var b='';
