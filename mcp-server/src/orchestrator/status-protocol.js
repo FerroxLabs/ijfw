@@ -59,7 +59,13 @@ export class ProtocolViolation extends Error {
 export function parseAgentReport(reportText) {
   const raw = reportText;
 
-  const statusMatch = raw.match(/^Status:\s*(\S+)\s*$/m);
+  // v1.5.1 H1.2 (audit workflow.md HIGH-F1): take the LAST `^Status:` match,
+  // not the first. The protocol places `Status:` at the end of the report, so
+  // when an agent quotes a prior wave's `Status: BLOCKED` mid-body, the FIRST
+  // match was hijacking the agent's own status at the end. Same fix applied
+  // to `extract()` below for Attempts / Branch / Commit / Tests / etc.
+  const statusMatches = [...raw.matchAll(/^Status:\s*(\S+)\s*$/gm)];
+  const statusMatch = statusMatches[statusMatches.length - 1];
   if (!statusMatch) {
     throw new ProtocolViolation('missing Status: line in agent report', raw);
   }
@@ -89,10 +95,21 @@ export function parseAgentReport(reportText) {
   };
 }
 
-/** Extract a single-line field value, or undefined if absent. */
+/**
+ * Extract the LAST single-line field value, or undefined if absent.
+ *
+ * v1.5.1 H1.2 (audit workflow.md HIGH-F1 / MED-C2): take the last match, not
+ * the first, so a quoted prior `Attempts: 5` (or any other field) does not
+ * override the agent's own value at the end of the report.
+ *
+ * Callers pass static field names (Commit, Branch, Tests, Attempts, etc.), so
+ * regex injection through `field` is not a concern — but we keep this comment
+ * as a tripwire: if you ever pass a user-controlled string here, escape it.
+ */
 function extract(text, field) {
-  const m = text.match(new RegExp(`^${field}:\\s*(.+?)\\s*$`, 'm'));
-  return m ? m[1] : undefined;
+  const matches = [...text.matchAll(new RegExp(`^${field}:\\s*(.+?)\\s*$`, 'gm'))];
+  const last = matches[matches.length - 1];
+  return last ? last[1] : undefined;
 }
 
 // ---------------------------------------------------------------------------
