@@ -25,6 +25,11 @@ import { parseAgentReport, handleStatus, ProtocolViolation } from './status-prot
 // loop so every downstream checkpoint/receipt/session row can be rolled up by
 // session in the dashboard.
 import { ensureTraceId } from '../observability/trace-id.js';
+// v1.5.0 audit-MED-work-M1 / M3: resume_preference config loader + composable
+// termination conditions.
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { defaultTermination } from './termination.js';
 
 /**
  * Review a subagent's report through the v1.4.4 4-value protocol.
@@ -95,11 +100,71 @@ export function reviewSubagentReport(reportText, ctx) {
  * that truncated. We never reselect the truncated AI itself.
  */
 
-const RESUME_PREFERENCE = {
+// Built-in defaults. v1.5.0 audit-MED-work-M1 promoted this to a config-
+// readable field on `.ijfw/swarm.json::resume_preference` so rosters that
+// include `opencode`, `aider`, `copilot`, etc. get cross-AI resume too
+// instead of falling through to escalate_to_user.
+const DEFAULT_RESUME_PREFERENCE = {
   claude: ['gemini', 'codex'],
   gemini: ['claude', 'codex'],
   codex: ['claude', 'gemini'],
 };
+
+// Cache one read per projectRoot per process — `selectResumeAI` is hot on the
+// orchestrator critical path and re-reading swarm.json every call wastes I/O.
+const _resumePrefCache = new Map();
+
+/**
+ * Load `resume_preference` from `<projectRoot>/.ijfw/swarm.json` if present,
+ * shallow-merge over the built-in defaults. Missing file / malformed JSON /
+ * missing field → defaults silently (this is advisory routing, never throws).
+ *
+ * Result shape: `{ [truncatedAI]: string[] }`. Keys NOT in defaults are kept
+ * (so a project with `opencode: ['claude','gemini']` can have its entry
+ * looked up by selectResumeAI), and entries in defaults stay unless the
+ * config explicitly overrides them with an array.
+ *
+ * @param {string} [projectRoot]
+ * @returns {Record<string, string[]>}
+ */
+export function loadResumePreference(projectRoot) {
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    return { ...DEFAULT_RESUME_PREFERENCE };
+  }
+  if (_resumePrefCache.has(projectRoot)) {
+    return _resumePrefCache.get(projectRoot);
+  }
+  const merged = { ...DEFAULT_RESUME_PREFERENCE };
+  try {
+    const swarmPath = join(projectRoot, '.ijfw', 'swarm.json');
+    if (existsSync(swarmPath)) {
+      const raw = JSON.parse(readFileSync(swarmPath, 'utf8'));
+      const cfg = raw && typeof raw === 'object' ? raw.resume_preference : null;
+      if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+        for (const [k, v] of Object.entries(cfg)) {
+          if (typeof k !== 'string' || k.length === 0) continue;
+          if (!Array.isArray(v)) continue;
+          const list = v.filter((x) => typeof x === 'string' && x.length > 0);
+          if (list.length > 0) merged[k] = list;
+        }
+      }
+    }
+  } catch { /* advisory — fall back to defaults */ }
+  _resumePrefCache.set(projectRoot, merged);
+  return merged;
+}
+
+/**
+ * Test-only helper to clear the resume-preference cache. Used by tests that
+ * mutate `.ijfw/swarm.json` and re-call `selectResumeAI` in the same process.
+ * @internal
+ */
+export function _resetResumePrefCache() {
+  _resumePrefCache.clear();
+}
+
+// Kept for backwards compat with any direct importers.
+const RESUME_PREFERENCE = DEFAULT_RESUME_PREFERENCE;
 
 /**
  * Pick a resume AI for a truncated subagent.
@@ -110,7 +175,12 @@ const RESUME_PREFERENCE = {
  * @param {string} [args.lastFailureReason]       - e.g. 'context_window'
  * @returns {string|null}                         - resume target, or null when blocked
  */
-export function selectResumeAI({ truncatedAI, available = ['claude', 'gemini', 'codex'], lastFailureReason } = {}) {
+export function selectResumeAI({
+  truncatedAI,
+  available = ['claude', 'gemini', 'codex'],
+  lastFailureReason,
+  projectRoot,
+} = {}) {
   if (typeof truncatedAI !== 'string' || truncatedAI.length === 0) {
     return null;
   }
@@ -122,7 +192,12 @@ export function selectResumeAI({ truncatedAI, available = ['claude', 'gemini', '
     return null;
   }
 
-  const preferred = RESUME_PREFERENCE[truncatedAI] || [];
+  // v1.5.0 audit-MED-work-M1: read resume_preference from swarm.json with a
+  // fall-through to DEFAULT_RESUME_PREFERENCE. Projects with `opencode` /
+  // `aider` / `copilot` in their roster get cross-AI resume routing instead
+  // of an escalate_to_user black hole.
+  const prefMap = loadResumePreference(projectRoot);
+  const preferred = prefMap[truncatedAI] || [];
   for (const candidate of preferred) {
     if (candidate === truncatedAI) continue;
     if (available.includes(candidate)) {
@@ -191,7 +266,8 @@ export function buildResumeBrief({ originalSpec, checkpoint = {}, fromAI, toAI }
 export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude', 'gemini', 'codex'] } = {}) {
   const truncatedAI = typeof parsed.ai === 'string' && parsed.ai.length > 0 ? parsed.ai : 'claude';
   const lastFailureReason = parsed.reason;
-  const toAI = selectResumeAI({ truncatedAI, available, lastFailureReason });
+  const projectRoot = typeof ctx.projectRoot === 'string' ? ctx.projectRoot : undefined;
+  const toAI = selectResumeAI({ truncatedAI, available, lastFailureReason, projectRoot });
 
   if (!toAI) {
     return {
@@ -207,4 +283,51 @@ export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude',
   const brief = buildResumeBrief({ originalSpec, checkpoint, fromAI: truncatedAI, toAI });
 
   return { action: 'resume_with_alt_ai', toAI, brief };
+}
+
+/**
+ * Generic iterative loop runner with a composable termination predicate
+ * (v1.5.0 audit-MED-work-M3). Closes the "MaxAttempts is the only stop
+ * rule" gap by letting callers compose WallClockTimeout, TokenBudget,
+ * FindingSeverity, etc. via the `or` / `and` combinators in
+ * `./termination.js`.
+ *
+ * The loop calls `step(iter, state)` on each iteration, expecting either:
+ *   - `{ done: true,  result }`        — natural completion; loop returns `{result}`
+ *   - `{ done: false, state?: object }` — keep iterating; new state merged in
+ *
+ * If the termination predicate fires before `done: true`, the loop returns
+ * `{ terminated: true, reason: 'termination', iter, state }`.
+ *
+ * The default predicate is MaxAttempts(3), matching the v1.4.4 N3 cap.
+ *
+ * @param {object} args
+ * @param {(iter: number, state: object) => Promise<{done:boolean, result?:unknown, state?:object}>} args.step
+ * @param {object} [args.initialState]   starting state object (shallow-merged with step output)
+ * @param {(iter:number, state:object) => boolean} [args.termination]
+ * @returns {Promise<{result?:unknown, terminated?:boolean, reason?:string, iter:number, state:object}>}
+ */
+export async function runLoop({ step, initialState = {}, termination } = {}) {
+  if (typeof step !== 'function') {
+    throw new TypeError('runLoop: step is required');
+  }
+  const stop = typeof termination === 'function' ? termination : defaultTermination();
+  let state = { ...initialState };
+  let iter = 0;
+  // Sentinel cap so a broken `termination` predicate can't pin the loop.
+  const HARD_CAP = 10_000;
+  while (iter < HARD_CAP) {
+    const out = await step(iter, state);
+    if (out && out.state && typeof out.state === 'object') {
+      state = { ...state, ...out.state };
+    }
+    if (out && out.done) {
+      return { result: out.result, iter, state };
+    }
+    if (stop(iter, state)) {
+      return { terminated: true, reason: 'termination', iter, state };
+    }
+    iter += 1;
+  }
+  return { terminated: true, reason: 'hard-cap', iter, state };
 }

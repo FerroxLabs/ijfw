@@ -83,3 +83,81 @@ test('handleTruncation returns escalate when selectResumeAI returns null', () =>
   assert.equal(typeof result.reason, 'string');
   assert.ok(result.reason.length > 0);
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-MED-work-M1 — resume_preference reads from swarm.json
+// ---------------------------------------------------------------------------
+import { loadResumePreference, _resetResumePrefCache } from './src/orchestrator/runtime-loop.js';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+function makeProject(swarmJsonContent) {
+  const dir = mkdtempSync(join(tmpdir(), 'ijfw-m1-'));
+  if (swarmJsonContent !== undefined) {
+    mkdirSync(join(dir, '.ijfw'), { recursive: true });
+    writeFileSync(join(dir, '.ijfw', 'swarm.json'), swarmJsonContent, 'utf8');
+  }
+  return dir;
+}
+
+test('M1: loadResumePreference returns defaults when no swarm.json', () => {
+  _resetResumePrefCache();
+  const dir = makeProject(undefined);
+  const pref = loadResumePreference(dir);
+  assert.deepEqual(pref.claude, ['gemini', 'codex']);
+  assert.deepEqual(pref.gemini, ['claude', 'codex']);
+  assert.deepEqual(pref.codex, ['claude', 'gemini']);
+});
+
+test('M1: loadResumePreference merges custom roster entries from swarm.json', () => {
+  _resetResumePrefCache();
+  const dir = makeProject(JSON.stringify({
+    resume_preference: {
+      opencode: ['claude', 'codex'],
+      aider:    ['gemini', 'claude'],
+      claude:   ['opencode', 'gemini'],  // override default
+    },
+  }));
+  const pref = loadResumePreference(dir);
+  assert.deepEqual(pref.opencode, ['claude', 'codex']);
+  assert.deepEqual(pref.aider,    ['gemini', 'claude']);
+  assert.deepEqual(pref.claude,   ['opencode', 'gemini']);
+  // unchanged defaults preserved
+  assert.deepEqual(pref.gemini, ['claude', 'codex']);
+});
+
+test('M1: malformed swarm.json falls back to defaults silently', () => {
+  _resetResumePrefCache();
+  const dir = makeProject('{{not valid json');
+  const pref = loadResumePreference(dir);
+  assert.deepEqual(pref.claude, ['gemini', 'codex']);
+});
+
+test('M1: selectResumeAI consults config-derived preference for non-default AIs', () => {
+  _resetResumePrefCache();
+  const dir = makeProject(JSON.stringify({
+    resume_preference: {
+      opencode: ['claude', 'codex'],
+    },
+  }));
+  const target = selectResumeAI({
+    truncatedAI: 'opencode',
+    available: ['claude', 'codex', 'opencode'],
+    projectRoot: dir,
+  });
+  assert.equal(target, 'claude');
+});
+
+test('M1: selectResumeAI returns null when no candidate available', () => {
+  _resetResumePrefCache();
+  const dir = makeProject(JSON.stringify({
+    resume_preference: { aider: ['gemini'] },
+  }));
+  const target = selectResumeAI({
+    truncatedAI: 'aider',
+    available: ['claude'],   // gemini not on the deployable list
+    projectRoot: dir,
+  });
+  assert.equal(target, null);
+});
