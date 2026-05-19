@@ -11,7 +11,7 @@
 //   5s default wait with 50ms retry. On timeout returns {status:'locked', pid}.
 
 import { writeFileSync, openSync, closeSync, fsyncSync, renameSync, readFileSync,
-  existsSync, mkdirSync, unlinkSync, statSync, chmodSync } from 'node:fs';
+  existsSync, mkdirSync, unlinkSync, statSync, lstatSync, chmodSync } from 'node:fs';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { platform } from 'node:os';
@@ -25,10 +25,20 @@ export function writeAtomic(targetPath, data, opts = {}) {
 
   if (ensureDir && !existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 
-  // Refuse symlinks at target -- supply-chain hygiene per v3 sec 1
+  // Refuse symlinks at target -- supply-chain hygiene per v3 sec 1.
+  //
+  // v1.5.1 H1.3 (audit update-install-trust.md F-COR-1): was `statSync`, which
+  // follows symlinks and returns the stat of the TARGET. On a symlink target's
+  // stat, `isSymbolicLink()` always returns false, so this check was dead code.
+  // Fixed to `lstatSync` which returns the stat of the link itself.
+  //
+  // NB: the rename pattern below (write tmp, rename to abs) is already
+  // symlink-safe at the POSIX `rename(2)` level — rename replaces a symlink
+  // rather than writing through it. This check is defense-in-depth: it makes
+  // symlink-replacement an explicit refusal instead of a silent overwrite.
   if (existsSync(abs)) {
     try {
-      const st = statSync(abs);
+      const st = lstatSync(abs);
       if (st.isSymbolicLink && st.isSymbolicLink()) {
         throw new Error(`refusing to overwrite symlink at ${abs}`);
       }
