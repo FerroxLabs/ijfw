@@ -97,7 +97,33 @@ e0f1c4e — these are NOT caused by wire-up.
   - Iframe browser smoke: NEW `test-iframe-sandbox-smoke.js` (7 static
     tests, all passing). Plus a REAL Playwright run in headless Chrome
     against `scripts/dashboard/design-preview-host.html` confirmed three
-    security properties in the live DOM:
+    security properties in the live DOM (see W3.C below for full evidence).
+
+### v1.5.0 wire-up Wave-W4 prep (2026-05-19)
+
+- **W4.a — Chunker normalizer + renderer field-name expansion** Root cause
+  of Trident r19's `(no detail)` dropout: the chunker normalizer + CLI
+  renderer only looked for `finding`/`message`/`text` fields, but auditors
+  emit findings with `description`/`issue`/`detail`/`note`/`summary`. The
+  fallback chain in both `cross-audit-chunker.js::normaliseFinding` and
+  `cross-orchestrator-cli.js`'s merged-finding render block now covers all
+  observed field names (legacy + new). r20 will surface the actual auditor
+  text rather than `(no detail)`. +5 regression tests in
+  `test-cross-audit-chunker.js` pin the wider contract; the legacy
+  `finding`/`message`/`text` keys still work unchanged.
+
+- **W4.b — ui-review-runner parallelism witness made deterministic**
+  W1.D/E's `parallel.parallelism === true` assertion was a millisecond-
+  resolution Date.now() comparison (`maxStart <= minFinish`). On fast
+  sync graders the timestamps drift between ms boundaries; the assertion
+  was occasionally flaky in batched sweeps (CPU-loaded runs). Replaced
+  with a concurrency counter: each grader increments `inFlight` on entry,
+  yields the microtask queue, then runs to completion. With Promise.all
+  dispatch, all 7 graders MUST enter their wrapper before any can return,
+  so `parallel.peakConcurrent === 7` is deterministic regardless of work
+  speed or wall-clock resolution. Sequential implementation would peak
+  at 1. The runner now surfaces `peakConcurrent` on the return value;
+  test asserts the new witness. 5/5 stress runs green.
       1. Safe http URL → iframe with `sandbox="allow-scripts"` only;
          `sandboxIncludesAllowSameOrigin: false`.
       2. `javascript:alert(1)` URL → no iframe spawned; fallback `.empty`

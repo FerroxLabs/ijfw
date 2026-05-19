@@ -1109,7 +1109,13 @@ async function cmdCross({ mode, target, only, confirm, expand, chunk }) {
         const sev = (f.severity || 'note').toUpperCase();
         const cluster = f.clusterSize > 1 ? ` [×${f.clusterSize}]` : '';
         const tgt = f.target ? ` ${f.target} —` : '';
-        const text = f.finding || f.text || '(no detail)';
+        // v1.5.0 wire-W4: widen field fallback to cover description/issue/
+        // detail/note/summary keys auditors emit. Closes the r19 "(no detail)"
+        // dropout that made adjudication a guessing game.
+        const text = f.finding || f.text || f.message ||
+                     f.description || f.issue ||
+                     f.detail || f.details || f.note || f.summary ||
+                     '(no detail)';
         console.log(`  ${sev}${cluster}${tgt} ${text}`);
       }
       return;

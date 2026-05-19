@@ -93,6 +93,10 @@ export function chunkText(text, opts = {}) {
 
 // Normalize finding shape — accept {severity, finding, target, action} OR
 // {severity, message} OR raw strings; coerce to a common shape.
+// v1.5.0 wire-W4: widened the field-name fallback chain to cover the field
+// names auditors actually emit. Trident r19 dropped 100% of finding text to
+// "(no detail)" because the lens responses used `description`/`issue`/`detail`
+// rather than `finding`/`message`/`text`. r20 captures them properly.
 function normaliseFinding(raw) {
   if (typeof raw === 'string') {
     return { severity: 'medium', finding: raw, target: '', action: '' };
@@ -100,9 +104,18 @@ function normaliseFinding(raw) {
   if (!raw || typeof raw !== 'object') return null;
   return {
     severity: String(raw.severity || 'medium').toLowerCase(),
-    finding:  String(raw.finding || raw.message || raw.text || ''),
-    target:   String(raw.target || raw.location || raw.path || ''),
-    action:   String(raw.action || raw.fix || raw.recommendation || ''),
+    finding:  String(
+      raw.finding || raw.message || raw.text || raw.description ||
+      raw.issue || raw.detail || raw.details || raw.note || raw.summary || ''
+    ),
+    target:   String(
+      raw.target || raw.location || raw.path || raw.file ||
+      raw.where || raw.line || ''
+    ),
+    action:   String(
+      raw.action || raw.fix || raw.recommendation ||
+      raw.suggestion || raw.remediation || ''
+    ),
     // preserve unknown keys for printers that want them
     _extra: raw,
   };

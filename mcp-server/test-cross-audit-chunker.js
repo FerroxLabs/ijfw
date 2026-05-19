@@ -126,3 +126,74 @@ test('chunkText r17-M1: small chunkSize + default overlap stays bounded', () => 
     assert.ok(advance >= 1, 'loop must advance at least 1 char per chunk');
   }
 });
+
+// v1.5.0 wire-W4 regression: Trident r19 dropped 100% of finding text to
+// "(no detail)" because the auditor responses used `description`/`issue`/
+// `detail` field names rather than `finding`/`message`/`text`. The
+// normaliseFinding fallback chain has been widened. These tests pin the new
+// contract so a future field-name shrink can't silently re-introduce the
+// dropout.
+
+test('wire-W4: mergeFindings preserves text from `description` key', () => {
+  const r = mergeFindings([
+    { chunkIndex: 0, findings: [
+      { severity: 'high', description: 'iframe missing sandbox attribute', target: 'foo.js:42' },
+    ] },
+  ]);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].finding, 'iframe missing sandbox attribute');
+  assert.equal(r[0].target, 'foo.js:42');
+});
+
+test('wire-W4: mergeFindings preserves text from `issue` key', () => {
+  const r = mergeFindings([
+    { chunkIndex: 0, findings: [
+      { severity: 'medium', issue: 'null guard missing on .map() entry' },
+    ] },
+  ]);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].finding, 'null guard missing on .map() entry');
+});
+
+test('wire-W4: mergeFindings preserves text from `detail`/`details`/`note`/`summary`', () => {
+  const r = mergeFindings([
+    { chunkIndex: 0, findings: [
+      { severity: 'low',    detail:  'detail-text' },
+      { severity: 'low',    details: 'details-text' },
+      { severity: 'low',    note:    'note-text' },
+      { severity: 'medium', summary: 'summary-text' },
+    ] },
+  ]);
+  const texts = r.map(x => x.finding).sort();
+  assert.deepEqual(texts, ['detail-text', 'details-text', 'note-text', 'summary-text']);
+});
+
+test('wire-W4: mergeFindings preserves target from `file`/`where`/`line`', () => {
+  // Note: finding text must be distinct enough that jaccard dedupe doesn't
+  // collapse them. Single-char texts tokenize to empty sets and cluster.
+  const r = mergeFindings([
+    { chunkIndex: 0, findings: [
+      { severity: 'high', finding: 'alpha bravo charlie',   file:  'src/x.js' },
+      { severity: 'high', finding: 'delta echo foxtrot',    where: 'src/y.js:12' },
+      { severity: 'high', finding: 'golf hotel india juliet', line: 'src/z.js:99' },
+    ] },
+  ]);
+  const targets = r.map(x => x.target).sort();
+  assert.deepEqual(targets, ['src/x.js', 'src/y.js:12', 'src/z.js:99']);
+});
+
+test('wire-W4: legacy `finding` / `message` / `text` keys still work', () => {
+  const r = mergeFindings([
+    { chunkIndex: 0, findings: [
+      { severity: 'high', finding: 'finding-keyword distinct alpha' },
+      { severity: 'high', message: 'message-keyword distinct bravo' },
+      { severity: 'high', text:    'text-keyword distinct charlie' },
+    ] },
+  ]);
+  const texts = r.map(x => x.finding).sort();
+  assert.deepEqual(texts, [
+    'finding-keyword distinct alpha',
+    'message-keyword distinct bravo',
+    'text-keyword distinct charlie',
+  ]);
+});

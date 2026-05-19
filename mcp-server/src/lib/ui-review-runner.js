@@ -374,19 +374,26 @@ export async function runUiReview({
 
   const files = walkSourceFiles(scopes, projectRoot);
 
-  // W1.E: 7 graders in parallel. The wrapper awaits a single yield BEFORE
-  // each grader runs so the event-loop registers every grader's startedAt
-  // in the same tick. Without the yield, the first synchronous grader
-  // finishes before the second even starts -- which is still concurrent
-  // dispatch but inspection-of-timestamps would show pseudo-sequential.
-  // With the yield, all 7 startedAt timestamps land in the same tick.
+  // W1.E: 7 graders in parallel via Promise.all. Concurrency witness is a
+  // counter (not timestamps): each grader increments `inFlight` on entry,
+  // yields the microtask queue once, then runs to completion. With
+  // Promise.all dispatch, all 7 graders enter their wrapper in the same
+  // tick before any returns -- so `peakConcurrent === PILLARS.length`.
+  // A sequential implementation would peak at 1. This witness is
+  // deterministic regardless of grader work speed or wall-clock resolution
+  // (Date.now() ms precision was flaky on fast sync work).
   const graderArgs = { spec, sourceScope: scopes, files, projectRoot, peerInputs };
   const beforeAll = Date.now();
+  let _inFlight = 0;
+  let _peakConcurrent = 0;
   const verdicts = await Promise.all(
     PILLARS.map((pillar) => Promise.resolve().then(async () => {
-      // Yield so concurrent graders all reach this point before any finishes.
+      _inFlight += 1;
+      if (_inFlight > _peakConcurrent) _peakConcurrent = _inFlight;
+      // Yield so all other graders also reach this point before any finishes.
       await Promise.resolve();
-      return GRADERS[pillar](graderArgs);
+      try { return GRADERS[pillar](graderArgs); }
+      finally { _inFlight -= 1; }
     })),
   );
   const afterAll = Date.now();
@@ -399,9 +406,14 @@ export async function runUiReview({
     maxStart: startedAtList[startedAtList.length - 1],
     minFinish: finishedAtList[0],
     maxFinish: finishedAtList[finishedAtList.length - 1],
-    // True iff the latest start was before the earliest finish — i.e. all
-    // graders were in flight at the same moment.
-    parallelism: startedAtList[startedAtList.length - 1] <= finishedAtList[0],
+    // Concurrency witness: how many graders were simultaneously inside the
+    // dispatcher wrapper at the peak. Equals PILLARS.length when Promise.all
+    // dispatch is parallel; would be 1 if implementation went sequential.
+    peakConcurrent: _peakConcurrent,
+    // True iff the witness == PILLARS.length (all 7 entered before any
+    // exited). Robust to wall-clock resolution since it's a tick-level event
+    // count, not a timestamp comparison.
+    parallelism: _peakConcurrent === PILLARS.length,
     wallMs: afterAll - beforeAll,
   };
 

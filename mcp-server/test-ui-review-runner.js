@@ -146,14 +146,18 @@ test('wire-W1.E: 7 graders dispatch in parallel (max start <= min finish)', asyn
       projectRoot: root,
       write: false,
     });
-    // Critical assertion: latest start time <= earliest finish time. If
-    // graders were sequential, this would be false (the next grader couldn't
-    // start until the previous one finished).
+    // Critical assertion: peak concurrency equals the pillar count (7).
+    // The runner's Promise.all wrapper increments `_inFlight` on entry +
+    // yields the microtask queue, so all 7 graders must enter before any
+    // can exit. A sequential implementation would peak at 1. This witness
+    // is deterministic regardless of CPU speed (the earlier Date.now()
+    // millisecond comparison was flaky on fast sync graders).
     assert.equal(
-      r.parallel.parallelism,
-      true,
-      `expected parallelism, got start=[${r.parallel.minStart}, ${r.parallel.maxStart}] finish=[${r.parallel.minFinish}, ${r.parallel.maxFinish}]`,
+      r.parallel.peakConcurrent,
+      PILLARS.length,
+      `expected peak concurrency = ${PILLARS.length}, got ${r.parallel.peakConcurrent}`,
     );
+    assert.equal(r.parallel.parallelism, true);
     assert.ok(r.parallel.wallMs >= 0);
     // All 7 graders have startedAt / finishedAt set.
     for (const v of r.verdicts) {
