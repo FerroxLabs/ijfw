@@ -84,6 +84,47 @@ export function writeCache(payload, env = process.env) {
 // Track in-flight refresh so concurrent calls don't fire N probes.
 let inflightRefresh = null;
 
+// Semver-aware comparison for model IDs.
+//
+// Why: Lexical sort breaks once a family hits double-digit majors:
+// `gemini-10.0` sorts BEFORE `gemini-2.0` because "1" < "2" before
+// length is considered. This compares dot-separated segments numerically
+// (highest first when used as a max-picker), falling back to lexical
+// for non-numeric tail segments like `-flash`, `-pro`, `-thinking`.
+//
+// Returns negative if a < b, positive if a > b, 0 if equal.
+// Inputs are full model IDs, e.g. 'gemini-2.5-pro', 'gemini-10.0-pro'.
+export function compareModelIds(a, b) {
+  // Split on hyphens AND dots so 'gemini-2.5-pro' → ['gemini','2','5','pro'].
+  const segs = (s) => String(s).split(/[-.]/);
+  const A = segs(a);
+  const B = segs(b);
+  const n = Math.max(A.length, B.length);
+  for (let i = 0; i < n; i++) {
+    const sa = A[i];
+    const sb = B[i];
+    if (sa === sb) continue;
+    if (sa === undefined) return -1;   // shorter is "less than"
+    if (sb === undefined) return 1;
+    const na = /^\d+$/.test(sa) ? parseInt(sa, 10) : NaN;
+    const nb = /^\d+$/.test(sb) ? parseInt(sb, 10) : NaN;
+    const aIsNum = Number.isFinite(na);
+    const bIsNum = Number.isFinite(nb);
+    if (aIsNum && bIsNum) {
+      if (na !== nb) return na - nb;
+      continue;
+    }
+    // Numeric segments beat non-numeric at the same position (so
+    // 'gemini-2.5-pro' < 'gemini-2.5-pro-thinking' falls out via the
+    // length rule above; here we just need deterministic ordering for
+    // mixed types).
+    if (aIsNum !== bIsNum) return aIsNum ? 1 : -1;
+    // Both non-numeric — lexical fallback.
+    return sa < sb ? -1 : 1;
+  }
+  return 0;
+}
+
 // Synchronous resolver. Returns the cached model id, or the hardcoded
 // fallback, NEVER null. Triggers a background refresh if stale.
 //   family: 'openai' | 'google' | 'anthropic'
@@ -175,7 +216,7 @@ async function probeGoogle(env, fetchImpl) {
       .filter(n => /^gemini-/.test(n))
       .filter(n => /-pro\b/.test(n))                  // prefer pro tier
       .filter(n => !/preview|exp|deprecated/i.test(n))
-      .sort();                                        // gemini-3.1-pro > gemini-2.5-pro lexically
+      .sort(compareModelIds);                         // semver-aware: gemini-10.0 > gemini-2.5
     const pick = candidates[candidates.length - 1];
     return pick ? { id: pick } : null;
   } catch {
