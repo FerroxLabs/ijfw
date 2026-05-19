@@ -410,6 +410,23 @@ function parseArgsInner(args) {
     return { cmd: 'design', sub: args[1] || 'status' };
   }
 
+  // v1.5.0 wire-W1.D — `ijfw ui-review --spec <path> --scope <dirs>`
+  if (args[0] === 'ui-review') {
+    const opts = { cmd: 'ui-review', spec: null, scope: null, write: true, gcSketches: false, peerInputs: null };
+    for (let i = 1; i < args.length; i++) {
+      const a = args[i];
+      if ((a === '--spec' || a === '-s') && args[i + 1]) { opts.spec = args[++i]; }
+      else if (a.startsWith('--spec=')) opts.spec = a.slice('--spec='.length);
+      else if ((a === '--scope' || a === '-S') && args[i + 1]) { opts.scope = args[++i]; }
+      else if (a.startsWith('--scope=')) opts.scope = a.slice('--scope='.length);
+      else if (a === '--no-write') opts.write = false;
+      else if (a === '--gc-sketches') opts.gcSketches = true;
+      else if ((a === '--peer-inputs') && args[i + 1]) { opts.peerInputs = args[++i]; }
+      else if (a.startsWith('--peer-inputs=')) opts.peerInputs = a.slice('--peer-inputs='.length);
+    }
+    return opts;
+  }
+
   if (args[0] === 'blackboard') {
     return { cmd: 'blackboard', sub: args[1] || 'status' };
   }
@@ -2372,6 +2389,8 @@ if (isMainModule) {
     cmdDashboard(parsed.sub);
   } else if (parsed.cmd === 'design') {
     cmdDesign(parsed.sub);
+  } else if (parsed.cmd === 'ui-review') {
+    cmdUiReview(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'blackboard') {
     cmdBlackboard(parsed.sub);
   } else if (parsed.cmd === 'team') {
@@ -2469,6 +2488,69 @@ function openDesignUrl(url) {
       ? spawnSync('cmd', ['/c', 'start', '', url], { stdio: 'ignore' })
       : spawnSync('xdg-open', [url], { stdio: 'ignore' });
   return res.status ?? 0;
+}
+
+// v1.5.0 wire-W1.D — `ijfw ui-review` production CLI. Wires the 7-pillar
+// audit runner into a user-facing command. Args:
+//   --spec <UI-SPEC.md path>           required
+//   --scope <comma-sep dirs>           required (e.g. "src,components")
+//   --no-write                         skip writing UI-REVIEW.md (preview mode)
+//   --gc-sketches                      run sketches-gc as the finalizer
+//   --peer-inputs <json-path>          optional axe / lighthouse / playwright
+//                                      pre-computed outputs (JSON file)
+//   --json                             machine-readable output (skip narrative)
+async function cmdUiReview(parsed) {
+  if (!parsed.spec) {
+    console.error('Usage: ijfw ui-review --spec <UI-SPEC.md> --scope <dirs> [--no-write] [--gc-sketches] [--peer-inputs <path>]');
+    process.exit(1);
+  }
+  if (!parsed.scope) {
+    console.error('ui-review: --scope is required (comma-separated dirs, e.g. "src,components")');
+    process.exit(1);
+  }
+  const specPath = isAbsolute(parsed.spec) ? parsed.spec : resolve(process.cwd(), parsed.spec);
+  if (!existsSync(specPath)) {
+    console.error(`ui-review: UI-SPEC not found at ${specPath}`);
+    process.exit(1);
+  }
+
+  let peerInputs = {};
+  if (parsed.peerInputs) {
+    const ppath = isAbsolute(parsed.peerInputs) ? parsed.peerInputs : resolve(process.cwd(), parsed.peerInputs);
+    try { peerInputs = JSON.parse(readFileSync(ppath, 'utf8')); }
+    catch (err) {
+      console.error(`ui-review: failed to read --peer-inputs JSON: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  const { runUiReview } = await import('./lib/ui-review-runner.js');
+  const result = await runUiReview({
+    uiSpecPath: specPath,
+    sourceScope: parsed.scope,
+    projectRoot: process.cwd(),
+    peerInputs,
+    write: parsed.write !== false,
+    gcSketches: !!parsed.gcSketches,
+  });
+
+  if (parsed.json) {
+    console.log(JSON.stringify({
+      topVerdict: result.topVerdict,
+      pillarVerdicts: result.pillarVerdicts,
+      reviewPath: result.reviewPath,
+      parallel: result.parallel,
+    }, null, 2));
+  } else {
+    console.log(`UI review: top-level ${result.topVerdict}`);
+    for (const [pillar, verdict] of Object.entries(result.pillarVerdicts)) {
+      console.log(`  - ${pillar.padEnd(12)} ${verdict}`);
+    }
+    if (result.reviewPath) console.log(`Review written to: ${result.reviewPath}`);
+    console.log(`Parallel grader run: wall=${result.parallel.wallMs}ms parallelism=${result.parallel.parallelism}`);
+  }
+  // Exit code: PASS=0, FLAG=0 (advisory), BLOCK=2 (ship-blocker)
+  process.exit(result.topVerdict === 'BLOCK' ? 2 : 0);
 }
 
 function cmdDesign(sub) {

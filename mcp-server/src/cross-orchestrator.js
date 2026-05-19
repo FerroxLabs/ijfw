@@ -23,6 +23,9 @@ import { buildRequest, parseResponse, mergeResponses, checkBudget } from './cros
 import { writeReceipt, readReceipts } from './receipts.js';
 import { runViaApi } from './api-client.js';
 import { RELEASE_BLOCKER_GATES, DegradedTridentError } from './trident/dispatch.js';
+// v1.5.0 wire-W1.B — Anthropic ephemeral-cache TTL heartbeat for long
+// convergence waves. Opt-in via IJFW_CACHE_KEEPALIVE_MS env (1s..5min).
+import { startKeepaliveFromEnv } from './lib/cache-keepalive.js';
 
 // ---------------------------------------------------------------------------
 // Per-provider timeout defaults (ms). Codex cold-start can take 120s+ (U2).
@@ -1189,6 +1192,7 @@ export async function runPhaseEConverge({
   runStamp,           // v1.5.0 audit-H4.5 — caller-supplied stamp; auto if absent
   totalTimeoutMs,     // v1.5.0 audit-MED-trident-M6 — cumulative timeout
   perLensBudgetUsd,   // v1.5.0 audit-MED-trident-M5 — per-lens USD cap
+  keepaliveOnTick,    // v1.5.0 wire-W1.B — caller-supplied keepalive heartbeat
   env = process.env,
 } = {}) {
   if (typeof dispatch !== 'function') {
@@ -1246,6 +1250,34 @@ export async function runPhaseEConverge({
     if (typeof _totalTimer.unref === 'function') _totalTimer.unref();
   }
 
+  // v1.5.0 wire-W1.B — Anthropic ephemeral-cache keepalive heartbeat.
+  // Production wiring for `mcp-server/src/lib/cache-keepalive.js`. A long
+  // Trident convergence (5+ minutes of sequential lens calls separated by
+  // CLI / API latency) can lose cache hits mid-wave because the 5-min TTL
+  // expires between calls even though every call re-sends the same cache-
+  // eligible prefix. The lib provides an opt-in heartbeat that fires a
+  // no-op on a configurable interval to keep the cache warm.
+  //
+  // Default OFF (intervalMs=0 when IJFW_CACHE_KEEPALIVE_MS env is unset).
+  // When the env var is set in the [1000, 300000] range, the heartbeat
+  // fires every N ms until convergence completes or the cumulative-timeout
+  // signal aborts (signal is passed through so the cap cascades into
+  // keepalive too).
+  //
+  // The default onTick is a counter increment; the count is surfaced on
+  // the return value + receipt for observability. Production callers can
+  // supply their own onTick via `keepaliveOnTick` arg (e.g. to ping an
+  // API endpoint that re-warms the cache prefix).
+  let _keepaliveTicks = 0;
+  const _keepalive = startKeepaliveFromEnv({
+    onTick: typeof keepaliveOnTick === 'function'
+      ? keepaliveOnTick
+      : () => { _keepaliveTicks += 1; },
+    onError: () => { /* keepalive errors must never crash the wave */ },
+    signal: _cycleAc.signal,
+    env,
+  });
+
   // v1.5.0 audit-MED-trident-M5 — per-lens budget. Tracks cumulative cost
   // attributed to each lens across this converge cycle; abort that lens once
   // its accumulated cost > cap. Cost source priority on dispatch return:
@@ -1268,6 +1300,9 @@ export async function runPhaseEConverge({
       clearTimeout(_totalTimer);
       _totalTimer = null;
     }
+    // v1.5.0 wire-W1.B — cancel keepalive (idempotent; no-op when never started).
+    try { _keepalive.cancel(); } catch { /* never throws */ }
+    const _keepaliveActive = _keepalive.isActive();
     // M5/M6: surface lens-budget + total-timeout posture on the return value
     // so callers can branch on partial-completion. lensCosts is always
     // present (even when no cap was set) so observability is consistent.
@@ -1276,6 +1311,10 @@ export async function runPhaseEConverge({
       lensCosts: { ..._lensCosts },
       ...(_lensOverBudget.size > 0 ? { lensesOverBudget: [..._lensOverBudget] } : {}),
       ...(_totalTimedOut ? { timedOutTotal: true } : {}),
+      // wire-W1.B observability: tick count + whether the heartbeat was wired
+      // at all for this run (proves the lib is live, not just imported).
+      keepaliveTicks: _keepaliveTicks,
+      keepaliveWired: _keepaliveActive || _keepaliveTicks > 0,
     };
     // Build + write the converge receipt. Failure to write must NOT clobber
     // the orchestrator return value (defensive — receipts are observability,
@@ -1309,6 +1348,10 @@ export async function runPhaseEConverge({
           per_lens_budget_usd: _resolvedPerLensCap,
           lens_costs: _lensCosts,
           lenses_over_budget: [..._lensOverBudget],
+          // wire-W1.B observability: how many keepalive heartbeats fired
+          // during this convergence; 0 means the lib was wired but the env
+          // opt-in was off, >0 proves the heartbeat ran in production.
+          keepalive_ticks: _keepaliveTicks,
         },
       };
       writeReceipt(_resolvedProjectDir, record);
@@ -1524,11 +1567,17 @@ export async function runPhaseEConverge({
 // One quirk: this dispatcher embeds the cycleSummary into the audit target
 // string (prefixed) so the lens sees prior-round context in its prompt.
 // Lens stdout shape: same as parseResponse('audit', stdout).
-export async function defaultConvergeDispatch({ lens, commitRange, iteration, cycleSummary, projectRoot } = {}) {
+export async function defaultConvergeDispatch({ lens, commitRange, iteration, cycleSummary, projectRoot, signal } = {}) {
   const env = process.env;
   const entry = ROSTER.find(e => e.id === lens);
   if (!entry) {
     return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: `lens "${lens}" not in roster` };
+  }
+  // v1.5.0 wire-W1.F — honor a pre-aborted cumulative-timeout signal before
+  // any CLI/API spawn so runPhaseEConverge's totalTimeoutMs cap actually
+  // bounds wall-clock time when the deadline expired between iterations.
+  if (signal && signal.aborted) {
+    return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: 'aborted' };
   }
   const reach = isReachable(lens, env);
   if (!reach.any) {
@@ -1550,7 +1599,9 @@ export async function defaultConvergeDispatch({ lens, commitRange, iteration, cy
   const request = buildRequest('audit', target, pick.id, 'general', null);
   const timeoutMs = timeoutForPick(pick, null);
   try {
-    const raw = await fireExternal(pick, request, timeoutMs, env, null);
+    // v1.5.0 wire-W1.F — forward cumulative-timeout signal so in-flight CLI
+    // spawn + API fallback both cascade their AbortControllers on deadline.
+    const raw = await fireExternal(pick, request, timeoutMs, env, signal || null);
     if (!raw || raw.status === 'timeout' || raw.status === 'failed' || raw.status === 'aborted') {
       return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: (raw && raw.stderr) || 'no output' };
     }

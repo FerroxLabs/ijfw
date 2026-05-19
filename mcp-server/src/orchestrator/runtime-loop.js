@@ -30,6 +30,10 @@ import { ensureTraceId } from '../observability/trace-id.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defaultTermination } from './termination.js';
+// v1.5.0 wire-W1.A: opt-in repo-map prefix for subagent dispatch / redispatch.
+// Folds the importance-ranked file summary in front of the brief when
+// IJFW_REPO_MAP=1 is set. Default off so existing flows are byte-identical.
+import { buildRepoMap, compactBriefForSubagent } from '../lib/repo-map.js';
 
 /**
  * Review a subagent's report through the v1.4.4 4-value protocol.
@@ -283,6 +287,96 @@ export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude',
   const brief = buildResumeBrief({ originalSpec, checkpoint, fromAI: truncatedAI, toAI });
 
   return { action: 'resume_with_alt_ai', toAI, brief };
+}
+
+// ---------------------------------------------------------------------------
+// v1.5.0 wire-W1.A — opt-in repo-map prefix for subagent (re)dispatch briefs
+// ---------------------------------------------------------------------------
+//
+// Production wire-up for `mcp-server/src/lib/repo-map.js`. The orchestrator-LLM
+// calls `ijfw_subagent_post_done` after every subagent turn. When the route
+// decision is a redispatch, the LLM composes a NEW brief for the next subagent.
+// With this wire active, the response payload carries `repoMapPrefix` — a
+// pre-built importance-ranked file summary the LLM prepends to the redispatch
+// brief, so the downstream subagent doesn't have to crawl the tree.
+//
+// Default OFF. Activates only when `IJFW_REPO_MAP=1` is set in the calling
+// process env AND a valid `projectRoot` is supplied. Pure no-op on miss.
+//
+// Failure modes are explicit: any throw inside buildRepoMap (permissions,
+// unreadable dirs, etc.) is swallowed and yields an empty prefix. This lets
+// the orchestrator-LLM remain on the existing redispatch path without
+// degrading.
+
+/**
+ * Build an opt-in repo-map prefix block for a subagent dispatch brief.
+ * Returns '' when env opt-in is missing OR projectRoot is invalid OR the
+ * map build throws. Never throws back to the caller.
+ *
+ * @param {object} args
+ * @param {string} [args.projectRoot]
+ * @param {object} [args.env]            defaults to process.env
+ * @param {number} [args.budgetTokens]   default 1000
+ * @returns {Promise<string>}            empty string when disabled or on error
+ */
+export async function buildSubagentRepoMapPrefix({ projectRoot, env = process.env, budgetTokens } = {}) {
+  if (!env || env.IJFW_REPO_MAP !== '1') return '';
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) return '';
+  try {
+    const budget = (typeof budgetTokens === 'number' && budgetTokens > 0) ? budgetTokens : 1000;
+    const repoMap = buildRepoMap({ rootDir: projectRoot, budgetTokens: budget });
+    // compactBriefForSubagent with an empty baseBrief returns just the
+    // header/footer-wrapped prefix block. We surface that as a standalone
+    // string the orchestrator-LLM splices in front of its own brief.
+    const { brief } = compactBriefForSubagent({ baseBrief: '', repoMap, maxPrefixTokens: budget });
+    return typeof brief === 'string' ? brief : '';
+  } catch {
+    // buildRepoMap throws on missing/inaccessible rootDir; on any error we
+    // fall back to "no prefix" rather than corrupt the redispatch payload.
+    return '';
+  }
+}
+
+/**
+ * Async wrapper around `reviewSubagentReport`. Returns the same decision shape
+ * but attaches `repoMapPrefix` (string) to any redispatch action when the
+ * env opt-in is on. The orchestrator-LLM consumes the prefix as the leading
+ * block of the next subagent's brief.
+ *
+ * @param {string} reportText
+ * @param {object} ctx                          - same shape as reviewSubagentReport
+ * @param {object} [env]                        - defaults to process.env
+ * @returns {Promise<object>}                   - decision (sync output + optional prefix)
+ */
+export async function reviewSubagentReportWithRepoMap(reportText, ctx, env = process.env) {
+  const decision = reviewSubagentReport(reportText, ctx);
+  if (decision && (decision.action === 'redispatch_needs_context' || decision.action === 'redispatch_with_context')) {
+    decision.repoMapPrefix = await buildSubagentRepoMapPrefix({
+      projectRoot: ctx?.projectRoot,
+      env,
+    });
+  }
+  return decision;
+}
+
+/**
+ * Async variant of `handleTruncation` that, when the env opt-in is set,
+ * prepends the repo-map prefix to the resume brief. Falls back byte-identical
+ * to sync handleTruncation when the prefix is empty.
+ *
+ * @param {object} args                         - same shape as handleTruncation, plus env
+ * @returns {Promise<object>}
+ */
+export async function handleTruncationWithRepoMap({ parsed = {}, ctx = {}, available, env = process.env } = {}) {
+  const decision = handleTruncation({ parsed, ctx, available });
+  if (decision && decision.action === 'resume_with_alt_ai' && typeof decision.brief === 'string') {
+    const prefix = await buildSubagentRepoMapPrefix({ projectRoot: ctx?.projectRoot, env });
+    if (prefix.length > 0) {
+      decision.brief = prefix + decision.brief;
+      decision.repoMapApplied = true;
+    }
+  }
+  return decision;
 }
 
 /**

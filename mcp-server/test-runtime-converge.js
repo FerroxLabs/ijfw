@@ -419,3 +419,179 @@ test('audit-H4.5: receipt records stalled flag + final verdict on stall', async 
     rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 wire-W1.F — signal cascade through defaultConvergeDispatch
+// ---------------------------------------------------------------------------
+//
+// runPhaseEConverge passes _cycleAc.signal to every dispatch call. Production
+// dispatchers MUST forward that signal to fireExternal so in-flight CLI/API
+// calls tear down on cumulative timeout. Two assertions:
+//   1. A pre-aborted signal short-circuits the dispatcher with status UNREACHABLE
+//      (no CLI/API spawn — proven by the fact that this returns synchronously
+//      against a non-existent lens fixture, no roster lookup is performed).
+//   2. A 1s totalTimeoutMs cap against a 5s mock dispatcher returns
+//      consensus_failed with timedOutTotal:true (the cap actually bounded the
+//      wall-clock, not just clamped iteration count).
+//
+// These together prove W1.F's claim: the signal is plumbed end-to-end.
+
+test('wire-W1.F: pre-aborted signal short-circuits defaultConvergeDispatch (no spawn)', async () => {
+  const ac = new AbortController();
+  ac.abort();
+  const r = await defaultConvergeDispatch({
+    lens: 'codex',
+    commitRange: 'HEAD~1..HEAD',
+    iteration: 1,
+    cycleSummary: null,
+    projectRoot: process.cwd(),
+    signal: ac.signal,
+  });
+  assert.equal(r.verdict, 'UNREACHABLE');
+  assert.equal(r.error, 'aborted');
+  assert.deepEqual(r.findings, []);
+  assert.equal(r.lens, 'codex');
+});
+
+// ---------------------------------------------------------------------------
+// v1.5.0 wire-W1.B — cache-keepalive wired into runPhaseEConverge
+// ---------------------------------------------------------------------------
+//
+// Two claims:
+//   1. With env opt-in set (IJFW_CACHE_KEEPALIVE_MS=1000) + a wave that takes
+//      ~2.5s, the keepalive default onTick fires AT LEAST once. The receipt
+//      records the tick count.
+//   2. Without env opt-in, the wire is still present (lib imported, wrapper
+//      called) but ticks remain 0 — proving the opt-in gate works.
+
+test('wire-W1.B: keepaliveTicks=0 when env opt-in absent (wire present, gated)', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'ijfw-w1b-off-'));
+  try {
+    const dispatch = async ({ lens }) => ({ lens, verdict: 'PASS', findings: [] });
+    const r = await runPhaseEConverge({
+      commitRange: 'HEAD~1..HEAD',
+      lenses: ['codex'],
+      dispatch,
+      projectDir: tmpDir,
+      env: { /* no IJFW_CACHE_KEEPALIVE_MS */ },
+    });
+    // Wire is live (field present) but no ticks because opt-in is off.
+    assert.equal(r.keepaliveTicks, 0);
+    // keepaliveWired reflects "anything happened" — false here is correct.
+    assert.equal(r.keepaliveWired, false);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('wire-W1.B: keepalive fires with env opt-in during a real (slow-mock) wave', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'ijfw-w1b-on-'));
+  try {
+    // A mock dispatcher that sleeps 1.2s per call — long enough that a 1s
+    // keepalive interval will fire at least once mid-wave.
+    const slowDispatch = ({ lens }) => new Promise((resolve) =>
+      setTimeout(() => resolve({ lens, verdict: 'PASS', findings: [] }), 1200)
+    );
+
+    const r = await runPhaseEConverge({
+      commitRange: 'HEAD~1..HEAD',
+      lenses: ['codex'],
+      dispatch: slowDispatch,
+      projectDir: tmpDir,
+      maxIterations: 1,
+      env: { IJFW_CACHE_KEEPALIVE_MS: '1000' },
+    });
+    assert.equal(r.verdict, 'PASS');
+    // Keepalive should fire at least once during the 1.2s dispatch.
+    assert.ok(
+      r.keepaliveTicks >= 1,
+      `expected at least 1 keepalive tick, got ${r.keepaliveTicks}`,
+    );
+    assert.equal(r.keepaliveWired, true);
+
+    // Receipt records the tick count too.
+    const receiptsPath = RECEIPTS_FILE(tmpDir);
+    const rec = JSON.parse(readFileSync(receiptsPath, 'utf8').trim().split('\n').pop());
+    assert.ok(
+      rec.converge && typeof rec.converge.keepalive_ticks === 'number',
+      'receipt converge block must carry keepalive_ticks',
+    );
+    assert.equal(rec.converge.keepalive_ticks, r.keepaliveTicks);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('wire-W1.B: caller-supplied keepaliveOnTick overrides default counter', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'ijfw-w1b-cb-'));
+  try {
+    let customCalls = 0;
+    const customTick = () => { customCalls += 1; };
+    const slowDispatch = ({ lens }) => new Promise((resolve) =>
+      setTimeout(() => resolve({ lens, verdict: 'PASS', findings: [] }), 1200)
+    );
+    const r = await runPhaseEConverge({
+      commitRange: 'HEAD~1..HEAD',
+      lenses: ['codex'],
+      dispatch: slowDispatch,
+      projectDir: tmpDir,
+      maxIterations: 1,
+      keepaliveOnTick: customTick,
+      env: { IJFW_CACHE_KEEPALIVE_MS: '1000' },
+    });
+    assert.ok(customCalls >= 1, `expected custom onTick to fire, got ${customCalls}`);
+    // Default counter stays at 0 because the custom tick replaced it.
+    assert.equal(r.keepaliveTicks, 0);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('wire-W1.F: totalTimeoutMs cap kills in-flight 5s mock dispatcher', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'ijfw-w1f-'));
+  try {
+    // Mock dispatcher that respects signal — sleeps up to 5s, resolves early on abort.
+    const slowDispatch = ({ signal }) => new Promise((resolve) => {
+      const timer = setTimeout(
+        () => resolve({ lens: 'codex', verdict: 'PASS', findings: [] }),
+        5000,
+      );
+      if (signal) {
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve({ lens: 'codex', verdict: 'UNREACHABLE', findings: [], error: 'aborted' });
+        }, { once: true });
+      }
+    });
+
+    const start = Date.now();
+    const r = await runPhaseEConverge({
+      commitRange: 'HEAD~1..HEAD',
+      lenses: ['codex'],
+      dispatch: slowDispatch,
+      projectDir: tmpDir,
+      totalTimeoutMs: 1000,
+      maxIterations: 1,
+    });
+    const elapsed = Date.now() - start;
+    // The cap should fire at ~1s; allow generous slack for CI jitter but
+    // assert we DID NOT wait the full 5s. This is the load-bearing assertion:
+    // it proves the signal cascaded into the in-flight dispatch and aborted it
+    // (without W1.F's fireExternal signal forward, the slow dispatcher would
+    // still resolve at the natural 5s — _totalTimedOut would set but the
+    // settlements await would hang).
+    assert.ok(elapsed < 3000, `expected <3s elapsed (cap fired), got ${elapsed}ms`);
+    assert.equal(r.timedOutTotal, true, 'timedOutTotal must be set when cap fires');
+    // With maxIterations:1, the cap-1 short-circuit returns whatever verdict
+    // the lens settlements yielded. Signal-aborted dispatchers return
+    // UNREACHABLE; the test's contract is "the cap actually bounded wall-clock",
+    // not the verdict label, which is correctly UNREACHABLE when no lens
+    // produced findings.
+    assert.ok(
+      r.verdict === 'UNREACHABLE' || r.verdict === 'consensus_failed',
+      `expected UNREACHABLE or consensus_failed, got ${r.verdict}`
+    );
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

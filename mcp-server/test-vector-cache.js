@@ -1,6 +1,8 @@
-// v1.5.0 audit MED #7 -- persistent embedding cache (memory_entry_vectors).
-// Tests encode/decode round trip + schema gate so callers can run against a
-// pre-migration db without crashing.
+// v1.5.0 audit MED #7 + wire-W1.C -- persistent embedding cache.
+// Tests encode/decode round trip + schema gate against the v1.5.0 wire-W1.C
+// content-keyed schema. Old getCachedVector / setCachedVector helpers were
+// renamed to getCachedEmbedding / setCachedEmbedding when the PK was
+// changed from memory_id to cache_key (sha256 of snippet).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,8 +14,9 @@ import {
   encodeVector,
   decodeVector,
   hasVectorCache,
-  getCachedVector,
-  setCachedVector,
+  cacheKeyFor,
+  getCachedEmbedding,
+  setCachedEmbedding,
   countCachedVectors,
 } from './src/memory/embedding-cache.js';
 
@@ -60,40 +63,43 @@ test('hasVectorCache: db without the table returns false', { skip: !Database }, 
   }
 });
 
-test('schema v5: hasVectorCache / set / get / count cycle', { skip: !Database }, () => {
+test('schema v5: hasVectorCache / set / get / count cycle (content-keyed)', { skip: !Database }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'ijfw-embed-cache-'));
   try {
     const db = new Database(join(dir, 'mem.db'));
-    // Apply migration 005 inline (kept short; full DDL lives in 005-vector-cache.js).
+    // v1.5.0 wire-W1.C: PK is (cache_key TEXT, model_id TEXT). Apply migration
+    // 005 inline (DDL mirrors src/memory/migrations/005-vector-cache.js).
     db.exec(
       'CREATE TABLE memory_entry_vectors (' +
-        'memory_id INTEGER NOT NULL,' +
+        'cache_key TEXT NOT NULL,' +
         'model_id TEXT NOT NULL,' +
         'embedding BLOB NOT NULL,' +
         "created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))," +
-        'PRIMARY KEY (memory_id, model_id))'
+        'PRIMARY KEY (cache_key, model_id))'
     );
 
     assert.equal(hasVectorCache(db), true);
     assert.equal(countCachedVectors(db), 0);
 
+    const text = 'apples are red fruit';
+    const key = cacheKeyFor(text);
     const vec = [0.1, 0.2, -0.3, 0.4];
-    assert.equal(setCachedVector(db, 42, 'mock-model', vec), true);
+    assert.equal(setCachedEmbedding(db, key, 'mock-model', vec), true);
     assert.equal(countCachedVectors(db), 1);
     assert.equal(countCachedVectors(db, 'mock-model'), 1);
     assert.equal(countCachedVectors(db, 'other-model'), 0);
 
-    const out = getCachedVector(db, 42, 'mock-model');
+    const out = getCachedEmbedding(db, key, 'mock-model');
     assert.equal(out.length, vec.length);
     for (let i = 0; i < vec.length; i++) {
       assert.ok(Math.abs(out[i] - vec[i]) < 1e-3);
     }
 
-    assert.equal(getCachedVector(db, 42, 'unknown'), null);
-    assert.equal(getCachedVector(db, 999, 'mock-model'), null);
+    assert.equal(getCachedEmbedding(db, key, 'unknown'), null);
+    assert.equal(getCachedEmbedding(db, 'wrong-key', 'mock-model'), null);
 
     // INSERT OR REPLACE on model-bump: no duplicate row, replaced value.
-    setCachedVector(db, 42, 'mock-model', [9.0, 9.0, 9.0, 9.0]);
+    setCachedEmbedding(db, key, 'mock-model', [9.0, 9.0, 9.0, 9.0]);
     assert.equal(countCachedVectors(db), 1, 'replacement does not duplicate');
     db.close();
   } finally {
@@ -101,13 +107,13 @@ test('schema v5: hasVectorCache / set / get / count cycle', { skip: !Database },
   }
 });
 
-test('schema v5: setCachedVector is a no-op when the table is missing', { skip: !Database }, () => {
+test('schema v5: setCachedEmbedding is a no-op when the table is missing', { skip: !Database }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'ijfw-embed-cache-'));
   try {
     const db = new Database(join(dir, 'mem.db'));
     // No migration applied.
-    assert.equal(setCachedVector(db, 1, 'm', [1, 2, 3, 4]), false);
-    assert.equal(getCachedVector(db, 1, 'm'), null);
+    assert.equal(setCachedEmbedding(db, 'k', 'm', [1, 2, 3, 4]), false);
+    assert.equal(getCachedEmbedding(db, 'k', 'm'), null);
     db.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

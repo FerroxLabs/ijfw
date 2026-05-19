@@ -775,6 +775,24 @@ function readProjectMemory(projectPath) {
 // vectors.js defaults). Async because embedder load + embed() are async. The
 // `opts.embedder` parameter lets tests inject a mock embedder without
 // installing @xenova/transformers.
+
+// v1.5.0 wire-W1.C — lazy memory.db handle for the embedding cache.
+// Opens once per process and reuses thereafter. Returns null when the
+// project has no .ijfw/index/memory.db (e.g. fresh checkout that never
+// stored a memory) so the rerank still falls back to live embed.
+let _memoryDbForRerank = null;
+async function getMemoryDbForRerank() {
+  if (_memoryDbForRerank) return _memoryDbForRerank;
+  try {
+    const { openDb } = await import('./memory/fts5.js');
+    _memoryDbForRerank = await openDb(PROJECT_DIR);
+    return _memoryDbForRerank;
+  } catch {
+    _memoryDbForRerank = null;
+    return null;
+  }
+}
+
 async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   limit = Math.min(Math.max(1, limit | 0), MAX_SEARCH_RESULTS);
   if (scope === 'all') {
@@ -833,7 +851,24 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
 
   // r17: cold-tier hybrid rerank. Pure no-op when vectors disabled OR
   // embedder unavailable. Never throws into the caller.
-  const reranked = await maybeRerankWithVectors(query, ranked, opts);
+  //
+  // v1.5.0 wire-W1.C: when the caller didn't supply a db handle but the
+  // memory.db exists for this project, open it lazily + thread through so
+  // the embedding cache backs the rerank. The default modelId mirrors
+  // vectors.js DEFAULT_MODEL so first-call writes match cache reads from
+  // the same process on later calls.
+  const rerankOpts = { ...opts };
+  if (!rerankOpts.db && opts.embedder !== undefined) {
+    // Tests inject an embedder + their own db (or none) -- never lazy-open.
+  } else if (!rerankOpts.db) {
+    try {
+      rerankOpts.db = await getMemoryDbForRerank();
+    } catch { /* memory db unavailable -- skip cache, fall back to live embed */ }
+  }
+  if (!rerankOpts.modelId) {
+    rerankOpts.modelId = process.env.IJFW_VECTORS_MODEL || 'Xenova/all-MiniLM-L6-v2';
+  }
+  const reranked = await maybeRerankWithVectors(query, ranked, rerankOpts);
 
   const boosted = reranked.map(r => {
     const m = meta.get(r.id);
@@ -1808,9 +1843,11 @@ function handleMessage(msg) {
           }
           case 'ijfw_subagent_post_done': {
             // v1.5.0-major S02: wired-in runtime contract.
+            // v1.5.0 wire-W1.A: call the async variant so a redispatch decision
+            // gets a `repoMapPrefix` field when IJFW_REPO_MAP=1 is set.
             const a = args || {};
-            const { reviewSubagentReport } = await import('./orchestrator/runtime-loop.js');
-            const routeDecision = reviewSubagentReport(a.reportText || '', {
+            const { reviewSubagentReportWithRepoMap } = await import('./orchestrator/runtime-loop.js');
+            const routeDecision = await reviewSubagentReportWithRepoMap(a.reportText || '', {
               dispatchTimestamp: a.dispatchTimestamp || 0,
               branch: a.branch || '',
               projectRoot: process.cwd(),

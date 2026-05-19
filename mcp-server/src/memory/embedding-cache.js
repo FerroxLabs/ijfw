@@ -5,8 +5,30 @@
 // hasn't reached schema v5 -- callers see "miss" rather than a throw,
 // so hybrid rerank degrades to live re-embed without flooding stderr.
 //
+// v1.5.0 wire-W1.C: PK is content-hash (sha256(text)) so the cache
+// works for ANY repeated snippet, not just rows that carry a stable
+// memory_entry id. The high-level helpers `cacheKeyFor(text)`,
+// `getCachedEmbedding(db, key, modelId)`, and `setCachedEmbedding(...)`
+// are the production wire surface for search-hybrid's
+// maybeRerankWithVectors path.
+//
 // Format: Float32Array <-> Buffer at the SQLite boundary. Each float
 // is 4 bytes little-endian. Decode is endian-agnostic via DataView.
+
+import { createHash } from 'node:crypto';
+
+/**
+ * Stable content-hash key for the cache. Lowercase hex sha256 over the
+ * literal snippet bytes. Whitespace and case are preserved -- the caller
+ * is expected to pass the same exact text on every lookup.
+ *
+ * @param {string} text
+ * @returns {string|null}   null when text is not a non-empty string
+ */
+export function cacheKeyFor(text) {
+  if (typeof text !== 'string' || text.length === 0) return null;
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
 
 /**
  * encodeVector(vec) -- Float32Array | number[] -> Buffer
@@ -53,16 +75,18 @@ export function hasVectorCache(db) {
 }
 
 /**
- * getCachedVector(db, memoryId, modelId) -> number[] | null
- * Returns the stored embedding for the (memory_id, model_id) pair, or
- * null on miss / when the table is absent.
+ * getCachedEmbedding(db, cacheKey, modelId) -> number[] | null
+ * Returns the stored embedding for the (cache_key, model_id) pair, or
+ * null on miss / when the table is absent / when cacheKey is invalid.
  */
-export function getCachedVector(db, memoryId, modelId) {
+export function getCachedEmbedding(db, cacheKey, modelId) {
   if (!hasVectorCache(db)) return null;
+  if (typeof cacheKey !== 'string' || cacheKey.length === 0) return null;
+  if (typeof modelId !== 'string' || modelId.length === 0) return null;
   try {
     const row = db.prepare(
-      'SELECT embedding FROM memory_entry_vectors WHERE memory_id = ? AND model_id = ?'
-    ).get(memoryId, modelId);
+      'SELECT embedding FROM memory_entry_vectors WHERE cache_key = ? AND model_id = ?'
+    ).get(cacheKey, modelId);
     if (!row || !row.embedding) return null;
     return decodeVector(row.embedding);
   } catch {
@@ -71,18 +95,20 @@ export function getCachedVector(db, memoryId, modelId) {
 }
 
 /**
- * setCachedVector(db, memoryId, modelId, vec) -> boolean (success).
+ * setCachedEmbedding(db, cacheKey, modelId, vec) -> boolean (success).
  * INSERT OR REPLACE so re-embed after a model change overwrites the
  * stale row. No-op if the table is missing or the vector encoding fails.
  */
-export function setCachedVector(db, memoryId, modelId, vec) {
+export function setCachedEmbedding(db, cacheKey, modelId, vec) {
   if (!hasVectorCache(db)) return false;
+  if (typeof cacheKey !== 'string' || cacheKey.length === 0) return false;
+  if (typeof modelId !== 'string' || modelId.length === 0) return false;
   const blob = encodeVector(vec);
   if (!blob) return false;
   try {
     db.prepare(
-      'INSERT OR REPLACE INTO memory_entry_vectors(memory_id, model_id, embedding) VALUES (?, ?, ?)'
-    ).run(memoryId, modelId, blob);
+      'INSERT OR REPLACE INTO memory_entry_vectors(cache_key, model_id, embedding) VALUES (?, ?, ?)'
+    ).run(cacheKey, modelId, blob);
     return true;
   } catch {
     return false;

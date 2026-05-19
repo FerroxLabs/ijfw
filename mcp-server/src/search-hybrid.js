@@ -15,6 +15,16 @@
 //     stderr warning per distinct reason. Never throws into the caller.
 
 import { vectorsEnabled, getEmbedder, hybridRerank } from './vectors.js';
+// v1.5.0 wire-W1.C: persistent embedding cache so repeated queries over a
+// stable corpus don't pay the per-snippet embed cost twice. Cache is keyed
+// on sha256(snippet) + model_id; falls back to live re-embed on any miss
+// or when opts.db is absent.
+import {
+  cacheKeyFor,
+  getCachedEmbedding,
+  setCachedEmbedding,
+  hasVectorCache,
+} from './memory/embedding-cache.js';
 
 // Throttle stderr noise — single warning per distinct failure reason.
 let _vectorWarnedReason = null;
@@ -69,10 +79,36 @@ export async function maybeRerankWithVectors(query, ranked, opts = {}) {
     // pipeline the calls still resolve serially under the hood, but
     // Promise.all is no worse than the sequential await and lets future
     // batch-aware embedders win without further changes.
+    //
+    // v1.5.0 wire-W1.C: when opts.db + opts.modelId are supplied AND the
+    // memory_entry_vectors table exists, route each embed through the
+    // persistent cache. The cache is keyed on sha256(text), so a second
+    // call with the same query + corpus serves entirely from SQLite —
+    // zero embedder calls, zero re-embed cost. The query embedding is
+    // also cached (queries repeat in long sessions / dashboard polls).
+    //
+    // cacheReady flips to false when the table is missing OR no db is
+    // passed; the rerank then degrades to the existing live-embed path
+    // with no observable behavior change.
     const snippets = ranked.map((r) => r.snippet || '');
+    const cacheDb = opts.db || null;
+    const modelId = opts.modelId || embedder.modelId || null;
+    const cacheReady = cacheDb && typeof modelId === 'string' && modelId.length > 0 && hasVectorCache(cacheDb);
+
+    const embedWithCache = async (text) => {
+      if (!cacheReady) return embedder.embed(text);
+      const key = cacheKeyFor(text);
+      if (key === null) return embedder.embed(text);
+      const hit = getCachedEmbedding(cacheDb, key, modelId);
+      if (hit) return hit;
+      const vec = await embedder.embed(text);
+      setCachedEmbedding(cacheDb, key, modelId, vec);
+      return vec;
+    };
+
     const [queryVec, ...docVecs] = await Promise.all([
-      embedder.embed(query),
-      ...snippets.map((s) => embedder.embed(s)),
+      embedWithCache(query),
+      ...snippets.map((s) => embedWithCache(s)),
     ]);
     const vectorScores = new Map();
     for (let i = 0; i < ranked.length; i++) {
