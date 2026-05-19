@@ -41,6 +41,11 @@ import { maybeRerankWithVectors } from './search-hybrid.js';
 import { crossProjectSearch } from './cross-project-search.js';
 // R2-E -- single source of truth for markdown/HTML/control-char defanger.
 import { sanitizeContent } from './sanitizer.js';
+// H5.5 / H5.6 — ingest-time fact extraction + semantic dedup. Closes
+// memory-engine.md competitor gaps (mem0/Zep extract facts; Graphiti dedups).
+// Both are pure-JS, zero-LLM, deterministic.
+import { extractFacts, factToJsonl } from './memory/fact-extractor.js';
+import { findNearDuplicate, readDedupConfig } from './memory/dedup.js';
 // 1.1.6: update tools (cap 8 -> 10) -- token-issuance + OOB terminal confirm.
 // Per CLAUDE.md policy: future growth triggers retirement review, not raise.
 import { ijfwUpdateCheck, TOOL_DEF as UPDATE_CHECK_TOOL } from './update-check.js';
@@ -598,6 +603,50 @@ function getRecentJournalEntries(count = 5) {
   return entries.slice(-count).join('\n');
 }
 
+// H5.6 — dedup needs `recents` shaped as { id, content } for findNearDuplicate.
+// We synthesize id from the timestamp (project-journal entries are unique by ts
+// down to ms; collisions would only happen on near-simultaneous writes which
+// our atomic-append + fs flush ordering already serialise).
+function getRecentMemoriesForDedup(limit = 50) {
+  const journal = readOr(join(MEMORY_DIR, 'project-journal.md'));
+  if (!journal) return [];
+  const lines = journal.split('\n').filter(l => /^- \[\d{4}-/.test(l));
+  // Most-recent-last in the file → reverse so findNearDuplicate sees newest first.
+  const slice = lines.slice(-limit).reverse();
+  return slice.map(line => {
+    // Format: "- [<iso>] <body>"   →   { id: iso, content: body }
+    const m = line.match(/^- \[([^\]]+)\]\s*(.*)$/);
+    if (!m) return null;
+    return { id: m[1], content: m[2] };
+  }).filter(Boolean);
+}
+
+// H5.5 — sidecar file for structured facts (one JSON object per line).
+// Append-only; consumed by handleRecall({context_hint:'facts'}).
+const FACTS_FILE = join(MEMORY_DIR, 'facts.jsonl');
+
+// Stable short id for joining a fact back to its journal entry. We don't have
+// a uuid; the journal-line text itself + ts is unique enough for cross-ref.
+function factMemoryIdFor(journalEntryText) {
+  return 'm-' + createHash('sha256')
+    .update(String(journalEntryText) + ':' + Date.now())
+    .digest('hex')
+    .slice(0, 10);
+}
+
+function appendFactsToSidecar(facts, meta) {
+  if (!Array.isArray(facts) || facts.length === 0) return { ok: true, written: 0 };
+  try {
+    const lines = facts.map(f => factToJsonl(f, meta)).join('\n') + '\n';
+    appendFileSync(FACTS_FILE, lines);
+    return { ok: true, written: facts.length };
+  } catch (err) {
+    // Non-fatal: facts are augmentation, not source-of-truth. Journal already
+    // captured the raw memory.
+    return { ok: false, code: err.code || 'EUNKNOWN', message: err.message };
+  }
+}
+
 // --- Cross-project registry (Phase 3) ---
 //
 // Registry lines look like: <abs-path> | <sha256-12> | <first-seen-iso>
@@ -986,6 +1035,27 @@ function handleRecall({ context_hint, detail_level = 'standard', from_project })
     return { text: getRecentJournalEntries(10) || 'No decisions recorded yet.' };
   }
 
+  // H5.5 — structured facts feed. Returns raw facts.jsonl so callers (other
+  // agents, dashboard panels) can build a knowledge graph over time.
+  if (context_hint === 'facts') {
+    try {
+      if (!existsSync(FACTS_FILE)) {
+        return { text: 'No structured facts extracted yet. Store memories with key:value lines, "X uses Y", or "decided to ..." phrases to populate.' };
+      }
+      const raw = readFileSync(FACTS_FILE, 'utf8');
+      // detail_level === 'summary' → just count + a sample tail. Keeps token
+      // usage bounded for session-start hydration.
+      if (detail_level === 'summary') {
+        const lines = raw.split('\n').filter(Boolean);
+        const tail = lines.slice(-5).join('\n');
+        return { text: `## Structured facts (${lines.length} total)\n${tail}` };
+      }
+      return { text: raw || 'No structured facts extracted yet.' };
+    } catch (err) {
+      return { text: `Facts sidecar unreadable: ${err.code || err.message}`, isError: true };
+    }
+  }
+
   const results = searchMemory(context_hint);
   if (results.length === 0) return { text: `No memories matching: ${context_hint}` };
   return { text: results.map(r => `[${r.source}] ${r.content}`).join('\n') };
@@ -1034,11 +1104,46 @@ function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
   const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
   const journalEntry = `**${type}**${tagStr}: ${safeSummary || safeContent.substring(0, 200)}`;
 
+  // H5.6 — Semantic dedup BEFORE append. If this memory is a near-duplicate
+  // of one already in the last N journal entries, short-circuit and return
+  // the existing entry's id. handoff is exempt (always overwrites a single
+  // file by design; deduping would silently drop a handoff swap).
+  const dedupCfg = readDedupConfig();
+  if (dedupCfg.enabled && type !== 'handoff') {
+    const recents = getRecentMemoriesForDedup(dedupCfg.windowSize);
+    // Dedup against the FULL journal-entry line shape -- that's what the next
+    // call would see in `recents`, so comparing apples to apples.
+    const dup = findNearDuplicate(journalEntry, recents);
+    if (dup) {
+      // Spec: emit a stderr line so the user/agent sees the elision.
+      try {
+        process.stderr.write(`[ijfw memory] dedup'd similar entry; keeping prior ${dup.match.id}\n`);
+      } catch { /* stderr may be detached in test harness */ }
+      return {
+        text: `Dedup'd: similar memory already exists (${dup.match.id}, similarity=${dup.similarity.toFixed(2)}). Not appended.`,
+        deduped: true,
+        existing_id: dup.match.id,
+        similarity: dup.similarity,
+      };
+    }
+  }
+
   // 1. Always append to journal (one-line timeline). Hard failure → report.
   const journalResult = appendToJournal(journalEntry);
   if (!journalResult.ok) {
     return { text: `Memory journal is not writable (${journalResult.code}) -- check .ijfw/ directory permissions and retry.`, isError: true };
   }
+
+  // H5.5 — Fact extraction AFTER successful append. Best-effort: a failure
+  // here is logged in the return text but does NOT poison the store result.
+  // Memory-id ties facts.jsonl rows back to their journal entry.
+  const factMeta = {
+    ts: new Date().toISOString(),
+    memory_id: factMemoryIdFor(journalEntry),
+    source: `memory_store:${type}`,
+  };
+  const facts = extractFacts(safeContent);
+  appendFactsToSidecar(facts, factMeta);
 
   // 2. Type-specific secondary writes. Each tracked so we report partial
   // success accurately rather than lying about "stored."
@@ -1762,4 +1867,10 @@ process.on('unhandledRejection', (err) => {
 // Export for tests (Node ESM allows this -- only consumed when imported, not on stdio run)
 // gatePermissionAndQuota is exported inline at its declaration above (B16/SEC-M-03)
 // so test-server-quota-integration.js can drive it without spinning a server.
-export { sanitizeContent, atomicWrite, readMarkdownFile, PROJECT_HASH };
+// H5.5 / H5.6 — expose handleStore/handleRecall + path/helpers so the ingest
+// integration test can drive the full pipeline without spawning a subprocess.
+export {
+  sanitizeContent, atomicWrite, readMarkdownFile, PROJECT_HASH,
+  handleStore, handleRecall,
+  MEMORY_DIR, FACTS_FILE,
+};
