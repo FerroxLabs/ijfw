@@ -851,6 +851,24 @@ const VERDICT_UNREACHABLE   = 'UNREACHABLE';
 const VERDICT_CONSENSUS_FAIL = 'consensus_failed';
 const DEFAULT_LENSES        = ['codex', 'gemini', 'claude'];
 
+// v1.5.0 audit-H4.1 — hard upper bound on convergence iterations. A caller
+// asking for 100 rounds would burn 100 rounds of full Trident dispatch (~3
+// auditors × ~90s = ~4.5h per cycle on cold start). 10 is well above the
+// observed empirical ceiling — the convergence loop almost always settles in
+// 2-3 iters; >5 is a smell, >10 is a misuse. Anything above the cap is
+// silently clamped to MAX_CONVERGE_ITERATIONS + emits a single dedup'd warning.
+export const MAX_CONVERGE_ITERATIONS = 10;
+
+// Module-level dedup set for max-iterations clamp warnings. One stderr line
+// per unique requested value per process lifetime (same pattern as
+// cross-project-search SKIP_LOG).
+const _MAX_ITER_WARN_LOG = new Set();
+
+/** Reset the max-iter warn-log dedup set. Test-only. */
+export function _resetMaxIterWarnLog() {
+  _MAX_ITER_WARN_LOG.clear();
+}
+
 // Stable serialization for stall comparison.
 function stableFindingsKey(perLensFindings) {
   // perLensFindings: { lens → Array<finding> }
@@ -933,6 +951,8 @@ export async function runPhaseEConverge({
   maxIterations = 3,
   dispatch,
   projectRoot,
+  projectDir,         // v1.5.0 audit-H4.5 — receipts destination (defaults to projectRoot)
+  runStamp,           // v1.5.0 audit-H4.5 — caller-supplied stamp; auto if absent
 } = {}) {
   if (typeof dispatch !== 'function') {
     throw new Error('runPhaseEConverge: dispatch function is required');
@@ -940,7 +960,68 @@ export async function runPhaseEConverge({
   if (!Array.isArray(lenses) || lenses.length === 0) {
     throw new Error('runPhaseEConverge: lenses must be a non-empty array');
   }
-  const cap = Math.max(1, Math.floor(maxIterations));
+  // v1.5.0 audit-H4.1 — clamp to [1, MAX_CONVERGE_ITERATIONS]. Anything above
+  // the cap is silently coerced; one-line stderr warning per unique requested
+  // value (Set dedup) so a caller running the same misconfigured tool 100
+  // times doesn't spam the log.
+  const requested = Math.max(1, Math.floor(maxIterations));
+  const cap = Math.min(requested, MAX_CONVERGE_ITERATIONS);
+  if (requested > MAX_CONVERGE_ITERATIONS) {
+    const key = String(requested);
+    if (!_MAX_ITER_WARN_LOG.has(key)) {
+      _MAX_ITER_WARN_LOG.add(key);
+      process.stderr.write(
+        `runPhaseEConverge: maxIterations=${requested} clamped to MAX_CONVERGE_ITERATIONS=${MAX_CONVERGE_ITERATIONS}.\n`
+      );
+    }
+  }
+
+  // v1.5.0 audit-H4.5 — receipts wiring. The flagship converge tool was
+  // previously invisible to `ijfw status` and the dashboard because no receipt
+  // was written. Capture start time + per-cycle finding counts here, write
+  // ONE summary receipt before each return path (writeReceiptIfPossible).
+  const _startMs = Date.now();
+  const _receiptCycles = [];          // [{ iteration, findingCount, lensVerdicts: {lens:verdict} }]
+  let _totalInvocations = 0;          // dispatch calls across all iterations
+
+  const _resolvedProjectDir = projectDir ?? projectRoot ?? process.cwd();
+  const _resolvedRunStamp = runStamp ?? new Date().toISOString();
+
+  function _finalize(returnVal) {
+    // Build + write the converge receipt. Failure to write must NOT clobber
+    // the orchestrator return value (defensive — receipts are observability,
+    // not correctness).
+    try {
+      const record = {
+        v: 1,
+        timestamp: new Date().toISOString(),
+        run_stamp: _resolvedRunStamp,
+        mode: 'converge',
+        target: commitRange,
+        // Receipt-compatible auditor list (renderReceipt reads .id from each).
+        auditors: lenses.map(id => ({ id })),
+        // findings shape matches renderReceipt's array branch.
+        findings: { items: Array.isArray(returnVal.findings) ? returnVal.findings : [] },
+        duration_ms: Date.now() - _startMs,
+        // Converge-specific fields (new — minimal addition; renderReceipt
+        // ignores unknown keys, so existing receipt renderers keep working).
+        converge: {
+          iterations: returnVal.iterations,
+          verdict: returnVal.verdict,
+          stalled: !!returnVal.stalled,
+          divergent: Array.isArray(returnVal.divergence) && returnVal.divergence.length > 0,
+          total_invocations: _totalInvocations,
+          cycles: _receiptCycles,
+          requested_max_iterations: requested,
+          effective_max_iterations: cap,
+        },
+      };
+      writeReceipt(_resolvedProjectDir, record);
+    } catch {
+      // Receipts are observability; never fail the converge run on a write error.
+    }
+    return returnVal;
+  }
 
   let cycleSummary = null;
   let prior = null;
@@ -949,6 +1030,7 @@ export async function runPhaseEConverge({
 
   for (let iter = 1; iter <= cap; iter++) {
     // Fire all lenses in parallel.
+    _totalInvocations += lenses.length;
     const settlements = await Promise.all(lenses.map(lens =>
       Promise.resolve()
         .then(() => dispatch({ lens, commitRange, iteration: iter, cycleSummary, projectRoot }))
@@ -983,6 +1065,15 @@ export async function runPhaseEConverge({
 
     const mergedFindings = lensResults.flatMap(r => r.findings.map(f => ({ ...f, _lens: r.lens })));
 
+    // Receipt cycle metadata — per-cycle finding count + verdict map.
+    const lensVerdicts = {};
+    for (const r of lensResults) lensVerdicts[r.lens] = r.verdict;
+    _receiptCycles.push({
+      iteration: iter,
+      findingCount: mergedFindings.length,
+      lensVerdicts,
+    });
+
     // Stop conditions, in priority order.
 
     // 1. maxIterations === 1 — cap the loop after first iter no matter what.
@@ -990,56 +1081,56 @@ export async function runPhaseEConverge({
       const verdict = reachable.length === 0
         ? VERDICT_UNREACHABLE
         : (divergence.divergent ? VERDICT_CONSENSUS_FAIL : reachable[0].verdict);
-      return {
+      return _finalize({
         verdict,
         iterations: 1,
         findings: mergedFindings,
         ...(divergence.divergent ? { divergence: divergence.axes } : {}),
         perIteration,
-      };
+      });
     }
 
     // 2. All reachable lenses PASS → done.
     if (reachable.length > 0 && !divergence.divergent && reachable[0].verdict === VERDICT_PASS) {
-      return {
+      return _finalize({
         verdict: VERDICT_PASS,
         iterations: iter,
         findings: mergedFindings,
         perIteration,
-      };
+      });
     }
 
     // 3. Consensus on non-PASS (e.g. all FAIL) — short-circuit, no point looping.
     if (reachable.length > 0 && !divergence.divergent) {
-      return {
+      return _finalize({
         verdict: reachable[0].verdict,
         iterations: iter,
         findings: mergedFindings,
         perIteration,
-      };
+      });
     }
 
     // 4. Stall breaker: byte-identical findings to prior iter → halt.
     if (priorFindingsKey !== null && findingsKey === priorFindingsKey) {
-      return {
+      return _finalize({
         verdict: VERDICT_CONSENSUS_FAIL,
         iterations: iter,
         findings: mergedFindings,
         divergence: divergence.axes,
         stalled: true,
         perIteration,
-      };
+      });
     }
 
     // 5. Cap hit while still divergent → consensus_failed.
     if (iter === cap) {
-      return {
+      return _finalize({
         verdict: VERDICT_CONSENSUS_FAIL,
         iterations: iter,
         findings: mergedFindings,
         divergence: divergence.axes,
         perIteration,
-      };
+      });
     }
 
     // Otherwise: stage next iteration with cycle summary.
@@ -1050,7 +1141,7 @@ export async function runPhaseEConverge({
 
   // Unreachable; loop must exit via one of the return paths above.
   /* c8 ignore next */
-  return { verdict: VERDICT_CONSENSUS_FAIL, iterations: cap, findings: [], perIteration };
+  return _finalize({ verdict: VERDICT_CONSENSUS_FAIL, iterations: cap, findings: [], perIteration });
 }
 
 // Default production dispatcher.  Wraps the existing single-lens spawn path
@@ -1073,9 +1164,15 @@ export async function defaultConvergeDispatch({ lens, commitRange, iteration, cy
   }
   const pick = (!reach.cli && reach.api) ? { ...entry, preferredSource: 'api' } : { ...entry };
 
-  // Inject cycleSummary into the target so lens reasoning sees prior context.
+  // v1.5.0 audit-H4.2 — cycleSummary MUST come AFTER any cache_control-eligible
+  // block. Cached content (the stable commitRange/target) goes FIRST so user-
+  // message cache_control (planned for v1.5.0 ADJUDICATION-1 cap-layer work)
+  // hits the same prefix on every iteration; the iteration-varying summary
+  // goes LAST so it never busts the cache. The previous prefix layout would
+  // invalidate the cache on every iteration ≥ 2. See ADJUDICATIONS.md
+  // DISPUTED-1 (cache_control ordering invariant).
   const target = (iteration > 1 && cycleSummary)
-    ? `${cycleSummary}\n\n---\n\n${commitRange}`
+    ? `${commitRange}\n\n---\n\n${cycleSummary}`
     : commitRange;
 
   const request = buildRequest('audit', target, pick.id, 'general', null);
