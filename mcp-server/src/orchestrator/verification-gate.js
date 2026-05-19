@@ -158,13 +158,33 @@ export function enforceVerificationGate(messageText, toolCalls, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Set of target paths whose write failure has already been logged to stderr
+ * this process. Prevents stderr flooding when the memory dir is unwritable
+ * and a high-frequency caller (e.g. a stuck subagent loop) keeps retrying.
+ *
+ * v1.5.0 audit-H4.3 (HIGH-Rel1): recordViolation used to silently swallow
+ * write failures, defeating the gate's whole job (surfacing violations to
+ * the memory-feedback system). The fix:
+ *   1. Emit ONE stderr line per failure (with the claim, so the violation
+ *      isn't fully lost), then
+ *   2. Return a result shape so callers can observe success/failure, but
+ *   3. NEVER throw — recordViolation remains advisory in posture.
+ *      Failures that used to be invisible are now AUDIBLE (stderr) +
+ *      OBSERVABLE (return shape), but still non-fatal.
+ */
+const RECORD_FAILURE_LOGGED = new Set();
+
+/**
  * Append a violation record to .ijfw/memory/verification-violations.jsonl.
- * Auto-creates parent directories. Advisory — errors are silently swallowed
- * so a write failure never blocks the orchestrator.
+ * Auto-creates parent directories.
+ *
+ * Advisory in posture (never throws), but no longer silent: write failures
+ * are logged to stderr (once per target-path, dedup'd via a module-level
+ * Set) and returned in the result shape so callers can observe them.
  *
  * @param {{ violation: string, claim: string, [key: string]: unknown }} violation
  * @param {string} projectRoot  Absolute path to the project root.
- * @returns {Promise<void>}
+ * @returns {Promise<{ ok: true, path: string } | { ok: false, path: string, error: string }>}
  */
 export async function recordViolation(violation, projectRoot) {
   const file = join(projectRoot, '.ijfw', 'memory', 'verification-violations.jsonl');
@@ -174,7 +194,31 @@ export async function recordViolation(violation, projectRoot) {
       file,
       JSON.stringify({ ...violation, recorded_at: new Date().toISOString() }) + '\n',
     );
-  } catch {
-    // Advisory — never propagate write errors.
+    return { ok: true, path: file };
+  } catch (err) {
+    const errMsg = err && err.message ? String(err.message) : String(err);
+    // Dedup: only one stderr line per target path per process, to avoid
+    // flooding when the memory dir is unwritable for a long-running loop.
+    if (!RECORD_FAILURE_LOGGED.has(file)) {
+      RECORD_FAILURE_LOGGED.add(file);
+      const claim = violation && violation.claim ? String(violation.claim) : '<unknown>';
+      // One-line stderr log so the violation isn't fully lost. Includes the
+      // claim string so a downstream operator can correlate.
+      process.stderr.write(
+        `[verification-gate] recordViolation write failed path=${file} claim=${JSON.stringify(claim)} err=${errMsg}\n`,
+      );
+    }
+    return { ok: false, path: file, error: errMsg };
   }
+}
+
+/**
+ * Reset the recordViolation failure-dedup Set. Test-only helper so each
+ * test can assert "one stderr line per failure" independently of other
+ * tests in the same process.
+ *
+ * @internal
+ */
+export function _resetRecordViolationDedup() {
+  RECORD_FAILURE_LOGGED.clear();
 }

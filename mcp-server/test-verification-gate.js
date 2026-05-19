@@ -7,6 +7,7 @@ import {
   checkVerificationGate,
   isVerificationCommand,
   recordViolation,
+  _resetRecordViolationDedup,
 } from './src/orchestrator/verification-gate.js';
 
 // ---------------------------------------------------------------------------
@@ -252,4 +253,104 @@ test('recordViolation appends multiple lines without corruption', async () => {
   assert.equal(lines.length, 2);
   assert.equal(JSON.parse(lines[0]).violation, 'first');
   assert.equal(JSON.parse(lines[1]).violation, 'second');
+});
+
+// ---------------------------------------------------------------------------
+// v1.5.0 audit-H4.3 (HIGH-Rel1): recordViolation no longer silently swallows
+// write failures. Failures emit one stderr line per target-path (dedup'd) and
+// are observable in the return shape. Posture stays advisory — no throw.
+// ---------------------------------------------------------------------------
+
+/**
+ * Capture stderr.write calls inside the supplied async fn. Returns the array
+ * of captured strings. Restores the original after fn resolves/rejects.
+ */
+async function captureStderr(fn) {
+  const captured = [];
+  const original = process.stderr.write.bind(process.stderr);
+  // @ts-ignore — patching for test isolation
+  process.stderr.write = (chunk, ...rest) => {
+    captured.push(typeof chunk === 'string' ? chunk : chunk.toString());
+    return true;
+  };
+  try {
+    await fn();
+  } finally {
+    // @ts-ignore — restore
+    process.stderr.write = original;
+  }
+  return captured;
+}
+
+test('v1.5.0 H4.3: recordViolation success returns { ok: true, path }', async () => {
+  _resetRecordViolationDedup();
+  const root = await mkdtemp(join(tmpdir(), 'vgate-ok-'));
+  const result = await recordViolation(
+    { violation: 'Completion claim "DONE" without verification', claim: 'DONE' },
+    root,
+  );
+  assert.equal(result.ok, true, 'success path must return ok:true');
+  assert.equal(
+    result.path,
+    join(root, '.ijfw', 'memory', 'verification-violations.jsonl'),
+    'success path must include resolved file path',
+  );
+});
+
+test('v1.5.0 H4.3: recordViolation on unwritable dir returns { ok:false, error } + stderr line', async () => {
+  _resetRecordViolationDedup();
+  // A path that is guaranteed-unwritable: nest under /dev/null (a non-directory
+  // on POSIX), which makes mkdir's recursive walk fail with ENOTDIR/EACCES.
+  const root = '/dev/null/ijfw-vgate-unwritable-' + Math.random();
+  let result;
+  const stderr = await captureStderr(async () => {
+    result = await recordViolation(
+      { violation: 'Completion claim "shipped" without verification', claim: 'shipped' },
+      root,
+    );
+  });
+  assert.equal(result.ok, false, 'failure path must return ok:false');
+  assert.ok(typeof result.error === 'string' && result.error.length > 0,
+    'failure path must include error message');
+  assert.ok(typeof result.path === 'string' && result.path.length > 0,
+    'failure path must still include target path for diagnostics');
+  // Exactly one stderr line for this failure
+  const matchingLines = stderr.filter((s) => s.includes('[verification-gate]'));
+  assert.equal(matchingLines.length, 1,
+    'failure must emit exactly one stderr line');
+  // Stderr line must carry the claim so the violation isn't fully lost
+  assert.ok(matchingLines[0].includes('shipped'),
+    'stderr line must include the claim string');
+});
+
+test('v1.5.0 H4.3: recordViolation dedup — same unwritable path twice emits ONE stderr line', async () => {
+  _resetRecordViolationDedup();
+  const root = '/dev/null/ijfw-vgate-dedup-' + Math.random();
+  let r1, r2;
+  const stderr = await captureStderr(async () => {
+    r1 = await recordViolation({ violation: 'first', claim: 'DONE' }, root);
+    r2 = await recordViolation({ violation: 'second', claim: 'completed' }, root);
+  });
+  assert.equal(r1.ok, false, 'first call must fail');
+  assert.equal(r2.ok, false, 'second call must also fail (still unwritable)');
+  const matchingLines = stderr.filter((s) => s.includes('[verification-gate]'));
+  assert.equal(matchingLines.length, 1,
+    'same target-path failure must only log to stderr once per process');
+});
+
+test('v1.5.0 H4.3: recordViolation failure does NOT throw (posture stays advisory)', async () => {
+  _resetRecordViolationDedup();
+  const root = '/dev/null/ijfw-vgate-noth-' + Math.random();
+  // Wrap the call in captureStderr so the failure log is absorbed; the
+  // contract under test is "no rejection", not the stderr line itself.
+  let threw = false;
+  await captureStderr(async () => {
+    try {
+      await recordViolation({ violation: 'x', claim: 'DONE' }, root);
+    } catch {
+      threw = true;
+    }
+  });
+  assert.equal(threw, false,
+    'recordViolation must NEVER throw — it remains advisory in posture');
 });
