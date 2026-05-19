@@ -21,6 +21,10 @@
  */
 
 import { parseAgentReport, handleStatus, ProtocolViolation } from './status-protocol.js';
+// v1.5.0 N4.obs M1: ensure a trace_id is minted at the start of the orchestrator
+// loop so every downstream checkpoint/receipt/session row can be rolled up by
+// session in the dashboard.
+import { ensureTraceId } from '../observability/trace-id.js';
 
 /**
  * Review a subagent's report through the v1.4.4 4-value protocol.
@@ -34,6 +38,10 @@ import { parseAgentReport, handleStatus, ProtocolViolation } from './status-prot
  * @returns {{ action: string, parsed?: object, missing?: string, error?: string, raw?: string, [k: string]: unknown }}
  */
 export function reviewSubagentReport(reportText, ctx) {
+  // v1.5.0 N4.obs M1: mint (or adopt) a session trace_id on the first
+  // orchestrator call. Idempotent -- subsequent calls reuse the cached id, and
+  // a subagent inheriting via IJFW_TRACE_ID env keeps the parent's id.
+  ensureTraceId();
   if (typeof reportText !== 'string' || reportText.length === 0) {
     return {
       action: 'redispatch_needs_context',

@@ -9,6 +9,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+// v1.5.0 N4.obs M1: tag every receipt with the orchestrator's trace_id so the
+// dashboard can roll up sessions->traces->observations like Langfuse / Helicone.
+import { getTraceId } from './observability/trace-id.js';
 
 export function RECEIPTS_FILE(projectDir) {
   return path.join(projectDir, '.ijfw', 'receipts', 'cross-runs.jsonl');
@@ -24,7 +27,13 @@ export function writeReceipt(projectDir, record) {
   const dest = RECEIPTS_FILE(projectDir);
   const dir = path.dirname(dest);
   fs.mkdirSync(dir, { recursive: true });
-  fs.appendFileSync(dest, JSON.stringify(record) + '\n');
+  // v1.5.0 N4.obs M1: tag with trace_id if one is set + caller hasn't supplied
+  // one. Never overwrite an explicit caller-supplied trace_id.
+  const traceId = getTraceId();
+  const enriched = (traceId && record && typeof record === 'object' && !record.trace_id)
+    ? { ...record, trace_id: traceId }
+    : record;
+  fs.appendFileSync(dest, JSON.stringify(enriched) + '\n');
   _pruneReceipts(dest);
 }
 

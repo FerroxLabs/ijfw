@@ -19,6 +19,8 @@
 import { mkdir, writeFile, readFile, readdir, copyFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
+// v1.5.0 N4.obs M1+M2: trace-id + hierarchical observation path.
+import { getTraceId, composePath } from '../observability/trace-id.js';
 
 // ---------------------------------------------------------------------------
 // Frozen constants — Wave 11-A imports these directly
@@ -81,11 +83,25 @@ export async function recordCheckpoint(waveId, subId, checkpoint, projectRoot) {
   // missing env var → use projectRoot as before.
   const effectiveRoot = process.env.IJFW_PARENT_PROJECT_ROOT ?? projectRoot;
 
+  // v1.5.0 N4.obs M1: tag every checkpoint with the orchestrator's trace_id when
+  // one is available (env-var inheritance or already-cached). Never fabricate
+  // here -- if the env isn't set + the orchestrator never called ensureTraceId,
+  // we skip the field so old consumers don't see a half-populated id.
+  const traceId = getTraceId();
+  // v1.5.0 N4.obs M2: hierarchical observation path. The orchestrator can pass
+  // a richer path via `checkpoint.path`; otherwise we synthesise a default that
+  // a UI tree-view can group on: /wave-<waveId>/sub-<subId>.
+  const path = (typeof checkpoint.path === 'string' && checkpoint.path.length > 0)
+    ? checkpoint.path
+    : composePath({ waveId, subId });
+
   const payload = {
     schema_version: 1,
     wave_id: waveId,
     sub_id: subId,
     ts: new Date().toISOString(),
+    ...(traceId ? { trace_id: traceId } : {}),
+    path,
     ...checkpoint,
   };
 
