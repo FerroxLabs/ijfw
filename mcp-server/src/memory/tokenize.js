@@ -9,11 +9,21 @@
 
 // Stopword list -- tiny on purpose. Anything bigger drifts toward
 // language-specific behaviour; the goal is to remove glue, not to do NLP.
+//
+// v1.5.0 audit-LOW-memory-#16: code-shorthand stopwords. Memories in this
+// project are code-heavy; without these, generic JS keywords (function, class,
+// const, etc.) saturate the BM25 IDF curve and out-rank actually-discriminative
+// terms. Keeping the list narrow (JS-flavoured plus a handful of universals)
+// preserves the language-agnostic spirit while killing the worst noise.
 const STOPWORDS = new Set([
+  // English glue
   'a', 'an', 'the', 'and', 'or', 'but', 'of', 'in', 'on', 'at', 'to', 'for',
   'with', 'by', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
   'this', 'that', 'these', 'those', 'it', 'its', 'i', 'we', 'you', 'they',
   'so', 'if', 'then', 'than', 'do', 'did', 'does',
+  // Code shorthand -- JS/TS keywords that dominate IDF in code-heavy memory.
+  'function', 'class', 'const', 'let', 'var', 'export', 'import', 'return',
+  'await', 'async',
 ]);
 
 /**

@@ -30,8 +30,34 @@ const PATTERNS = [
   { kind: 'rule',        re: /\b(?:every time|each time|whenever|any time)\b/i },
 ];
 
+// v1.5.0 audit-LOW-memory-#15: negation / sarcasm guards.
+// When any of these phrases appears, suppress all feedback detection for the
+// prompt — the user has signalled that the literal phrase shouldn't be taken
+// as feedback (retraction, joke, hypothetical). High precision is more
+// valuable than recall here; a false positive promotes a bogus rule into
+// long-term memory which is expensive to unlearn.
+const NEGATION_PATTERNS = [
+  /\bnever ?mind\s+(?:that|this|it)?\b/i,
+  /\bnvm\b/i,
+  /\bactually,?\s+wait\b/i,
+  /\bsarcasm:\s*yes\b/i,
+  /\b\/s\b/i,                          // tumblr/reddit sarcasm tag
+  /\bjust kidding\b/i,
+  /\bscratch that\b/i,
+  /\bdisregard (?:that|this|it|the (?:above|last))\b/i,
+];
+
+function isNegatedOrSarcastic(prompt) {
+  for (const re of NEGATION_PATTERNS) {
+    if (re.test(prompt)) return true;
+  }
+  return false;
+}
+
 export function detectFeedback(prompt) {
   if (typeof prompt !== 'string' || !prompt) return [];
+  // Suppress detection when negation/sarcasm signal present.
+  if (isNegatedOrSarcastic(prompt)) return [];
   const hits = [];
   for (const { kind, re } of PATTERNS) {
     const m = prompt.match(re);

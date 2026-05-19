@@ -243,8 +243,33 @@ export function indexEntry(db, entry) {
     const ts = row.created_at;
     const sessionId = row.session_id;
     const body = row.body;
+    // v1.5.0 audit-LOW-memory-#14: dead-letter receipt for auto-index failures.
+    // Fire-and-forget was already swallowed silently; now we append an
+    // append-only JSONL receipt so silent indexer breakage is detectable in
+    // post-mortems. Best-effort: file write failures themselves are swallowed
+    // because indexEntry must never throw on diagnostic-write failure.
     const p = autoIndexGraphFromMemoryBody({ memoryDb: db, body, sessionId, ts })
-      .catch(() => null);
+      .catch((err) => {
+        try {
+          // Lazy import; node:fs/promises is always available.
+          import('node:fs/promises').then(({ appendFile, mkdir }) => {
+            try {
+              const indexDir = '.ijfw/index';
+              return mkdir(indexDir, { recursive: true })
+                .then(() => appendFile(
+                  `${indexDir}/graph-errors.jsonl`,
+                  JSON.stringify({
+                    ts: new Date().toISOString(),
+                    session_id: sessionId || null,
+                    err: err && err.message ? String(err.message) : String(err),
+                  }) + '\n',
+                ))
+                .catch(() => {});
+            } catch { /* swallow */ }
+          }).catch(() => {});
+        } catch { /* swallow */ }
+        return null;
+      });
     __lastAutoIndexPromise = p;
   } catch {
     // never throw out of indexEntry due to auto-index
