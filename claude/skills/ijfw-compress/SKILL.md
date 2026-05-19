@@ -18,4 +18,4 @@ Process:
 1. Back up: cp <file> <file>.original.md
 2. Compress prose sections.
 3. Validate: all headings preserved, all code blocks intact, all URLs unchanged.
-4. Report savings: "Compressed: 1,847 -> 923 tokens (50% saved -- approx $0.01-0.02 per session at Sonnet input pricing)"
+4. Report savings as measured per-artifact: "Compressed: <before> -> <after> tokens (<percent>% saved on this artifact)". Report the MEASURED number from wc -w / token-count on the actual files. Do NOT claim a fixed percentage — savings vary widely by input shape (verbose handoffs compress further than dense memory files). v1.5.0 audit removed the legacy hardcoded "50% / 40-50%" framing from this skill in favor of measured-per-receipt reporting.

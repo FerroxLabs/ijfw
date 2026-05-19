@@ -292,7 +292,7 @@ Decisions, patterns, handoffs, and journal entries persist as plain markdown in 
 | Warm | BM25 ranked retrieval | Always on. Scales to around 10,000 entries. |
 | Cold | Optional semantic vectors (hybrid BM25 + cosine rerank) | Off by default. Enable with `IJFW_VECTORS=on` and `npm i @xenova/transformers` (one-time ~23MB MiniLM model cached locally). Pure no-op fallback to BM25 if disabled, the package isn't installed, or the model fails to load. |
 
-Ten MCP tools (cap raised 8 -> 10 in 1.1.6 to land the update-check + update-apply admin tools) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
+Twelve MCP tool endpoints (10 user-facing in `tools/list` + 2 admin handlers for `ijfw_update_check` / `ijfw_update_apply`; cap raised 8→10 in v1.1.6 and 10→12 in v1.5.0 to land `ijfw_subagent_post_done` and `ijfw_cross_audit_converge`) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
 
 **Dream reconciliation.** On demand (`/consolidate` or "run a dream cycle"), IJFW sweeps your memory: it promotes observed patterns into the knowledge base, prunes stale entries, reconciles contradictions, and optionally lifts winners into your global memory so every future project benefits. You end up with a memory that grows sharper over time instead of heavier.
 
@@ -408,21 +408,24 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 ### The MCP memory server
 
-Node.js. 40 KB. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Ten tools at the CLAUDE.md cap of 10.
+Node.js. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Twelve tool endpoints (10 in `tools/list`, 2 admin handlers) at the CLAUDE.md cap of 12.
 
 | Tool | Purpose |
 |------|---------|
-| `ijfw_memory_recall` | Wake up with full project context. Cross-project via `from_project`. |
-| `ijfw_memory_store` | Persist decisions, patterns, handoffs, preferences, observations. |
-| `ijfw_memory_search` | BM25-ranked search over local memory. `scope:"all"` for cross-project. `scope:"sandbox"` retrieves sandboxed command output. |
+| `ijfw_memory_recall` | Wake up with full project context. Cross-project via `from_project`. New in v1.5.0: `context_hint: "facts"` returns the structured-fact ledger built by the ingest pipeline. |
+| `ijfw_memory_store` | Persist decisions, patterns, handoffs, preferences, observations. v1.5.0 ingest pipeline: redact → sanitize → near-duplicate dedup → journal append → structured-fact extraction. |
+| `ijfw_memory_search` | BM25-ranked search over local memory. `scope:"all"` routes through BM25 cross-project search (v1.5.0: was naive keyword count). `scope:"sandbox"` retrieves sandboxed command output. |
 | `ijfw_memory_status` | Roughly 200-token project brief. Mode, pending, last handoff. |
 | `ijfw_memory_prelude` | Full first-turn memory bundle for agents without SessionStart hooks. |
 | `ijfw_prompt_check` | Deterministic regex detector for vague prompts. Zero LLM cost. |
-| `ijfw_metrics` | Tokens, cost, routing mix, session totals. |
-| `ijfw_cross_project_search` | BM25 across every registered IJFW project on the machine. |
+| `ijfw_metrics` | Tokens, cost, routing mix, session totals. Model-aware in v1.5.0 (Opus/Haiku rates correct, not Sonnet-only). |
+| `ijfw_cross_project_search` | BM25 across every registered IJFW project on the machine. v1.5.0: realpath + containment check refuses symlinks pointing outside `$HOME`. |
 | `ijfw_run` | Token sandbox for large command output. Spawns the command, streams stdout/stderr to `~/.ijfw/session-sandbox/`, returns a terse domain-aware summary (test runner / build / grep / log / raw). Triggers on >40 lines or >50 KB. Saves 90%+ context tokens on builds, test suites, grep -r, and log tails. Full output retrievable via `ijfw_memory_search(scope: "sandbox", label: "...")`. |
+| `ijfw_subagent_post_done` | **(v1.5.0, slot 11)** Runtime contract enforcement called after every subagent dispatch completes. Verifies the 4-value status protocol (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED), commit freshness, and Iron-Law completion-claim coverage before the orchestrator advances. |
+| `ijfw_cross_audit_converge` | **(v1.5.0, slot 12)** Trident-as-a-service: multi-lens consensus convergence loop. Bounded `maxIterations` (cap 10), receipts logged per cycle, cycleSummary placed AFTER cacheable target for prompt-cache friendliness. |
+| `ijfw_update_check` / `ijfw_update_apply` *(admin)* | Air-gapped self-update flow. `check` issues a 5-minute crypto-random token; `apply` writes a pending sentinel and returns the literal terminal command. v1.5.0: shasum cross-verify against the source release as a second factor on top of `npm audit signatures`. |
 
-Hard cap at 10 (raised from 8 in 1.1.6 to land the update-check + update-apply admin tools). Every tool earns its slot or it gets cut; future growth triggers a retirement review, not another cap raise.
+Hard cap at 12 (raised from 10 in v1.5.0; previously 8 → 10 in v1.1.6 to land update-check + update-apply). Every tool earns its slot or it gets cut; future growth triggers a retirement review, not another cap raise.
 
 ### The `ijfw` CLI
 
@@ -512,24 +515,25 @@ Same engine behind all of them. Native affordances on each.
        |              |            |            |
        v              v            v            v
    Token economy   Workflow     Teams        Memory
-   (right model,   (Quick and   (per-project  (10 MCP tools,
+   (right model,   (Quick and   (per-project  (12 MCP tools,
     output rules,   Deep modes,  agents +      hot, warm,
-    cache)          audit gates) swarm)        cold)
+    cache)          audit gates) swarm)        cold + facts)
        |              |            |            |
        +--------------+------+-----+------------+
-                            |
-                            v
-                +-------------------------+
-                |   Multi-AI Trident      |
-                | (Codex + Gemini +       |
-                |  Claude specialists)    |
-                +-------------------------+
-                            |
-                            v
-                     Receipt + Memory
+                |            |             |
+                v            v             v
+       +---------------+  +-----------+  +---------------+
+       |   Trident     |  |  Design   |  |   Update +    |
+       | (Codex+Gemini |  | contract  |  |  trust model  |
+       |  +Claude+...) |  |(DESIGN.md)|  | (air-gapped)  |
+       +---------------+  +-----------+  +---------------+
+                |            |             |
+                +-----+------+------+------+
+                      v
+              Receipts + Memory + Statusline
 ```
 
-Five engines. One workflow. One memory. One Trident. One install.
+Seven engines. One workflow. One memory. One Trident. One install. Token economy, disciplined workflow, custom teams, connected memory, multi-AI Trident, design contract, and the always-on update + cross-platform status surface — all in one binary.
 
 * * *
 

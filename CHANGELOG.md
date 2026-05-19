@@ -2,7 +2,52 @@
 
 ## [Unreleased]
 
-## [1.5.0] -- 2026-05-18 (MAJOR — "The All-in-One That Just Fucking Works")
+## [1.5.0] -- 2026-05-19 (MAJOR — "The All-in-One That Just Fucking Works") — RETAGGED
+
+### Post-tag deep-dive audit pass (2026-05-19) — 20 commits closing ~35 audit findings
+
+After tag-day on 2026-05-18 at `9ddf1ed`, an 8-engine deep-dive audit (`.planning/audit-v1.5.0/`) surfaced ~32 HIGH + ~29 MED + ~16 LOW findings across token-optimization / observability / design / memory / workflow / teams / Trident / update-install-trust. Per "no-half-shipping" discipline, the hardening pass landed in-tag (no v1.5.1 split). v1.5.0 tag retagged at the post-pass HEAD; v1.5.0 npm release ships with the hardening included.
+
+**H1 — Atomic safety fixes (7 commits, 2026-05-19):**
+- **H1.1** `verification-gate.js` bare `build` substring let `Bash("ls build/")` clear the Iron Law without running tests. Fix: explicit allowlist of build/test verbs at command-start; segment-split on shell separators after Trident r18 found the first-cut still accepted `echo npm test`. (HIGH-S2)
+- **H1.2** `status-protocol.js` `^Status:` regex returned FIRST match; an agent quoting "the prior wave: Status: BLOCKED" hijacked its own status. Same root cause hit `Attempts:` and triggered the 3-attempt-cap escalation. Fix: take LAST match across every protocol field. Created `test-status-protocol.js` (was zero coverage). (HIGH-F1 + MED-C2)
+- **H1.3** `atomic-io.js` symlink-refuse defense at `writeAtomic` used `statSync` (follows symlinks), so `isSymbolicLink()` always returned false — dead-code check. Fixed to `lstatSync`. Created `test-atomic-io.js`. (F-COR-1)
+- **H1.4** Sanitizer added Unicode tag-block strip (U+E0000–U+E007F) — the "ASCII Smuggler" prompt-injection vector that hides ASCII-mapped instructions invisibly in memory content. (F-SEC-3)
+- **H1.5** `ijfw_memory_search({scope:'all'})` routed to naive keyword-count `searchAcrossProjects`; now routes to BM25-ranked `crossProjectSearch`. Removed 28 LOC of legacy fallback. (F-FUN-4)
+- **H1.6** `--chunk` flag was advertised at `cross-orchestrator-cli.js:967` but the chunker module (177 LOC, 10 passing tests since r17.1) was unimported. **2/2 audit consensus** between token-opt + Trident auditors. Wired: argv parsing + per-chunk dispatch through `runCrossOp` + `mergeFindings()` Jaccard-dedupe across chunks + structured exit code 2 on degraded dispatch. (HIGH consensus)
+- **H1 Trident r18 close-out** Codex audited the H1 diff and surfaced 2 follow-up findings: (a) the H1.1 first-cut still let `echo npm test` clear the gate — restructured to segment-split + verb-at-segment-head + env-var prefix allowance; (b) the H1.3 try/catch wrapping the symlink throw was fragile — restructured so throw is outside any try/catch.
+
+**H3 — Net-new security batch (parallel subagent dispatch, 4 commits, 2026-05-19):**
+- **H3.1+H3.2+H3.3** Dashboard XSS (`esc()` now escapes single quotes; closes `evil');alert(1);//.md` filename injection), strict `Content-Security-Policy` header on all 5 HTML routes (default-src self, no remote scripts), `/api/memory-file?path=` body routed through `redactor.js` before serving + 5 MiB size cap → 413. (observability HIGH-1/2/3)
+- **H3.4** `cross-project-search.js` registry entries now `realpathSync`-resolved and containment-checked against `allowedRoots` (default `$HOME`); symlink-escape silently skipped with one-time stderr per offender. (memory-engine F-SEC-1)
+- **H3.5** Redactor expanded to cover 2026 secret families: GitLab PATs (`glpat-`, `glcbt-`, `gldt-`), AWS secret access keys (contextualized), Discord bot tokens, JWT/Supabase service-role, OpenAI org IDs, Vercel tokens, Notion (legacy + 2026), Linear API keys, Twilio. +47 LOC pattern table, +22 tests. (memory-engine F-SEC-2)
+- **H3.6** `override-use-registry.recordOverrideUse` now validates `projectRoot` against 9 layers: type, isAbsolute, no `..`, length cap, no ASCII control chars, no Unicode tag-block, no `<`/`>`/backtick. Returns `{ok}` shape instead of throwing. (update-install-trust F-SEC-4)
+
+**H4 — Hardening (5 commits, 2026-05-19):**
+- **H4.1+H4.2+H4.5** Trident hardening trio in `cross-orchestrator.js`: bounded `runPhaseEConverge` at `MAX_CONVERGE_ITERATIONS=10`; `cycleSummary` placed AFTER cacheable target (prep for user-content `cache_control` per ADJUDICATIONS DISPUTED-1); `runPhaseEConverge` now writes converge receipts so the flagship v1.5.0 feature appears on `ijfw status` + dashboard. (trident HIGH-2/4/5)
+- **H4.3** `recordViolation` no longer silently swallows write failures: returns `{ok, path?, error?}`, emits one stderr line per unique target-path (Set-dedup), remains advisory (never throws). (workflow HIGH-Rel1)
+- **H4.6** `hero-line.js` cost-savings constant replaced with model-aware lookup against `cost/pricing.js`. Opus / Haiku users now see correct dollar amounts (was Sonnet rate everywhere). Unknown model falls back to Sonnet + one stderr advisory per session.
+- **H4.7** `model-refresh.js` Google sort replaced lexical `.sort()` with semver-aware `compareModelIds()` — `gemini-10.x` now sorts AFTER `gemini-2.x` (was before). Pinned the contract for openai/anthropic.
+- **H4.8** Three parallel pricing surfaces unified onto `cost/pricing.js`: `parse-transcripts.js` was using Haiku 3.5 rates (~20% understated); `cross-dispatcher.js` had stale codex/copilot rates. Cross-surface consistency test prevents future drift.
+
+**H5 — Memory engine completions (2 commits, 2026-05-19):**
+- **H5.3** Teams claim TTL + heartbeat + orphan eviction: `evictOrphanedClaims({ttlMs=30min})` walks blackboard claims, evicts stale ones, emits `claim.evicted` events. New CLI: `ijfw swarm evict-orphans [--ttl-min N]` + `ijfw swarm heartbeat <artifact-id> --owner <agent>`. Closes the wayland-pattern silent-failure runtime gap.
+- **H5.5+H5.6** Memory ingest pipeline: `fact-extractor.js` heuristic-extracts structured facts at store time → `facts.jsonl` (recallable via `context_hint:"facts"`); `dedup.js` Jaccard-similarity check at ≥0.85 threshold prevents near-duplicate memory bloat. Env knobs: `IJFW_DEDUP_THRESHOLD`, `IJFW_DEDUP_OFF=1`. Handoff type exempt from dedup. (memory-engine gaps vs mem0/Zep/Graphiti)
+
+**H2 — Doc/code reconciliation (3 commits, 2026-05-19):**
+- **H2.1** `ijfw team init` now accepts `--brief <text>` and `detectTeamArchetype` scores it against per-domain keyword tables. Book/research/campaign briefs no longer silently collapse to `mixed`. Fixed the `normalizeArchetype` mapping bug (alias canonicalization before SUPPORTED_ARCHETYPES gate). (teams F-FUN-1)
+- **H2.2** `ijfw update --verify` now performs shasum cross-verify against the source release as second factor on top of `npm audit signatures` (closes the `docs/SECURITY.md` claim that didn't exist in code). New `mcp-server/src/lib/shasum-verify.js`. (update-install-trust F-SEC-7)
+- **D1-D5 docs scrub** (this commit): README MCP-tool count 10→12 with per-tool table refreshed for `ijfw_subagent_post_done`, `ijfw_cross_audit_converge`, and admin update tools. ASCII engine diagram fixed (heading said "seven", diagram said "five" — now both seven). `ijfw-compress` SKILL.md fixed-percentage savings claim replaced with measured-per-artifact framing. v1.4.1 memory note reconciled — earlier "tier-2 enforcement reached 5 platforms" claim corrected to "permissions: schemas declared, runtime hooks Claude-only".
+
+**Stale tests cleaned up:** `test.js` 10-tool assertion → canonical 12-tool list; cross-project test fixture path layout fixed for the new `H3.4` containment check.
+
+**Trident r18 dogfooded mid-pass:** Codex audited the H1 commit range, refuted one finding (cache_control on system block IS set; only user-content lacks it — see `.planning/audit-v1.5.0/ADJUDICATIONS.md` DISPUTED-1), confirmed `--chunk`-not-wired via independent grep (2/2 consensus), surfaced 2 regressions in my H1.1 + H1.3 fixes that were resolved in the close-out commit. Gemini timed out at 90s on the 41KB diff target — consistent flake pattern noted in memory.
+
+**Audit artifacts:** `.planning/audit-v1.5.0/{SYNTHESIS,ADJUDICATIONS,SHIP-PLAN-v1.5.1}.md` + 8 per-engine audit files in `engines/`. ~393KB of analysis with citation back to specific code+line for every finding.
+
+---
+
+### Initial ship contents (tag-day 2026-05-18 at 9ddf1ed)
 
 **Replaces GSD + Superpowers; ships multi-domain templates.** This release is the foundation (S1-S10 + 6 fold-ins — see "Foundation summary" below) plus **30 net-new scope items + 3 replacement tests + 6 polish fixes + 6 r15-audit closures** that prove the all-in-one claim. ("Scope items" — each item is a feature, not a file; some items ship multiple files. Concrete file count v1.4.4..HEAD: ~108 new content files across skills/agents/templates/libraries/tests/docs/dashboard.) The cross-system audit (R1 Superpowers / R2 GSD / R3 IJFW-current / R4 synthesis) drove the scope; the replacement tests (RT1 GSD-style software / RT2 Superpowers-style TDD / RT3 multi-domain proof) are the falsifiable acceptance gate, not a marketing claim. **Net: 30 scope items (~108 new content files: skills + agents + templates + libraries + tests + docs + dashboard) + 38 subagent dispatches across Waves 12-A0/A/B/C/D/E/F + multi-lens convergence ships as the canonical Phase E.**
 
