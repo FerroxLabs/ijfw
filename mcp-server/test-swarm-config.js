@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getSwarmConfig, loadSwarmConfig, detectProjectType, DEFAULT_SPECIALISTS, SCHEMA } from './src/swarm-config.js';
+import { getSwarmConfig, loadSwarmConfig, detectProjectType, DEFAULT_SPECIALISTS, SCHEMA, specialistsFor } from './src/swarm-config.js';
 
 function makeTmp() {
   return mkdtempSync(join(tmpdir(), 'ijfw-swarm-test-'));
@@ -171,6 +171,44 @@ test('detectProjectType: typed wins over node when tsconfig.json present', () =>
 });
 
 // ── No pollution of real .ijfw ──────────────────────────────────────────────
+
+// ── audit-MED-teams-#6: domain-keyed bench routing ─────────────────────────
+
+test('DEFAULT_SPECIALISTS exposes archetype-keyed benches (book, content, research)', () => {
+  for (const key of ['software', 'book', 'content', 'marketing', 'research', 'design', 'business', 'mixed']) {
+    assert.ok(Array.isArray(DEFAULT_SPECIALISTS[key]), `missing archetype key: ${key}`);
+    assert.ok(DEFAULT_SPECIALISTS[key].length > 0, `empty archetype bench: ${key}`);
+  }
+});
+
+test('book archetype bench contains story/continuity/prose specialists, no accessibility-eng', () => {
+  const ids = DEFAULT_SPECIALISTS.book.map((s) => s.id);
+  assert.ok(ids.includes('story-architect'), 'book bench should include story-architect');
+  assert.ok(ids.includes('continuity-editor'), 'book bench should include continuity-editor');
+  assert.ok(ids.includes('prose-stylist'), 'book bench should include prose-stylist');
+  assert.ok(!ids.includes('accessibility-eng'), 'book bench should NOT include accessibility-eng');
+  assert.ok(!ids.includes('release-eng'), 'book bench should NOT include release-eng');
+});
+
+test('research archetype bench includes research-lead + data-analyst', () => {
+  const ids = DEFAULT_SPECIALISTS.research.map((s) => s.id);
+  assert.ok(ids.includes('research-lead'));
+  assert.ok(ids.includes('data-analyst'));
+});
+
+test('specialistsFor archetype wins over language', () => {
+  const bench = specialistsFor({ archetype: 'book', language: 'node' });
+  const ids = bench.map((s) => s.id);
+  assert.ok(ids.includes('story-architect'));
+  assert.ok(!ids.includes('reviewer'), 'book bench should not inherit software reviewer');
+});
+
+test('specialistsFor falls back to language then other', () => {
+  const node = specialistsFor({ language: 'node' });
+  const other = specialistsFor({});
+  assert.ok(node.length > 0);
+  assert.ok(other.length > 0);
+});
 
 test('real project .ijfw/swarm.json is not touched by tests', () => {
   // This test verifies the test suite did not write to the real project dir.

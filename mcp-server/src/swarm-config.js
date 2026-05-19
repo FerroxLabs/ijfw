@@ -53,14 +53,63 @@ const V150_SPECIALISTS = [
   RELEASE_ENG, DOC_WRITER, ACCESSIBILITY_ENG,
 ];
 
+// F-FUN-3 (audit-MED-teams-#6): non-software domain specialists. Mirrors
+// the fixture role definitions so we don't duplicate prompts; the IDs here
+// are the *bench* names the swarm config tracks. Selecting a non-software
+// archetype yields a bench tailored to the domain (book gets story-architect,
+// not accessibility-eng). Software remains the default to preserve back-compat.
+const STORY_ARCHITECT     = { id: 'story-architect',    role: 'Plot + structure architecture', agent_type: 'ijfw-story-architect',    since: '1.5.0' };
+const CONTINUITY_EDITOR   = { id: 'continuity-editor',  role: 'Timeline + voice continuity',   agent_type: 'ijfw-continuity-editor',  since: '1.5.0' };
+const PROSE_STYLIST       = { id: 'prose-stylist',      role: 'Sentence-level voice + pacing', agent_type: 'ijfw-prose-stylist',      since: '1.5.0' };
+
+const CAMPAIGN_STRATEGIST = { id: 'campaign-strategist', role: 'Audience + funnel strategy',   agent_type: 'ijfw-campaign-strategist', since: '1.5.0' };
+const COPY_EDITOR         = { id: 'copy-editor',         role: 'Channel-aware copy editing',   agent_type: 'ijfw-copy-editor',         since: '1.5.0' };
+
+const RESEARCH_LEAD       = { id: 'research-lead',       role: 'Methodology + literature review', agent_type: 'ijfw-research-lead',    since: '1.5.0' };
+const DATA_ANALYST        = { id: 'data-analyst',        role: 'Quantitative analysis',         agent_type: 'ijfw-data-analyst',        since: '1.5.0' };
+
+// Per-archetype bench definitions. Keys here track the project_archetypes
+// vocabulary used by team/generator.js so a brief-detected archetype maps
+// directly to the right bench without an extra translation layer.
+const SOFTWARE_BENCH = [...BASE, TESTS_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS];
+const TYPED_BENCH    = [...BASE, TESTS_SPECIALIST, TYPES_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS];
+const GO_RUST_BENCH  = [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS];
+const OTHER_BENCH    = [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS];
+
+const BOOK_BENCH      = [STORY_ARCHITECT, CONTINUITY_EDITOR, PROSE_STYLIST, DOC_VERIFIER, NYQUIST_AUDITOR];
+const CONTENT_BENCH   = [CAMPAIGN_STRATEGIST, COPY_EDITOR, DOC_VERIFIER, NYQUIST_AUDITOR];
+const RESEARCH_BENCH  = [RESEARCH_LEAD, DATA_ANALYST, DOC_VERIFIER, NYQUIST_AUDITOR];
+
 export const DEFAULT_SPECIALISTS = {
-  node:   [...BASE, TESTS_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS],
-  python: [...BASE, TESTS_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS],
-  typed:  [...BASE, TESTS_SPECIALIST, TYPES_SPECIALIST, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS],
-  go:     [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS],
-  rust:   [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS],
-  other:  [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS],
+  // Language-keyed defaults (preserved for back-compat with v1.4.x callers
+  // that hand in a detectProjectType() result).
+  node:   SOFTWARE_BENCH,
+  python: SOFTWARE_BENCH,
+  typed:  TYPED_BENCH,
+  go:     GO_RUST_BENCH,
+  rust:   GO_RUST_BENCH,
+  other:  OTHER_BENCH,
+  // Archetype-keyed defaults (new in v1.5.0 audit-MED-teams-#6) -- selected
+  // when the caller hands in a project archetype from the team detector.
+  software:  SOFTWARE_BENCH,
+  book:      BOOK_BENCH,
+  content:   CONTENT_BENCH,
+  marketing: CONTENT_BENCH,
+  research:  RESEARCH_BENCH,
+  design:    CONTENT_BENCH,
+  business:  SOFTWARE_BENCH,
+  mixed:     SOFTWARE_BENCH,
 };
+
+// F-FUN-3: helper -- pick the right bench for a (language, archetype) pair.
+// Archetype wins when supplied (a "book" project running from a tmp dir
+// with no package.json must still receive the book bench). Falls back to
+// language and then `other` so older callers keep working.
+export function specialistsFor({ archetype, language } = {}) {
+  if (archetype && DEFAULT_SPECIALISTS[archetype]) return DEFAULT_SPECIALISTS[archetype];
+  if (language && DEFAULT_SPECIALISTS[language]) return DEFAULT_SPECIALISTS[language];
+  return DEFAULT_SPECIALISTS.other;
+}
 
 // Detects project type from filesystem signals in projectDir.
 // Returns 'node' | 'python' | 'go' | 'rust' | 'typed' | 'other'.
@@ -95,14 +144,21 @@ function applySwarmDefaults(config) {
 }
 
 // Returns a fresh default config object for the given project type.
-function buildDefault(projectType) {
-  const specialists = DEFAULT_SPECIALISTS[projectType] ?? DEFAULT_SPECIALISTS.other;
-  return applySwarmDefaults({ project_type: projectType, specialists: specialists.map(s => ({ ...s })) });
+// F-FUN-3: supports an optional `archetype` keyed selection so non-software
+// projects (book, content, research, ...) get a domain-tailored bench.
+function buildDefault(projectType, options = {}) {
+  const specialists = specialistsFor({ archetype: options.archetype, language: projectType });
+  const config = { project_type: projectType, specialists: specialists.map(s => ({ ...s })) };
+  if (options.archetype) config.archetype = options.archetype;
+  return applySwarmDefaults(config);
 }
 
 // Reads .ijfw/swarm.json if present, otherwise detects type, generates
 // default config, persists it, and returns it.
-export function loadSwarmConfig(projectDir) {
+//
+// F-FUN-3: optional `options.archetype` overrides language-only selection so
+// brief-detected domains (book, content, research, ...) hit a tailored bench.
+export function loadSwarmConfig(projectDir, options = {}) {
   const swarmPath = join(projectDir, '.ijfw', 'swarm.json');
 
   if (existsSync(swarmPath)) {
@@ -112,7 +168,7 @@ export function loadSwarmConfig(projectDir) {
   }
 
   const projectType = detectProjectType(projectDir);
-  const config = buildDefault(projectType);
+  const config = buildDefault(projectType, { archetype: options.archetype });
 
   const ijfwDir = join(projectDir, '.ijfw');
   if (!existsSync(ijfwDir)) mkdirSync(ijfwDir, { recursive: true });
