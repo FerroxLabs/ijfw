@@ -289,7 +289,13 @@ function gradeInteraction({ spec, files, peerInputs }) {
       }
     } catch { /* peer tool optional */ }
   }
-  return { pillar: 'interaction', verdict: VERDICT_PASS, findings, evidence: `${focusMentions} :focus / ${interactiveDecls} interactive surfaces`, startedAt, finishedAt: Date.now() };
+  // r21-HIGH-1: derive the verdict from findings instead of returning PASS
+  // unconditionally. A recorded playwright baseline diff (or any other
+  // finding) must downgrade the pillar — a true PASS means zero findings.
+  let verdict = VERDICT_PASS;
+  if (findings.some((f) => f.severity === 'high')) verdict = VERDICT_BLOCK;
+  else if (findings.length > 0) verdict = VERDICT_FLAG;
+  return { pillar: 'interaction', verdict, findings, evidence: `${focusMentions} :focus / ${interactiveDecls} interactive surfaces`, startedAt, finishedAt: Date.now() };
 }
 
 function gradeSecurity({ spec, files, peerInputs }) {
@@ -297,12 +303,18 @@ function gradeSecurity({ spec, files, peerInputs }) {
   const findings = [];
   // a11y is part of the security pillar per the v1.5.0 7-pillar enumeration.
   if (peerInputs && peerInputs.axe !== undefined) {
-    const a11y = evaluateA11y(peerInputs.axe, {
-      target: spec.a11yTarget || DEFAULT_A11Y_TARGET,
-      maxViolations: spec.maxViolations != null ? spec.maxViolations : DEFAULT_MAX_VIOLATIONS,
-    });
-    if (a11y.pass === false) {
-      findings.push({ severity: 'high', text: `a11y: ${a11y.count} violations exceed budget ${a11y.maxViolations}` });
+    // r21-MED: isolate evaluator failures — a malformed axe peer input must
+    // not throw out of the grader and reject the whole Promise.all review.
+    try {
+      const a11y = evaluateA11y(peerInputs.axe, {
+        target: spec.a11yTarget || DEFAULT_A11Y_TARGET,
+        maxViolations: spec.maxViolations != null ? spec.maxViolations : DEFAULT_MAX_VIOLATIONS,
+      });
+      if (a11y.pass === false) {
+        findings.push({ severity: 'high', text: `a11y: ${a11y.count} violations exceed budget ${a11y.maxViolations}` });
+      }
+    } catch (err) {
+      findings.push({ severity: 'med', text: `a11y evaluation failed: ${err && err.message ? err.message : String(err)}` });
     }
   }
   // CSP / inline-handler smell tests
@@ -321,9 +333,15 @@ function gradeSecurity({ spec, files, peerInputs }) {
   }
   // Lighthouse audit (optional peer)
   if (peerInputs && peerInputs.lighthouse !== undefined) {
-    const lh = evaluateLighthouse(peerInputs.lighthouse);
-    if (lh.pass === false) {
-      findings.push({ severity: 'med', text: `lighthouse: LCP ${lh.lcpMs}ms / CLS ${lh.clsScore} -- ${lh.reason}` });
+    // r21-MED: isolate evaluator failures — a malformed lighthouse peer
+    // input must not throw out of the grader and crash the review.
+    try {
+      const lh = evaluateLighthouse(peerInputs.lighthouse);
+      if (lh.pass === false) {
+        findings.push({ severity: 'med', text: `lighthouse: LCP ${lh.lcpMs}ms / CLS ${lh.clsScore} -- ${lh.reason}` });
+      }
+    } catch (err) {
+      findings.push({ severity: 'med', text: `lighthouse evaluation failed: ${err && err.message ? err.message : String(err)}` });
     }
   }
   let verdict = VERDICT_PASS;

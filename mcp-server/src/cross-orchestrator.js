@@ -1264,15 +1264,21 @@ export async function runPhaseEConverge({
   // signal aborts (signal is passed through so the cap cascades into
   // keepalive too).
   //
-  // The default onTick is a counter increment; the count is surfaced on
-  // the return value + receipt for observability. Production callers can
-  // supply their own onTick via `keepaliveOnTick` arg (e.g. to ping an
-  // API endpoint that re-warms the cache prefix).
+  // Every tick increments a counter (surfaced on the return value + receipt
+  // for observability). Production callers can additionally supply their own
+  // onTick via `keepaliveOnTick` arg (e.g. to ping an API endpoint that
+  // re-warms the cache prefix); it runs alongside the counter, not instead.
   let _keepaliveTicks = 0;
   const _keepalive = startKeepaliveFromEnv({
-    onTick: typeof keepaliveOnTick === 'function'
-      ? keepaliveOnTick
-      : () => { _keepaliveTicks += 1; },
+    // r21-LOW: count every tick regardless of whether a custom onTick is
+    // supplied. Previously the counter only ran on the default path, so
+    // runs that passed keepaliveOnTick under-reported as zero ticks.
+    onTick: () => {
+      _keepaliveTicks += 1;
+      if (typeof keepaliveOnTick === 'function') {
+        try { keepaliveOnTick(); } catch { /* keepalive errors must never crash the wave */ }
+      }
+    },
     onError: () => { /* keepalive errors must never crash the wave */ },
     signal: _cycleAc.signal,
     env,
@@ -1300,9 +1306,12 @@ export async function runPhaseEConverge({
       clearTimeout(_totalTimer);
       _totalTimer = null;
     }
-    // v1.5.0 wire-W1.B — cancel keepalive (idempotent; no-op when never started).
-    try { _keepalive.cancel(); } catch { /* never throws */ }
+    // v1.5.0 wire-W1.B — sample the active flag BEFORE cancel. isActive()
+    // returns false once cancelled, so reading it after teardown (r21-MED)
+    // would under-report a heartbeat that was wired and running this wave.
     const _keepaliveActive = _keepalive.isActive();
+    // Cancel keepalive (idempotent; no-op when never started).
+    try { _keepalive.cancel(); } catch { /* never throws */ }
     // M5/M6: surface lens-budget + total-timeout posture on the return value
     // so callers can branch on partial-completion. lensCosts is always
     // present (even when no cap was set) so observability is consistent.

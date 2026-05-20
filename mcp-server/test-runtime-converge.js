@@ -487,10 +487,11 @@ test('wire-W1.B: keepaliveTicks=0 when env opt-in absent (wire present, gated)',
 test('wire-W1.B: keepalive fires with env opt-in during a real (slow-mock) wave', async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), 'ijfw-w1b-on-'));
   try {
-    // A mock dispatcher that sleeps 1.2s per call — long enough that a 1s
-    // keepalive interval will fire at least once mid-wave.
+    // A mock dispatcher that sleeps 2.5s per call — long enough that a 1s
+    // keepalive interval fires ~2 times mid-wave with comfortable slack.
+    // r21-MED: 1.2s left only ~200ms margin and was flaky under CI load.
     const slowDispatch = ({ lens }) => new Promise((resolve) =>
-      setTimeout(() => resolve({ lens, verdict: 'PASS', findings: [] }), 1200)
+      setTimeout(() => resolve({ lens, verdict: 'PASS', findings: [] }), 2500)
     );
 
     const r = await runPhaseEConverge({
@@ -502,7 +503,7 @@ test('wire-W1.B: keepalive fires with env opt-in during a real (slow-mock) wave'
       env: { IJFW_CACHE_KEEPALIVE_MS: '1000' },
     });
     assert.equal(r.verdict, 'PASS');
-    // Keepalive should fire at least once during the 1.2s dispatch.
+    // Keepalive should fire at least once during the 2.5s dispatch.
     assert.ok(
       r.keepaliveTicks >= 1,
       `expected at least 1 keepalive tick, got ${r.keepaliveTicks}`,
@@ -522,13 +523,13 @@ test('wire-W1.B: keepalive fires with env opt-in during a real (slow-mock) wave'
   }
 });
 
-test('wire-W1.B: caller-supplied keepaliveOnTick overrides default counter', async () => {
+test('wire-W1.B: caller-supplied keepaliveOnTick runs alongside the tick counter', async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), 'ijfw-w1b-cb-'));
   try {
     let customCalls = 0;
     const customTick = () => { customCalls += 1; };
     const slowDispatch = ({ lens }) => new Promise((resolve) =>
-      setTimeout(() => resolve({ lens, verdict: 'PASS', findings: [] }), 1200)
+      setTimeout(() => resolve({ lens, verdict: 'PASS', findings: [] }), 2500)
     );
     const r = await runPhaseEConverge({
       commitRange: 'HEAD~1..HEAD',
@@ -540,8 +541,17 @@ test('wire-W1.B: caller-supplied keepaliveOnTick overrides default counter', asy
       env: { IJFW_CACHE_KEEPALIVE_MS: '1000' },
     });
     assert.ok(customCalls >= 1, `expected custom onTick to fire, got ${customCalls}`);
-    // Default counter stays at 0 because the custom tick replaced it.
-    assert.equal(r.keepaliveTicks, 0);
+    // r21-LOW: keepaliveTicks counts EVERY tick, even when a custom onTick
+    // is supplied. The counter and the custom callback run together — the
+    // custom tick does not replace the counter.
+    assert.ok(
+      r.keepaliveTicks >= 1,
+      `expected keepaliveTicks to count custom-onTick ticks, got ${r.keepaliveTicks}`,
+    );
+    assert.equal(
+      r.keepaliveTicks, customCalls,
+      'tick counter and custom onTick must increment in lockstep',
+    );
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }

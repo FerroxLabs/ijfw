@@ -1451,20 +1451,26 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
 
   // 1.2.0 Phase 5: surface the DESIGN picker to platforms without a skills tree.
   // Skip when the project already has a DESIGN.md (contract exists; no picker).
+  // Built into a standalone block so the abstention path below can re-emit it:
+  // a fresh project with no memory AND no DESIGN.md is exactly when the picker
+  // matters most, so it must survive the thin-memory short-circuit.
+  let designPickerBlock = '';
   try {
     if (!existsSync(join(PROJECT_DIR, 'DESIGN.md'))) {
       const names = DESIGN_TEMPLATE_CATALOG.map(([n]) => n);
-      parts.push('## Design picker');
-      parts.push('No DESIGN.md in project. 12 curated templates available:');
-      parts.push(names.slice(0, 5).join(', ') + ',');
-      parts.push(names.slice(5, 10).join(', ') + ',');
-      parts.push(names.slice(10).join(', ') + '.');
-      parts.push('');
-      parts.push('Pick one: ijfw_memory_recall({context_hint: "design_template:<name>"}).');
-      parts.push('Full catalog with descriptions: ijfw_memory_recall({context_hint: "design_template"}).');
-      parts.push('');
+      designPickerBlock = [
+        '## Design picker',
+        'No DESIGN.md in project. 12 curated templates available:',
+        names.slice(0, 5).join(', ') + ',',
+        names.slice(5, 10).join(', ') + ',',
+        names.slice(10).join(', ') + '.',
+        '',
+        'Pick one: ijfw_memory_recall({context_hint: "design_template:<name>"}).',
+        'Full catalog with descriptions: ijfw_memory_recall({context_hint: "design_template"}).',
+      ].join('\n');
     }
-  } catch { /* cwd unreadable -- skip picker block */ }
+  } catch { /* project dir unreadable -- skip picker block */ }
+  if (designPickerBlock) parts.push(designPickerBlock, '');
 
   // Team knowledge first -- shared decisions/patterns/stack rank above personal.
   const team = readTeamKnowledge();
@@ -1596,9 +1602,12 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
     const abstain = [
       '<ijfw-memory>',
       'Memory present but nothing relevant to your prompt -- proceed and I\'ll store any decisions you make.',
-      '</ijfw-memory>',
-    ].join('\n');
-    return { text: abstain };
+    ];
+    // The DESIGN picker is independent of memory richness — preserve it
+    // through the abstention path, otherwise a fresh project never sees it.
+    if (designPickerBlock) abstain.push('', designPickerBlock);
+    abstain.push('</ijfw-memory>');
+    return { text: abstain.join('\n') };
   }
 
   return { text };

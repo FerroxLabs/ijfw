@@ -134,6 +134,51 @@ e0f1c4e — these are NOT caused by wire-up.
          (sandbox is doing its job).
     Full evidence inlined in the smoke test file footer.
 
+### v1.5.0 wire-up Wave-W5 — Trident r21 cross-audit close-out (2026-05-20)
+
+Post-compact full cross-audit of the cumulative wire-up diff `e0f1c4e..HEAD`
+(164.5 KB, 4-chunk codex+gemini Trident r21). 6 findings: 1 HIGH + 4 MED +
+1 LOW. 5 fixed in-commit, 1 documented false-positive. Full adjudication in
+`.planning/v150-wireup/W5-R21-ADJUDICATION.md`.
+
+- **r21-HIGH-1 — `gradeInteraction` false-PASS** `ui-review-runner.js`'s
+  interaction grader pushed a `med` finding when a Playwright baseline diff
+  was recorded, then returned `verdict: VERDICT_PASS` unconditionally — the
+  interaction pillar read PASS with a regression in hand. Same class as
+  r20-HIGH-1 (gradeColor). Verdict is now derived from findings (high →
+  BLOCK, any finding → FLAG, else PASS), mirroring `gradeSecurity`. New
+  regression test in `test-ui-review-runner.js` drives the hash-fallback
+  baseline-diff path and asserts FLAG.
+- **r21-MED — `gradeSecurity` evaluator isolation** `evaluateA11y` and
+  `evaluateLighthouse` peer-input calls are now wrapped in try/catch; a
+  malformed peer input surfaces as a `med` finding instead of throwing out
+  of the grader and rejecting the whole `Promise.all` review.
+- **r21-MED — keepalive active flag sampled after cancel** `runPhaseEConverge`'s
+  `_finalize` read `_keepalive.isActive()` *after* `cancel()` (always false
+  post-teardown); the sample now happens before cancel so `keepaliveWired`
+  reports accurately.
+- **r21-MED — keepalive test scheduling slack** the W1.B keepalive tests used
+  a 1200ms mock wave against a 1000ms interval (~200ms slack, CI-flaky).
+  Raised to 2500ms — ~2 guaranteed ticks, matching the tests' own documented
+  intent.
+- **r21-LOW — tick counter only ran on the default onTick path** a custom
+  `keepaliveOnTick` *replaced* the `_keepaliveTicks` increment, so
+  `keepalive_ticks` reported 0 for any caller passing a custom callback. The
+  counter now always increments and the custom callback runs alongside it
+  (guarded). Test renamed + re-asserted (counter and callback in lockstep).
+- **r21-MED (false positive)** — `search-hybrid.js` rerank "hard-codes the
+  default modelId": L95 already prefers `opts.modelId || embedder.modelId`;
+  the `Xenova/all-MiniLM-L6-v2` default lives in `vectors.js::getEmbedder()`
+  and applies only to the default embedder. No fix.
+
+- **DESIGN-picker prelude regression (pre-existing, fixed)** — `npm test`
+  (`node test.js`) had 2 long-standing red checks. `handlePrelude`'s
+  thin-memory abstention path discarded the entire `parts[]` buffer —
+  including the DESIGN-picker block — so a fresh project with no memory AND
+  no `DESIGN.md` never saw the 12-template picker. The picker is now built
+  into a standalone block and re-emitted through the abstention path.
+  `npm test` is green again (103/103).
+
 ### Workflow-engine MED batch (v1.5.0 audit close-out, 2026-05-19)
 
 - **M1** `selectResumeAI` now reads `.ijfw/swarm.json::resume_preference` (falls back to the built-in claude/gemini/codex matrix). Rosters with `opencode`, `aider`, `copilot` etc. get cross-AI resume routing instead of escalating to user. `loadResumePreference()` + `_resetResumePrefCache()` helpers exported from `runtime-loop.js`.

@@ -238,6 +238,56 @@ test('wire-W1.D: peerInputs.axe violations escalate the security verdict to BLOC
 });
 
 // ---------------------------------------------------------------------------
+// 6b: r21-HIGH-1 regression — interaction pillar must not false-PASS when a
+//     playwright baseline diff is recorded as a finding.
+// ---------------------------------------------------------------------------
+
+test('wire-W1.D (r21-HIGH): interaction pillar does not false-PASS on a playwright baseline diff', async () => {
+  const { root, specPath } = makeProject({
+    specBody: SPEC_FULL,
+    scopeFiles: {
+      // Interactive element WITH :focus styling so the a11y floor check
+      // passes and execution reaches the playwright-baseline branch.
+      'src/App.tsx': 'export function App(){return <button className="focus:ring">hi</button>;}\n',
+      'src/sty.css': 'button:focus{outline:1px solid red}\n',
+    },
+  });
+  try {
+    // Plant a baseline PNG; the candidate png differs → compareToBaseline
+    // returns { pass: false } via the hash fallback (no pixel-differ injected).
+    const baseDir = join(root, 'baselines', 'phase-x');
+    mkdirSync(baseDir, { recursive: true });
+    writeFileSync(join(baseDir, 'home.png'), Buffer.from([1, 2, 3, 4]));
+
+    const r = await runUiReview({
+      uiSpecPath: specPath,
+      sourceScope: 'src',
+      projectRoot: root,
+      write: false,
+      peerInputs: {
+        playwright: {
+          projectRoot: root,
+          root: 'baselines',
+          phase: 'phase-x',
+          surface: 'home',
+          png: new Uint8Array([9, 9, 9, 9]), // differs from the baseline
+        },
+      },
+    });
+    // r21-HIGH-1: a recorded baseline diff MUST downgrade the interaction
+    // pillar. Before the fix, gradeInteraction returned PASS unconditionally
+    // even with a finding in hand — a silent false-PASS.
+    assert.equal(
+      r.pillarVerdicts.interaction, 'FLAG',
+      `interaction must FLAG on a baseline diff, got ${r.pillarVerdicts.interaction}`,
+    );
+    const iv = r.verdicts.find((v) => v.pillar === 'interaction');
+    assert.ok(iv && (iv.findings || []).length > 0, 'interaction pillar must carry the baseline-diff finding');
+    assert.match(iv.findings[0].text, /playwright baseline diff/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------------------
 // 7: missing spec sections produce spec-section-missing (treated as BLOCK)
 // ---------------------------------------------------------------------------
 
