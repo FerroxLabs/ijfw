@@ -742,11 +742,67 @@ const handlers = {
     return { ok: true, wave: readWaveStateFile(root, waveId) };
   },
 
-  // --- wave.advance — write, Day-1 create ----------------------------------
+  // --- wave.advance — write, Day-1 create, gate=checkpoint-completeness ----
+  // v1.5.0 T18 (W3 mid-wave boundary): when the wave declares a hard gate
+  // — either via `payload.hardGate: true` on the call, or via the wave's
+  // persisted frontmatter (`hard_gate: true`) — we run a checkpoint-
+  // completeness pre-lock check: every subagent on the wave's roster MUST
+  // have a checkpoint file at `paths.checkpoint(root, waveId, subId)`.
+  // Missing checkpoints → verdict-fail → REFUSE (no state mutation, no
+  // journal commit). Advisory-by-default: when no hard gate is declared the
+  // current behavior is preserved verbatim. `GATE_BYPASS` downgrades a would-
+  // be refusal to a loud advisory — enforcement is a floor, never a single
+  // point of failure (contract §4 MCP-unavailable row).
   async 'wave.advance'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const waveId = requireId(payload?.waveId, 'waveId');
     const status = requireStr(payload?.status, 'status');
+
+    // Pre-lock hard-gate decision. The wave's hard_gate declaration is
+    // persisted in its frontmatter so a downstream advance call (which may
+    // not re-pass `hardGate`) still honors it. An explicit `payload.hardGate`
+    // wins when supplied — that's how a caller arms the gate on first write.
+    const existingPreGate = readWaveStateFile(root, waveId);
+    const hardGate = payload?.hardGate === true
+      || existingPreGate?.frontmatter?.hard_gate === true;
+
+    if (hardGate) {
+      // Compute the roster the gate measures. We honor an explicit
+      // `payload.requiredSubagents` (whitelist) so a caller can scope the
+      // check to the subset that should hold checkpoints at THIS advance;
+      // otherwise the wave's registered roster (from subagent.dispatch) is
+      // the source of truth.
+      const roster = Array.isArray(payload?.requiredSubagents)
+        ? payload.requiredSubagents.filter((s) => typeof s === 'string' && s)
+        : (Array.isArray(existingPreGate?.frontmatter?.subagents)
+          ? existingPreGate.frontmatter.subagents
+          : []);
+      const missing = [];
+      for (const subId of roster) {
+        if (!existsSync(paths.checkpoint(root, waveId, subId))) {
+          missing.push(subId);
+        }
+      }
+      if (missing.length > 0) {
+        const reason = `wave.advance hard-gate: ${missing.length} subagent(s) `
+          + `lack a checkpoint (${missing.join(', ')})`;
+        if (!GATE_BYPASS) {
+          // Verdict-fail → REFUSE. Pre-`_withLocks` early-return guarantees
+          // no state mutation, no journal begin/commit pair.
+          return {
+            ok: false, refused: true, gate: 'wave-advance-hard',
+            reason, missing,
+          };
+        }
+        // Bypass masks a would-be refusal — loud WARN + advisory result so
+        // the operator can see what enforcement skipped.
+        process.stderr.write(
+          '[state-sdk] WARN wave.advance gate bypassed via IJFW_STATE_GATE_BYPASS '
+          + `(would-refuse: ${reason})\n`,
+        );
+      }
+    }
+
     const targets = [
       paths.intentJournal(root), paths.waves(root), paths.waveState(root, waveId),
     ];
@@ -762,8 +818,17 @@ const handlers = {
       if (payload.frontmatter && typeof payload.frontmatter === 'object') {
         for (const [k, v] of Object.entries(payload.frontmatter)) fm[k] = v;
       }
+      // Persist the hard-gate declaration on the wave's frontmatter so
+      // subsequent advance calls honor it without re-passing `hardGate`.
+      if (payload?.hardGate === true) fm.hard_gate = true;
       const wave = writeWaveStateFile(root, waveId, fm, existing?.body ?? '');
-      return { ok: true, wave };
+      const result = { ok: true, wave };
+      if (hardGate && GATE_BYPASS) {
+        result.advisory = true;
+        result.gate = 'wave-advance-hard';
+        result.reason = 'IJFW_STATE_GATE_BYPASS=1';
+      }
+      return result;
     }, env);
   },
 

@@ -128,6 +128,17 @@ If a clever workaround would still leave a future reader unable to independently
 - Asserting "shipped" because a tag was created locally without `git push` verification.
 - Asserting "Trident PASS" because the synthesis file exists, without checking each auditor's input file is non-empty and reports PASS.
 
+## Iron-Law discipline -- the four boundaries
+
+The runtime gate fires at four enumerated W3 boundaries -- the verbs that advance state ABOVE you:
+
+- **`phase.complete`** -- post-phase verdict; `enforceVerificationGate` refuses on red.
+- **`phase.plan-check`** -- pre-execute plan validation; any HIGH-tier finding refuses dispatch.
+- **`subagent.post-done`** -- subagent completion; `runSelfCheck` refuses when claimed files/commits aren't on disk.
+- **`wave.advance` (hard gate)** -- mid-wave checkpoint-completeness; a wave that declares `hard_gate: true` refuses to advance while any registered subagent lacks a checkpoint.
+
+Discipline rule: collect verification evidence *after* the change, in the same message as the claim, *before* the boundary verb fires. The gate is the floor, not the ceiling -- pre-empting it is the job.
+
 ## The bottom line
 
 **No shortcuts for verification.**

@@ -398,3 +398,278 @@ test('M8: low-confidence variant returns ok when no low-confidence signal', () =
   );
   assert.equal(result.ok, true);
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 T18 — W3: verification at every enumerated boundary.
+//
+// docs/ENFORCEMENT-MATRIX.md §3 fixes the W3 boundary set at exactly four
+// state-advancing verbs:
+//
+//   1. phase.complete       — verdict-fail → REFUSE (enforceVerificationGate)
+//   2. phase.plan-check     — HIGH finding  → REFUSE (validatePlan)
+//   3. subagent.post-done   — failed self-check → REFUSE (runSelfCheck)
+//   4. wave.advance (hard)  — missing checkpoint → REFUSE (inline gate)
+//
+// Coverage philosophy: T15 / T17 prove the first three boundaries via
+// `test-verification-gate-strict.js` against real `query()` calls. This
+// block proves each boundary is structurally reachable from the public
+// state-SDK surface — one falsifiable refusal per boundary. The first three
+// tests are intentionally minimal (the strict-mode test file owns the deep
+// coverage) and the wave.advance test is fuller because that path is new
+// in T18 and the audit explicitly demands a falsifiable hard-gate test.
+//
+// Every test uses real `query()` against a real temp dir — no mocks beyond
+// the documented `_setGateFnsForTest` seam.
+// ---------------------------------------------------------------------------
+
+import { test as t18Test } from 'node:test';
+import { mkdtempSync, rmSync, existsSync as existsSyncT18, writeFileSync, readFileSync as readFileSyncT18 } from 'node:fs';
+import { join as joinT18 } from 'node:path';
+import { tmpdir as tmpdirT18 } from 'node:os';
+
+let t18SdkCounter = 0;
+async function loadFreshStateSdkT18() {
+  t18SdkCounter += 1;
+  return import(`./src/orchestrator/state-sdk.js?t18=${Date.now()}-${t18SdkCounter}`);
+}
+
+function mkT18Project(label) {
+  const root = mkdtempSync(joinT18(tmpdirT18(), `t18-${label}-`));
+  const home = mkdtempSync(joinT18(tmpdirT18(), `t18-${label}-home-`));
+  return {
+    root,
+    ctx: { projectRoot: root, homeDir: home },
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+
+t18Test('T18 boundary 1/4: phase.complete fires the verification gate (REFUSE on red)', async () => {
+  delete process.env.IJFW_STATE_GATE_BYPASS;
+  const { query } = await loadFreshStateSdkT18();
+  const { root, ctx, cleanup } = mkT18Project('boundary-complete');
+  try {
+    const r = await query('phase.complete', {
+      phase: 'build',
+      evidence: { reportText: 'all tests pass ✅', toolCalls: [] },
+    }, ctx);
+    // Falsifiable: a verdict-fail at this boundary MUST refuse and MUST NOT
+    // write workflow.json. Flip either invariant → test fails.
+    assert.equal(r.ok, false, 'phase.complete must refuse on red gate');
+    assert.equal(r.refused, true);
+    assert.equal(r.gate, 'verification');
+    assert.equal(
+      existsSyncT18(joinT18(root, '.ijfw', 'state', 'workflow.json')),
+      false,
+      'refused phase.complete must not mutate workflow.json',
+    );
+  } finally { cleanup(); }
+});
+
+t18Test('T18 boundary 2/4: phase.plan-check fires the plan-check gate (REFUSE on HIGH finding)', async () => {
+  delete process.env.IJFW_STATE_GATE_BYPASS;
+  const { query } = await loadFreshStateSdkT18();
+  const { root, ctx, cleanup } = mkT18Project('boundary-plancheck');
+  try {
+    // Empty plan body raises BLOCK-severity findings in validatePlan.
+    const r = await query('phase.plan-check', { planText: '' }, ctx);
+    // Falsifiable: HIGH-tier finding MUST refuse pre-lock and MUST NOT write
+    // the workflow.json plan_check verdict. Flip either invariant → fail.
+    assert.equal(r.ok, false, 'phase.plan-check must refuse on HIGH finding');
+    assert.equal(r.refused, true);
+    assert.equal(r.gate, 'plan-check');
+    assert.ok(Array.isArray(r.findings) && r.findings.length > 0,
+      'refused plan-check must surface its findings');
+    assert.equal(
+      existsSyncT18(joinT18(root, '.ijfw', 'state', 'workflow.json')),
+      false,
+      'refused phase.plan-check must not mutate workflow.json',
+    );
+  } finally { cleanup(); }
+});
+
+t18Test('T18 boundary 3/4: subagent.post-done fires the self-check gate (REFUSE on missing file claim)', async () => {
+  delete process.env.IJFW_STATE_GATE_BYPASS;
+  const { query } = await loadFreshStateSdkT18();
+  const { root, ctx, cleanup } = mkT18Project('boundary-postdone');
+  try {
+    const report = [
+      'Done. Created the following file:',
+      '- src/file-that-does-not-exist-t18.js',
+      '',
+      'Verified with `npm test`.',
+    ].join('\n');
+    const r = await query('subagent.post-done', {
+      subagentId: 'sa-t18',
+      reportText: report,
+      projectRoot: root,
+    }, ctx);
+    // Falsifiable: a claimed file that isn't on disk MUST refuse.
+    assert.equal(r.ok, false, 'subagent.post-done must refuse on missing file claim');
+    assert.equal(r.refused, true);
+    assert.equal(r.gate, 'post-done-self-check');
+    assert.match(r.reason, /self-check FAILED/);
+  } finally { cleanup(); }
+});
+
+// ---------------------------------------------------------------------------
+// Boundary 4/4 — wave.advance hard gate.
+//
+// Per the T16 matrix, `wave.advance` is "advisory by default; verdict-fail
+// only when wave declares a hard gate." T16's review concern requires
+// PROVING that the verdict-fail path is reachable, not just the advisory
+// path. The three tests below cover:
+//
+//   (a) hard gate + missing checkpoint        → REFUSE (verdict-fail path)
+//   (b) hard gate + all checkpoints present   → ADVANCE (gate satisfied)
+//   (c) no hard gate declared                 → ADVANCE (advisory-by-default)
+//
+// (a) is the falsifiable proof T16 demands; (b)+(c) prevent over-triggering.
+// ---------------------------------------------------------------------------
+
+t18Test('T18 boundary 4/4: wave.advance hard gate REFUSES on missing checkpoint (verdict-fail)', async () => {
+  delete process.env.IJFW_STATE_GATE_BYPASS;
+  const { query } = await loadFreshStateSdkT18();
+  const { root, ctx, cleanup } = mkT18Project('boundary-wave-refuse');
+  try {
+    // Register two subagents on the wave roster via subagent.dispatch.
+    await query('subagent.dispatch', {
+      waveId: 'W18A', subagentId: 'sa-alpha', brief: 'work alpha',
+    }, ctx);
+    await query('subagent.dispatch', {
+      waveId: 'W18A', subagentId: 'sa-beta', brief: 'work beta',
+    }, ctx);
+
+    // Only sa-alpha writes its checkpoint; sa-beta is missing.
+    await query('subagent.checkpoint', {
+      waveId: 'W18A', subagentId: 'sa-alpha',
+      dedupKey: 'cp-alpha-1',
+      checkpoint: { status: 'DONE', note: 'alpha complete' },
+    }, ctx);
+
+    // Advance the wave with hardGate:true. The pre-lock check sees sa-beta
+    // has no checkpoint file → verdict-fail → REFUSE.
+    const r = await query('wave.advance', {
+      waveId: 'W18A', status: 'in_progress', hardGate: true,
+    }, ctx);
+
+    // Falsifiable: the hard-gate refusal MUST carry refused:true + ok:false
+    // AND name the missing subagent. Mutate any of:
+    //   - drop the `hardGate` precondition → test fails (advisory path)
+    //   - write the missing checkpoint → test fails (gate satisfied)
+    //   - mask the missing[] array → test fails (no observable proof)
+    assert.equal(r.ok, false, 'hard-gate wave.advance must refuse on missing checkpoint');
+    assert.equal(r.refused, true);
+    assert.equal(r.gate, 'wave-advance-hard');
+    assert.ok(Array.isArray(r.missing), 'refusal must list missing subagents');
+    assert.ok(r.missing.includes('sa-beta'),
+      'refusal must name the subagent with no checkpoint');
+    assert.ok(!r.missing.includes('sa-alpha'),
+      'present checkpoints must not be reported missing');
+    assert.match(r.reason, /hard-gate/);
+
+    // State invariant: the wave STATE.md status was NOT changed by the
+    // refused advance. Read it back and confirm it is still in_progress
+    // from the subagent.dispatch (not the refused advance's status).
+    // The frontmatter must still carry its original status; even when the
+    // attempted status string equals the dispatch-time one, the pre-lock
+    // refusal guarantees writeWaveStateFile was never called.
+    const wave = await query('wave.get', { waveId: 'W18A' }, ctx);
+    assert.ok(wave.wave, 'wave should still exist from dispatch');
+    // Frontmatter must NOT carry hard_gate=true since the advance was
+    // refused before persisting it. This is the clean-mutation proof.
+    assert.notEqual(wave.wave.frontmatter?.hard_gate, true,
+      'refused advance must not persist hard_gate flag');
+  } finally { cleanup(); }
+});
+
+t18Test('T18 wave.advance hard gate ADVANCES when every checkpoint is present (gate-satisfied)', async () => {
+  delete process.env.IJFW_STATE_GATE_BYPASS;
+  const { query } = await loadFreshStateSdkT18();
+  const { ctx, cleanup } = mkT18Project('boundary-wave-pass');
+  try {
+    await query('subagent.dispatch', {
+      waveId: 'W18B', subagentId: 'sa-one', brief: 'b1',
+    }, ctx);
+    await query('subagent.checkpoint', {
+      waveId: 'W18B', subagentId: 'sa-one', dedupKey: 'cp-one',
+      checkpoint: { status: 'DONE' },
+    }, ctx);
+
+    const r = await query('wave.advance', {
+      waveId: 'W18B', status: 'complete', hardGate: true,
+    }, ctx);
+    // Falsifiable: a fully-checkpointed wave MUST advance. If the gate over-
+    // triggers and refuses, this test catches it.
+    assert.equal(r.ok, true, 'satisfied hard gate must advance');
+    assert.notEqual(r.refused, true);
+    assert.equal(r.wave.frontmatter.status, 'complete');
+    assert.equal(r.wave.frontmatter.hard_gate, true,
+      'satisfied advance must persist hard_gate flag for downstream calls');
+  } finally { cleanup(); }
+});
+
+t18Test('T18 wave.advance is advisory-by-default when no hard gate declared (matrix §3)', async () => {
+  delete process.env.IJFW_STATE_GATE_BYPASS;
+  const { query } = await loadFreshStateSdkT18();
+  const { ctx, cleanup } = mkT18Project('boundary-wave-advisory');
+  try {
+    // Register a subagent but never write its checkpoint.
+    await query('subagent.dispatch', {
+      waveId: 'W18C', subagentId: 'sa-x', brief: 'bx',
+    }, ctx);
+
+    // No hardGate → advance must succeed (advisory-by-default per matrix).
+    const r = await query('wave.advance', {
+      waveId: 'W18C', status: 'in_progress',
+    }, ctx);
+    // Falsifiable: advisory-by-default must NOT refuse. If we accidentally
+    // tightened the gate to always-on, this test catches it.
+    assert.equal(r.ok, true, 'no hardGate → advance must succeed');
+    assert.notEqual(r.refused, true);
+    assert.notEqual(r.wave.frontmatter.hard_gate, true);
+  } finally { cleanup(); }
+});
+
+t18Test('T18 wave.advance hard gate honors IJFW_STATE_GATE_BYPASS=1 (loud advisory + advance)', async () => {
+  process.env.IJFW_STATE_GATE_BYPASS = '1';
+  try {
+    const { query } = await loadFreshStateSdkT18();
+    const { ctx, cleanup } = mkT18Project('boundary-wave-bypass');
+    try {
+      await query('subagent.dispatch', {
+        waveId: 'W18D', subagentId: 'sa-missing', brief: 'b',
+      }, ctx);
+
+      const captured = [];
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (chunk) => {
+        captured.push(typeof chunk === 'string' ? chunk : chunk.toString());
+        return true;
+      };
+      let r;
+      try {
+        r = await query('wave.advance', {
+          waveId: 'W18D', status: 'in_progress', hardGate: true,
+        }, ctx);
+      } finally {
+        process.stderr.write = original;
+      }
+      // Falsifiable: bypass must downgrade refusal to a loud advisory.
+      assert.equal(r.ok, true, 'bypass must NOT refuse');
+      assert.equal(r.advisory, true);
+      assert.equal(r.gate, 'wave-advance-hard');
+      assert.match(r.reason, /IJFW_STATE_GATE_BYPASS/);
+      const warns = captured.filter((s) => s.includes('[state-sdk]')
+        && s.includes('wave.advance')
+        && s.includes('IJFW_STATE_GATE_BYPASS'));
+      assert.ok(warns.length >= 1, 'bypass must emit a loud stderr WARN line');
+      assert.ok(warns[0].includes('would-refuse'),
+        'WARN must surface what enforcement was skipped');
+    } finally { cleanup(); }
+  } finally {
+    delete process.env.IJFW_STATE_GATE_BYPASS;
+  }
+});
