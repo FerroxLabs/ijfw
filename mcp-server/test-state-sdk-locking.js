@@ -323,7 +323,10 @@ test('SDK concurrency: extension.set-active (cross-root locks) serialises', asyn
 
     const file = join(home, '.ijfw', 'state', 'active-extension.json');
     const obj = JSON.parse(readFileSync(file, 'utf8'));
-    assert.ok(/^ext-\d+$/.test(obj.manifest.name), `homedir file intact: ${obj.manifest.name}`);
+    // Verb writes the FLAT consumer-contract shape: { name, scope, permissions, activated_at, ... }.
+    // The cross-root concurrency assertion is: the homedir file is well-formed JSON,
+    // and its `name` is one of the N concurrent writers — no torn write.
+    assert.ok(/^ext-\d+$/.test(obj.name), `homedir file intact: ${obj.name}`);
   } finally { cleanup(); }
 });
 

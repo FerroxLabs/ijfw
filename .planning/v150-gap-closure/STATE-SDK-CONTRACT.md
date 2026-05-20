@@ -406,10 +406,10 @@ carries `verbId` (string) and `ok` (boolean).
 - Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/team/workflow.json`.
 
 ### verb: extension.set-active
-- Signature: query('extension.set-active', { manifest, scope, homeDir? })
-- Payload: `manifest` (object, required — `{ name, permissions:{ reads, writes } }`) OR `null` to clear · `scope` (`'project'|'org'|'user'`, required) · `homeDir` (string, optional — overrides `ctx.homeDir`/`os.homedir()`).
-- Returns: `{ ok:true, path: string }` — `path` = `~/.ijfw/state/active-extension.json`. With `manifest:null`, clears the file and returns `{ ok:true, cleared:true }`.
-- Day-1: create — auto-creates `~/.ijfw/state/` and writes the homedir state file when absent.
+- Signature: query('extension.set-active', { manifest, scope, homeDir?, activated_by_ide?, activated_by_pid? })
+- Payload: `manifest` (object, required — `{ name, permissions:{ reads, writes }, quotas? }`) OR `null` to clear · `scope` (`'project'|'org'|'user'`, required) · `homeDir` (string, optional — overrides `ctx.homeDir`/`os.homedir()`) · `activated_by_ide` (string, optional — IDE id stamped on the record, matches `/^[a-z0-9-]+$/`) · `activated_by_pid` (number, optional — pid stamped on the record). The verb **writes the FLAT consumer-contract shape** to `~/.ijfw/state/active-extension.json`: `{ name, scope, permissions:{ reads, writes }, activated_at, activated_by_ide?, activated_by_pid?, quotas? }`. Wrapping the manifest is FORBIDDEN — five consumers (`runtime-mediator.js`, `extension-permission-check.mjs`, `dashboard-server.js`, `dispatch/active-cli.js`, `active-extension-writer.detectCrossIdeDivergence`) read these fields at the top level.
+- Returns: `{ ok:true, path: string }` — `path` = `~/.ijfw/state/active-extension.json`. With `manifest:null`, clears the file (unlinks it) and returns `{ ok:true, path, cleared:true }`.
+- Day-1: create — auto-creates `~/.ijfw/state/` and writes the homedir state file when absent. Clearing (`manifest:null`) is idempotent — succeeds whether or not the file was present.
 - Locks: `.ijfw/state/intent-journal.jsonl` → `~/.ijfw/state/active-extension.json` (the homedir file is always the LAST lock — §3 #11).
 
 ### verb: decision.add

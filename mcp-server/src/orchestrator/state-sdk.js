@@ -1071,6 +1071,15 @@ const handlers = {
   },
 
   // --- extension.set-active — write, Day-1 create, homedir file ----------
+  // CRITICAL: writes the FLAT consumer-contract shape:
+  //   { name, scope, permissions:{ reads, writes }, activated_at,
+  //     activated_by_ide?, activated_by_pid?, quotas? }
+  // Five consumers read these fields at the top level — runtime-mediator.js,
+  // extension-permission-check.mjs, dashboard-server.js, dispatch/active-cli.js,
+  // and active-extension-writer.detectCrossIdeDivergence. A wrapped
+  // {manifest, scope, updated_at} shape would fail-closed at the security
+  // boundary in runtime-mediator (returns MALFORMED) on every call. Contract:
+  // .planning/v150-gap-closure/STATE-SDK-CONTRACT.md §7 extension.set-active.
   async 'extension.set-active'(payload, ctx, env) {
     requireRoot(ctx);
     const scope = payload?.scope;
@@ -1090,7 +1099,45 @@ const handlers = {
       if (!manifest || typeof manifest !== 'object' || typeof manifest.name !== 'string') {
         throw new Error('state-sdk: extension.set-active needs a manifest { name, permissions } or null');
       }
-      writeJson(file, { manifest, scope, updated_at: nowIso() });
+      // Build the FLAT consumer-contract shape.
+      const perms = manifest.permissions && typeof manifest.permissions === 'object'
+        ? manifest.permissions : {};
+      const reads = Array.isArray(perms.reads) ? perms.reads : [];
+      const writes = Array.isArray(perms.writes) ? perms.writes : [];
+      const out = {
+        name: manifest.name,
+        scope,
+        permissions: { reads, writes },
+        activated_at: nowIso(),
+      };
+      // Optional IDE/PID stamping — only when valid.
+      const ideId = payload?.activated_by_ide;
+      if (typeof ideId === 'string' && /^[a-z0-9-]+$/.test(ideId)) {
+        out.activated_by_ide = ideId;
+        const pid = payload?.activated_by_pid;
+        if (typeof pid === 'number' && Number.isFinite(pid) && Number.isInteger(pid) && pid > 0) {
+          out.activated_by_pid = pid;
+        }
+      }
+      // Optional quotas — copy only positive integer dimensions (matches
+      // active-extension-writer.js semantics so the tier-2 hook can enforce).
+      if (
+        manifest.quotas !== undefined &&
+        manifest.quotas !== null &&
+        typeof manifest.quotas === 'object' &&
+        !Array.isArray(manifest.quotas)
+      ) {
+        const cleanQuotas = {};
+        let copied = 0;
+        for (const [k, v] of Object.entries(manifest.quotas)) {
+          if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0) {
+            cleanQuotas[k] = v;
+            copied++;
+          }
+        }
+        if (copied > 0) out.quotas = cleanQuotas;
+      }
+      writeJson(file, out);
       return { ok: true, path: file };
     }, env);
   },
