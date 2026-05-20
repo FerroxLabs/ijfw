@@ -1466,6 +1466,38 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
   const updateNudge = composeUpdateNudge();
   if (updateNudge) parts.push(updateNudge, '');
 
+  // v1.5.0 memory-moat M3 (INT.4): surface top-K recently-successful skills
+  // at session start. The Wayland-pattern "more-you-use-it-better-it-gets"
+  // feedback loop: every skill execution writes to skill_telemetry via the
+  // state-SDK telemetry.record verb (INT.3); this block reads top-5 by
+  // success-count and surfaces them as a hint to the model. Best-effort:
+  // an unmigrated db, empty telemetry, or read failure all skip the block
+  // silently — never breaks the prelude.
+  try {
+    const { topKSuccessfulSkills } = await import('./orchestrator/skill-telemetry.js');
+    const Database = (await import('better-sqlite3')).default;
+    const { join: joinP } = await import('node:path');
+    const root = process.env.IJFW_PROJECT_DIR || process.cwd();
+    const dbPath = joinP(root, '.ijfw', 'index', 'memory.db');
+    if (existsSync(dbPath)) {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const top = topKSuccessfulSkills(db, { k: 5 });
+        if (top.length > 0) {
+          const names = top.map((r) => `${r.skill_id} (${r.success_count}×)`).join(', ');
+          parts.push(
+            '<ijfw-recommended-skills>',
+            `Observed success this project: ${names}`,
+            '</ijfw-recommended-skills>',
+            '',
+          );
+        }
+      } finally {
+        try { db.close(); } catch { /* best-effort */ }
+      }
+    }
+  } catch { /* best-effort; never block the prelude */ }
+
   // 1.2.0 Phase 5: surface the DESIGN picker to platforms without a skills tree.
   // Skip when the project already has a DESIGN.md (contract exists; no picker).
   // Built into a standalone block so the abstention path below can re-emit it:
