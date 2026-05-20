@@ -24,6 +24,7 @@ import { mkdir, readFile, readdir, copyFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { query } from './state-sdk.js';
+import { pollEvents } from './state-events.js';
 // v1.5.0 N4.obs M1+M2: trace-id + hierarchical observation path.
 import { getTraceId, composePath } from '../observability/trace-id.js';
 
@@ -361,4 +362,91 @@ export async function drainCheckpoints(waveId, worktreePath, projectRoot) {
   const drained = counts.reduce((a, b) => a + b, 0);
 
   return { ok: true, drained };
+}
+
+// ---------------------------------------------------------------------------
+// v1.5.0 T19 (G1) — subagent dispatch + event-stream reader
+//
+// Thin SDK-facing helpers the orchestrator uses to (1) dispatch a subagent
+// via the deterministic `subagent.dispatch` verb and (2) poll its per-
+// subagent event log to see verbs arrive live (every verb the subagent
+// dispatches fires `_emitEvent` per T5 / state-events.js).
+// ---------------------------------------------------------------------------
+
+/**
+ * Dispatch a subagent via the `subagent.dispatch` state-SDK verb. Wraps the
+ * raw `query()` call with the documented orchestrator-side signature
+ * (waveId, subId, role, brief, projectRoot, opts) and returns the verb's
+ * `{ ok, dispatchBrief, subagentId, waveId, mode, isolation, inheritedEnv,
+ * eventLogPath }` shape verbatim.
+ *
+ * The dispatch brief is DETERMINISTIC on Claude (handed to the native
+ * subagent primitive) and a best-effort PROMPT TEMPLATE elsewhere — the
+ * `mode` field discriminates. The SDK env-var contract is baked into the
+ * brief and returned via `inheritedEnv` for the caller to seed the
+ * subagent process when the platform supports env passthrough.
+ *
+ * @param {string}  waveId       wave id (matches /^[A-Za-z0-9_-]{1,64}$/)
+ * @param {string}  subId        subagent id (matches /^[A-Za-z0-9_-]{1,64}$/)
+ * @param {string}  role         role label (e.g. 'implementer', 'reviewer')
+ * @param {string}  brief        the task brief markdown
+ * @param {string}  projectRoot  absolute path to the project root
+ * @param {{isolation?: 'shared'|'worktree', env?: object, platform?: string,
+ *          subagentId?: string}} [opts]
+ * @returns {Promise<object>} the verb result (see contract §7
+ *                            `subagent.dispatch`).
+ */
+export async function dispatchSubagent(waveId, subId, role, brief, projectRoot, opts = {}) {
+  validateWaveId(waveId);
+  validateSubId(subId);
+  if (typeof brief !== 'string' || brief.length === 0) {
+    throw new Error('subagent-telemetry: dispatchSubagent requires a non-empty brief');
+  }
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    throw new Error('subagent-telemetry: dispatchSubagent requires projectRoot');
+  }
+  const payload = {
+    subagentId: subId,
+    waveId,
+    brief,
+    isolation: opts.isolation === 'shared' ? 'shared' : 'worktree',
+  };
+  if (typeof role === 'string' && role.length > 0) payload.role = role;
+  if (opts.env && typeof opts.env === 'object' && !Array.isArray(opts.env)) {
+    payload.env = opts.env;
+  }
+  const ctx = { projectRoot };
+  if (typeof opts.platform === 'string') ctx.platform = opts.platform;
+  if (typeof opts.subagentId === 'string') ctx.subagentId = opts.subagentId;
+  return query('subagent.dispatch', payload, ctx);
+}
+
+/**
+ * Stream the per-subagent event log. Returns the events with `seq > since`
+ * (the cursor), plus the highest `seq` seen so the caller can feed it back
+ * on the next poll. NEVER uses `fs.watch` — explicit-interval polling per
+ * contract §5 (works across all 13 platforms).
+ *
+ * Every verb the subagent calls fires `_emitEvent` after lock release; the
+ * tap envelope carries `{ seq, verb, subagentId, ts, verbId, outcome,
+ * payloadDigest }` — exactly the rows this poller surfaces.
+ *
+ * @param {string} waveId
+ * @param {string} subId
+ * @param {string} projectRoot
+ * @param {number} [since]   highest seq already processed (default 0)
+ * @returns {{events: object[], cursor: number}}
+ */
+export function streamSubagentEvents(waveId, subId, projectRoot, since = 0) {
+  validateWaveId(waveId);
+  validateSubId(subId);
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    throw new Error('subagent-telemetry: streamSubagentEvents requires projectRoot');
+  }
+  return pollEvents({
+    projectRoot,
+    waveId,
+    subagentId: subId,
+    since: Number.isFinite(since) ? since : 0,
+  });
 }

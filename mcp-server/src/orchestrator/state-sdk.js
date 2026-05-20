@@ -980,12 +980,53 @@ const handlers = {
   },
 
   // --- subagent.dispatch — write, Day-1 create -----------------------------
+  //
+  // v1.5.0 T19 (G1 — subagent event stream + dispatch verb): produces a
+  // DETERMINISTIC dispatch brief that bakes in the SDK contract — the
+  // env-var passthrough (`IJFW_PROJECT_DIR`, `IJFW_SESSION_ID`,
+  // `IJFW_PARENT_PROJECT_ROOT`, `IJFW_WAVE_ID`, `IJFW_SUBAGENT_ID`,
+  // `IJFW_ISOLATION`) PLUS any caller-supplied env keys. The brief is
+  // platform-agnostic markdown: on Claude the orchestrator hands it to the
+  // native subagent primitive (deterministic execution); elsewhere it is
+  // pasted into a prompt template (best-effort — recorded in the T16
+  // enforcement matrix). Parent observes subagent progress via the event
+  // log -- each verb the subagent dispatches fires `_emitEvent` (T5),
+  // streamed by `pollEvents` from state-events.js.
   async 'subagent.dispatch'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const subagentId = requireId(payload?.subagentId, 'subagentId');
     const waveId = requireId(payload?.waveId, 'waveId');
     const brief = requireStr(payload?.brief, 'brief');
     const isolation = payload?.isolation === 'shared' ? 'shared' : 'worktree';
+    const role = typeof payload?.role === 'string' && payload.role.length > 0
+      ? payload.role : null;
+    // Caller-supplied env passthrough (object: name → value). Coerce values to
+    // strings (env vars are always strings) and drop nullish entries.
+    const callerEnv = (payload?.env && typeof payload.env === 'object'
+      && !Array.isArray(payload.env)) ? payload.env : {};
+
+    // SDK env-var contract — the deterministic set every subagent inherits.
+    // The parent's process env is the source of truth for IJFW_SESSION_ID /
+    // IJFW_PARENT_PROJECT_ROOT (when the orchestrator runs inside a wrapper
+    // that already set them); the verb derives the rest from its own payload.
+    const sdkContractEnv = {
+      IJFW_PROJECT_DIR: root,
+      IJFW_PARENT_PROJECT_ROOT: process.env.IJFW_PARENT_PROJECT_ROOT || root,
+      IJFW_WAVE_ID: waveId,
+      IJFW_SUBAGENT_ID: subagentId,
+      IJFW_ISOLATION: isolation,
+    };
+    if (typeof process.env.IJFW_SESSION_ID === 'string' && process.env.IJFW_SESSION_ID) {
+      sdkContractEnv.IJFW_SESSION_ID = process.env.IJFW_SESSION_ID;
+    }
+    // Merge: caller env overrides SDK contract on duplicate keys (caller's
+    // intent wins). Coerce all values to strings, drop null/undefined.
+    const inheritedEnv = { ...sdkContractEnv };
+    for (const [k, v] of Object.entries(callerEnv)) {
+      if (v === null || v === undefined) continue;
+      inheritedEnv[k] = String(v);
+    }
+
     const targets = [paths.intentJournal(root), paths.waveState(root, waveId)];
     return _withLocks(targets, async () => {
       // Register the subagent on the wave STATE.md.
@@ -1007,16 +1048,37 @@ const handlers = {
       // verb core picks deterministic when a Claude subagent context is set.
       const mode = ctx?.platform === 'claude' || ctx?.subagentId
         ? 'deterministic' : 'prompt-template';
+      // Compose the deterministic dispatch brief — markdown, platform-
+      // agnostic. The subagent reads this verbatim; SDK env vars are listed
+      // explicitly so a best-effort prompt-template platform can paste them
+      // into its shell-export preamble.
+      const envLines = Object.keys(inheritedEnv).sort()
+        .map((k) => `  ${k}=${inheritedEnv[k]}`);
+      const eventLogPath = resolveEventLogPath(root, waveId, subagentId);
+      const eventLogRel = eventLogPath.startsWith(root + '/')
+        ? eventLogPath.slice(root.length + 1) : eventLogPath;
       const dispatchBrief = [
         `# Subagent dispatch — ${subagentId} (wave ${waveId})`,
+        role ? `Role: ${role}` : null,
         `Isolation: ${isolation}`,
-        payload?.env && typeof payload.env === 'object'
-          ? `Env passthrough: ${Object.keys(payload.env).join(', ') || '(none)'}`
-          : 'Env passthrough: (none)',
+        `Event log: ${eventLogRel}`,
         '',
+        '## Inherited env (SDK contract + caller passthrough)',
+        ...envLines,
+        '',
+        '## Brief',
         brief,
-      ].join('\n');
-      return { ok: true, dispatchBrief, subagentId, mode };
+      ].filter((l) => l !== null).join('\n');
+      return {
+        ok: true,
+        dispatchBrief,
+        subagentId,
+        waveId,
+        mode,
+        isolation,
+        inheritedEnv,
+        eventLogPath,
+      };
     }, env);
   },
 

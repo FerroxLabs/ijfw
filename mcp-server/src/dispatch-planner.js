@@ -202,6 +202,81 @@ export function mergeOrder(manifest) {
 
 function idOf(sw) { return sw.sub || sw.wave; }
 
+// ---------------------------------------------------------------------------
+// v1.5.0 T19 (G1) — env-var passthrough composer (pure, no fs writes).
+//
+// Computes the SDK-contract env map a dispatched subagent inherits, given
+// the parent's process env and the per-subagent (waveId, subId, isolation,
+// projectRoot) context. The actual dispatch is performed by the
+// `subagent.dispatch` SDK verb — this is the planner-side pure helper used
+// to construct the env passthrough payload BEFORE the verb call.
+//
+// Stays in dispatch-planner.js because:
+//   * Caller intent: the planner is the orchestrator's pure compute layer.
+//   * Test invariant: the dispatch-planner spy gate forbids ANY fs write —
+//     this helper performs zero fs I/O (read or write).
+// ---------------------------------------------------------------------------
+
+/**
+ * Compose the deterministic env-var passthrough for a dispatched subagent.
+ *
+ * The SDK contract specifies these well-known names (verb contract §7
+ * `subagent.dispatch`):
+ *   * `IJFW_PROJECT_DIR`         — absolute project root
+ *   * `IJFW_PARENT_PROJECT_ROOT` — parent's project root (worktree subagents)
+ *   * `IJFW_WAVE_ID`             — wave id
+ *   * `IJFW_SUBAGENT_ID`         — this subagent's id
+ *   * `IJFW_ISOLATION`           — 'shared' | 'worktree'
+ *   * `IJFW_SESSION_ID`          — orchestrator session id (when set)
+ *
+ * Caller-supplied `extraEnv` keys override the SDK contract on collision —
+ * by design (caller's intent wins). Values are coerced to strings; null /
+ * undefined entries are dropped.
+ *
+ * @param {{projectRoot:string, waveId:string, subagentId:string,
+ *          isolation?:'shared'|'worktree', parentEnv?:object, extraEnv?:object}} input
+ * @returns {Record<string,string>} the composed env map (sorted-stable).
+ */
+export function composeDispatchEnv(input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('dispatch-planner.composeDispatchEnv: input object required');
+  }
+  const { projectRoot, waveId, subagentId } = input;
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    throw new Error('dispatch-planner.composeDispatchEnv: projectRoot required');
+  }
+  if (typeof waveId !== 'string' || waveId.length === 0) {
+    throw new Error('dispatch-planner.composeDispatchEnv: waveId required');
+  }
+  if (typeof subagentId !== 'string' || subagentId.length === 0) {
+    throw new Error('dispatch-planner.composeDispatchEnv: subagentId required');
+  }
+  const isolation = input.isolation === 'shared' ? 'shared' : 'worktree';
+  const parentEnv = (input.parentEnv && typeof input.parentEnv === 'object')
+    ? input.parentEnv : {};
+  const extraEnv = (input.extraEnv && typeof input.extraEnv === 'object'
+    && !Array.isArray(input.extraEnv)) ? input.extraEnv : {};
+
+  const composed = {
+    IJFW_PROJECT_DIR: projectRoot,
+    IJFW_PARENT_PROJECT_ROOT: typeof parentEnv.IJFW_PARENT_PROJECT_ROOT === 'string'
+      && parentEnv.IJFW_PARENT_PROJECT_ROOT.length > 0
+      ? parentEnv.IJFW_PARENT_PROJECT_ROOT : projectRoot,
+    IJFW_WAVE_ID: waveId,
+    IJFW_SUBAGENT_ID: subagentId,
+    IJFW_ISOLATION: isolation,
+  };
+  if (typeof parentEnv.IJFW_SESSION_ID === 'string' && parentEnv.IJFW_SESSION_ID.length > 0) {
+    composed.IJFW_SESSION_ID = parentEnv.IJFW_SESSION_ID;
+  }
+  for (const [k, v] of Object.entries(extraEnv)) {
+    if (v === null || v === undefined) continue;
+    composed[k] = String(v);
+  }
+  // Stable sort for deterministic output ordering.
+  return Object.fromEntries(Object.keys(composed).sort().map((k) => [k, composed[k]]));
+}
+
 // Glob-aware intersection. Treats `*`/`**` as wildcards so a declaration
 // like `claude/commands/*.md` conflicts with `claude/commands/status.md`.
 // Returns true on any exact match OR glob-vs-literal match.
