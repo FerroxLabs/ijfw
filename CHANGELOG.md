@@ -209,6 +209,34 @@ Final test posture: `node --test` 2013 tests / 2012 pass / 0 fail / 1 skip;
 `npm test` (`node test.js`) 103/103. Fully green — the first v1.5.0 state
 with zero failing tests across both harnesses.
 
+### v1.5.0 wire-up Wave-W5 — E2E smoke close-out (2026-05-20)
+
+Ran the pre-publish E2E install harness (`scripts/e2e-smoke.sh`, 2 modes).
+5 gate failures, triaged: 2 real (fixed), 3 not bugs.
+
+- **Fixed — `installer/package.json` provenance**: added
+  `publishConfig.provenance: true`. The CI publish path already passes
+  `--provenance`; pinning it in `package.json` also makes a manual publish
+  default to provenance. The documented local-rollback (`--no-provenance
+  --otp`) still overrides when OIDC is unavailable.
+- **Fixed — `ijfw-update` skill drift**: `claude/skills/ijfw-update/SKILL.md`
+  had drifted from the canonical `shared/` copy and wrongly claimed
+  `ijfw_update_apply` was "deprecated since v1.5.0" — the retirement review
+  was considered and **rejected** (MCP tool cap is 12/12, fully populated).
+  Reverted to the `shared/` copy; all gated trees now identical.
+- **Not bugs (no fix):** (a) scratch-guard "scope leak" on
+  `~/.claude/settings.json` — artifact of running the harness inside a live
+  Claude Code session mutating its own settings concurrently; (b)
+  `ijfw --version` reporting 1.4.4 — the global npm install is the last
+  *published* version, resolves when Phase F publishes v1.5.0; (c) codex
+  Stop hook not emitting the status card — `session-end.sh` deliberately
+  gates the card behind `IJFW_CODEX_HOOK_NOTICES=1` (codex renders Stop
+  stdout as a visible warning); codex users still get the update nudge via
+  the prelude. The smoke gate is stricter than the deliberate design.
+
+Post-fix: 5 → 3 gate failures, all 3 non-bugs (environmental / unpublished /
+deliberate-design). Unit + curated harnesses remain fully green.
+
 ### Workflow-engine MED batch (v1.5.0 audit close-out, 2026-05-19)
 
 - **M1** `selectResumeAI` now reads `.ijfw/swarm.json::resume_preference` (falls back to the built-in claude/gemini/codex matrix). Rosters with `opencode`, `aider`, `copilot` etc. get cross-AI resume routing instead of escalating to user. `loadResumePreference()` + `_resetResumePrefCache()` helpers exported from `runtime-loop.js`.
