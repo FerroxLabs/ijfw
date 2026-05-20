@@ -45,14 +45,18 @@ const EXPECTED_TOOLS = [
   // from STATE-SDK-CONTRACT §7 are reachable through this one tool.
   'ijfw_state',
   // v1.5.0-major (W12-C N03): Trident-as-a-service. Multi-lens consensus
-  // convergence loop (lock-in #47 — canonical Phase E). Fills the 12th
-  // tool-cap slot; cap is now fully populated.
+  // convergence loop (lock-in #47 — canonical Phase E).
   'ijfw_cross_audit_converge',
+  // v1.5.0 memory-moat (M5 / INT.6): bi-temporal facts read path.
+  // Surfaces getValidAt / getHistory / getAllFactsWithWindows through MCP.
+  // Cap raised 12 → 13 for this single read-only surface (combined-tool
+  // pattern remains preferred for future growth).
+  'ijfw_memory_facts',
 ];
 // v1.5.0 T13: ijfw_subagent_post_done was retired (absorbed into ijfw_state as
 // the `subagent.post-done` verb). The tool MUST NOT appear in tools/list.
 const RETIRED_TOOLS = ['ijfw_subagent_post_done'];
-const EXPECTED_COUNT = 12;
+const EXPECTED_COUNT = 13;
 
 function send(child, msg) {
   child.stdin.write(JSON.stringify(msg) + '\n');

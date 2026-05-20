@@ -484,7 +484,7 @@ test('D2 -- MCP tool count remains 12 (no graph:* tools registered; v1.5.0-major
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const resp = await waitForResponse(2);
     assert.ok(resp.result && Array.isArray(resp.result.tools), 'tools list returned');
-    assert.equal(resp.result.tools.length, 12, `tool count is 12 (got ${resp.result.tools.length})`);
+    assert.equal(resp.result.tools.length, 13, `tool count is 13 (got ${resp.result.tools.length})`);
   } finally {
     try { child.kill('SIGTERM'); } catch { /* nothing */ }
   }

@@ -1019,6 +1019,21 @@ const TOOLS = [
     }
   },
   {
+    // v1.5.0 M5 (INT.6) -- bi-temporal facts MCP surface.
+    name: 'ijfw_memory_facts',
+    description: 'Query the bi-temporal facts table (subject/predicate/object timeline with valid_from / valid_to). Default: current-valid rows only. Pass history=true for full timeline; pass valid_at=<ISO-8601> for point-in-time. Subject + predicate are required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject:   { type: 'string', description: 'Fact subject (e.g. "v1.5.0").' },
+        predicate: { type: 'string', description: 'Fact predicate (e.g. "ship_date").' },
+        valid_at:  { type: 'string', description: 'Optional ISO-8601 timestamp. Returns rows whose validity window covers this instant.' },
+        history:   { type: 'boolean', description: 'If true, return all rows (current + invalidated) ordered DESC by valid_from.' }
+      },
+      required: ['subject', 'predicate']
+    }
+  },
+  {
     name: 'ijfw_prompt_check',
     description: 'Call on the first turn when the user prompt is short (<30 tokens) or likely vague. Returns whether the prompt is under-specified and a sharpening suggestion. Deterministic regex detector -- no LLM call. Use for Codex/Cursor/Windsurf/Copilot/Gemini where pre-prompt hooks are not available.',
     inputSchema: {
@@ -1955,6 +1970,12 @@ function handleMessage(msg) {
           case 'ijfw_memory_prelude':
             result = await handlePrelude(args || {});
             break;
+          case 'ijfw_memory_facts': {
+            // v1.5.0 M5 (INT.6) -- surface bi-temporal facts read path.
+            const mod = await import('./memory-facts-handler.js');
+            result = await mod.handleMemoryFacts(args || {});
+            break;
+          }
           case 'ijfw_metrics':
             result = handleMetrics(args || {});
             break;

@@ -102,13 +102,16 @@ async function runTest() {
     // slot 11 = ijfw_state (state-SDK verb facade; absorbs the retired
     //           ijfw_subagent_post_done — `subagent.post-done` is now a verb),
     // slot 12 = ijfw_cross_audit_converge (N03 Trident-as-a-service).
-    // CLAUDE.md fixes the cap at 12 — if a 13th appears, this assertion forces
-    // an explicit, intentional update rather than silent drift.
+    // CLAUDE.md fixes the cap at 13 (raised 12 → 13 in v1.5.0 memory-moat
+    // amendment for ijfw_memory_facts — the bi-temporal facts read path).
+    // If a 14th appears, this assertion forces an explicit, intentional
+    // update rather than silent drift.
     const CANONICAL_TOOLS_V150 = [
       'ijfw_memory_recall',
       'ijfw_memory_store',
       'ijfw_memory_search',
       'ijfw_memory_prelude',
+      'ijfw_memory_facts',
       'ijfw_prompt_check',
       'ijfw_metrics',
       'ijfw_cross_project_search',
