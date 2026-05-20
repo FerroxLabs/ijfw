@@ -40,8 +40,9 @@ One `state-sdk.js` `query(verb, …)` core — a **verb facade over the
 existing physical files** (`workflow.json`, `*.jsonl`, `wave-*/`,
 `active-extension.json` stay; the SDK is the single *mutation surface*, not
 a single file). Exposed **three ways** off one core: JS module (in-process
-writers), `bin/ijfw-state` CLI (scripting/external), `ijfw_state` MCP tool
-(all 13 platforms).
+writers), the `ijfw state:<verb>` CLI colon-namespace (scripting/external),
+`ijfw_state` MCP tool (all 13 platforms). There is no `bin/` — the CLI face
+is a colon-namespace on the existing `ijfw` CLI.
 
 **MCP cap (resolved — stays 12/12):** `ijfw_state` is created by
 *absorbing* `ijfw_subagent_post_done` — post-done IS a state transition, so
@@ -220,7 +221,7 @@ threshold set at plan time** (the never-ships mitigation — no open-ended
 
 | Item | Proof it is actually closed |
 |---|---|
-| G2 | Grep-gate test covers JS **and `.sh`** writers **and homedir paths** — zero state writes bypass the SDK. Each migrated writer has a regression test (spy throws if raw `writeFile` is hit). Concurrent-write + multi-lock **deadlock** test passes. `bin/ijfw-state` + `ijfw_state` MCP exercised in e2e-smoke. |
+| G2 | Grep-gate test covers JS **and `.sh`** writers **and homedir paths** — zero state writes bypass the SDK. Each migrated writer has a regression test (spy throws if raw `writeFile` is hit). Concurrent-write + multi-lock **deadlock** test passes. `ijfw state:<verb>` CLI + `ijfw_state` MCP exercised in e2e-smoke. |
 | G3 | Test proves `state.complete-phase` REFUSES on a red verification verdict via the MCP path. Separate test proves a gate **exception** degrades to advisory (does NOT block). Enforcement-matrix doc exists; an automated check confirms every platform row maps to a real exercised hook/MCP path. |
 | G1 | A real dispatched subagent run produces a per-subagent event log the parent polls live. A simulated truncation is RECOVERED to the last committed verb; a partially-applied verb rolls back; an append verb does not double-apply on replay. Truncation rate measured and reported; **pass threshold: ≤ 31% (at least halving the 62% baseline)**. |
 | G4 | Seeded bug → review → auto-fix → Trident-verified → atomic commit, end-to-end in a test. Plus a unit test for the 3-tier verification matrix independent of the e2e run. |

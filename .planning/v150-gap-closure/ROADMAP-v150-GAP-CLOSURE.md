@@ -44,7 +44,7 @@ not yet unblocked — surface it before P0a freezes.
 | Wave | Item | Scope | Mode |
 |------|------|-------|------|
 | **P0a** | state-SDK verb core | `state-sdk.js` verb dispatcher; lock hierarchy + canonical acquire-order; tmp+rename writes; heartbeat-refreshed locks; idempotency model (write-ahead intent + commit markers, dedup keys for append verbs); day-1/missing-file semantics per verb; observability model (capped events, rotated log, fire-and-forget after lock release, explicit poll interval). **Ends with a FROZEN verb API contract.** | sequential — blocks all |
-| **P0b** | migrations + faces | Migrate all state writers — JS (`dispatch-planner`, `wave-state`, `agents-md-blackboard`, `subagent-telemetry`, `active-extension-writer`) **and the shell hooks** (`compute-nudge.sh`, `pre-tool-use-extension-check.sh`) — to route through verbs; port `merge-block-aware.sh` to in-process JS; `bin/ijfw-state` CLI; `ijfw_state` MCP tool **absorbing `ijfw_subagent_post_done`** (cap stays 12/12). | parallel with P1 |
+| **P0b** | migrations + faces | Migrate all state writers — JS (`dispatch-planner`, `wave-state`, `agents-md-blackboard`, `subagent-telemetry`, `active-extension-writer`) **and the shell hooks** (`compute-nudge.sh`, `pre-tool-use-extension-check.sh`) — to route through verbs; port `merge-block-aware.sh` to in-process JS; `ijfw state:<verb>` CLI colon-namespace; `ijfw_state` MCP tool **absorbing `ijfw_subagent_post_done`** (cap stays 12/12). | parallel with P1 |
 
 **P0a exit:** frozen verb contract published.
 **P0b exit:** grep-gate (JS + `.sh` + homedir) green; per-writer regression
