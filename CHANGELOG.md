@@ -179,6 +179,36 @@ Post-compact full cross-audit of the cumulative wire-up diff `e0f1c4e..HEAD`
   into a standalone block and re-emitted through the abstention path.
   `npm test` is green again (103/103).
 
+### v1.5.0 wire-up Wave-W5 — pre-existing test-debt close-out (2026-05-20)
+
+The cross-audit also surfaced 4 long-standing `node --test` failures that
+predate the wire-up — all stale tests/manifests lagging behind deliberate
+code changes, not product bugs. Closed so the full suite is green:
+
+- **swarm-worktree merge assertion** — the test expected the default git
+  `Merge branch` message, but `integrateTaskWorktree` deliberately does a
+  `--no-ff` merge with an `ijfw merge: <task-id>` message (so `git log
+  --grep` can recover the merge boundary). Assertion updated to the real
+  contract.
+- **specialist registration (×2)** — `test-orchestrator-specialists*.js`
+  asserted the v1.4.4 + v1.5.0 specialist rosters register for *every*
+  project type. audit-MED-teams-#6 deliberately superseded that: book /
+  content / marketing / research / design get domain-specific benches
+  (story-architect, campaign-strategist, …) and do NOT carry the
+  software-oriented roster. Both tests now scope the roster assertion to
+  the software-family project types; a new test `7b` positively pins the
+  domain-bench contract (software specialists must NOT leak into a domain
+  bench).
+- **platform capability manifest** — `platform-capabilities.json` declared
+  22 claude skills; 34 `ijfw-*` skill dirs actually ship (the full-featured
+  claude plugin grew through v1.5.0 while the leaner codex/gemini packages
+  stayed at 19). The drift guard did its job; the manifest is bumped to 34.
+  codex / gemini / shared were already consistent — no change.
+
+Final test posture: `node --test` 2013 tests / 2012 pass / 0 fail / 1 skip;
+`npm test` (`node test.js`) 103/103. Fully green — the first v1.5.0 state
+with zero failing tests across both harnesses.
+
 ### Workflow-engine MED batch (v1.5.0 audit close-out, 2026-05-19)
 
 - **M1** `selectResumeAI` now reads `.ijfw/swarm.json::resume_preference` (falls back to the built-in claude/gemini/codex matrix). Rosters with `opencode`, `aider`, `copilot` etc. get cross-AI resume routing instead of escalating to user. `loadResumePreference()` + `_resetResumePrefCache()` helpers exported from `runtime-loop.js`.

@@ -100,9 +100,17 @@ test('DEFAULT_SPECIALISTS includes all 5 new specialists in node project type', 
   }
 });
 
-test('DEFAULT_SPECIALISTS spreads new specialists across every project type', () => {
-  for (const type of Object.keys(DEFAULT_SPECIALISTS)) {
-    const agentTypes = new Set(DEFAULT_SPECIALISTS[type].map((s) => s.agent_type));
+// audit-MED-teams-#6: book/content/marketing/research/design get domain benches
+// that carry only the domain-agnostic v1.4.4 specialists (doc-verifier +
+// nyquist-auditor). The full v1.4.4 software roster registers for the
+// software-family project types only.
+const SOFTWARE_FAMILY = ['node', 'python', 'typed', 'go', 'rust', 'other', 'software', 'business', 'mixed'];
+
+test('DEFAULT_SPECIALISTS spreads new specialists across every software-family project type', () => {
+  for (const type of SOFTWARE_FAMILY) {
+    const list = DEFAULT_SPECIALISTS[type];
+    assert.ok(list, `software-family project_type ${type} missing from DEFAULT_SPECIALISTS`);
+    const agentTypes = new Set(list.map((s) => s.agent_type));
     for (const name of NEW_SPECIALISTS) {
       assert.ok(agentTypes.has(name), `${type}: missing new specialist ${name}`);
     }

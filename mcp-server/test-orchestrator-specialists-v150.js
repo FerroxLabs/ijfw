@@ -111,10 +111,18 @@ test('6. ijfw-e2e-runner declares HARD CONTRACT in DO NOT section', () => {
   assert.match(body, /e2e\.fixture\.json/, 'fixture path commitment missing');
 });
 
-test('7. All 8 new specialists registered in DEFAULT_SPECIALISTS for every project type', () => {
+// audit-MED-teams-#6 deliberately gives book/content/marketing/research/design
+// domain-specific benches (story-architect, campaign-strategist, ...) that do
+// NOT carry the software-oriented v1.5.0 specialist roster. The 8 v1.5.0
+// specialists register only for the software-family project types.
+const SOFTWARE_FAMILY = ['node', 'python', 'typed', 'go', 'rust', 'other', 'software', 'business', 'mixed'];
+const DOMAIN_FAMILY = ['book', 'content', 'marketing', 'research', 'design'];
+
+test('7. All 8 new specialists registered in DEFAULT_SPECIALISTS for every software-family project type', () => {
   const expectedAgentTypes = V150_FILES; // file stems match agent_type values.
-  for (const projectType of Object.keys(DEFAULT_SPECIALISTS)) {
+  for (const projectType of SOFTWARE_FAMILY) {
     const list = DEFAULT_SPECIALISTS[projectType];
+    assert.ok(list, `software-family project_type ${projectType} missing from DEFAULT_SPECIALISTS`);
     const have = new Set(list.map(s => s.agent_type));
     for (const at of expectedAgentTypes) {
       assert.ok(have.has(at), `project_type ${projectType}: missing agent_type ${at}`);
@@ -124,6 +132,19 @@ test('7. All 8 new specialists registered in DEFAULT_SPECIALISTS for every proje
       if (expectedAgentTypes.includes(s.agent_type)) {
         assert.equal(s.since, '1.5.0', `${projectType}/${s.agent_type}: since=${s.since}`);
       }
+    }
+  }
+});
+
+test('7b. Domain benches carry domain specialists, not the software v1.5.0 roster', () => {
+  // audit-MED-teams-#6 contract: a non-software archetype yields a bench
+  // tailored to the domain. Guard against the software roster leaking back in.
+  for (const projectType of DOMAIN_FAMILY) {
+    const list = DEFAULT_SPECIALISTS[projectType];
+    assert.ok(list, `domain project_type ${projectType} missing from DEFAULT_SPECIALISTS`);
+    const have = new Set(list.map(s => s.agent_type));
+    for (const at of V150_FILES) {
+      assert.ok(!have.has(at), `${projectType}: software specialist ${at} leaked into the domain bench`);
     }
   }
 });

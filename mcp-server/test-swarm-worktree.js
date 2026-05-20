@@ -123,7 +123,10 @@ test('integrateTaskWorktree merges committed work and cleanup removes worktree',
 
     const integrated = integrateTaskWorktree(dir, 'swarm:w1:runtime-module');
     assert.equal(integrated.ok, true);
-    assert.match(git(dir, ['log', '--oneline', '-1']), /Merge branch|task change/);
+    // integrateTaskWorktree does a --no-ff merge with a deliberate
+    // `ijfw merge: <task-id>` message (so `git log --grep` can recover the
+    // merge boundary — see swarm/worktree.js). Assert that exact contract.
+    assert.match(git(dir, ['log', '--oneline', '-1']), /ijfw merge: swarm:w1:runtime-module/);
 
     const cleaned = cleanupTaskWorktree(dir, 'swarm:w1:runtime-module');
     assert.equal(cleaned.ok, true);

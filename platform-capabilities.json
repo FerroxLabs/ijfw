@@ -2,7 +2,7 @@
   "schema": 1,
   "platforms": {
     "claude": {
-      "skills": 22,
+      "skills": 34,
       "hookEvents": 6,
       "skillsPath": "claude/skills",
       "hooksPath": "claude/hooks/hooks.json"
