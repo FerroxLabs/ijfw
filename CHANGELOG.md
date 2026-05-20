@@ -250,6 +250,107 @@ deliberate-design). Unit + curated harnesses remain fully green.
 
 ## [1.5.0] -- 2026-05-19 (MAJOR — "The All-in-One That Just Fucking Works") — RETAGGED
 
+### Gap-closure milestone (2026-05-19 → 2026-05-20) — 32 swarm tasks + 7 plan/docs commits closing v1.4.4 spec-vs-impl gaps
+
+After the wire-up + r19/r20/r21 close-outs landed (CHANGELOG §Unreleased above) we
+ran a deep-dive brainstorm + 3-lens plan cross-audit (commits `dec3d08`, `b498704`,
+`67320a8`, `d7f1896`, `2ba371b`, `eb0f2a9`) and routed the result through a
+34-task swarm build plan executed across `5857463` (T1) → `fceaa13` (T32). No
+v1.5.1 split — every spec-vs-impl gap landed in v1.5.0. The retagged HEAD picks up
+the merge commit.
+
+**State-SDK migration (T1-T14) — single verb-namespaced writer for all state writes:**
+- **T1** Freeze the SDK verb contract: 18 verbs across `subagent.*`, `wave.*`,
+  `lock.*`, `event.*`, `blocker.*`, `extension.*`, `intent.*`. Numeric rotation
+  ceiling asserted in the contract validator.
+- **T2** `state-sdk.js` verb core + dispatcher with Day-1 consistency contract
+  (`subagent.post-done` returns the same envelope shape that
+  `ijfw_subagent_post_done` MCP tool returns).
+- **T3** Lock hierarchy + canonical acquire-order (`wave > subagent > artifact`);
+  refuse-in-lock invariant prevents same-lock reentrance.
+- **T4** Intent/commit idempotency + append dedup — replay-safe writes; single-
+  source targets; blocker STATE.md surface; refuse-in-lock invariant.
+- **T5** Event emit + per-subagent rotated log (`pollEvents` reader, NEVER
+  `fs.watch`); APPEND_QUEUES cleanup identity check.
+- **T6-T11** Migrate every existing state writer to the SDK:
+  `dispatch-planner.js`, `wave-state.js`, `agents-md-blackboard.js` (+ ported
+  `merge-block-aware.sh` to JS), `subagent-telemetry.js`,
+  `active-extension-writer.js`, shell-hook state writes.
+- **T12** `ijfw state:<verb>` CLI colon-namespace — every SDK verb callable from
+  shell.
+- **T13** **`ijfw_state` MCP tool absorbing `ijfw_subagent_post_done`** —
+  combined-tool pattern preferred over individual additions; MCP cap stays at
+  12/12. Backwards-compat: `ijfw_subagent_post_done` still routes through the new
+  tool's `action: 'subagent.post-done'` path.
+- **T14** SDK grep-gate + per-writer regression sweep: no direct state-file
+  writes outside the SDK; CI fails on drift.
+
+**Enforcement-as-precondition (T15-T18, T29) — G3 gates fire BEFORE the verb runs:**
+- **T15** Gates as verb preconditions + strict fail-mode tests: writes that would
+  violate a gate are refused at the SDK boundary, not just flagged post-facto.
+- **T16** Per-platform enforcement matrix (`docs/PLATFORM-ENFORCEMENT.md`):
+  documents the deterministic-vs-prompt-template split (Claude has real subagent
+  primitive; codex/gemini/cursor/windsurf/copilot route through prompt-templates).
+  Accuracy check + drift tests.
+- **T17** **W1 plan-check hard-BLOCK on HIGH finding** — `validatePlan` returning
+  any HIGH severity now sets `block: true` on the post-done envelope. Replaces the
+  v1.4.4 advisory-only behavior.
+- **T18** W3 verification at every enumerated boundary + Iron-Law discipline
+  promoted to default. Pre-existing advisory mode preserved via `gateAction:
+  'advise'`.
+- **T29** W2 Trident-powered debug + field-validation campaign — every gate's
+  failure mode covered by a Trident dissent test.
+
+**G1 — subagent runtime visibility (T19, T20) — closes lock-in #46 dispatcher gap:**
+- **T19** `subagent.dispatch` verb produces a DETERMINISTIC dispatch brief baking
+  in the SDK env-var contract (IJFW_PROJECT_DIR, IJFW_PARENT_PROJECT_ROOT,
+  IJFW_WAVE_ID, IJFW_SUBAGENT_ID, IJFW_ISOLATION). Returns `eventLogPath`. New
+  `dispatchSubagent` + `streamSubagentEvents` API. **Dispatcher auto-injection
+  shipped: every subagent spawned through the verb now emits real-time events to
+  its per-subagent log without manual invocation.** Closes the lock-in #46 v1.5.1
+  defer.
+- **T20** G1 truncation recovery + measured rate ≤31% (down from 62% baseline at
+  v1.5.0-foundation). Falsifiable proof published.
+
+**G4 — cross-AI consensus + Trident telemetry (T21, T27):**
+- **T21** Trident convergence telemetry: every `runPhaseEConverge` cycle now
+  records `cycle_duration_ms`, `divergence_score`, `cycle_summary_chars`,
+  `participant_outcomes` to the receipt. Dashboard reads it.
+- **T27** Cross-AI consensus code-fixer loop — when 2+ lenses agree on the same
+  HIGH, the fixer fires automatically with a unified diff and re-runs Trident on
+  the result; convergence within 3 cycles or escalate.
+
+**W5 — memory benchmark + temporal decay (T22, T23):**
+- **T22** Memory benchmark harness + published axes (recall@k, MRR, NDCG@10, p95
+  latency) reproducible from `npm run bench:memory`. Result table in
+  `docs/MEMORY-BENCHMARK.md`.
+- **T23** Memory temporal decay-on-retrieval — score penalty proportional to
+  `log(age_days)`; recent memories surface over stale ones at equal lexical
+  match. Env knob: `IJFW_MEMORY_DECAY_LAMBDA`.
+
+**G7 — code-fixer agent + domain templates (T24, T25, T26, T28, T30):**
+- **T24** G7-core `ijfw-code-fixer` agent built; wired into 4 software-domain
+  agents (executor, plan-checker, spec-reviewer, quality-reviewer).
+- **T25** G7-gen domain-aware team generator — `ijfw team init --brief <text>`
+  detects archetype + generates the right roster (software vs book vs research
+  vs campaign vs design vs launch).
+- **T26** G7-gen domain-template specs (≥3 domains) + schema validation; each
+  domain template ships with its own SPEC.md schema and validator.
+- **T28** G6 codex Stop e2e gate — codex hook now emits the status card behind
+  the opt-in `IJFW_CODEX_HOOK_NOTICES=1` flag.
+- **T30** Agent cross-platform deploy + 7 domain specialists shipped across
+  Claude + codex + gemini packages.
+
+**T31-T32 — Falsifiable-proof walk + Trident milestone cross-audit:**
+- **T31** Walked every G1-G7 falsifiable proof end-to-end; results green.
+- **T32** Trident milestone cross-audit synthesis (3 lenses ran against the full
+  T1-T31 diff; results in `.planning/v150-gap-closure/`).
+
+**Test posture at gap-closure close:** All curated harnesses green; e2e-smoke
+shows only pre-existing acceptable failures (scope-leak environmental on
+concurrent Claude-Code session; `ijfw --version` pre-publish drift — resolves at
+Phase F npm publish).
+
 ### Post-tag deep-dive audit pass (2026-05-19) — 20 commits closing ~35 audit findings
 
 After tag-day on 2026-05-18 at `9ddf1ed`, an 8-engine deep-dive audit (`.planning/audit-v1.5.0/`) surfaced ~32 HIGH + ~29 MED + ~16 LOW findings across token-optimization / observability / design / memory / workflow / teams / Trident / update-install-trust. Per "no-half-shipping" discipline, the hardening pass landed in-tag (no v1.5.1 split). v1.5.0 tag retagged at the post-pass HEAD; v1.5.0 npm release ships with the hardening included.
@@ -339,7 +440,7 @@ After tag-day on 2026-05-18 at `9ddf1ed`, an 8-engine deep-dive audit (`.plannin
 - **r15-M4** dogfooding receipt prose downgraded from proof-of-runtime to completion-record (retroactive caveat called out — see "Dogfooding receipt" below).
 - **r15-M5** "30 new files" claim corrected — the 30 is scope items (features), not files (~108).
 - **r15-M6** `buildResumeBrief` includes approx prior-context token count + explicit summarise-don't-quote instruction if receiving model's context window is tight.
-- **r16-H1** lock-in #46 wording clarified — the CLI + telemetry MECHANISM is canonical (shipped + tested in W12-A0/S01); dispatcher-auto-injection of the CLI call is v1.5.1. Honest scope rather than over-claiming runtime exercise.
+- **r16-H1** lock-in #46 wording clarified — the CLI + telemetry MECHANISM is canonical (shipped + tested in W12-A0/S01); dispatcher-auto-injection of the CLI call was scoped to v1.5.1 at audit time, then folded back into v1.5.0 via the gap-closure T19 (`subagent.dispatch` verb shipped 2026-05-20). Honest scope rather than over-claiming runtime exercise.
 - **r16-M1** "Net: 30 new files" intro line corrected (the body had been fixed in r15-M5 but the intro mirror was missed).
 - **r16-M2** lock-in #44 wording further scoped — applies to runtime mechanisms only; agent-facing content artifacts (skills/agents/templates) are NOT runtime mechanisms (their runtime caller IS the orchestrator-LLM dispatch + post-done gate).
 
@@ -365,7 +466,7 @@ After tag-day on 2026-05-18 at `9ddf1ed`, an 8-engine deep-dive audit (`.plannin
 43. **Replacement claim is acceptance-tested, not asserted.** RT1, RT2, RT3 are required Phase E gates.
 44. **Discipline is wired, not advisory.** Lock-in #44 applies to **runtime mechanisms** (gate-style enforcement, parsing, validation, contract checks): every such mechanism must have a **runtime caller in JS** OR be **invoked through an MCP tool whose output is a hard-block signal the orchestrator surface honors** (e.g., `ijfw_subagent_post_done` returning `block: true` on `gateAction: 'block'`). **Agent-facing content artifacts** (skills, agents, templates, prompts, docs) are NOT runtime mechanisms — their "runtime caller" IS the orchestrator-LLM's dispatch + the post-done verification gate that runs over their output. Skill-text-only **enforcement claims** to the orchestrator LLM are explicitly **NOT sufficient** as a runtime gate substitute. (Trident r15 H1 + r16 M2 closure.)
 45. **Domain templates are first-class.** Software, book, campaign, landing-page, design-system, launch all have brief templates + phase patterns shipped.
-46. **Cross-worktree checkpoint visibility is the canonical S1 MECHANISM.** The CLI (`ijfw checkpoint`) + telemetry library (`subagent-telemetry.js` w/ `IJFW_PARENT_PROJECT_ROOT` env passthrough) + drain CLI (`ijfw worktree-drain`) constitute the mechanism — these all shipped in W12-A0/S01 with 14/14 tests and are the canonical path going forward. **Auto-injection by the dispatcher** (so every spawned Agent subagent calls the CLI without being asked) is v1.5.1 work — the mechanism is canonical, the dispatcher wrapper that exercises it without manual invocation lands next milestone. (Trident r16 H1 clarification.)
+46. **Cross-worktree checkpoint visibility is the canonical S1 MECHANISM.** The CLI (`ijfw checkpoint`) + telemetry library (`subagent-telemetry.js` w/ `IJFW_PARENT_PROJECT_ROOT` env passthrough) + drain CLI (`ijfw worktree-drain`) constitute the mechanism — these all shipped in W12-A0/S01 with 14/14 tests and are the canonical path going forward. **Auto-injection by the dispatcher** (so every spawned Agent subagent calls the CLI without being asked) shipped in the gap-closure milestone via T19 (`subagent.dispatch` verb, 2026-05-20): the verb produces a deterministic dispatch brief baking in the SDK env-var contract + `eventLogPath`, and `dispatchSubagent`/`streamSubagentEvents` close the live-visibility loop without manual CLI invocation. (Trident r16 H1 clarification — originally scoped to v1.5.1, folded back in.)
 47. **Multi-lens consensus is the canonical Phase E.** Single-shot is the fallback.
 48. **Memory feeds forward.** Every BLOCKED / 3-attempt-cap-hit / divergence event writes a memory entry the next phase's planner reads.
 
@@ -380,7 +481,7 @@ After tag-day on 2026-05-18 at `9ddf1ed`, an 8-engine deep-dive audit (`.plannin
 
 ### Dogfooding receipt
 
-`.ijfw/wave-W12-*/subagent-*.checkpoint.json` — **38 receipts** (target ≥12 per lock-in #42, satisfied by count). **Caveat:** all 38 are retroactively synthesised from merge-log evidence at Phase D — the subagent-side `ijfw checkpoint` CLI was available (S01 shipped at W12-A0) but NOT invoked by the dispatched agents during their runs. Receipts therefore document COMPLETION outcomes, not real-time intermediate checkpoints. **The runtime visibility lock-in (#46) is not yet exercised end-to-end at the dispatcher layer**; v1.5.1 will inject `ijfw checkpoint` calls automatically in the dispatch wrapper so receipts become real-time artifacts. (Trident r15 M4 acknowledgement.)
+`.ijfw/wave-W12-*/subagent-*.checkpoint.json` — **38 receipts** (target ≥12 per lock-in #42, satisfied by count). **Caveat (W12-D era):** all 38 are retroactively synthesised from merge-log evidence at Phase D — the subagent-side `ijfw checkpoint` CLI was available (S01 shipped at W12-A0) but NOT invoked by the dispatched agents during their runs. Receipts therefore document COMPLETION outcomes, not real-time intermediate checkpoints. **Closed in gap-closure T19 (2026-05-20):** the `subagent.dispatch` verb auto-injects the SDK env-var contract + `eventLogPath` at dispatch time, and `dispatchSubagent`/`streamSubagentEvents` close the runtime-visibility lock-in #46 end-to-end at the dispatcher layer. New dispatches now produce real-time event-log artifacts (the 38 W12-D receipts remain as historical completion records). (Trident r15 M4 acknowledgement, gap-closure T19 close.)
 
 ---
 
