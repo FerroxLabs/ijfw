@@ -7,3 +7,4 @@
 [2026-05-21T00:25Z] M1.1+1.2+1.3 ✅ — migration 006 + obsidian-parser (parse + indexObsidianRelations); 3/3 indexing tests + 6/6 parser tests
 [2026-05-21T00:45Z] M1.4+1.5 ✅ — query-dataview parser+executor + grammar doc; 10/10 tests pass; schema-fit fix (production memory_entries has integer id, no title)
 [2026-05-21T01:10Z] M2.2+2.3 ✅ — auto-linker (A-Mem) + budget integration; 7/7 tests pass; tokenized body LIKE, production-schema-fit
+[2026-05-21T01:30Z] M4.1+4.2+4.3 ✅ — migration 008 (origin) + dream/state-file + dream/stage-runner; 13/13 tests pass
