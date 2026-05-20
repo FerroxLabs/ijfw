@@ -13,12 +13,17 @@
  * Lock:
  *   <projectRoot>/.ijfw/wave-<waveId>/.subagent-<subId>.lock
  *
+ * v1.5.0 T9: checkpoint/summary/violation writes route through the state-SDK
+ * verbs (`subagent.checkpoint`, `event.emit`) instead of raw fs writes.
+ * Append ops carry stable dedupKeys derived from their inputs.
+ *
  * Frozen surface for Wave 11-A (S1 rest, S2, S3) — do not change signatures.
  */
 
-import { mkdir, writeFile, readFile, readdir, copyFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, copyFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { withFsLock } from '../fs-lock.js';
+import { createHash } from 'node:crypto';
+import { query } from './state-sdk.js';
 // v1.5.0 N4.obs M1+M2: trace-id + hierarchical observation path.
 import { getTraceId, composePath } from '../observability/trace-id.js';
 
@@ -59,6 +64,14 @@ function checkpointPaths(waveId, subId, projectRoot) {
   };
 }
 
+/**
+ * Derive a short hash string for use in dedupKeys. Stable across calls with
+ * the same input — sha256 of JSON-serialised payload, first 12 hex chars.
+ */
+function shortHash(obj) {
+  return createHash('sha256').update(JSON.stringify(obj)).digest('hex').slice(0, 12);
+}
+
 // ---------------------------------------------------------------------------
 // Public API — FROZEN for Wave 11-A
 // ---------------------------------------------------------------------------
@@ -91,33 +104,40 @@ export async function recordCheckpoint(waveId, subId, checkpoint, projectRoot) {
   // v1.5.0 N4.obs M2: hierarchical observation path. The orchestrator can pass
   // a richer path via `checkpoint.path`; otherwise we synthesise a default that
   // a UI tree-view can group on: /wave-<waveId>/sub-<subId>.
-  const path = (typeof checkpoint.path === 'string' && checkpoint.path.length > 0)
+  const observPath = (typeof checkpoint.path === 'string' && checkpoint.path.length > 0)
     ? checkpoint.path
     : composePath({ waveId, subId });
 
-  const payload = {
+  // Build the checkpoint envelope (preserving existing field contract for
+  // readLastCheckpoint consumers). The envelope is passed as the `checkpoint`
+  // object to the SDK verb and stored nested under that key.
+  const ts = new Date().toISOString();
+  const envelope = {
     schema_version: 1,
     wave_id: waveId,
     sub_id: subId,
-    ts: new Date().toISOString(),
+    ts,
     ...(traceId ? { trace_id: traceId } : {}),
-    path,
+    path: observPath,
     ...checkpoint,
   };
 
-  const serialised = JSON.stringify(payload);
+  const serialised = JSON.stringify(envelope);
   if (serialised.length > MAX_CHECKPOINT_SIZE) {
     throw new Error(
       `subagent-telemetry: checkpoint size ${serialised.length} exceeds MAX_CHECKPOINT_SIZE ${MAX_CHECKPOINT_SIZE}`,
     );
   }
 
-  const { dir, file, lock } = checkpointPaths(waveId, subId, effectiveRoot);
-
-  await withFsLock(lock, async () => {
-    await mkdir(dir, { recursive: true });
-    await writeFile(file, serialised, 'utf8');
-  });
+  // v1.5.0 T9: route through state-SDK verb — no raw fs write.
+  // dedupKey is stable for this (subId, ts) pair: callers that retry within
+  // the same millisecond get a no-op rather than a double-write.
+  const dedupKey = `checkpoint:${subId}:${ts}`;
+  await query(
+    'subagent.checkpoint',
+    { waveId, subagentId: subId, checkpoint: envelope, dedupKey },
+    { projectRoot: effectiveRoot },
+  );
 }
 
 /**
@@ -144,7 +164,71 @@ export async function readLastCheckpoint(waveId, subId, projectRoot) {
     if (err && err.code === 'ENOENT') return null;
     throw err;
   }
-  return JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  // v1.5.0 T9: the SDK verb writes `{ waveId, subagentId, dedupKey, checkpoint,
+  // updated_at }` — the caller-supplied envelope lives nested under `checkpoint`.
+  // Unwrap to restore the flat shape that readLastCheckpoint consumers expect.
+  // Old-format files (no `checkpoint` key, have `schema_version`) are returned
+  // as-is for backward compatibility during migration.
+  if (parsed && typeof parsed.checkpoint === 'object' && parsed.checkpoint !== null
+      && typeof parsed.waveId === 'string') {
+    return parsed.checkpoint;
+  }
+  return parsed;
+}
+
+/**
+ * v1.5.0 T9: Append a summary event for a subagent via the `event.emit` verb.
+ * Routes through the state-SDK — no raw fs write.
+ *
+ * @param {string} waveId
+ * @param {string} subId
+ * @param {object} data     arbitrary JSON (summary body ≤ 4 KiB)
+ * @param {string} projectRoot
+ * @returns {Promise<{ok: boolean, seq?: number, deduped?: boolean}>}
+ */
+export async function appendSummary(waveId, subId, data, projectRoot) {
+  validateWaveId(waveId);
+  validateSubId(subId);
+  if (!data || typeof data !== 'object') {
+    throw new Error('subagent-telemetry: appendSummary requires a data object');
+  }
+  // v1.5.0-major S01: honor IJFW_PARENT_PROJECT_ROOT for worktree subagents.
+  const effectiveRoot = process.env.IJFW_PARENT_PROJECT_ROOT ?? projectRoot;
+  // dedupKey: stable hash of (waveId, subId, data) — identical retries are no-ops.
+  const dedupKey = `summary:${subId}:${shortHash({ waveId, subId, data })}`;
+  return query(
+    'event.emit',
+    { subagentId: subId, waveId, eventType: 'summary', data, dedupKey },
+    { projectRoot: effectiveRoot },
+  );
+}
+
+/**
+ * v1.5.0 T9: Record a violation event for a subagent via the `event.emit` verb.
+ * Routes through the state-SDK — no raw fs write.
+ *
+ * @param {string} waveId
+ * @param {string} subId
+ * @param {object} data     violation payload (type, message, etc.) ≤ 4 KiB
+ * @param {string} projectRoot
+ * @returns {Promise<{ok: boolean, seq?: number, deduped?: boolean}>}
+ */
+export async function recordViolation(waveId, subId, data, projectRoot) {
+  validateWaveId(waveId);
+  validateSubId(subId);
+  if (!data || typeof data !== 'object') {
+    throw new Error('subagent-telemetry: recordViolation requires a data object');
+  }
+  // v1.5.0-major S01: honor IJFW_PARENT_PROJECT_ROOT for worktree subagents.
+  const effectiveRoot = process.env.IJFW_PARENT_PROJECT_ROOT ?? projectRoot;
+  // dedupKey: stable hash of (waveId, subId, data) — identical retries are no-ops.
+  const dedupKey = `violation:${subId}:${shortHash({ waveId, subId, data })}`;
+  return query(
+    'event.emit',
+    { subagentId: subId, waveId, eventType: 'violation', data, dedupKey },
+    { projectRoot: effectiveRoot },
+  );
 }
 
 /**
