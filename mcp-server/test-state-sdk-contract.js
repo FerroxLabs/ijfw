@@ -151,6 +151,30 @@ for (const model of MODELS) {
   });
 }
 
+// --- Model 3: rotation ceiling values are numerically present ---------------
+// The contract explicitly states "4 MiB" and "10000" as the literal ceilings.
+// A future edit deleting either ceiling must break this test — a pure body-
+// length check would not catch that regression.
+test('event-record model (Model 3) states the 4 MiB byte ceiling', () => {
+  const section = extractSection(MODELS[2].matcher);
+  assert.ok(section, 'cross-cutting model 3 (Event record) section not found');
+  assert.match(
+    section.body,
+    /4\s*MiB/,
+    'Model 3 must state the 4 MiB byte ceiling for event log rotation',
+  );
+});
+
+test('event-record model (Model 3) states the 10000-line ceiling', () => {
+  const section = extractSection(MODELS[2].matcher);
+  assert.ok(section, 'cross-cutting model 3 (Event record) section not found');
+  assert.match(
+    section.body,
+    /10000/,
+    'Model 3 must state the 10000-line ceiling for event log rotation',
+  );
+});
+
 test('all 4 cross-cutting models are present', () => {
   for (const model of MODELS) {
     assert.ok(
