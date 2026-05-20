@@ -47,6 +47,11 @@ import { dirname, join } from 'path';
 // so the user-facing spelling 'domain-manifest:<op>' (matching the error
 // message and CLI surface) parses + routes uniformly. The set entry is the
 // hyphenated form so copy-paste from the error string Just Works.
+// v1.5.0 (T12): added 'state' — the state-SDK CLI face. Routes
+// `state:<verb> <json-payload>` straight into orchestrator/state-sdk.js
+// `query(verb, payload, ctx)`. This is the external-tooling surface for the
+// state-SDK; the JS module is the in-process surface and the MCP tool is the
+// remote surface (contract §0).
 const RUN_NAMESPACES = new Set([
   'compute',
   'index',
@@ -55,6 +60,7 @@ const RUN_NAMESPACES = new Set([
   'override',
   'extension',
   'domain-manifest',
+  'state',
 ]);
 const SEARCH_NAMESPACES = new Set(['compute', 'graph']);
 
@@ -166,11 +172,85 @@ export async function dispatchRun(parsed, ctx = {}) {
     const m = await import('./domain-manifest.js');
     return m.domainManifestDispatch({ command: parsed.command, args: parsed.args, projectRoot });
   }
+  if (parsed.namespace === 'state') {
+    return dispatchState(parsed, { projectRoot, sessionId });
+  }
 
   return {
     ok: false,
-    error: 'Unknown ijfw_run sub-command. Supported: compute:python, compute:js, index:<source>, detect:project_type, graph:traverse, override:<op>, extension:<op>, domain-manifest:<op>',
+    error: 'Unknown ijfw_run sub-command. Supported: compute:python, compute:js, index:<source>, detect:project_type, graph:traverse, override:<op>, extension:<op>, domain-manifest:<op>, state:<verb>',
   };
+}
+
+// --- state:<verb> dispatch -------------------------------------------------
+//
+// T12: external tooling reaches the state-SDK via the CLI colon-namespace.
+// `state:<verb> [json-payload]` parses the payload as JSON, then calls
+// orchestrator/state-sdk.js `query(verb, payload, ctx)`. The verb name is the
+// part after `state:` (e.g. `workflow.get`, `wave.advance`). The payload
+// defaults to `{}` when no args are supplied — read-only verbs like
+// `workflow.get` work with an empty payload.
+//
+// Errors come back as `{ ok: false, error, code }` so callers (cli-run.js,
+// shell hooks) can JSON.parse the stdout uniformly. Unknown verbs throw
+// inside `query()` and the throw is caught + surfaced with `code: 'UNKNOWN_VERB'`.
+async function dispatchState(parsed, { projectRoot, sessionId }) {
+  const verb = parsed.command;
+  if (!verb) {
+    return { ok: false, error: 'state:<verb> requires a verb after the colon.', code: 'NO_VERB' };
+  }
+
+  // Parse the JSON payload. Empty args -> `{}`. The colon-syntax parser
+  // already strips a single matching outer quote pair so callers can use
+  // either `state:foo '{"k":"v"}'` (shell-style) or `state:foo {"k":"v"}`
+  // (already-stripped) and reach the same handler.
+  const raw = String(parsed.args || '').trim();
+  let payload = {};
+  if (raw.length > 0) {
+    try {
+      payload = JSON.parse(raw);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `state:${verb} payload is not valid JSON: ${err && err.message ? err.message : String(err)}`,
+        code: 'INVALID_JSON',
+      };
+    }
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      return {
+        ok: false,
+        error: `state:${verb} payload must be a JSON object, got ${Array.isArray(payload) ? 'array' : typeof payload}.`,
+        code: 'INVALID_JSON',
+      };
+    }
+  }
+
+  // Lazy-import the SDK so this module stays cheap for the non-state
+  // dispatch paths (e.g. compute:python) and so a state-sdk init error
+  // surfaces as a structured ok:false instead of a top-level module crash.
+  let query;
+  try {
+    ({ query } = await import('../orchestrator/state-sdk.js'));
+  } catch (err) {
+    return {
+      ok: false,
+      error: `state:${verb} could not load state-sdk: ${err && err.message ? err.message : String(err)}`,
+      code: 'SDK_LOAD',
+    };
+  }
+
+  try {
+    const result = await query(verb, payload, { projectRoot, sessionId });
+    return result;
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    const isUnknownVerb = /unknown verb/i.test(msg);
+    return {
+      ok: false,
+      error: `state:${verb} did not complete: ${msg}`,
+      code: isUnknownVerb ? 'UNKNOWN_VERB' : (err && err.code) || 'ERROR',
+    };
+  }
 }
 
 async function dispatchCompute(parsed, { projectRoot, sessionId /*, provenance unused for compute runs */ }) {

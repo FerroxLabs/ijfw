@@ -773,6 +773,29 @@ fi
 rm -rf "$SC_HOME"
 
 # ============================================================
+# 1.5.0 (T12) -- state-SDK CLI face: `ijfw state:<verb>` colon-namespace
+# ============================================================
+# Proves the CLI face contract from STATE-SDK-CONTRACT §0:
+#   * cli-run.js is the bash-callable shim that routes `state:<verb> <json>`
+#     into orchestrator/state-sdk.js `query(verb, payload, ctx)`.
+#   * Output is JSON on stdout; ok:true exits 0; ok:false exits non-zero.
+# A fresh tmp dir + IJFW_PROJECT_DIR keeps the gate hermetic — no $HOME
+# touch, no leak into the iso-home install state.
+hdr "1.5.0 T12 -- state:<verb> CLI face (cli-run.js)"
+
+T12_DIR="$(mktemp -d -t ijfw-t12-XXXXXX)"
+SCRATCH_DIRS+=("$T12_DIR")
+
+T12_JSON=$(IJFW_PROJECT_DIR="$T12_DIR" node "$REPO_ROOT/mcp-server/src/cli-run.js" state:workflow.get '{}' 2>/dev/null)
+T12_EXIT=$?
+if [ "$T12_EXIT" -eq 0 ] && \
+   node -e "const d=JSON.parse(process.argv[1]); process.exit(d && d.ok===true && typeof d.verbId==='string' ? 0 : 1)" "$T12_JSON" >/dev/null 2>&1; then
+  pass "T12: ijfw state:workflow.get returns valid JSON with ok:true + verbId"
+else
+  fail "T12: ijfw state:workflow.get gate failed (exit=$T12_EXIT, out=$T12_JSON)"
+fi
+
+# ============================================================
 # 1.2.10 -- Gemini banner dedup (W8-F: atomic mkdir per session_id)
 # ============================================================
 hdr "1.2.10 -- gemini banner dedup"

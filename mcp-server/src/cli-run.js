@@ -10,20 +10,34 @@
  *   long-lived MCP server. A 30-line shim that imports dispatchRun directly
  *   keeps the dependency chain trivial: bash -> node -> dispatch/*.js.
  *
+ *   v1.5.0 T12 extends this shim with the `state:<verb>` colon-namespace —
+ *   the CLI face of the state-SDK (contract §0). The same shim now lets
+ *   external tooling reach `query(verb, payload, ctx)` from bash, e.g.
+ *   shell-hook state writes (T11) and the e2e-smoke `state:workflow.get` gate.
+ *
  * Usage:
  *   node cli-run.js <namespace>:<command> [--project-root <dir>] [args...]
  *
  * Examples:
  *   node cli-run.js domain-manifest:load --project-root /path/to/proj
  *   node cli-run.js extension:deploy-lazy --project-root /path/to/proj
+ *   node cli-run.js state:workflow.get '{}'
+ *   node cli-run.js state:workflow.set-phase '{"phase":"build"}'
  *
  * Contract:
- *   - Always exits 0 on a successful dispatch (even when the dispatched
- *     command reports ok:false -- that's a *result*, not a shim failure).
+ *   - Prints the JSON-stringified result to stdout.
  *   - Exits 2 on argv-shape errors (missing colon expression).
  *   - Exits 3 on a thrown error inside the dispatcher.
- *   - Prints the JSON-stringified result to stdout. stderr stays empty on
- *     the happy path so the session-start log isn't polluted.
+ *   - For the `state:` namespace: exits 0 on `ok:true`, non-zero on
+ *     `ok:false` so shell callers can branch on `$?` without re-parsing
+ *     the JSON. The non-zero exit is paired with a stderr line carrying
+ *     the result's `error` for log readability.
+ *   - For every other namespace (compute/index/detect/graph/override/
+ *     extension/domain-manifest): exits 0 on a successful dispatch even
+ *     when the dispatched command reports ok:false — that is a *result*,
+ *     not a shim failure (legacy behaviour preserved).
+ *   - stderr stays empty on the happy path so the session-start log isn't
+ *     polluted.
  *
  * Discipline:
  *   - Built-in Node only. No new deps.
@@ -80,7 +94,21 @@ async function main() {
     const result = await dispatchRun(parsed, {
       projectRoot: projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd(),
     });
-    process.stdout.write(JSON.stringify(result == null ? { ok: false, error: 'dispatch returned null (unknown namespace)' } : result) + '\n');
+    const payload = result == null
+      ? { ok: false, error: 'dispatch returned null (unknown namespace)' }
+      : result;
+    process.stdout.write(JSON.stringify(payload) + '\n');
+    // T12: the `state:` namespace honours `ok:true/false` as the process
+    // exit code so bash callers can `if ijfw state:foo ...; then` without
+    // re-parsing the JSON. Other namespaces keep the legacy always-0 contract
+    // — a dispatched compute:python script with exit_code=1 is a *result*,
+    // not a shim failure, and the existing session-start hooks rely on that.
+    if (parsed.namespace === 'state' && payload && payload.ok === false) {
+      if (payload.error) {
+        process.stderr.write(`cli-run: state:${parsed.command || '<verb>'}: ${payload.error}\n`);
+      }
+      process.exit(1);
+    }
     process.exit(0);
   } catch (err) {
     process.stderr.write(`cli-run: dispatch threw: ${err && err.message ? err.message : String(err)}\n`);
