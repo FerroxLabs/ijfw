@@ -188,6 +188,13 @@ Field contract:
 - Append-style verbs are made replay-safe by `dedupKey`: re-applying an append
   whose `dedupKey` already exists in the target log is a no-op.
 
+**Handler invariant (refuse-before-the-lock):** a verb handler MUST NOT return
+a refusal after entering `_withLocks` / after performing any mutation — a
+refusal must be decided *before* the critical section (verdict gates already run
+before `_withLocks`). This keeps the dispatcher's commit-on-refuse sound: a
+`begin`-then-`refused` result mutated nothing inside the lock, so the snapshot
+still equals disk and committing only marks the `verbId` terminal.
+
 ---
 
 ## 5. CROSS-CUTTING MODEL 3 — Event record + log rotation
@@ -399,17 +406,17 @@ carries `verbId` (string) and `ok` (boolean).
 
 ### verb: blocker.add
 - Signature: query('blocker.add', { id, text, waveId?, dedupKey })
-- Payload: `id` (string, required — stable blocker id) · `text` (string, required) · `waveId` (string, optional — associates the blocker to a wave) · `dedupKey` (string, required — append dedup).
+- Payload: `id` (string, required — stable blocker id) · `text` (string, required) · `waveId` (string, optional — associates the blocker to a wave; recorded inside the blocker record) · `dedupKey` (string, required — append dedup).
 - Returns: `{ ok:true, blockerId: string, deduped: boolean }`.
-- Day-1: create — auto-creates `.ijfw/blackboard/decisions.jsonl` (blockers share the decision log, `kind:'blocker'`) when absent; when `waveId` is given, also auto-creates `.ijfw/wave-<waveId>/STATE.md` (status `in_progress`) so the `blockers_open` bump always lands.
-- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl` → `.ijfw/wave-<waveId>/STATE.md` (the wave lock is acquired only when `waveId` is given, to bump `blockers_open`). When `waveId` is given the verb DOES write `STATE.md`: it bumps the `blockers_open` set — a `string[]` of open blocker ids (the same flat-YAML array shape `wave-state.js` writes) — by adding `id` (idempotent: a no-op if `id` is already present).
+- Day-1: create — auto-creates `.ijfw/blackboard/decisions.jsonl` (blockers share the decision log, `kind:'blocker'`) when absent. `waveId`, when given, is stored as a field on the appended blocker record; the verb does NOT create or write any `wave-<waveId>/STATE.md`.
+- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl`. The verb mutates ONLY its blocker-record log (`decisions.jsonl`) — that is its sole declared lock target. It does NOT write `wave-<waveId>/STATE.md`. The `wave-<waveId>/STATE.md` `blockers_open` wave-summary is a separate concern owned by `wave-state.js`; making it a single-writer with one representation is completed by **T7 (migrate wave-state.js to the SDK)**.
 
 ### verb: blocker.resolve
 - Signature: query('blocker.resolve', { id, resolution, waveId?, dedupKey })
-- Payload: `id` (string, required — the blocker id to resolve) · `resolution` (string, required) · `waveId` (string, optional) · `dedupKey` (string, required — append dedup; the resolution is itself an append).
+- Payload: `id` (string, required — the blocker id to resolve) · `resolution` (string, required) · `waveId` (string, optional — recorded inside the resolution record) · `dedupKey` (string, required — append dedup; the resolution is itself an append).
 - Returns: `{ ok:true, blockerId: string, resolved: boolean, deduped: boolean }` — `resolved:false` when no open blocker with `id` exists.
-- Day-1: refuse — `ok:false` with `reason:'no-blocker-log'` when `decisions.jsonl` is absent (cannot resolve a blocker that was never recorded).
-- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl` → `.ijfw/wave-<waveId>/STATE.md` (wave lock only when `waveId` is given). When `waveId` is given the verb DOES write `STATE.md`: it decrements the `blockers_open` set by removing `id` from the `string[]` of open blocker ids (a no-op if `id` was not present).
+- Day-1: refuse — `ok:false` with `reason:'no-blocker-log'` when `decisions.jsonl` is absent (cannot resolve a blocker that was never recorded). `waveId`, when given, is stored as a field on the appended resolution record; the verb does NOT create or write any `wave-<waveId>/STATE.md`.
+- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl`. The verb mutates ONLY its blocker-record log (`decisions.jsonl`) — that is its sole declared lock target. It does NOT write `wave-<waveId>/STATE.md`. The `wave-<waveId>/STATE.md` `blockers_open` wave-summary is owned by `wave-state.js`; its single-writer reconciliation is completed by **T7 (migrate wave-state.js to the SDK)**.
 
 ### verb: state.replay
 - Signature: query('state.replay', { sinceVerbId? })

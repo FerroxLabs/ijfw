@@ -547,30 +547,6 @@ function writeWaveStateFile(root, waveId, frontmatter, body) {
   return { frontmatter, body: body || '', raw };
 }
 
-/**
- * Apply `transform` to the wave STATE.md `blockers_open` set and write it back.
- * `blockers_open` is a string[] of open blocker ids — the same flat-YAML
- * string-array shape `wave-state.js` writes (`blockers_open: [...]`). Day-1:
- * auto-creates `.ijfw/wave-<waveId>/STATE.md` (status `in_progress`) when
- * absent so a `blocker.add` with `waveId` always lands its STATE.md bump. Used
- * by `blocker.add` (append an id) and `blocker.resolve` (remove an id).
- */
-function bumpWaveBlockers(root, waveId, transform) {
-  const existing = readWaveStateFile(root, waveId);
-  const open = Array.isArray(existing?.frontmatter?.blockers_open)
-    ? [...existing.frontmatter.blockers_open] : [];
-  const next = transform(open);
-  const fm = {
-    ...(existing?.frontmatter || {}),
-    wave_id: waveId,
-    status: existing?.frontmatter?.status ?? 'in_progress',
-    created_at: existing?.frontmatter?.created_at ?? nowIso(),
-    updated_at: nowIso(),
-    blockers_open: next,
-  };
-  writeWaveStateFile(root, waveId, fm, existing?.body ?? '');
-}
-
 // ---------------------------------------------------------------------------
 // Context / payload validation
 // ---------------------------------------------------------------------------
@@ -1038,11 +1014,12 @@ const handlers = {
   },
 
   // --- blocker.add — append, Day-1 create, dedupKey --------------------
-  // Appends a kind:'blocker' record to decisions.jsonl AND, when `waveId` is
-  // given, bumps the wave STATE.md `blockers_open` set (contract §7) — the
-  // blocker id is added to the `blockers_open` string array. This makes the
-  // verb's real mutations match its declared lock targets: when STATE.md is a
-  // declared target, the verb actually writes it.
+  // Appends a kind:'blocker' record to decisions.jsonl — its ONLY mutation.
+  // `waveId`, when given, is recorded INSIDE that blocker record; the verb does
+  // NOT write any wave-<waveId>/STATE.md. The `blockers_open` wave-summary is
+  // owned by `wave-state.js` (a separate co-writer of that key) — reconciling
+  // it to a single writer is deferred to T7 (migrate wave-state.js to the SDK).
+  // Lock targets therefore list exactly the one file the verb mutates.
   async 'blocker.add'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const id = requireStr(payload?.id, 'id');
@@ -1052,7 +1029,6 @@ const handlers = {
       ? undefined : requireId(payload.waveId, 'waveId');
     const log = paths.decisions(root);
     const targets = [paths.intentJournal(root), log];
-    if (waveId) targets.push(paths.waveState(root, waveId));
     return _withLocks(targets, async () => {
       if (jsonlHasDedupKey(log, dedupKey)) {
         return { ok: true, blockerId: id, deduped: true };
@@ -1061,20 +1037,17 @@ const handlers = {
         kind: 'blocker', blockerId: id, text, dedupKey,
         waveId: waveId ?? null, resolved: false, ts: nowIso(),
       });
-      // Bump blockers_open on the wave STATE.md when a wave was given.
-      if (waveId) {
-        bumpWaveBlockers(root, waveId, (open) => (
-          open.includes(id) ? open : [...open, id]
-        ));
-      }
       return { ok: true, blockerId: id, deduped: false };
     }, env);
   },
 
   // --- blocker.resolve — append, Day-1 refuse, dedupKey ---------------
-  // Appends a kind:'blocker-resolution' record AND, when `waveId` is given,
-  // decrements the wave STATE.md `blockers_open` set by removing the resolved
-  // blocker id (contract §7).
+  // Appends a kind:'blocker-resolution' record to decisions.jsonl — its ONLY
+  // mutation. `waveId`, when given, is recorded INSIDE that resolution record;
+  // the verb does NOT write any wave-<waveId>/STATE.md. The `blockers_open`
+  // wave-summary is owned by `wave-state.js`; its single-writer reconciliation
+  // is deferred to T7 (migrate wave-state.js to the SDK). Lock targets list
+  // exactly the one file the verb mutates.
   async 'blocker.resolve'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const id = requireStr(payload?.id, 'id');
@@ -1087,7 +1060,6 @@ const handlers = {
       return { ok: false, refused: true, reason: 'no-blocker-log' };
     }
     const targets = [paths.intentJournal(root), log];
-    if (waveId) targets.push(paths.waveState(root, waveId));
     return _withLocks(targets, async () => {
       if (jsonlHasDedupKey(log, dedupKey)) {
         return { ok: true, blockerId: id, resolved: true, deduped: true };
@@ -1104,12 +1076,6 @@ const handlers = {
         kind: 'blocker-resolution', blockerId: id, resolution, dedupKey,
         waveId: waveId ?? null, resolved: resolvable, ts: nowIso(),
       });
-      // Decrement blockers_open: drop this id from the wave STATE.md set. Done
-      // even when not resolvable — the wave should not list an id whose
-      // resolution we just recorded; a no-op when the id was never present.
-      if (waveId) {
-        bumpWaveBlockers(root, waveId, (open) => open.filter((b) => b !== id));
-      }
       return { ok: true, blockerId: id, resolved: resolvable, deduped: false };
     }, env);
   },
@@ -1354,9 +1320,13 @@ export async function query(verb, payload = {}, ctx = {}) {
   // critical section). A handler that returned early WITHOUT calling
   // `_withLocks` (e.g. `phase.plan-check` Day-1 refuse / gate refuse) wrote no
   // `begin` and needs no `commit` — it mutated nothing. When a `begin` exists,
-  // commit regardless of refused/ok: a refused result mutated nothing so the
-  // snapshot equals current state; committing marks the verbId terminal so
-  // replay never treats a clean refusal as a recoverable partial.
+  // commit regardless of refused/ok. This commit-on-refuse is sound ONLY
+  // because of the §4 handler invariant: a handler MUST NOT return a refusal
+  // after entering `_withLocks` / after any mutation — refusals are decided
+  // before the critical section (verdict gates already run pre-`_withLocks`).
+  // So a `begin`-then-`refused` result mutated nothing inside the lock, the
+  // snapshot still equals disk, and committing only marks the verbId terminal
+  // so replay never treats a clean pre-lock refusal as a recoverable partial.
   if (env.journalHandle) {
     await _journalCommit(env.journalHandle);
   }

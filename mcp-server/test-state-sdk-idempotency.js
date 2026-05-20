@@ -573,75 +573,98 @@ test('rollback (real interruption): an interrupted telemetry.record is sealed, n
 });
 
 // ===========================================================================
-// PART H — blocker.add / blocker.resolve mutate STATE.md (issue 1)
+// PART H — blocker.add / blocker.resolve mutate ONLY their blocker-record log
+//
+// Corrected behavior (T4 re-review): the blocker verbs append a blocker record
+// to decisions.jsonl — their single mutation — and do NOT write any
+// wave-<waveId>/STATE.md. `wave-state.js` is the sole writer of the STATE.md
+// `blockers_open` wave-summary; reconciling it to one writer is deferred to T7.
+// Each verb's begin-record `targets[]` therefore lists exactly decisions.jsonl
+// (+ the intent journal) and no STATE.md.
 // ===========================================================================
 
-/** Parse a wave STATE.md frontmatter into an object (minimal flat-YAML). */
-function readWaveFm(root, waveId) {
-  const p = join(root, '.ijfw', `wave-${waveId}`, 'STATE.md');
-  if (!existsSync(p)) return null;
-  const raw = readFileSync(p, 'utf8');
-  const end = raw.indexOf('\n---', 3);
-  const block = raw.slice(4, end);
-  const fm = {};
-  const lines = block.split('\n');
-  for (let i = 0; i < lines.length; i += 1) {
-    const c = lines[i].indexOf(':');
-    if (c === -1) continue;
-    const key = lines[i].slice(0, c).trim();
-    const rest = lines[i].slice(c + 1).trim();
-    if (rest === '') {
-      const seq = [];
-      let j = i + 1;
-      while (j < lines.length && lines[j].trimStart().startsWith('- ')) {
-        seq.push(lines[j].replace(/^\s*-\s?/, '')); j += 1;
-      }
-      fm[key] = seq; i = j - 1;
-    } else if (rest === '[]') fm[key] = [];
-    else fm[key] = rest;
-  }
-  return fm;
+/** Read the decisions.jsonl blocker-record log into an array of records. */
+function readDecisions(root) {
+  const p = join(root, '.ijfw', 'blackboard', 'decisions.jsonl');
+  if (!existsSync(p)) return [];
+  return readFileSync(p, 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 
-// --- H1 — blocker.add with waveId bumps blockers_open on STATE.md ---------
-test('blocker.add: with waveId, bumps blockers_open on the wave STATE.md', async () => {
+// --- H1 — blocker.add with waveId appends to its log, writes no STATE.md --
+test('blocker.add: with waveId, appends only to decisions.jsonl (no STATE.md)', async () => {
   const { ctx, root, cleanup } = mkProject();
   try {
     const r = await query('blocker.add', {
       id: 'blk-1', text: 'CI red', waveId: 'W7', dedupKey: 'bh-1',
     }, ctx);
     assert.equal(r.ok, true);
+    assert.equal(r.deduped, false);
 
-    const fm = readWaveFm(root, 'W7');
-    assert.ok(fm, 'STATE.md was created for the wave');
-    assert.deepEqual(fm.blockers_open, ['blk-1'],
-      'blockers_open holds the new blocker id');
+    // The blocker record landed in decisions.jsonl with waveId recorded inline.
+    const recs = readDecisions(root);
+    const hit = recs.find((x) => x.kind === 'blocker' && x.blockerId === 'blk-1');
+    assert.ok(hit, 'the blocker record was appended to decisions.jsonl');
+    assert.equal(hit.waveId, 'W7', 'waveId is recorded inside the blocker record');
+
+    // No wave STATE.md was created or modified.
+    assert.equal(existsSync(join(root, '.ijfw', 'wave-W7', 'STATE.md')), false,
+      'blocker.add does NOT create a wave STATE.md');
+    assert.equal(existsSync(join(root, '.ijfw', 'wave-W7')), false,
+      'blocker.add does NOT create a wave directory');
+
+    // The begin record's targets[] list decisions.jsonl, never a STATE.md.
+    const begin = readJournal(root).find(
+      (x) => x.verbId === r.verbId && x.phase === 'begin',
+    );
+    assert.ok(begin, 'a begin record was written');
+    assert.ok(begin.targets.some((t) => t.endsWith('decisions.jsonl')),
+      'begin targets[] include decisions.jsonl');
+    assert.equal(begin.targets.some((t) => t.endsWith('STATE.md')), false,
+      'begin targets[] do NOT list any STATE.md');
   } finally { cleanup(); }
 });
 
-// --- H2 — blocker.resolve with waveId decrements blockers_open -----------
-test('blocker.resolve: with waveId, removes the id from blockers_open', async () => {
+// --- H2 — blocker.resolve with waveId appends only to its log -------------
+test('blocker.resolve: with waveId, appends only to decisions.jsonl (no STATE.md)', async () => {
   const { ctx, root, cleanup } = mkProject();
   try {
     await query('blocker.add', {
       id: 'blk-a', text: 'a', waveId: 'W7', dedupKey: 'bh-2a',
     }, ctx);
-    await query('blocker.add', {
-      id: 'blk-b', text: 'b', waveId: 'W7', dedupKey: 'bh-2b',
-    }, ctx);
-    assert.deepEqual(readWaveFm(root, 'W7').blockers_open, ['blk-a', 'blk-b']);
 
     const res = await query('blocker.resolve', {
       id: 'blk-a', resolution: 'fixed', waveId: 'W7', dedupKey: 'bh-2r',
     }, ctx);
     assert.equal(res.ok, true);
     assert.equal(res.resolved, true);
-    assert.deepEqual(readWaveFm(root, 'W7').blockers_open, ['blk-b'],
-      'the resolved blocker id was removed from blockers_open');
+
+    // The resolution record landed in decisions.jsonl.
+    const recs = readDecisions(root);
+    const resolution = recs.find(
+      (x) => x.kind === 'blocker-resolution' && x.blockerId === 'blk-a',
+    );
+    assert.ok(resolution, 'the resolution record was appended to decisions.jsonl');
+    assert.equal(resolution.waveId, 'W7',
+      'waveId is recorded inside the resolution record');
+
+    // No wave STATE.md was created or modified.
+    assert.equal(existsSync(join(root, '.ijfw', 'wave-W7', 'STATE.md')), false,
+      'blocker.resolve does NOT create a wave STATE.md');
+
+    // The begin record's targets[] list decisions.jsonl, never a STATE.md.
+    const begin = readJournal(root).find(
+      (x) => x.verbId === res.verbId && x.phase === 'begin',
+    );
+    assert.ok(begin, 'a begin record was written');
+    assert.ok(begin.targets.some((t) => t.endsWith('decisions.jsonl')),
+      'begin targets[] include decisions.jsonl');
+    assert.equal(begin.targets.some((t) => t.endsWith('STATE.md')), false,
+      'begin targets[] do NOT list any STATE.md');
   } finally { cleanup(); }
 });
 
-// --- H3 — without waveId, no STATE.md is created (lock targets match) -----
+// --- H3 — without waveId, mutates only decisions.jsonl --------------------
 test('blocker.add: without waveId, mutates only decisions.jsonl', async () => {
   const { ctx, root, cleanup } = mkProject();
   try {
