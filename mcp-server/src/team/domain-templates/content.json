@@ -1,0 +1,50 @@
+{
+  "schema_version": "domain-template/v1",
+  "domain": "content",
+  "display_name": "Content / Campaign",
+  "description": "Marketing campaigns, launch copy, blog posts, newsletters, social media, and SEO content.",
+  "agent_ids": [
+    "ijfw-campaign-strategist",
+    "ijfw-copy-reviewer"
+  ],
+  "agent_id_source": "domain-specialist",
+  "workflow_phases": ["plan", "execute", "review", "publish"],
+  "brief_fields": [
+    {
+      "key": "objective",
+      "type": "string",
+      "description": "Primary campaign objective (e.g. product launch, lead gen, brand awareness).",
+      "required": true
+    },
+    {
+      "key": "audience",
+      "type": "string",
+      "description": "Target audience segment — who the content is written for.",
+      "required": true
+    },
+    {
+      "key": "channels",
+      "type": "array",
+      "description": "Distribution channels in scope (e.g. blog, email, Twitter/X, LinkedIn, press).",
+      "required": false
+    },
+    {
+      "key": "tone",
+      "type": "string",
+      "description": "Brand voice and tone guidelines (e.g. authoritative, conversational, playful).",
+      "required": false
+    },
+    {
+      "key": "key_messages",
+      "type": "array",
+      "description": "Top-line messages that every piece must reinforce.",
+      "required": false
+    },
+    {
+      "key": "cta",
+      "type": "string",
+      "description": "Primary call-to-action the campaign drives toward.",
+      "required": false
+    }
+  ]
+}

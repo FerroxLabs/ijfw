@@ -1,0 +1,41 @@
+{
+  "schema_version": "domain-template/v1",
+  "domain": "research",
+  "display_name": "Research / Analysis",
+  "description": "Academic papers, whitepapers, literature reviews, studies, and investigative analysis.",
+  "agent_ids": [],
+  "agent_id_source": "domain-specialist",
+  "workflow_phases": ["question", "collect", "synthesize", "review"],
+  "brief_fields": [
+    {
+      "key": "research_question",
+      "type": "string",
+      "description": "Primary research question or hypothesis the work addresses.",
+      "required": true
+    },
+    {
+      "key": "methodology",
+      "type": "string",
+      "description": "Research methodology (e.g. qualitative, quantitative, mixed-methods, literature review).",
+      "required": false
+    },
+    {
+      "key": "sources",
+      "type": "array",
+      "description": "Key source types or corpora to consult (e.g. academic databases, proprietary data, interviews).",
+      "required": false
+    },
+    {
+      "key": "output_format",
+      "type": "string",
+      "description": "Intended output artefact (e.g. journal paper, internal report, executive summary).",
+      "required": false
+    },
+    {
+      "key": "scope_constraints",
+      "type": "string",
+      "description": "Explicit scope limits: time range, geography, population, domain.",
+      "required": false
+    }
+  ]
+}

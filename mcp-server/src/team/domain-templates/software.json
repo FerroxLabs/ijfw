@@ -1,0 +1,40 @@
+{
+  "schema_version": "domain-template/v1",
+  "domain": "software",
+  "display_name": "Software / Engineering",
+  "description": "Code, APIs, services, libraries, CLIs, mobile and web applications.",
+  "agent_ids": [
+    "ijfw-doc-verifier",
+    "ijfw-integration-checker",
+    "ijfw-nyquist-auditor",
+    "ijfw-code-fixer"
+  ],
+  "agent_id_source": "software-core",
+  "workflow_phases": ["plan", "execute", "review", "verify"],
+  "brief_fields": [
+    {
+      "key": "stack",
+      "type": "string",
+      "description": "Primary language / framework stack (e.g. Node.js + Express, Python + FastAPI).",
+      "required": false
+    },
+    {
+      "key": "architecture",
+      "type": "string",
+      "description": "High-level architecture pattern (e.g. monolith, microservices, serverless).",
+      "required": false
+    },
+    {
+      "key": "entry_points",
+      "type": "array",
+      "description": "Key modules or endpoints the team should focus on first.",
+      "required": false
+    },
+    {
+      "key": "test_strategy",
+      "type": "string",
+      "description": "Preferred test approach: unit, integration, e2e, TDD.",
+      "required": false
+    }
+  ]
+}
