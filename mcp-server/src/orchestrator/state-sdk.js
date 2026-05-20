@@ -46,6 +46,11 @@ import { withFsLock, canonicalLockOrder, lockPathFor } from '../fs-lock.js';
 import { enforceVerificationGate, VerificationGateViolation } from './verification-gate.js';
 import { validatePlan } from './plan-checker.js';
 import { runSelfCheck } from './post-done-runner.js';
+import {
+  emitEvent as emitEventToLog,
+  appendUnderHeldLock as appendEventUnderHeldLock,
+  resolveEventLogPath,
+} from './state-events.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -368,14 +373,37 @@ async function _journalCommit(handle) {
 }
 
 /**
- * Event-emit seam (T5). Fire-and-forget, AFTER lock release (Model 3).
- * Today: no-op. NOTE: distinct from the `event.emit` *verb* — the verb is a
- * caller-facing append; this seam is the implicit per-query observability tap.
+ * Event-emit seam (T5 — IMPLEMENTED). Fire-and-forget, AFTER lock release
+ * (Model 3). Distinct from the `event.emit` *verb* — the verb is a
+ * caller-facing journaled append that acquires its own §3 lock; this seam is
+ * the implicit per-query observability tap that fires for EVERY verb dispatch
+ * (read + mutating). The dispatcher invokes this AFTER the handler returns
+ * and AFTER all §3 locks are released — see the dispatcher's call sites.
  *
- * @param {object} _event  { verb, subagentId, ts, verbId, outcome, payloadDigest }
+ * The tap takes NO §3 lock and is serialized per-log-path by an in-process
+ * Promise-chain mutex inside `state-events.emitEvent`. Errors are swallowed
+ * (logged to stderr in the impl); a tap failure NEVER propagates to the
+ * caller. This call returns immediately — the underlying append happens on
+ * the microtask queue but is not awaited by the dispatcher.
+ *
+ * @param {{verb:string, subagentId:string, ts:string, verbId:string,
+ *          outcome:string, payloadDigest:string,
+ *          projectRoot:string, waveId?:string}} event
  */
-function _emitEvent(_event) {
-  // T5 replaces this with an append to the rotated per-subagent event log.
+function _emitEvent(event) {
+  if (!event || !event.projectRoot) return;
+  // Fire-and-forget: do NOT await. `emitEvent` swallows its own errors so
+  // an unhandled rejection cannot escape here either.
+  emitEventToLog({
+    projectRoot: event.projectRoot,
+    waveId: event.waveId,
+    subagentId: event.subagentId,
+    verb: event.verb,
+    verbId: event.verbId,
+    outcome: event.outcome,
+    payloadDigest: event.payloadDigest,
+    ts: event.ts,
+  }).catch(() => { /* impossible — emitEvent swallows; belt-and-suspenders */ });
 }
 
 // ---------------------------------------------------------------------------
@@ -874,17 +902,25 @@ const handlers = {
     const log = paths.eventLog(root, waveId, subagentId);
     const targets = [paths.intentJournal(root), log];
     return _withLocks(targets, async () => {
-      const existing = readJsonl(log);
-      const dup = existing.find((e) => e && e.dedupKey === dedupKey);
+      // Dedup against any prior record with the same dedupKey -- both in the
+      // live file (cheap) and, if absent there, in the most-recent archive
+      // (cross-rotation dedup). Live-file scan first for the hot path.
+      const liveRecords = readJsonl(log);
+      const dup = liveRecords.find((e) => e && e.dedupKey === dedupKey);
       if (dup) return { ok: true, seq: dup.seq, deduped: true };
-      const seq = existing.length
-        ? (existing[existing.length - 1].seq || existing.length) + 1
-        : 1;
-      appendJsonl(log, {
-        seq, eventType, subagentId, waveId,
-        ts: nowIso(), dedupKey, data: payload.data,
+
+      // T5: seq is assigned by the shared `state-events` helper so the verb's
+      // seq stream + the dispatcher tap's seq stream are ONE stream, monotonic
+      // across rotation. We are under the §3 event-log lock here, so we use
+      // the under-lock path that bypasses the in-process tap mutex.
+      const record = appendEventUnderHeldLock({
+        path: log,
+        envelope: {
+          eventType, subagentId, waveId,
+          ts: nowIso(), dedupKey, data: payload.data,
+        },
       });
-      return { ok: true, seq, deduped: false };
+      return { ok: true, seq: record.seq, deduped: false };
     }, env);
   },
 
@@ -1296,6 +1332,14 @@ export async function query(verb, payload = {}, ctx = {}) {
     env.journalHandle = null;
   }
 
+  // The tap envelope's projectRoot is best-effort: `ctx.projectRoot` is
+  // required for mutating verbs but may be unset for invalid calls — in that
+  // case the tap silently no-ops (an erroring unknown verb / missing-root
+  // call has nowhere to write its tap event). `waveId` is derived from the
+  // payload when the verb names one — the tap routes to the wave-scoped log.
+  const eventRoot = typeof ctx?.projectRoot === 'string' ? ctx.projectRoot : null;
+  const eventWaveId = typeof payload?.waveId === 'string' ? payload.waveId : null;
+
   let result;
   let outcome = 'ok';
   try {
@@ -1307,10 +1351,12 @@ export async function query(verb, payload = {}, ctx = {}) {
     // T4 — the handler threw: if a `begin` was written (`env.journalHandle`
     // set) the verb is a partial. Leave the begin record + snapshot in place
     // so `state.replay` rolls it back (overwrite verb) or seals it (append
-    // verb). T5 SEAM — emit the failure event before re-throwing.
+    // verb). T5 — emit the failure event before re-throwing. Fire-and-forget,
+    // no §3 lock taken, errors swallowed inside `_emitEvent`.
     _emitEvent({
       verb, subagentId: ctx?.subagentId ?? 'parent', ts: nowIso(),
       verbId, outcome, payloadDigest: digest,
+      projectRoot: eventRoot, waveId: eventWaveId,
     });
     throw err;
   }
@@ -1331,10 +1377,13 @@ export async function query(verb, payload = {}, ctx = {}) {
     await _journalCommit(env.journalHandle);
   }
 
-  // T5 SEAM — fire-and-forget event AFTER the critical section. No-op until T5.
+  // T5 — fire-and-forget event AFTER the critical section. Per Model 3 the
+  // tap is observability, not state — it runs post-lock-release and never
+  // blocks the caller. `_emitEvent` returns synchronously after queueing.
   _emitEvent({
     verb, subagentId: ctx?.subagentId ?? 'parent', ts: nowIso(),
     verbId, outcome, payloadDigest: digest,
+    projectRoot: eventRoot, waveId: eventWaveId,
   });
 
   // Every query() result carries `verbId` + `ok` (contract §7).

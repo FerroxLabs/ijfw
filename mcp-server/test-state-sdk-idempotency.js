@@ -607,11 +607,13 @@ test('blocker.add: with waveId, appends only to decisions.jsonl (no STATE.md)', 
     assert.ok(hit, 'the blocker record was appended to decisions.jsonl');
     assert.equal(hit.waveId, 'W7', 'waveId is recorded inside the blocker record');
 
-    // No wave STATE.md was created or modified.
+    // No wave STATE.md was created or modified. (The wave-<id>/ dir itself
+    // MAY exist post-dispatch — the T5 observability tap routes the per-verb
+    // tap event under `wave-<waveId>/events-parent.jsonl` per contract §5 when
+    // a verb carries a `waveId` payload. The verb's actual contract is "no
+    // STATE.md write", which is what we assert here.)
     assert.equal(existsSync(join(root, '.ijfw', 'wave-W7', 'STATE.md')), false,
       'blocker.add does NOT create a wave STATE.md');
-    assert.equal(existsSync(join(root, '.ijfw', 'wave-W7')), false,
-      'blocker.add does NOT create a wave directory');
 
     // The begin record's targets[] list decisions.jsonl, never a STATE.md.
     const begin = readJournal(root).find(
