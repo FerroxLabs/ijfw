@@ -186,10 +186,21 @@ const APPEND_QUEUES = new Map();
 function queueAppend(path, work) {
   const prev = APPEND_QUEUES.get(path) || Promise.resolve();
   const next = prev.then(work, work);
-  APPEND_QUEUES.set(path, next.finally(() => {
-    // Pop the queue head once we are done so the Map does not grow without bound.
+  // Store `next` itself (NOT a `.finally()`-wrapped copy) so the cleanup
+  // check below `=== next` actually identifies the queue head. A `.finally()`
+  // wrapper returns a different Promise object, which would make the
+  // identity-check `APPEND_QUEUES.get(path) === next` permanently false and
+  // leak Map entries (one per unique log path).
+  APPEND_QUEUES.set(path, next);
+  next.then(() => {
+    // Only delete when no follow-up emit has chained onto `next` -- if a
+    // subsequent `queueAppend(path, ...)` call has already set a new head,
+    // leave it in place. This keeps the Map bounded by the number of
+    // CURRENTLY-IN-FLIGHT log paths rather than ever-seen ones.
     if (APPEND_QUEUES.get(path) === next) APPEND_QUEUES.delete(path);
-  }));
+  }, () => {
+    if (APPEND_QUEUES.get(path) === next) APPEND_QUEUES.delete(path);
+  });
   return next;
 }
 
