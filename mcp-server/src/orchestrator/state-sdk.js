@@ -145,26 +145,134 @@ async function _withLocks(lockTargets, fn) {
 }
 
 /**
- * Intent-journal `begin` seam (T4). Returns a per-invocation handle the
- * matching `_journalCommit` consumes. Today: no-op handle.
- *
- * @param {{verb:string, verbId:string, dedupKey?:string, targets:string[], payloadDigest:string}} _record
- * @returns {object} journal handle
+ * Relative-path form for a journal `targets[]` entry. Project-scope files are
+ * rendered relative to `projectRoot` (the §4 example shape — e.g.
+ * `.ijfw/wave-W12-A/STATE.md`). The homedir active-extension file lives on a
+ * different filesystem root, so it cannot be made relative — it is recorded by
+ * its absolute path. Replay reconstructs `absPath` from the snapshot sidecar
+ * regardless, so the journal `targets[]` form is purely informational.
  */
-function _journalBegin(_record) {
-  // T4 replaces this with a write-ahead `begin` line to intent-journal.jsonl
-  // plus a pre-write snapshot of the targets for rollback.
-  return { begun: false };
+function relForJournal(root, abs) {
+  const prefix = root.endsWith('/') ? root : `${root}/`;
+  return abs.startsWith(prefix) ? abs.slice(prefix.length) : abs;
+}
+
+// ---------------------------------------------------------------------------
+// T4 — Intent / commit journal (STATE-SDK-CONTRACT §4, CROSS-CUTTING MODEL 2).
+//
+// Every mutating verb writes a write-ahead `begin` record to
+// `.ijfw/state/intent-journal.jsonl` BEFORE touching any target file and a
+// `commit` record AFTER the atomic rename(s) succeed. The dispatcher already
+// runs `_journalBegin` / `_journalCommit` inside the §3 intent-journal lock
+// (T3 acquires it as the outermost lock for every mutating verb) — so these
+// writes are serialized for free; T4 adds NO second lock.
+//
+// Rollback source: alongside the `begin` record, `_journalBegin` captures a
+// pre-write snapshot of every target file into a per-verbId sidecar at
+// `.ijfw/state/intent-snapshots/<verbId>.json`. `_journalCommit` deletes the
+// sidecar (the write is durable — nothing to roll back). `state.replay` reads
+// a partial's sidecar to restore its targets.
+//
+// DEDUP SOURCE OF TRUTH: the per-target-log scan stays the in-critical-section
+// fast path (it already runs under the same intent-journal lock, atomic). The
+// `commit` record additionally carries the verb's `dedupKey` so the JOURNAL is
+// the authoritative idempotency record for `state.replay`. The two provably
+// AGREE: a verb writes its target-log append and its `commit` record inside
+// ONE critical section under ONE lock — there is no window where one says
+// "present" and the other says "absent". Append verbs are therefore replay-
+// safe two ways: a live double-call is caught by the target-log scan; a replay
+// is caught because the verb's verbId already has a begin+commit pair.
+// ---------------------------------------------------------------------------
+
+/** Snapshot-sidecar directory for in-flight (begin-but-not-commit) verbs. */
+function snapshotDir(root) {
+  return join(root, '.ijfw', 'state', 'intent-snapshots');
+}
+
+/** Snapshot-sidecar path for one verb invocation. */
+function snapshotPath(root, verbId) {
+  return join(snapshotDir(root), `${verbId}.json`);
 }
 
 /**
- * Intent-journal `commit` seam (T4). Marks the invocation durably applied.
- * Today: no-op.
- *
- * @param {object} _handle  the handle returned by `_journalBegin`
+ * LOCKING NOTE — `_journalBegin` and `_journalCommit` run at the DISPATCHER
+ * level, strictly BEFORE and AFTER the verb handler. The handler acquires the
+ * §3 intent-journal lock (T3, outermost) only for the duration of its own
+ * critical section. begin → handler → commit is therefore a SEQUENTIAL chain,
+ * never a nested one — so each of begin/commit acquires the intent-journal
+ * lock itself with no re-entry and no deadlock (the handler's lock is already
+ * released before commit, not yet taken before begin). This serializes journal
+ * appends across concurrent verbs without holding a lock across the handler.
  */
-function _journalCommit(_handle) {
-  // T4 replaces this with a `commit` line to intent-journal.jsonl.
+
+/**
+ * Intent-journal `begin` seam (T4 — IMPLEMENTED). Under the intent-journal
+ * lock: captures a pre-write snapshot of every target, writes the snapshot
+ * sidecar, then appends the `begin` record. Returns a handle the matching
+ * `_journalCommit` consumes.
+ *
+ * @param {{root:string, verb:string, verbId:string, dedupKey?:string, targets:string[], payloadDigest:string}} record
+ *        `targets` is the absolute-path list the verb mutates (the
+ *        intent-journal file itself is excluded — it is infrastructure).
+ * @returns {Promise<object>} journal handle — `{ begun, root, verbId, ... }`
+ */
+async function _journalBegin(record) {
+  const { root, verb, verbId, dedupKey, targets } = record;
+  const journal = paths.intentJournal(root);
+  return withFsLock(lockPathFor(journal), async () => {
+    const relTargets = [];
+    const snapTargets = [];
+    for (const abs of targets) {
+      const rel = relForJournal(root, abs);
+      relTargets.push(rel);
+      // Pre-write snapshot: content + existence — rollback restores-or-deletes.
+      if (existsSync(abs)) {
+        snapTargets.push({
+          relPath: rel, absPath: abs, existed: true,
+          content: readFileSync(abs, 'utf8'),
+        });
+      } else {
+        snapTargets.push({ relPath: rel, absPath: abs, existed: false, content: null });
+      }
+    }
+    // Snapshot sidecar is written BEFORE the begin record: if we crash between
+    // the two, replay sees no begin record and treats the verb as never-started
+    // (the orphan sidecar is harmless — `state.validate` ignores it).
+    ensureDir(snapshotDir(root));
+    writeAtomic(snapshotPath(root, verbId), JSON.stringify({ verbId, targets: snapTargets }));
+    const begin = {
+      verb, verbId, phase: 'begin', ts: nowIso(), targets: relTargets,
+      payloadDigest: record.payloadDigest,
+    };
+    if (typeof dedupKey === 'string' && dedupKey) begin.dedupKey = dedupKey;
+    ensureDir(join(journal, '..'));
+    appendFileSync(journal, `${JSON.stringify(begin)}\n`, { mode: 0o600 });
+    return { begun: true, root, verbId, verb, dedupKey, payloadDigest: record.payloadDigest };
+  }, LOCK_OPTS);
+}
+
+/**
+ * Intent-journal `commit` seam (T4 — IMPLEMENTED). Under the intent-journal
+ * lock: appends the `commit` record (durable-applied marker) and deletes the
+ * now-redundant snapshot sidecar.
+ *
+ * @param {object} handle  the handle returned by `_journalBegin`
+ */
+async function _journalCommit(handle) {
+  if (!handle || !handle.begun) return;
+  const { root, verbId, verb, dedupKey } = handle;
+  const journal = paths.intentJournal(root);
+  await withFsLock(lockPathFor(journal), async () => {
+    const commit = {
+      verb, verbId, phase: 'commit', ts: nowIso(),
+      payloadDigest: handle.payloadDigest,
+    };
+    if (typeof dedupKey === 'string' && dedupKey) commit.dedupKey = dedupKey;
+    appendFileSync(journal, `${JSON.stringify(commit)}\n`, { mode: 0o600 });
+    // The write is durable — the snapshot is no longer needed for rollback.
+    try { const s = snapshotPath(root, verbId); if (existsSync(s)) unlinkSync(s); }
+    catch { /* best-effort; a stale sidecar of a committed verb is harmless */ }
+  }, LOCK_OPTS);
 }
 
 /**
@@ -228,10 +336,48 @@ function jsonlHasDedupKey(path, dedupKey) {
   return readJsonl(path).some((rec) => rec && rec.dedupKey === dedupKey);
 }
 
-/** sha256-<hex> digest of a canonical-JSON payload (intent/event records). */
-function payloadDigest(payload) {
-  const canon = JSON.stringify(payload ?? null);
-  return `sha256-${createHash('sha256').update(canon).digest('hex')}`;
+/**
+ * Canonical JSON serialization — recursive, key-sorted. The digest must be
+ * STABLE across process restarts (replay safety: a verb is recognized as
+ * already-committed by digest). Plain `JSON.stringify` preserves key INSERTION
+ * order, so two payloads with the same content but different key order would
+ * hash differently and a replay would wrongly re-apply. This sorts every
+ * object's keys recursively so the canonical form is content-addressable.
+ *
+ * Arrays are NOT reordered — array element order is meaningful data.
+ * `undefined` collapses to `null` (matches JSON's own value space).
+ */
+function canonicalJson(value) {
+  if (value === undefined || value === null) return 'null';
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? JSON.stringify(value) : 'null';
+  }
+  if (typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => canonicalJson(v === undefined ? null : v)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    const parts = [];
+    for (const k of keys) {
+      if (value[k] === undefined) continue; // JSON.stringify drops these too
+      parts.push(`${JSON.stringify(k)}:${canonicalJson(value[k])}`);
+    }
+    return `{${parts.join(',')}}`;
+  }
+  // function / symbol / bigint — not valid JSON; collapse to null.
+  return 'null';
+}
+
+/**
+ * sha256-<hex> digest of the CANONICAL-JSON payload (intent/event records).
+ * Deterministic regardless of payload key insertion order — see `canonicalJson`.
+ * Exported so T4's idempotency suite can assert cross-run digest stability.
+ */
+export function payloadDigest(payload) {
+  return `sha256-${createHash('sha256').update(canonicalJson(payload)).digest('hex')}`;
 }
 
 // --- STATE.md (YAML frontmatter + md body) flat read/write ------------------
@@ -821,38 +967,74 @@ const handlers = {
     });
   },
 
-  // --- state.replay — read, Day-1 no-op ------------------------------
-  // T4 owns the intent journal; T20 owns the full rollback walk. The verb-core
-  // handler reads the journal and classifies begin/commit pairs — it does NOT
-  // perform rollback (no journal records exist until T4 writes them, so on a
-  // T2-only tree this is always the empty result).
+  // --- state.replay — read (recovery), Day-1 no-op -------------------
+  // T4 (this task): reads the intent journal, classifies each verbId, and
+  // ROLLS BACK partials. A `begin`+`commit` pair = already applied → skip
+  // (no-op — re-issuing the verb is unnecessary). A `begin` with NO `commit` =
+  // a partial (interrupted before durability) → restore each target from the
+  // pre-`begin` snapshot sidecar, then mark the verbId terminal by appending a
+  // synthetic `commit` record (so a second replay sees it resolved and does
+  // not roll back again). T20 layers truncation-recovery orchestration on top.
   async 'state.replay'(payload, ctx) {
     const root = requireRoot(ctx);
     const journal = paths.intentJournal(root);
     if (!existsSync(journal)) {
       return { ok: true, replayed: [], skipped: [], rolledBack: [] };
     }
-    const records = readJsonl(journal);
-    const sinceVerbId = payload?.sinceVerbId;
-    let scoped = records;
-    if (typeof sinceVerbId === 'string' && sinceVerbId) {
-      const idx = records.findIndex((r) => r && r.verbId === sinceVerbId);
-      if (idx !== -1) scoped = records.slice(idx);
-    }
-    const begins = new Map();
-    const commits = new Set();
-    for (const r of scoped) {
-      if (!r || typeof r.verbId !== 'string') continue;
-      if (r.phase === 'begin') begins.set(r.verbId, r);
-      else if (r.phase === 'commit') commits.add(r.verbId);
-    }
-    const skipped = [];
-    const rolledBack = [];
-    for (const [verbId] of begins) {
-      if (commits.has(verbId)) skipped.push(verbId);
-      else rolledBack.push(verbId); // partial — T20 performs the actual restore
-    }
-    return { ok: true, replayed: [], skipped, rolledBack };
+    // The replay walk + any rollback restores happen under the intent-journal
+    // lock so a concurrent mutating verb cannot interleave with recovery.
+    return withFsLock(lockPathFor(journal), async () => {
+      const records = readJsonl(journal);
+      const sinceVerbId = payload?.sinceVerbId;
+      let scoped = records;
+      if (typeof sinceVerbId === 'string' && sinceVerbId) {
+        const idx = records.findIndex((r) => r && r.verbId === sinceVerbId);
+        if (idx !== -1) scoped = records.slice(idx);
+      }
+      const begins = new Map();
+      const commits = new Set();
+      for (const r of scoped) {
+        if (!r || typeof r.verbId !== 'string') continue;
+        if (r.phase === 'begin') begins.set(r.verbId, r);
+        else if (r.phase === 'commit') commits.add(r.verbId);
+      }
+      const skipped = [];
+      const rolledBack = [];
+      for (const [verbId, beginRec] of begins) {
+        if (commits.has(verbId)) {
+          // begin + commit → durably applied. Re-issuing it would be a no-op,
+          // so replay simply records it as skipped and mutates nothing.
+          skipped.push(verbId);
+          continue;
+        }
+        // Partial: begin without commit. Restore every target from the
+        // snapshot sidecar — restore-or-delete per its pre-begin existence.
+        const snap = readJson(snapshotPath(root, verbId), null);
+        if (snap && Array.isArray(snap.targets)) {
+          for (const t of snap.targets) {
+            try {
+              if (t.existed) {
+                writeAtomic(t.absPath, t.content ?? '');
+              } else if (existsSync(t.absPath)) {
+                unlinkSync(t.absPath); // the partial created it — undo by delete
+              }
+            } catch { /* a single target restore failing must not abort the walk */ }
+          }
+        }
+        // Discard the snapshot sidecar and seal the verbId with a synthetic
+        // `commit` so a re-run of replay treats this partial as resolved.
+        try {
+          const s = snapshotPath(root, verbId);
+          if (existsSync(s)) unlinkSync(s);
+        } catch { /* best-effort */ }
+        appendFileSync(journal, `${JSON.stringify({
+          verb: beginRec.verb, verbId, phase: 'commit', ts: nowIso(),
+          payloadDigest: beginRec.payloadDigest, rolledBack: true,
+        })}\n`, { mode: 0o600 });
+        rolledBack.push(verbId);
+      }
+      return { ok: true, replayed: [], skipped, rolledBack };
+    }, LOCK_OPTS);
   },
 
   // --- state.validate — read, Day-1 no-op ----------------------------
@@ -904,6 +1086,63 @@ const MUTATING = new Set([
   'extension.set-active', 'decision.add', 'blocker.add', 'blocker.resolve',
 ]);
 
+/**
+ * T4 — resolve the physical target files a mutating verb writes, so the
+ * dispatcher can record them in the `begin` record and snapshot them for
+ * rollback. This MIRRORS the `targets` list each handler builds for
+ * `_withLocks`, minus the intent-journal path itself (infrastructure, not a
+ * verb target — it is never rolled back). It is purely a read of `payload` /
+ * `ctx`; it performs no I/O and never throws on a malformed payload (it just
+ * returns the targets it can resolve — handler validation surfaces real
+ * errors). `subagent.post-done` is mutating-for-gating but writes no file →
+ * empty target list → no snapshot, an empty begin/commit pair (still recorded
+ * so a post-done is replay-classifiable).
+ */
+function targetsFor(verb, payload, ctx) {
+  const root = ctx?.projectRoot;
+  if (typeof root !== 'string' || !root) return [];
+  const p = payload || {};
+  switch (verb) {
+    case 'workflow.set-phase':
+    case 'phase.plan-check':
+    case 'phase.complete':
+      return [paths.workflow(root)];
+    case 'wave.advance':
+      return ID_RE.test(p.waveId)
+        ? [paths.waves(root), paths.waveState(root, p.waveId)] : [];
+    case 'wave.record-task':
+    case 'subagent.dispatch':
+      return ID_RE.test(p.waveId) ? [paths.waveState(root, p.waveId)] : [];
+    case 'subagent.checkpoint':
+      return (ID_RE.test(p.waveId) && ID_RE.test(p.subagentId))
+        ? [paths.checkpoint(root, p.waveId, p.subagentId)] : [];
+    case 'event.emit':
+      return (ID_RE.test(p.waveId) && ID_RE.test(p.subagentId))
+        ? [paths.eventLog(root, p.waveId, p.subagentId)] : [];
+    case 'telemetry.record':
+      return [paths.telemetry(root)];
+    case 'roster.record':
+      return [paths.teamWorkflow(root), paths.teamCharter(root)];
+    case 'extension.set-active': {
+      const home = p.homeDir || ctx?.homeDir || homedir();
+      return [paths.activeExtension(home)];
+    }
+    case 'decision.add':
+      return [paths.decisions(root)];
+    case 'blocker.add':
+    case 'blocker.resolve': {
+      const t = [paths.decisions(root)];
+      if (p.waveId !== undefined && ID_RE.test(p.waveId)) {
+        t.push(paths.waveState(root, p.waveId));
+      }
+      return t;
+    }
+    case 'subagent.post-done':
+    default:
+      return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // THE DISPATCHER
 // ---------------------------------------------------------------------------
@@ -935,11 +1174,18 @@ export async function query(verb, payload = {}, ctx = {}) {
   const digest = payloadDigest(payload);
   const isMutating = MUTATING.has(verb);
 
-  // T4 SEAM — write-ahead intent `begin` record. No-op until T4 lands.
+  // T4 — write-ahead intent `begin` record + pre-write target snapshot. Runs
+  // BEFORE the handler so the snapshot captures pre-mutation state; the handler
+  // (whose §3 locks are sequential to — never nested with — this) then mutates.
   let journalHandle = null;
   if (isMutating) {
-    journalHandle = _journalBegin({
-      verb, verbId, dedupKey: payload?.dedupKey, targets: [], payloadDigest: digest,
+    // The journal lives under the project root; require it up-front so a
+    // mutating verb with a malformed ctx fails fast (handler validation would
+    // surface the same error, but the journal needs the root to even begin).
+    const journalRoot = requireRoot(ctx);
+    journalHandle = await _journalBegin({
+      root: journalRoot, verb, verbId, dedupKey: payload?.dedupKey,
+      targets: targetsFor(verb, payload, ctx), payloadDigest: digest,
     });
   }
 
@@ -951,6 +1197,8 @@ export async function query(verb, payload = {}, ctx = {}) {
     else if (result && result.advisory) outcome = 'advisory';
   } catch (err) {
     outcome = 'error';
+    // T4 — the handler threw: the verb is a partial (begin, no commit). Leave
+    // the begin record + snapshot in place so `state.replay` rolls it back.
     // T5 SEAM — emit the failure event before re-throwing. No-op until T5.
     _emitEvent({
       verb, subagentId: ctx?.subagentId ?? 'parent', ts: nowIso(),
@@ -959,9 +1207,18 @@ export async function query(verb, payload = {}, ctx = {}) {
     throw err;
   }
 
-  // T4 SEAM — `commit` marker after the write(s) succeeded. No-op until T4.
-  if (isMutating && (result?.ok !== false)) {
-    _journalCommit(journalHandle);
+  // T4 — `commit` marker after the write(s) succeeded. A refused/non-ok result
+  // means the verb mutated nothing → also drop the begin record's partial
+  // status by committing (the snapshot equals current state; nothing to undo).
+  if (isMutating) {
+    if (result?.ok !== false) {
+      await _journalCommit(journalHandle);
+    } else {
+      // Refused: no file was mutated, so there is no partial to roll back.
+      // Commit anyway to mark the verbId terminal — replay must not treat a
+      // clean refusal as a recoverable partial.
+      await _journalCommit(journalHandle);
+    }
   }
 
   // T5 SEAM — fire-and-forget event AFTER the critical section. No-op until T5.
