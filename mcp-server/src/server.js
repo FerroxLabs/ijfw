@@ -1069,22 +1069,24 @@ const TOOLS = [
     },
   },
   {
-    // v1.5.0-major S02: wired-in runtime contracts. MUST be called by the orchestrator-LLM
-    // after every subagent finishes -- NOT inferred from skill text. Parses report through
-    // the v1.4.4 4-value status protocol; if DONE, ALSO runs two-stage review + verification
-    // gate. Single tool with combined behavior keeps us under the 10-tool cap (CLAUDE.md).
-    name: 'ijfw_subagent_post_done',
-    description: 'Process a subagent report through wired-in v1.4.4 + v1.5.0 runtime contracts. Parses 4-value status, verifies fresh commit, and if DONE runs two-stage review (spec then quality) + verification-gate scan. Call after every subagent finishes. Returns route decision + (if DONE) review verdict + gate result.',
+    // v1.5.0 T13: ijfw_state — single MCP face for the state-SDK verb facade.
+    // Absorbs the retired ijfw_subagent_post_done tool (post-done IS a state
+    // transition → reachable as the `subagent.post-done` verb). All 20 frozen
+    // verbs from STATE-SDK-CONTRACT §7 are reachable through this one tool,
+    // keeping the MCP cap at 12/12. The same `query(verb, payload, ctx)` core
+    // is also exposed as a JS import and a CLI colon-namespace (`ijfw state:<verb>`).
+    name: 'ijfw_state',
+    description: 'State-SDK verb facade — invoke any of the 20 frozen verbs (workflow.*, wave.*, phase.*, subagent.*, event.emit, telemetry.record, roster.*, extension.set-active, decision.add, blocker.*, state.replay, state.validate) over the canonical physical state files. Single MCP face for the state-SDK; subagent.post-done is the verb that absorbed the retired ijfw_subagent_post_done tool. Returns the verb result with `ok` + `verbId` + verb-specific fields (see STATE-SDK-CONTRACT §7).',
     inputSchema: {
       type: 'object',
       properties: {
-        reportText:        { type: 'string',  description: 'The subagent’s final message verbatim.' },
-        dispatchTimestamp: { type: 'number',  description: 'Unix seconds at dispatch time (Date.now()/1000).' },
-        branch:            { type: 'string',  description: 'Dispatched branch name (optional; empty = detached HEAD).' },
-        taskId:            { type: 'string',  description: 'Task identifier (required only if status is DONE for review).' },
-        taskSpec:          { type: 'string',  description: 'Spec text the implementer was supposed to satisfy (optional).' },
+        verb:        { type: 'string', description: 'Verb name from the frozen 20-verb registry (e.g. "workflow.get", "wave.advance", "subagent.post-done", "state.validate").' },
+        payload:     { type: 'object', description: 'Verb-specific payload (see STATE-SDK-CONTRACT §7 for each verb signature). Defaults to {} when omitted.' },
+        projectRoot: { type: 'string', description: 'Project root for ctx (defaults to process.cwd()).' },
+        subagentId:  { type: 'string', description: 'Subagent id stamped on event/telemetry records (defaults to "parent").' },
+        homeDir:     { type: 'string', description: 'Home dir override for the homedir-scope active-extension file (defaults to process.env.HOME / USERPROFILE / os.homedir()).' },
       },
-      required: ['reportText', 'dispatchTimestamp'],
+      required: ['verb'],
     },
   },
   {
@@ -1854,43 +1856,38 @@ function handleMessage(msg) {
             result = { text: JSON.stringify(r, null, 2), isError: !!(r && r.error) };
             break;
           }
-          case 'ijfw_subagent_post_done': {
-            // v1.5.0-major S02: wired-in runtime contract.
-            // v1.5.0 wire-W1.A: call the async variant so a redispatch decision
-            // gets a `repoMapPrefix` field when IJFW_REPO_MAP=1 is set.
+          case 'ijfw_state': {
+            // v1.5.0 T13: single MCP face for the state-SDK. Routes every call
+            // into the same `query(verb, payload, ctx)` core that the JS module
+            // (`./orchestrator/state-sdk.js`) and the CLI colon-namespace
+            // (`ijfw state:<verb>`) use. The retired `ijfw_subagent_post_done`
+            // tool is now reachable as the `subagent.post-done` verb.
             const a = args || {};
-            const { reviewSubagentReportWithRepoMap } = await import('./orchestrator/runtime-loop.js');
-            const routeDecision = await reviewSubagentReportWithRepoMap(a.reportText || '', {
-              dispatchTimestamp: a.dispatchTimestamp || 0,
-              branch: a.branch || '',
-              projectRoot: process.cwd(),
-            });
-            let postDone = null;
-            if (routeDecision.action === 'proceed_to_review') {
-              const { runPostDone } = await import('./orchestrator/post-done-runner.js');
-              postDone = await runPostDone({
-                taskId: a.taskId || '',
-                taskSpec: a.taskSpec || '',
-                commitSha: routeDecision.commit_sha,
-                branch: a.branch || '',
-                reportText: a.reportText || '',
-                toolCallsInMessage: [],
-                dispatch: null, // server side has no Agent tool; review.js handles null dispatch
-                projectRoot: process.cwd(),
-              }).catch((err) => ({ error: err && err.message ? err.message : String(err) }));
+            if (typeof a.verb !== 'string' || a.verb.length === 0) {
+              result = { text: JSON.stringify({ ok: false, error: 'verb (string) is required' }), isError: true };
+              break;
             }
-            // v1.5.0-major W12-F/F4 (RT2-H1): when post-done sets
-            // gateAction:'block' (verification failed in strict mode),
-            // surface a structured `block: true` so the orchestrator-LLM
-            // treats it as a hard stop instead of an advisory note.
-            const blocked = postDone && postDone.gateAction === 'block';
-            const payload = { routeDecision, postDone };
-            if (blocked) {
-              payload.block = true;
-              payload.blockReason = 'verification_gate_strict';
-              payload.blockDetail = postDone.gateViolation || null;
+            try {
+              const { query } = await import('./orchestrator/state-sdk.js');
+              const payload = (a.payload && typeof a.payload === 'object') ? a.payload : {};
+              const ctx = {
+                projectRoot: typeof a.projectRoot === 'string' && a.projectRoot.length > 0
+                  ? a.projectRoot
+                  : process.cwd(),
+              };
+              if (typeof a.subagentId === 'string' && a.subagentId.length > 0) ctx.subagentId = a.subagentId;
+              if (typeof a.homeDir === 'string' && a.homeDir.length > 0) ctx.homeDir = a.homeDir;
+              const r = await query(a.verb, payload, ctx);
+              // A verdict-fail refusal (Model 4) is the verb's correct hard-block —
+              // surface `isError: true` so the orchestrator-LLM treats it as a
+              // hard stop rather than an advisory note (mirrors the prior
+              // ijfw_subagent_post_done `block: true` contract).
+              const refused = r && r.refused === true;
+              result = { text: JSON.stringify(r, null, 2), isError: !!refused };
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              result = { text: JSON.stringify({ ok: false, error: msg }), isError: true };
             }
-            result = { text: JSON.stringify(payload, null, 2), isError: blocked };
             break;
           }
           case 'ijfw_update_apply': {

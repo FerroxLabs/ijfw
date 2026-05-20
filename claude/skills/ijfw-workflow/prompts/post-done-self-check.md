@@ -50,4 +50,4 @@ Add this block to the END of any SUMMARY.md you wrote:
 
 We've observed implementer agents claiming `Status: DONE` with commit SHAs that didn't exist, files that weren't written, and tests that weren't run. The pattern is honest-mistake (agent's internal world model diverged from disk reality) but the cost is real. Self-check converts the divergence into an automatic FAIL before it reaches the reviewer.
 
-This skill is invoked automatically by the orchestrator-LLM via `ijfw_subagent_post_done` MCP tool (v1.5.0-major S02) before passing to the two-stage review. Implementer agents should also run it manually before emitting DONE.
+This skill is invoked automatically by the orchestrator-LLM via the `ijfw_state` MCP tool's `subagent.post-done` verb (v1.5.0-major S02 / v1.5.0 T13 — single state-SDK MCP face) before passing to the two-stage review. Implementer agents should also run it manually before emitting DONE.

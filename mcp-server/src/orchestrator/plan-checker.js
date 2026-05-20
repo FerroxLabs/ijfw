@@ -1,9 +1,11 @@
 /**
  * plan-checker.js — v1.5.0-major W12-D C14: pre-dispatch plan validation gate.
  *
- * Pure-function library called by the existing `ijfw_subagent_post_done` MCP
- * tool routing (no new MCP tool — cap is full at 12/12). Also surfaced in the
- * `ijfw-plan-check` skill as the deterministic pre-dispatch gate.
+ * Pure-function library called by the existing `ijfw_state` MCP tool routing
+ * (no new MCP tool — cap is full at 12/12; v1.5.0 T13 absorbed the retired
+ * `ijfw_subagent_post_done` tool as the `subagent.post-done` verb). Also
+ * surfaced in the `ijfw-plan-check` skill as the deterministic pre-dispatch
+ * gate.
  *
  * Distilled from /Users/seandonahoe/.claude/agents/gsd-plan-checker.md — extracts
  * the mechanically-checkable rules (the prose-reasoning ones stay in the skill).

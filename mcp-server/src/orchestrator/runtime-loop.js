@@ -294,8 +294,10 @@ export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude',
 // ---------------------------------------------------------------------------
 //
 // Production wire-up for `mcp-server/src/lib/repo-map.js`. The orchestrator-LLM
-// calls `ijfw_subagent_post_done` after every subagent turn. When the route
-// decision is a redispatch, the LLM composes a NEW brief for the next subagent.
+// calls the `ijfw_state` MCP tool with `verb: 'subagent.post-done'` after every
+// subagent turn (v1.5.0 T13 absorbed the retired `ijfw_subagent_post_done`
+// tool). When the route decision is a redispatch, the LLM composes a NEW brief
+// for the next subagent.
 // With this wire active, the response payload carries `repoMapPrefix` — a
 // pre-built importance-ranked file summary the LLM prepends to the redispatch
 // brief, so the downstream subagent doesn't have to crawl the tree.

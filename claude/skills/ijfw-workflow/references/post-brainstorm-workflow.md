@@ -63,7 +63,7 @@ Alternative status strings (append below the standard block as needed):
 `DONE_WITH_CONCERNS` + `Concerns:`; `NEEDS_CONTEXT` + `Missing:`; `BLOCKED` + `Reason:` + `Tried:`.
 No other status strings are valid.
 
-**Deviation rules + 3-attempt cap (v1.5.0-major S07):** dispatched implementer subagents follow `claude/agents/ijfw-executor.md`'s deviation taxonomy (Rules 1-3 auto-fix bugs / missing critical things / blockers; Rule 4 STOPs on architectural change) + a per-issue 3-attempt fix cap. The orchestrator-LLM should brief implementers using ijfw-executor's PROCESS + DEVIATION RULES sections. After-DONE, an `Attempts: N` line in the Status block is parsed by `ijfw_subagent_post_done` MCP tool — N≥3 routes to `escalate_to_user` with `reason: '3-attempt-cap-hit'` regardless of reported status. The field is opt-in: reports without an `Attempts:` line default to 0 and behave exactly as before.
+**Deviation rules + 3-attempt cap (v1.5.0-major S07):** dispatched implementer subagents follow `claude/agents/ijfw-executor.md`'s deviation taxonomy (Rules 1-3 auto-fix bugs / missing critical things / blockers; Rule 4 STOPs on architectural change) + a per-issue 3-attempt fix cap. The orchestrator-LLM should brief implementers using ijfw-executor's PROCESS + DEVIATION RULES sections. After-DONE, an `Attempts: N` line in the Status block is parsed by the `ijfw_state` MCP tool's `subagent.post-done` verb (v1.5.0 T13 — single state-SDK MCP face) — N≥3 routes to `escalate_to_user` with `reason: '3-attempt-cap-hit'` regardless of reported status. The field is opt-in: reports without an `Attempts:` line default to 0 and behave exactly as before.
 <!-- IJFW-A1-DISPATCH-END -->
 
 **Phase banner** -- emit at every phase transition (Brainstorm, Plan, Execute, Verify, Ship):
@@ -119,7 +119,7 @@ Dispatching Wave 1...
 <!-- IJFW-A2-REVIEW-START -->
 **Post-DONE pipeline (v1.5.0-major S02 — MANDATORY MCP tool call, NOT advisory text):**
 
-After every subagent finishes (any `Status:` value), the orchestrator MUST call the `ijfw_subagent_post_done` MCP tool with `reportText` + `dispatchTimestamp` (Unix seconds at dispatch) + `branch`. The tool returns `{routeDecision, postDone}`. Act on `routeDecision.action`:
+After every subagent finishes (any `Status:` value), the orchestrator MUST call the `ijfw_state` MCP tool with `verb: 'subagent.post-done'` and `payload: { subagentId, reportText, dispatchTimestamp, branch }` (v1.5.0 T13 — single state-SDK MCP face). The tool returns `{routeDecision, postDone}`. Act on `routeDecision.action`:
 
 - `proceed_to_review` → tool already ran two-stage review + verification-gate scan. Inspect `postDone.verdict`. If approved, mark task complete in blackboard. If findings, re-dispatch implementer (max `REVIEW_MAX_ITERATIONS = 3`).
 - `redispatch_needs_context` → re-dispatch with `routeDecision.missing` as added context.
@@ -127,7 +127,7 @@ After every subagent finishes (any `Status:` value), the orchestrator MUST call 
 - `escalate_to_user` → surface to human with `routeDecision.reason` + `routeDecision.tried`.
 - `proceed_with_flag` → mark complete; note `routeDecision.concerns` in wave SUMMARY.
 
-This is wired runtime contract, NOT honor-system markdown. Behind the tool: `runtime-loop.js::reviewSubagentReport` + `post-done-runner.js::runPostDone`. Combined into one MCP tool to stay under the ≤10-tool cap. The two-stage review (spec-reviewer.md then quality-reviewer.md) + verification-gate scan are now invoked automatically; skipping the tool call silently no-ops these v1.4.4 N3 + N5 features.
+This is wired runtime contract, NOT honor-system markdown. Behind the tool: `runtime-loop.js::reviewSubagentReport` + `post-done-runner.js::runPostDone`, routed through the `ijfw_state` MCP face as the `subagent.post-done` verb (v1.5.0 T13 — the state-SDK verb facade keeps the cap at 12/12). The two-stage review (spec-reviewer.md then quality-reviewer.md) + verification-gate scan are now invoked automatically; skipping the tool call silently no-ops these v1.4.4 N3 + N5 features.
 
 Reviewer subagents are SEPARATE from the implementer (no self-review). Both use `isolation: 'none'` (read-only on the implementer's branch).
 <!-- IJFW-A2-REVIEW-END -->

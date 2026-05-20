@@ -154,7 +154,7 @@ After LOCK, the brief drives every downstream phase. Same discipline, same memor
 
 Quick reference:
 - **PLAN** → write `.ijfw/memory/plan.md`; design auto-fire on visual artifacts; `ijfw plan-check` audit.
-- **EXECUTE** → wave dispatch via `dispatch-planner.js`; status-block protocol; mandatory `ijfw_subagent_post_done` MCP call after every subagent; task micro-audit.
+- **EXECUTE** → wave dispatch via `dispatch-planner.js`; status-block protocol; mandatory `ijfw_state` MCP call with `verb: 'subagent.post-done'` after every subagent (v1.5.0 T13 — single state-SDK MCP face); task micro-audit.
 - **VERIFY** → audit against brief, not plan; Functional + UX + Security + Quality checklists; optional `ijfw cross audit <diff>`.
 - **Cross-Audit Phase (Phase E)** → auto-fires after VERIFY; reads `.ijfw/swarm.json::auditors` or falls back to `[codex, gemini, claude]`; PASS / CONDITIONAL / FAIL routes.
 - **SHIP** → atomic commit, explicit user approval before tag/release/publish, memory write, ship gate.
