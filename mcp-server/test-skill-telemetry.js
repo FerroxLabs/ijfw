@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { runMigrations } from './src/memory/migration-runner.js';
 import { recordSkillExecution, topKSuccessfulSkills } from './src/orchestrator/skill-telemetry.js';
+import { sinkSkillTelemetry } from './src/orchestrator/skill-telemetry-sink.js';
 
 // ---------------------------------------------------------------------------
 // M3.1 -- migration 007 creates skill_telemetry table
@@ -66,4 +67,23 @@ test('topKSuccessfulSkills filters by since (ms)', async () => {
   const top = topKSuccessfulSkills(db, { since: now - 1000 });
   assert.equal(top.length, 1);
   assert.equal(top[0].skill_id, 'fresh');
+});
+
+// ---------------------------------------------------------------------------
+// M3.3 -- sinkSkillTelemetry shim
+// ---------------------------------------------------------------------------
+
+test('sinkSkillTelemetry routes payload through recordSkillExecution', async () => {
+  const db = new Database(':memory:');
+  await runMigrations(db, 0, 7);
+  sinkSkillTelemetry(db, {
+    metric: 'skill.execution',
+    labels: { skill_id: 'ijfw-verify', session_id: 's-a' },
+    value: 1,
+    outcome: 'success',
+    latency_ms: 90,
+  });
+  const row = db.prepare('SELECT * FROM skill_telemetry WHERE skill_id=?').get('ijfw-verify');
+  assert.equal(row.outcome, 'success');
+  assert.equal(row.latency_ms, 90);
 });
