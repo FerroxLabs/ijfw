@@ -44,14 +44,75 @@ import { gunzipSync } from 'node:zlib';
 import { writeAtomic, readSafe } from '../lib/atomic-io.js';
 import { rotateJsonlIfNeeded } from '../lib/jsonl-rotation.js';
 import { withFsLock, canonicalLockOrder, lockPathFor } from '../fs-lock.js';
-import { enforceVerificationGate, VerificationGateViolation } from './verification-gate.js';
-import { validatePlan } from './plan-checker.js';
-import { runSelfCheck } from './post-done-runner.js';
+import {
+  enforceVerificationGate as _realEnforceVerificationGate,
+  VerificationGateViolation,
+} from './verification-gate.js';
+import { validatePlan as _realValidatePlan } from './plan-checker.js';
+import { runSelfCheck as _realRunSelfCheck } from './post-done-runner.js';
 import {
   emitEvent as emitEventToLog,
   appendUnderHeldLock as appendEventUnderHeldLock,
   resolveEventLogPath,
 } from './state-events.js';
+
+// ---------------------------------------------------------------------------
+// Gate-function indirection (T15 — Model 4 testability seam)
+//
+// ESM module bindings are read-only, so a test cannot replace
+// `enforceVerificationGate` / `validatePlan` / `runSelfCheck` on the source
+// module to drive the execution-fail branch deterministically. To exercise the
+// "gate threw a non-Violation → degrade to advisory" path (contract §4 Model 4
+// row 2) we route the three gate calls through a single mutable registry
+// (`_gateFns`) and expose a test-only `_setGateFnsForTest({...})` /
+// `_resetGateFnsForTest()` pair.
+//
+// PRODUCTION callers always go through the live registry — `_gateFns.foo(...)`
+// reads the current binding on every call, so tests can swap it in/out around
+// a single assertion without leaking state across tests. The default values
+// are the real gate functions; tests restore the defaults in their `finally`.
+//
+// This is the same advisory-seam pattern used by `_resetRecordViolationDedup`
+// in verification-gate.js — internal, documented, test-only.
+// ---------------------------------------------------------------------------
+
+const _gateFns = {
+  enforceVerificationGate: _realEnforceVerificationGate,
+  validatePlan: _realValidatePlan,
+  runSelfCheck: _realRunSelfCheck,
+};
+
+/**
+ * Replace one or more gate functions. Test-only — production code MUST NOT
+ * call this. The previous values are NOT stacked; callers are responsible for
+ * restoring with `_resetGateFnsForTest()` in a `finally`.
+ *
+ * @param {{enforceVerificationGate?: Function, validatePlan?: Function, runSelfCheck?: Function}} overrides
+ * @internal
+ */
+export function _setGateFnsForTest(overrides) {
+  if (overrides && typeof overrides === 'object') {
+    if (typeof overrides.enforceVerificationGate === 'function') {
+      _gateFns.enforceVerificationGate = overrides.enforceVerificationGate;
+    }
+    if (typeof overrides.validatePlan === 'function') {
+      _gateFns.validatePlan = overrides.validatePlan;
+    }
+    if (typeof overrides.runSelfCheck === 'function') {
+      _gateFns.runSelfCheck = overrides.runSelfCheck;
+    }
+  }
+}
+
+/**
+ * Restore every gate function to its real implementation. Test-only.
+ * @internal
+ */
+export function _resetGateFnsForTest() {
+  _gateFns.enforceVerificationGate = _realEnforceVerificationGate;
+  _gateFns.validatePlan = _realValidatePlan;
+  _gateFns.runSelfCheck = _realRunSelfCheck;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -750,9 +811,28 @@ const handlers = {
       planText = readFileSync(abs, 'utf8');
     }
     // Model 4: gate-fail → refuse; gate threw → advisory (proceed).
+    // GATE_BYPASS (MCP-unavailable row of §4) short-circuits the gate to
+    // advisory and writes a loud WARN — enforcement is a floor, never a
+    // single point of failure.
+    if (GATE_BYPASS) {
+      process.stderr.write('[state-sdk] WARN phase.plan-check gate bypassed via IJFW_STATE_GATE_BYPASS\n');
+      const file = paths.workflow(root);
+      const targets = [paths.intentJournal(root), file];
+      return _withLocks(targets, async () => {
+        const current = readJson(file, {}) || {};
+        current.plan_check = {
+          verdict: 'bypass', phaseId: payload?.phaseId ?? null, checked_at: nowIso(),
+        };
+        writeJson(file, current);
+        return {
+          ok: true, advisory: true, gate: 'plan-check',
+          reason: 'IJFW_STATE_GATE_BYPASS=1', findings: [],
+        };
+      }, env);
+    }
     let result;
     try {
-      result = validatePlan(planText, { strict: true });
+      result = _gateFns.validatePlan(planText, { strict: true });
     } catch (e) {
       process.stderr.write(`[state-sdk] WARN phase.plan-check gate execution-fail: ${e.message}\n`);
       return { ok: true, advisory: true, gate: 'plan-check', reason: e.message, findings: [] };
@@ -786,7 +866,7 @@ const handlers = {
     let gateAdvisory = null;
     if (!GATE_BYPASS) {
       try {
-        enforceVerificationGate(
+        _gateFns.enforceVerificationGate(
           typeof ev.reportText === 'string' ? ev.reportText : '',
           Array.isArray(ev.toolCalls) ? ev.toolCalls : [],
           { strict: true },
@@ -894,19 +974,38 @@ const handlers = {
     const projectRoot = typeof payload?.projectRoot === 'string' && payload.projectRoot
       ? payload.projectRoot : root;
     // Model 4: failed self-check is a verdict-fail → refuse. A thrown
-    // self-check is an execution-fail → advisory (proceed).
+    // self-check is an execution-fail → advisory (proceed). GATE_BYPASS
+    // (MCP-unavailable row of §4) downgrades a would-be refusal to a loud
+    // advisory — enforcement is a floor, never a single point of failure.
     let selfCheck;
     try {
-      selfCheck = runSelfCheck(reportText, projectRoot);
+      selfCheck = _gateFns.runSelfCheck(reportText, projectRoot);
     } catch (e) {
       process.stderr.write(`[state-sdk] WARN subagent.post-done gate execution-fail: ${e.message}\n`);
       return { ok: true, advisory: true, gate: 'post-done-self-check', reason: e.message };
     }
-    if (selfCheck.verdict !== 'PASSED' && !GATE_BYPASS) {
+    if (selfCheck.verdict !== 'PASSED') {
+      const reason = `self-check FAILED — ${selfCheck.files_missing.length} missing file(s), `
+        + `${selfCheck.commits_missing.length} missing commit(s)`;
+      if (!GATE_BYPASS) {
+        return {
+          ok: false, refused: true, gate: 'post-done-self-check', reason,
+        };
+      }
+      // Bypass masks a would-be refusal — emit a loud WARN + advisory
+      // result so the operator can see what enforcement skipped.
+      process.stderr.write(
+        '[state-sdk] WARN subagent.post-done gate bypassed via IJFW_STATE_GATE_BYPASS '
+        + `(would-refuse: ${reason})\n`,
+      );
       return {
-        ok: false, refused: true, gate: 'post-done-self-check',
-        reason: `self-check FAILED — ${selfCheck.files_missing.length} missing file(s), `
-          + `${selfCheck.commits_missing.length} missing commit(s)`,
+        ok: true, advisory: true, gate: 'post-done-self-check',
+        reason: 'IJFW_STATE_GATE_BYPASS=1',
+        selfCheck: {
+          claimedPaths: selfCheck.files_claimed,
+          claimedCommits: selfCheck.commits_claimed,
+          verified: false,
+        },
       };
     }
     return {
