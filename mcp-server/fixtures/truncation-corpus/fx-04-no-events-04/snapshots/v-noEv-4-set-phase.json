@@ -1,0 +1,11 @@
+{
+  "verbId": "v-noEv-4-set-phase",
+  "targets": [
+    {
+      "relPath": ".ijfw/state/workflow.json",
+      "absPath": "<<ABS>>",
+      "existed": true,
+      "content": "{\"phase\":\"noEv-pre-4\"}"
+    }
+  ]
+}

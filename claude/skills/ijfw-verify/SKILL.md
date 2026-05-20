@@ -1,6 +1,6 @@
 ---
 name: ijfw-verify
-description: "Use when about to claim completion: 'done', 'fix complete', 'tests pass', 'build succeeded', 'shipped', 'no regressions', 'ready to merge', 'ready to ship'. Iron Law gate requiring fresh verification evidence in the same message as the claim; wires into runtime (verification-gate.js + ijfw_subagent_post_done)."
+description: "Use when about to claim completion: 'done', 'fix complete', 'tests pass', 'build succeeded', 'shipped', 'no regressions', 'ready to merge', 'ready to ship'. Iron Law gate requiring fresh verification evidence in the same message as the claim; wires into runtime (verification-gate.js + the ijfw_state MCP tool subagent.post-done verb)."
 ---
 
 # IJFW Verify -- The Iron Law
@@ -80,7 +80,7 @@ If your claim is not in this table, the table is **not exhaustive** -- derive th
 
 ## Integration with the runtime gate
 
-This skill is the **author-time** half of IJFW's verification contract. The **runtime** half lives in `mcp-server/src/orchestrator/verification-gate.js::checkVerificationGate` (originally shipped in v1.4.4 as N5 as an advisory check) and is now invoked automatically by `mcp-server/src/orchestrator/post-done-runner.js` whenever the `ijfw_subagent_post_done` MCP tool fires after a subagent emits `Status: DONE` (v1.5.0-major).
+This skill is the **author-time** half of IJFW's verification contract. The **runtime** half lives in `mcp-server/src/orchestrator/verification-gate.js::checkVerificationGate` (originally shipped in v1.4.4 as N5 as an advisory check) and is now invoked automatically by `mcp-server/src/orchestrator/post-done-runner.js` whenever the `ijfw_state` MCP tool's `subagent.post-done` verb fires after a subagent emits `Status: DONE` (v1.5.0-major / v1.5.0 T13 — single state-SDK MCP face).
 
 What that means in practice:
 
@@ -127,6 +127,17 @@ If a clever workaround would still leave a future reader unable to independently
 - Asserting "tests pass" because the test file exists and was edited.
 - Asserting "shipped" because a tag was created locally without `git push` verification.
 - Asserting "Trident PASS" because the synthesis file exists, without checking each auditor's input file is non-empty and reports PASS.
+
+## Iron-Law discipline -- the four boundaries
+
+The runtime gate fires at four enumerated W3 boundaries -- the verbs that advance state ABOVE you:
+
+- **`phase.complete`** -- post-phase verdict; `enforceVerificationGate` refuses on red.
+- **`phase.plan-check`** -- pre-execute plan validation; any HIGH-tier finding refuses dispatch.
+- **`subagent.post-done`** -- subagent completion; `runSelfCheck` refuses when claimed files/commits aren't on disk.
+- **`wave.advance` (hard gate)** -- mid-wave checkpoint-completeness; a wave that declares `hard_gate: true` refuses to advance while any registered subagent lacks a checkpoint.
+
+Discipline rule: collect verification evidence *after* the change, in the same message as the claim, *before* the boundary verb fires. The gate is the floor, not the ceiling -- pre-empting it is the job.
 
 ## The bottom line
 

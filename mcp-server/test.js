@@ -98,8 +98,9 @@ async function runTest() {
     console.log('\nTools:');
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     resp = await waitForResponse(2);
-    // updated 2026-05-19 v1.5.0 (tool cap raised 10→12 in v1.5.0-major):
-    // slot 11 = ijfw_subagent_post_done (S02 runtime contracts),
+    // updated 2026-05-20 v1.5.0 T13 (cap fixed at 12 since v1.5.0-major):
+    // slot 11 = ijfw_state (state-SDK verb facade; absorbs the retired
+    //           ijfw_subagent_post_done — `subagent.post-done` is now a verb),
     // slot 12 = ijfw_cross_audit_converge (N03 Trident-as-a-service).
     // CLAUDE.md fixes the cap at 12 — if a 13th appears, this assertion forces
     // an explicit, intentional update rather than silent drift.
@@ -114,7 +115,7 @@ async function runTest() {
       'ijfw_update_check',
       'ijfw_update_apply',
       'ijfw_run',
-      'ijfw_subagent_post_done',
+      'ijfw_state',
       'ijfw_cross_audit_converge',
     ];
     assert(resp.result?.tools?.length === CANONICAL_TOOLS_V150.length,

@@ -5,15 +5,38 @@
  * clears it on deactivate. Used by:
  *   - `ijfw_run extension:activate <name>` CLI command
  *   - installExtension when opts.activate is set
+ *
+ * v1.5.0 T10 — Migrated to the state-SDK. The legacy
+ * `writeFile`/`rename`/`unlink` direct-write path is replaced by a call to
+ * `query('extension.set-active', ...)`. The state-SDK is the single mutation
+ * surface for `~/.ijfw/state/active-extension.json`; this writer now adapts
+ * the SDK's verb-returns to the writer's `{ok, path, error}` /
+ * `{ok, removed}` external API so every existing caller keeps working without
+ * change (`extension-installer.js`, `dispatch/active-cli.js`,
+ * `dispatch/extension.js`, the test suite).
+ *
+ * Side-effects retained verbatim from the v1.4.0/W7.1 contract:
+ *   - quota counters are reset on activate (B16/SEC-M-02) and clear (B16) via
+ *     `resetExtensionQuotas` — best-effort, never blocks the verb result.
+ *   - B18 cross-IDE last-seen / divergence detection (`detectCrossIdeDivergence`)
+ *     stays as-is — it is a read-only consumer of the homedir state file and
+ *     does not need the SDK.
+ *   - `findInstalledManifest` stays as-is — it reads project/org/user-scope
+ *     manifest.json files; it is a read of installed extensions, not a write
+ *     to the homedir state file, so it is outside the state-SDK surface.
  */
 
 import { readFile, writeFile, unlink, mkdir, readdir, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
 import { resetExtensionQuotas } from './extension-quota-tracker.js';
 // v1.5.0 audit-LOW-update-#13: shared tmp-suffix helper.
 import { tmpSuffix } from './lib/tmp-suffix.js';
+// v1.5.0 T10: route the canonical write/clear of ~/.ijfw/state/active-extension.json
+// through the state-SDK verb.
+import { query } from './orchestrator/state-sdk.js';
 
 const STATE_PATH_REL = ['.ijfw', 'state', 'active-extension.json'];
 
@@ -36,15 +59,36 @@ function stateDir(home) {
 }
 
 /**
+ * Pick a state-SDK projectRoot to satisfy the verb's `ctx.projectRoot`
+ * requirement. The writer's external callers don't carry a project root
+ * (extension activation is a homedir-scoped operation), so we fall back to
+ * `process.cwd()`. The SDK uses this only for the intent-journal lock path
+ * (`<projectRoot>/.ijfw/state/intent-journal.jsonl`) — it never mutates any
+ * project file under it. opts.projectRoot, when supplied, takes precedence.
+ */
+function pickProjectRoot(opts) {
+  if (opts && typeof opts.projectRoot === 'string' && opts.projectRoot.length > 0) {
+    return opts.projectRoot;
+  }
+  return process.cwd();
+}
+
+/**
  * Write the active-extension state file from a manifest + scope.
- * Validates required fields before write. Atomic write via tmp+rename.
+ * Validates required fields before write. Atomic write via the state-SDK
+ * `extension.set-active` verb (tmp+rename via atomic-io).
  *
- * @param {{ name: string, permissions: { reads: string[], writes: string[] } }} manifest
+ * @param {{ name: string, permissions: { reads: string[], writes: string[] }, quotas?: object }} manifest
  * @param {'project'|'org'|'user'} scope
- * @param {{ homeDir?: string, ideId?: string|null }} [opts]
+ * @param {{ homeDir?: string, ideId?: string|null, projectRoot?: string }} [opts]
  * @returns {Promise<{ ok: boolean, path?: string, error?: string }>}
  */
 export async function writeActiveExtension(manifest, scope, opts = {}) {
+  // Validation — external API contract (returns ok:false, never throws).
+  // Mirrors the pre-v1.5.0 behavior so every existing caller keeps the same
+  // error-handling shape. The SDK verb would throw on the same inputs; the
+  // adapter catches that downstream too, but explicit pre-checks give the
+  // historical error messages.
   if (!manifest || typeof manifest !== 'object') {
     return { ok: false, error: 'manifest must be an object' };
   }
@@ -57,58 +101,73 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
   if (!manifest.permissions || typeof manifest.permissions !== 'object') {
     return { ok: false, error: 'manifest.permissions required' };
   }
-  const reads = Array.isArray(manifest.permissions.reads) ? manifest.permissions.reads : [];
-  const writes = Array.isArray(manifest.permissions.writes) ? manifest.permissions.writes : [];
-  const activatedAt = new Date().toISOString();
+
+  const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
+
   // B18: stamp activated_by_ide + activated_by_pid when ideId is provided.
   // Caller (CLI) is responsible for calling detectIde() and threading the
-  // value in. When opts.ideId is null/undefined, fields are omitted (so the
-  // file stays back-compatible with v1.4.1 readers).
+  // value in. When opts.ideId is null/undefined or invalid, fields are
+  // omitted (so the file stays back-compatible with v1.4.1 readers).
   const ideId = (typeof opts.ideId === 'string' && IDE_ID_PATTERN.test(opts.ideId))
     ? opts.ideId
     : null;
-  const out = {
+
+  // Normalize permissions + quotas in the manifest payload so the SDK verb
+  // sees the exact shape it expects. The verb itself filters quotas to
+  // positive integers — we leave that filtering to it (single writer rule).
+  const reads = Array.isArray(manifest.permissions.reads) ? manifest.permissions.reads : [];
+  const writes = Array.isArray(manifest.permissions.writes) ? manifest.permissions.writes : [];
+  const verbManifest = {
     name: manifest.name,
-    scope,
     permissions: { reads, writes },
-    activated_at: activatedAt,
   };
-  if (ideId) {
-    out.activated_by_ide = ideId;
-    out.activated_by_pid = process.pid;
-  }
-  // R12-H-01: persist manifest.quotas so the tier-2 hook
-  // (extension-permission-check.mjs) can enforce quotas on Edit/Write/Bash
-  // dispatch. Without this the tier-2 hook reads `active.quotas` as undefined
-  // and silently bypasses the v1.4.3 quota gate that the server-side
-  // gatePermissionAndQuota path enforces. Schema (extension-manifest-schema.js):
-  // optional object whose values are positive integers — currently
-  // max_files_written / max_bytes_written / max_wall_clock_ms (forward-compat:
-  // unknown dimensions are kept as-is — schema rejects unknowns at install).
   if (
     manifest.quotas !== undefined &&
     manifest.quotas !== null &&
     typeof manifest.quotas === 'object' &&
     !Array.isArray(manifest.quotas)
   ) {
-    const cleanQuotas = {};
-    let copied = 0;
-    for (const [k, v] of Object.entries(manifest.quotas)) {
-      if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0) {
-        cleanQuotas[k] = v;
-        copied++;
-      }
-    }
-    if (copied > 0) out.quotas = cleanQuotas;
+    verbManifest.quotas = manifest.quotas;
   }
-  const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
-  const path = statePath(home);
-  await mkdir(dirname(path), { recursive: true });
-  // v1.5.0 audit-LOW-update-#13: tmpSuffix() replaces inline randomBytes call.
-  const tmp = `${path}.tmp.${tmpSuffix({ bytes: 4, includePid: false })}`;
-  await writeFile(tmp, JSON.stringify(out, null, 2) + '\n', 'utf8');
-  const { rename } = await import('node:fs/promises');
-  await rename(tmp, path);
+
+  const payload = {
+    manifest: verbManifest,
+    scope,
+    homeDir: home,
+  };
+  if (ideId) {
+    payload.activated_by_ide = ideId;
+    payload.activated_by_pid = process.pid;
+  }
+
+  let result;
+  try {
+    result = await query('extension.set-active', payload, {
+      projectRoot: pickProjectRoot(opts),
+      homeDir: home,
+    });
+  } catch (err) {
+    // The SDK verb throws on protocol violations. Surface as the writer's
+    // {ok:false, error} contract so callers don't have to learn a new shape.
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+  if (!result || result.ok !== true) {
+    return { ok: false, error: 'state-sdk extension.set-active returned non-ok' };
+  }
+
+  // Recover the activated_at timestamp the SDK stamped so we can pass it to
+  // resetExtensionQuotas (parity with the legacy writer's wall_clock_ms window).
+  // Best-effort: if the read fails, omit activated_at and the tracker resets
+  // counters without the window stamp.
+  let activatedAt;
+  try {
+    const raw = await readFile(result.path, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.activated_at === 'string') {
+      activatedAt = parsed.activated_at;
+    }
+  } catch { /* best-effort */ }
+
   // B16/SEC-M-02: reset quota counters on activate; stamp activated_at so
   // wall_clock_ms can be computed against this activation window.
   try {
@@ -117,21 +176,24 @@ export async function writeActiveExtension(manifest, scope, opts = {}) {
     // Quota reset failure must not block activation. Counters will self-heal
     // on next deactivate or the next activate of the same name.
   }
-  return { ok: true, path };
+
+  return { ok: true, path: result.path };
 }
 
 /**
  * Clear the active-extension state file. Idempotent -- succeeds if file is absent.
  *
- * @param {{ homeDir?: string }} [opts]
+ * @param {{ homeDir?: string, projectRoot?: string }} [opts]
  * @returns {Promise<{ ok: boolean, removed: boolean }>}
  */
 export async function clearActiveExtension(opts = {}) {
   const home = opts && opts.homeDir ? opts.homeDir : (process.env.HOME || homedir());
-  // B16/SEC-M-02: read the active extension name BEFORE unlinking so we can
-  // clear its quota counters. Best-effort: if the file is missing or
+
+  // B16/SEC-M-02: read the active extension name BEFORE clearing so we can
+  // reset its quota counters. Best-effort: if the file is missing or
   // malformed, deactivate still succeeds.
   let extName = null;
+  const wasPresent = existsSync(statePath(home));
   try {
     const raw = await readFile(statePath(home), 'utf8');
     const parsed = JSON.parse(raw);
@@ -141,27 +203,42 @@ export async function clearActiveExtension(opts = {}) {
   } catch {
     // ignore — extName stays null
   }
+
+  // Drive the canonical clear through the SDK verb (manifest:null is the
+  // documented clear semantics — see STATE-SDK-CONTRACT.md §7).
+  // The verb is idempotent on an absent file (best-effort unlink).
+  let verbOk = false;
   try {
-    await unlink(statePath(home));
-    if (extName) {
-      try {
-        await resetExtensionQuotas(extName, { homeDir: home });
-      } catch {
-        // best-effort
-      }
-    }
-    return { ok: true, removed: true };
-  } catch (err) {
-    if (err && err.code === 'ENOENT') {
-      if (extName) {
-        try {
-          await resetExtensionQuotas(extName, { homeDir: home });
-        } catch { /* best-effort */ }
-      }
-      return { ok: true, removed: false };
-    }
-    return { ok: false, removed: false };
+    const r = await query('extension.set-active', {
+      manifest: null,
+      // The verb requires a valid scope. 'project' is a safe sentinel — the
+      // clear branch does not consult `scope` for any state-file content
+      // (clear unlinks the file unconditionally). Any of the three valid
+      // values would work.
+      scope: 'project',
+      homeDir: home,
+    }, {
+      projectRoot: pickProjectRoot(opts),
+      homeDir: home,
+    });
+    verbOk = !!(r && r.ok);
+  } catch {
+    verbOk = false;
   }
+
+  // Always reset quota counters if we know the ext name, regardless of
+  // whether the verb succeeded or the file was present — mirrors the
+  // legacy writer's ENOENT-tolerant best-effort reset.
+  if (extName) {
+    try {
+      await resetExtensionQuotas(extName, { homeDir: home });
+    } catch { /* best-effort */ }
+  }
+
+  if (verbOk) {
+    return { ok: true, removed: wasPresent };
+  }
+  return { ok: false, removed: false };
 }
 
 /**

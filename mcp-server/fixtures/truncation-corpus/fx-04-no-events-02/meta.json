@@ -1,0 +1,18 @@
+{
+  "id": "fx-04-no-events-02",
+  "category": "no-events",
+  "waveId": "W20-noEv-2",
+  "subId": "noEv2",
+  "notes": "subagent emitted no events; recovery rolls back open begin",
+  "expectedDetection": {
+    "truncated": "no-events-open-begin",
+    "reasonContains": "no events"
+  },
+  "expectedRecovery": {
+    "recovered": true
+  },
+  "expectedFinalState": {
+    ".ijfw/state/workflow.json": "{\"phase\":\"noEv-pre-2\"}"
+  },
+  "expectedTerminalVerb": "subagent.post-done"
+}

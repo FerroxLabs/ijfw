@@ -10,10 +10,45 @@ import { fileURLToPath } from 'node:url';
 import { writeAtomic } from '../lib/atomic-io.js';
 import { syncCodexAgents } from '../codex-agents.js';
 import { detect } from '../project-type-detector.js';
-import { assertValidTeamBundle, validateTeamCharter, validateWorkflowManifest } from './schemas.js';
+import {
+  DOMAIN_SPECIALIST_AGENT_IDS as CANONICAL_DOMAIN_SPECIALIST_AGENT_IDS,
+  SOFTWARE_CORE_AGENT_IDS as CANONICAL_SOFTWARE_CORE_AGENT_IDS,
+  assertValidTeamBundle,
+  validateTeamCharter,
+  validateWorkflowManifest,
+} from './schemas.js';
 
 const FIXTURE_DIR = resolve(fileURLToPath(new URL('../../fixtures/team/', import.meta.url)));
 const SUPPORTED_ARCHETYPES = new Set(['software', 'design', 'content', 'book', 'research', 'business', 'mixed']);
+
+// T24 / G7-core: the four universal software-core agents. Any software-
+// domain roster MUST include all four. The ids resolve to static markdown
+// files under `claude/agents/<id>.md`; the generator does not synthesise
+// these — it references them by id and trusts the installer to deploy the
+// markdown files into platform-native agent directories.
+//
+// Single source of truth lives in `./schemas.js` (so downstream validators
+// can reference the canonical list without importing the generator). This
+// re-export keeps the historic generator.js surface intact for callers
+// already wired to `SOFTWARE_CORE_AGENT_IDS`.
+//
+// Static set (order is deterministic for snapshot stability):
+//   - ijfw-doc-verifier        — factual-claim verification post-doc-gen
+//   - ijfw-integration-checker — cross-subagent E2E flow verification
+//   - ijfw-nyquist-auditor     — coverage-gap closure + skeleton-test proposals
+//   - ijfw-code-fixer          — atomic per-finding code fixes (G4 fixer)
+export const SOFTWARE_CORE_AGENT_IDS = CANONICAL_SOFTWARE_CORE_AGENT_IDS;
+
+// T25 / G7-gen: canonical per-domain specialist agent ids. Re-exported from
+// schemas.js so callers wired to `generator.js` get a stable surface. See
+// schemas.js for the per-archetype contract and the rationale for which
+// archetypes are populated today.
+export const DOMAIN_SPECIALIST_AGENT_IDS = CANONICAL_DOMAIN_SPECIALIST_AGENT_IDS;
+
+// T24: archetypes that always include the software-core agent set.
+// Currently only `software`; future domains (`mixed` with software files)
+// may opt in via T25's domain-aware generator.
+const SOFTWARE_CORE_ARCHETYPES = new Set(['software']);
 
 // F-FUN-1: alias map -- detector returns language-flavoured labels and
 // project-type-detector emits 'unknown' / unmapped domains. Canonicalize
@@ -178,6 +213,61 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// T24 / G7-core: resolve the static software-core agent set for an
+// archetype. Returns `[]` for non-software archetypes. The returned ids
+// each resolve to `claude/agents/<id>.md` in the IJFW repo — callers can
+// look the files up via the installer's deploy step (the markdown is the
+// agent spec; the generator doesn't render its content, it references
+// it). Deterministic order.
+export function resolveSoftwareCoreAgentIds(archetype) {
+  const normalized = normalizeArchetype(archetype);
+  if (!SOFTWARE_CORE_ARCHETYPES.has(normalized)) return [];
+  // Return a fresh array so callers cannot mutate the frozen source set
+  // through the public surface.
+  return [...SOFTWARE_CORE_AGENT_IDS];
+}
+
+// T25 / G7-gen: resolve the per-domain specialist agent set. Returns the
+// archetype's specialist ids per `DOMAIN_SPECIALIST_AGENT_IDS`, or `[]` if
+// the archetype has no domain specialists yet (e.g. `research`, `business`,
+// `mixed`). For `software` this returns `[]` — the software roster is
+// covered by `resolveSoftwareCoreAgentIds`, not duplicated here.
+//
+// Deterministic order. Returns a fresh array per call.
+export function resolveDomainSpecialistAgentIds(archetype) {
+  const normalized = normalizeArchetype(archetype);
+  const specialists = DOMAIN_SPECIALIST_AGENT_IDS[normalized];
+  if (!Array.isArray(specialists)) return [];
+  return [...specialists];
+}
+
+// T25 / G7-gen: resolve the FULL roster for an archetype — the union of
+// software-core agents (when applicable) plus domain specialists. This is
+// the single function downstream callers (installers, dashboard tiles,
+// `roster.synthesize` consumers) should reach for when they want the
+// complete set of agents the generator believes a domain needs.
+//
+// Contract:
+//   - software archetype  → all 4 SOFTWARE_CORE_AGENT_IDS, no specialists
+//   - book/content/design → only the domain specialists for that archetype
+//   - other archetypes    → []
+//   - order is deterministic: software-core first, then domain specialists
+//   - no duplicates: even if a domain ever overlaps with a core id (it
+//     should not, by convention — see schemas.js), the union dedupes.
+//
+// The returned array is fresh per call so callers cannot mutate the
+// canonical sources via the public surface.
+export function resolveRosterForDomain(archetype) {
+  const normalized = normalizeArchetype(archetype);
+  const core = resolveSoftwareCoreAgentIds(normalized);
+  const specialists = resolveDomainSpecialistAgentIds(normalized);
+  const merged = [...core];
+  for (const id of specialists) {
+    if (!merged.includes(id)) merged.push(id);
+  }
+  return merged;
+}
+
 export function loadTeamTemplate(archetype) {
   const normalized = normalizeArchetype(archetype);
   const path = join(FIXTURE_DIR, `${normalized}.json`);
@@ -223,6 +313,21 @@ export function createTeamAssembly(projectRoot = process.cwd(), options = {}) {
   }
   const codexAgents = syncCodexAgents(root, { bundle });
 
+  // T24 / G7-core: software-domain rosters always advertise the static
+  // software-core agent set. Non-software archetypes get an empty array
+  // (preserves the field on every return shape so callers don't need to
+  // null-check). The ids point to `claude/agents/<id>.md` in the IJFW
+  // install; the installer is responsible for placing the markdown.
+  const softwareCoreAgentIds = resolveSoftwareCoreAgentIds(archetype);
+
+  // T25 / G7-gen: domain-specific specialist agent ids. Same on-disk
+  // contract as the software-core ids — each id resolves to
+  // `claude/agents/<id>.md`. T25 returns the ids; T26 lands the matching
+  // markdown files. Until T26 ships, downstream installers should treat
+  // a missing file as "deploy stub" rather than fail-closed.
+  const domainSpecialistAgentIds = resolveDomainSpecialistAgentIds(archetype);
+  const rosterAgentIds = resolveRosterForDomain(archetype);
+
   return {
     ok: true,
     archetype,
@@ -233,6 +338,9 @@ export function createTeamAssembly(projectRoot = process.cwd(), options = {}) {
     workflowPath,
     agentFiles,
     codexAgents,
+    softwareCoreAgentIds,
+    domainSpecialistAgentIds,
+    rosterAgentIds,
   };
 }
 

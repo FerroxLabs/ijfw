@@ -3,10 +3,12 @@
  * test-tool-cap.js -- Live MCP introspection of the tool-cap.
  *
  * Per IJFW MCP discipline: the server may register at most 12 tools (v1.5.0-major
- * cap, fully populated: 11 wired tools + ijfw_cross_audit_converge for
- * Trident-as-a-service). The structural grep in test.js can drift if a new tool
- * is added without removing one. This harness spawns bin/ijfw-memory, speaks
- * JSON-RPC over stdio, calls tools/list, and asserts:
+ * cap, fully populated). v1.5.0 T13 retired the legacy single-purpose
+ * subagent-post-done tool and replaced it with `ijfw_state` — the single MCP
+ * face for the state-SDK verb facade. `subagent.post-done` is now a verb on
+ * that tool; cap stays at 12/12. The structural grep in test.js can drift if a
+ * new tool is added without removing one. This harness spawns bin/ijfw-memory,
+ * speaks JSON-RPC over stdio, calls tools/list, and asserts:
  *
  *   1. result.tools.length === 12
  *   2. names match the expected canonical set exactly (no extras, none missing)
@@ -37,17 +39,19 @@ const EXPECTED_TOOLS = [
   'ijfw_update_check',
   'ijfw_update_apply',
   'ijfw_run',
-  // v1.5.0-major (S02): runtime contract enforcement — wraps the v1.4.4 N2
-  // status protocol + N3 review.js + N5 verification-gate.js into a single
-  // callable so the orchestrator-LLM invokes them via MCP, not on honor.
-  // Combined into one tool (vs. shipping reviewSubagentReport + runPostDone
-  // as two tools) to minimise cap pressure. See server.js for the dispatch.
-  'ijfw_subagent_post_done',
+  // v1.5.0 T13: ijfw_state — single MCP face for the state-SDK verb facade.
+  // Absorbed the legacy single-purpose subagent-post-done tool (post-done IS a
+  // state transition → the `subagent.post-done` verb). All 20 frozen verbs
+  // from STATE-SDK-CONTRACT §7 are reachable through this one tool.
+  'ijfw_state',
   // v1.5.0-major (W12-C N03): Trident-as-a-service. Multi-lens consensus
   // convergence loop (lock-in #47 — canonical Phase E). Fills the 12th
   // tool-cap slot; cap is now fully populated.
   'ijfw_cross_audit_converge',
 ];
+// v1.5.0 T13: ijfw_subagent_post_done was retired (absorbed into ijfw_state as
+// the `subagent.post-done` verb). The tool MUST NOT appear in tools/list.
+const RETIRED_TOOLS = ['ijfw_subagent_post_done'];
 const EXPECTED_COUNT = 12;
 
 function send(child, msg) {
@@ -148,6 +152,16 @@ async function main() {
       pass++;
     } else {
       console.log(`  [FAIL] tool names mismatch. missing=${JSON.stringify(missing)} extras=${JSON.stringify(extras)}`);
+      fail++;
+    }
+
+    // Assertion 3 (T13): retired tools MUST NOT be present.
+    const lingering = RETIRED_TOOLS.filter((n) => names.includes(n));
+    if (lingering.length === 0) {
+      console.log(`  [PASS] retired tools absent (${RETIRED_TOOLS.join(', ')})`);
+      pass++;
+    } else {
+      console.log(`  [FAIL] retired tools still registered: ${lingering.join(', ')}`);
       fail++;
     }
 

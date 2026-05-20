@@ -1,0 +1,3 @@
+{"verb":"subagent.checkpoint","verbId":"v-midA-5-ckpt","phase":"begin","ts":"2026-05-20T12:00:00.000Z","targets":[".ijfw/wave-W20-midA-5/subagent-midA5.checkpoint.json"],"payloadDigest":"sha256-fixture-v-midA-5-ckpt","kind":"append","dedupKey":"dk-ckpt-midA-5"}
+{"verb":"subagent.checkpoint","verbId":"v-midA-5-ckpt","phase":"commit","ts":"2026-05-20T12:00:00.000Z","payloadDigest":"sha256-fixture-v-midA-5-ckpt","kind":"append","dedupKey":"dk-ckpt-midA-5"}
+{"verb":"decision.add","verbId":"v-midA-5-decision-add","phase":"begin","ts":"2026-05-20T12:00:00.000Z","targets":[".ijfw/blackboard/decisions.jsonl"],"payloadDigest":"sha256-fixture-v-midA-5-decision-add","kind":"append","dedupKey":"dk-midA-5"}

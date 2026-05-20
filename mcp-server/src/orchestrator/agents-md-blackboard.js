@@ -1,54 +1,152 @@
 /**
- * agents-md-blackboard.js — v1.5.0 S4: populate AGENTS.md BLACKBOARD block.
+ * agents-md-blackboard.js — populate the AGENTS.md BLACKBOARD marker block.
  *
- * Closes lock-in #28: the BLACKBOARD marker block in AGENTS.md is spec'd in
- * ijfw-agents-md/SKILL.md but currently empty. checkpointWave (S5) calls this
- * after writing wave state to keep AGENTS.md in sync with the live wave.
+ * v1.5.0 S4 (initial landing): shelled out to
+ *   claude/skills/ijfw-agents-md/scripts/merge-block-aware.sh
+ * under `withFsLock(.AGENTS.md.lock)` via `execFile('bash', …)`. That
+ * pattern HELD an fs-lock across a subprocess spawn — a STATE-SDK-CONTRACT
+ * §3 violation:
+ *     "No lock is held across a subprocess spawn. `merge-block-aware.sh` is
+ *      ported to in-process JS (T8); any unavoidable spawn pre-renders its
+ *      payload and runs outside the lock."
  *
- * Concurrency: serialised via withFsLock on AGENTS.md path.
- * Failure handling: silent fail (returns {ok:false, reason}) so a missing
- * merger script does NOT block checkpoint. Caller decides whether to surface.
+ * v1.5.0 T8 (this rewrite):
+ *   - The shell script is ported to in-process JS at
+ *     `./merge-block-aware.js` (single-pair AGENTS.md block merge with
+ *     parity-tested semantics — see `test-merge-block-aware.js`).
+ *   - The AGENTS.md write happens under `withFsLock(lockPathFor(<AGENTS.md>))`
+ *     — i.e. the STATE-SDK-CONTRACT §3 #8 tier lock — using the SAME lock
+ *     primitive every other state writer uses. No subprocess is ever
+ *     spawned anywhere in the call graph; the critical section is
+ *     read → mergeBlocks() → writeAtomic().
+ *   - The blackboard refresh is registered with the SDK as a fire-and-forget
+ *     observability event via `query('event.emit', …)` AFTER the lock is
+ *     released. This is the SDK-routing requirement from the T8 brief
+ *     ("Blackboard writes route through verbs"): every blackboard write
+ *     emits an `agents-md.blackboard.set` event, classifiable by replay.
+ *
+ * SDK-VERB GAP — T8-followup-1 (mirror of T7-followup-1):
+ *   The frozen 20-verb state-SDK contract (`.planning/v150-gap-closure/
+ *   STATE-SDK-CONTRACT.md` §7+§8) does NOT include a verb that writes
+ *   `<projectRoot>/AGENTS.md`. The contract §1 table lists this module
+ *   ("agents-md-blackboard.js (T8)") as the sole writer for the BLACKBOARD
+ *   marker block, and the contract §3 lock hierarchy assigns AGENTS.md to
+ *   tier #8 — but no verb signature emits that write today. T8 closes the
+ *   subprocess-under-lock violation in-process; absorbing the actual file
+ *   write into a future `agents-md.blackboard.set` verb is deferred to a
+ *   later contract amendment (do-not-touch state-sdk.js per the T8 brief).
+ *   The §3 #8 lock IS taken, the §3 §4 ordering invariant holds (no other
+ *   tier locks are acquired by this writer), and the SDK is notified of the
+ *   write via the `event.emit` verb after release — so the absence of a
+ *   dedicated verb is purely a contract-API gap, not a correctness gap.
+ *
+ * Failure handling: non-throwing. Returns `{ok, reason?, error?}` so a
+ * missing AGENTS.md / missing template / write-error degrades the blackboard
+ * refresh to advisory (the wave-state checkpoint must never be blocked by an
+ * AGENTS.md hiccup — see `wave-state.js#checkpointWave`).
  */
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { withFsLock, lockPathFor } from '../fs-lock.js';
 import { readWaveState } from './wave-state.js';
-import { withFsLock } from '../fs-lock.js';
+import { mergeFile, MergeBlockAwareError } from './merge-block-aware.js';
+import { query } from './state-sdk.js';
 
-const execFileP = promisify(execFile);
+/**
+ * Render the BLACKBOARD marker-block payload from a wave's STATE.md
+ * frontmatter slice. Stable shape — consumers (humans + the dashboard's
+ * BLACKBOARD lens) read these keys directly.
+ *
+ * @param {string} waveId
+ * @param {object} state  parsed STATE.md (`readWaveState` result)
+ * @returns {string}      pretty-printed JSON (2-space indent — matches v1.5.0 S4)
+ */
+function renderBlackboardPayload(waveId, state) {
+  const fm = state?.frontmatter || {};
+  return JSON.stringify({
+    wave_id: waveId,
+    state_path: `.ijfw/wave-${waveId}/STATE.md`,
+    status: fm.status,
+    claims_active: fm.claims_active ?? 0,
+    blockers_open: fm.blockers_open ?? [],
+    findings_recent: fm.findings_recent ?? [],
+    updated_at: new Date().toISOString(),
+  }, null, 2);
+}
 
+/**
+ * Refresh the BLACKBOARD marker block in `<projectRoot>/AGENTS.md` from the
+ * given wave's STATE.md. Held under the §3 #8 AGENTS.md lock; in-process
+ * (no spawn). Best-effort SDK event emit after lock release.
+ *
+ * Return shapes:
+ *   `{ ok: true }`                          — wrote AGENTS.md
+ *   `{ ok: false, reason: 'no-state' }`     — wave STATE.md absent (skip)
+ *   `{ ok: false, reason: 'merge-error', error }`  — merger threw
+ *
+ * @param {string} waveId
+ * @param {string} projectRoot
+ * @returns {Promise<{ok: boolean, reason?: string, error?: string}>}
+ */
 export async function populateBlackboardBlock(waveId, projectRoot) {
   const state = await readWaveState(waveId, projectRoot);
   if (!state) return { ok: false, reason: 'no-state' };
 
-  const payload = JSON.stringify({
-    wave_id: waveId,
-    state_path: `.ijfw/wave-${waveId}/STATE.md`,
-    status: state.frontmatter.status,
-    claims_active: state.frontmatter.claims_active ?? 0,
-    blockers_open: state.frontmatter.blockers_open ?? [],
-    findings_recent: state.frontmatter.findings_recent ?? [],
-    updated_at: new Date().toISOString(),
-  }, null, 2);
-
-  const mergerPath = join(projectRoot, 'claude', 'skills', 'ijfw-agents-md', 'scripts', 'merge-block-aware.sh');
+  const payload = renderBlackboardPayload(waveId, state);
   const agentsMdPath = join(projectRoot, 'AGENTS.md');
-  const lockDir = join(projectRoot, '.ijfw', 'state');
-  const lock = join(lockDir, 'AGENTS.md.lock');
+  const lockPath = lockPathFor(agentsMdPath);
 
-  if (!existsSync(mergerPath)) return { ok: false, reason: 'merger-missing' };
+  let mergeResult;
+  let mergeError = null;
+  try {
+    mergeResult = await withFsLock(lockPath, async () => mergeFile(
+      agentsMdPath,
+      [{ block: 'BLACKBOARD', content: payload }],
+    ));
+  } catch (err) {
+    mergeError = err;
+  }
 
-  return await withFsLock(lock, async () => {
-    try {
-      await execFileP('bash', [mergerPath, agentsMdPath, 'BLACKBOARD', payload], {
-        encoding: 'utf8',
-        maxBuffer: 4 * 1024 * 1024,
-      });
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, reason: 'merger-failed', stderr: err.stderr ? String(err.stderr) : '' };
-    }
-  });
+  if (mergeError) {
+    // Surface the same shape callers expected from the legacy
+    // `execFile`-of-merger failure mode: ok:false + a reason + an error
+    // string. `reason` is the canonical T8 replacement for the v1.5.0 S4
+    // `merger-failed`/`merger-missing` strings (the merger is now in-
+    // process — the failure surface is "merge-error").
+    const code = mergeError instanceof MergeBlockAwareError ? mergeError.code : null;
+    return {
+      ok: false,
+      reason: code === 'ERR_TEMPLATE_MISSING' ? 'template-missing' : 'merge-error',
+      error: String(mergeError.message || mergeError),
+    };
+  }
+
+  // SDK-routed observability event — fire-and-forget AFTER the lock has been
+  // released. STATE-SDK-CONTRACT §5 (Model 3): the event tap is observability,
+  // not state. Failure here is swallowed (advisory by design).
+  //
+  // `event.emit` requires `subagentId` + `waveId` (both stable from the
+  // checkpoint context). `dedupKey` uses the file bytes + waveId so two
+  // identical refreshes within the same wave are idempotent on the event
+  // log (matches the §6 append/dedup semantics).
+  try {
+    await query('event.emit', {
+      subagentId: 'parent',
+      waveId,
+      eventType: 'agents-md.blackboard.set',
+      data: {
+        path: mergeResult?.path ?? agentsMdPath,
+        bytes: mergeResult?.bytes ?? 0,
+        seeded: !!mergeResult?.seeded,
+        wave_status: state?.frontmatter?.status ?? null,
+      },
+      dedupKey: `agents-md.blackboard.set:${waveId}:${mergeResult?.bytes ?? 0}`,
+    }, { projectRoot, subagentId: 'parent' });
+  } catch {
+    // Observability is best-effort; never demote a successful AGENTS.md
+    // rewrite because the event tap had a hiccup.
+  }
+
+  return { ok: true };
 }

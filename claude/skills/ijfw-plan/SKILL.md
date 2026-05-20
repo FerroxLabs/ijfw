@@ -134,7 +134,8 @@ gate uses it to detect budget overrun.
 ## Pre-dispatch gate (mechanical, MUST RUN)
 
 Before handing the plan to execute, run the deterministic gate that's wired
-into the existing `ijfw_subagent_post_done` MCP tool routing:
+into the existing `ijfw_state` MCP tool's `subagent.post-done` verb routing
+(v1.5.0 T13 — single state-SDK face, cap stays 12/12):
 
 ```js
 // Library — no new MCP tool needed (cap is 12/12).

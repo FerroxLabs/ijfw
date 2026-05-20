@@ -1,0 +1,18 @@
+{
+  "id": "fx-01-clean-exit-05",
+  "category": "clean-exit",
+  "waveId": "W20-clean-5",
+  "subId": "cleanA5",
+  "notes": "baseline — clean exit with terminal verb; recovery is a no-op",
+  "expectedDetection": {
+    "truncated": false,
+    "reasonContains": "clean exit"
+  },
+  "expectedRecovery": {
+    "recovered": true
+  },
+  "expectedFinalState": {
+    ".ijfw/state/workflow.json": "{\"phase\":\"clean-5\",\"ts\":\"2026-05-20T12:00:00.000Z\"}"
+  },
+  "expectedTerminalVerb": "subagent.post-done"
+}

@@ -1,0 +1,18 @@
+{
+  "id": "fx-05-error-terminated-01",
+  "category": "error-terminated",
+  "waveId": "W20-errT-1",
+  "subId": "errT1",
+  "notes": "error-terminated with overwrite partial — rollback restores baseline",
+  "expectedDetection": {
+    "truncated": "error-terminated",
+    "reasonContains": "outcome='error'"
+  },
+  "expectedRecovery": {
+    "recovered": true
+  },
+  "expectedFinalState": {
+    ".ijfw/state/workflow.json": "{\"phase\":\"errT-pre-1\"}"
+  },
+  "expectedTerminalVerb": "subagent.post-done"
+}

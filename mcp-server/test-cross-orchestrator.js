@@ -453,3 +453,201 @@ test('M2: buildSpawnEnv scrubs vendor API keys not on per-pick allowlist', () =>
   assert.equal(unknownEnv.GEMINI_API_KEY, undefined);
   assert.equal(unknownEnv.PATH, '/usr/bin', 'unknown pick still keeps non-vendor env');
 });
+
+// ---------------------------------------------------------------------------
+// v1.5.0 T21 (W4) — Trident convergence telemetry
+//
+// runPhaseEConverge publishes the three locked metrics — cyclesToConverge,
+// falsePositiveRate, costUsd — via state-SDK `telemetry.record` into
+// `.ijfw/telemetry/convergence.json`. The tests below run REAL convergence
+// loops with deterministic stub dispatchers against REAL temp project roots
+// (no mocking of `query()`), then read the artifact and assert the three
+// metrics are present + correctly valued.
+// ---------------------------------------------------------------------------
+
+import { readFileSync as _t21ReadFile, existsSync as _t21Exists, mkdtempSync as _t21Mkdtemp, rmSync as _t21Rm } from 'node:fs';
+import { tmpdir as _t21Tmpdir } from 'node:os';
+import { join as _t21Join } from 'node:path';
+
+const { runPhaseEConverge: _t21Converge } = await import('./src/cross-orchestrator.js');
+
+function _t21ReadConvergenceFile(projectDir) {
+  const p = _t21Join(projectDir, '.ijfw', 'telemetry', 'convergence.json');
+  if (!_t21Exists(p)) return null;
+  return JSON.parse(_t21ReadFile(p, 'utf8'));
+}
+
+test('T21 telemetry: a real converge run emits .ijfw/telemetry/convergence.json with all three metrics', async () => {
+  const tmpDir = _t21Mkdtemp(_t21Join(_t21Tmpdir(), 'ijfw-t21-pass-'));
+  try {
+    // Deterministic stub: 3 lenses all PASS first cycle.
+    const dispatch = async ({ lens }) => ({ lens, verdict: 'PASS', findings: [] });
+    const r = await _t21Converge({
+      commitRange: 'HEAD~1..HEAD',
+      dispatch,
+      projectDir: tmpDir,
+      runStamp: '2026-05-20T00:00:00Z',
+    });
+    assert.equal(r.verdict, 'PASS');
+    assert.equal(r.iterations, 1);
+
+    const doc = _t21ReadConvergenceFile(tmpDir);
+    assert.ok(doc, 'convergence.json must exist after a converge run');
+    assert.ok(Array.isArray(doc.records) && doc.records.length >= 1, 'records array populated');
+
+    // The newest record is from this run; find it by dedupKey shape.
+    const rec = doc.records.find(rr => rr && rr.kind === 'convergence');
+    assert.ok(rec, 'must have a convergence kind record');
+    assert.equal(typeof rec.dedupKey, 'string');
+    assert.ok(rec.dedupKey.startsWith('convergence:'), 'dedupKey uses the convergence: prefix');
+
+    // The three locked metrics.
+    assert.equal(typeof rec.metrics.cyclesToConverge, 'number', 'cyclesToConverge is a number');
+    assert.equal(rec.metrics.cyclesToConverge, 1, 'one-cycle PASS reports 1');
+    assert.equal(typeof rec.metrics.falsePositiveRate, 'number', 'falsePositiveRate is a number');
+    assert.ok(rec.metrics.falsePositiveRate >= 0 && rec.metrics.falsePositiveRate <= 1,
+      'falsePositiveRate is in [0, 1]');
+    assert.equal(rec.metrics.falsePositiveRate, 0, 'no alarms in an all-PASS run');
+    assert.equal(typeof rec.metrics.costUsd, 'number', 'costUsd is a number');
+    assert.equal(rec.metrics.costUsd, 0, 'no cost reported by stub dispatcher → 0');
+  } finally {
+    _t21Rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('T21 telemetry: false-positive rate is non-zero when a lens raised an alarm but consensus passed', async () => {
+  const tmpDir = _t21Mkdtemp(_t21Join(_t21Tmpdir(), 'ijfw-t21-fp-'));
+  try {
+    // Iter 1: codex says FAIL (raises an alarm), others PASS → divergent.
+    // Iter 2: all PASS → consensus PASS. Final verdict PASS means codex's
+    // iter-1 FAIL was a false positive.
+    const script = {
+      codex:  [
+        { verdict: 'FAIL', findings: [{ severity: 'high', text: 'phantom' }] },
+        { verdict: 'PASS', findings: [] },
+      ],
+      gemini: [
+        { verdict: 'PASS', findings: [{ text: 'g1' }] },
+        { verdict: 'PASS', findings: [] },
+      ],
+      claude: [
+        { verdict: 'PASS', findings: [{ text: 'c1' }] },
+        { verdict: 'PASS', findings: [] },
+      ],
+    };
+    const dispatch = async ({ lens, iteration }) => {
+      const s = script[lens];
+      const idx = Math.min(iteration - 1, s.length - 1);
+      return { lens, ...s[idx] };
+    };
+    const r = await _t21Converge({
+      commitRange: 'HEAD~1..HEAD',
+      dispatch,
+      projectDir: tmpDir,
+      maxIterations: 5,
+    });
+    assert.equal(r.verdict, 'PASS');
+    assert.equal(r.iterations, 2);
+
+    const doc = _t21ReadConvergenceFile(tmpDir);
+    const rec = doc.records.find(rr => rr && rr.kind === 'convergence');
+    assert.ok(rec, 'convergence record present');
+
+    // 2 cycles × 3 reachable lenses = 6 reachable observations.
+    // 1 alarm (codex iter 1 FAIL). final PASS → 1 false positive.
+    // rate = 1 / 6 ≈ 0.1667.
+    assert.equal(rec.metrics.cyclesToConverge, 2);
+    assert.ok(rec.metrics.falsePositiveRate > 0, 'rate > 0 when an alarm occurred and consensus passed');
+    assert.ok(Math.abs(rec.metrics.falsePositiveRate - (1 / 6)) < 1e-9,
+      `falsePositiveRate ≈ 1/6, got ${rec.metrics.falsePositiveRate}`);
+    assert.equal(rec.metrics.costUsd, 0, 'stub dispatcher reports no cost');
+  } finally {
+    _t21Rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('T21 telemetry: costUsd sums per-lens cost_usd from dispatcher results', async () => {
+  const tmpDir = _t21Mkdtemp(_t21Join(_t21Tmpdir(), 'ijfw-t21-cost-'));
+  try {
+    // Each lens reports a stable cost on every call. With 3 lenses × 1 iter:
+    // codex=0.01, gemini=0.02, claude=0.03 → total = 0.06.
+    const costs = { codex: 0.01, gemini: 0.02, claude: 0.03 };
+    const dispatch = async ({ lens }) => ({
+      lens, verdict: 'PASS', findings: [],
+      cost_usd: costs[lens] ?? 0,
+    });
+    const r = await _t21Converge({
+      commitRange: 'HEAD~1..HEAD',
+      dispatch,
+      projectDir: tmpDir,
+    });
+    assert.equal(r.verdict, 'PASS');
+
+    const doc = _t21ReadConvergenceFile(tmpDir);
+    const rec = doc.records.find(rr => rr && rr.kind === 'convergence');
+    assert.ok(rec, 'convergence record present');
+    assert.equal(rec.metrics.cyclesToConverge, 1);
+    assert.equal(rec.metrics.falsePositiveRate, 0);
+    assert.ok(Math.abs(rec.metrics.costUsd - 0.06) < 1e-9,
+      `costUsd should sum per-lens cost_usd, got ${rec.metrics.costUsd}`);
+  } finally {
+    _t21Rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('T21 telemetry: dedupKey makes the verb idempotent across re-runs with same runStamp', async () => {
+  const tmpDir = _t21Mkdtemp(_t21Join(_t21Tmpdir(), 'ijfw-t21-dedup-'));
+  try {
+    const dispatch = async ({ lens }) => ({ lens, verdict: 'PASS', findings: [] });
+    const opts = {
+      commitRange: 'HEAD~1..HEAD',
+      dispatch,
+      projectDir: tmpDir,
+      runStamp: '2026-05-20T11:11:11Z',
+    };
+    // Two back-to-back runs with the SAME runStamp + commitRange. The verb
+    // dedups by `convergence:<runStamp>:<commitRange>` so the second call
+    // must NOT append a duplicate record.
+    await _t21Converge(opts);
+    await _t21Converge(opts);
+
+    const doc = _t21ReadConvergenceFile(tmpDir);
+    const convergenceRecs = doc.records.filter(rr => rr && rr.kind === 'convergence');
+    assert.equal(convergenceRecs.length, 1,
+      'dedupKey-keyed re-runs append exactly one record');
+  } finally {
+    _t21Rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('T21 telemetry: convergence verdict is unaffected by telemetry failures', async () => {
+  // Run against a project root whose `.ijfw/telemetry/` cannot be written.
+  // We use a path under /dev/null/* (on POSIX) so any write throws ENOTDIR.
+  // The telemetry try/catch swallows the failure and the converge return
+  // value remains intact.
+  //
+  // The state-SDK's event-tap also logs a one-liner to stderr on failure;
+  // we silence that here so the test output is clean (the message is the
+  // verb's normal observability, not a test failure).
+  const dispatch = async ({ lens }) => ({ lens, verdict: 'PASS', findings: [] });
+  const _origStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...rest) => {
+    const s = typeof chunk === 'string' ? chunk : String(chunk);
+    if (s.includes('state-events')) return true;
+    return _origStderrWrite(chunk, ...rest);
+  };
+  try {
+    const r = await _t21Converge({
+      commitRange: 'HEAD~1..HEAD',
+      dispatch,
+      // A non-writeable root — `.ijfw/telemetry/` cannot be auto-created here.
+      projectDir: '/dev/null/this-cannot-exist',
+    });
+    // The verdict is unaffected: the convergence return value is the contract;
+    // telemetry is observability only.
+    assert.equal(r.verdict, 'PASS');
+    assert.equal(r.iterations, 1);
+  } finally {
+    process.stderr.write = _origStderrWrite;
+  }
+});

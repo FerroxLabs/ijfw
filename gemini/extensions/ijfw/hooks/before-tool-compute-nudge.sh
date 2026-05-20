@@ -14,6 +14,9 @@
 #   - Async non-blocking; ASCII only; positive framing; <=50ms wall-clock.
 #   - Heavy work (logging) runs in a detached subprocess.
 #   - One nudge per session; state file at ~/.ijfw/state/<session_id>.compute-nudged.
+#     T11: sentinel written via `ijfw state:event.emit` (SDK route) rather than
+#     a direct bash redirect. The local file check is a fast read-only guard;
+#     the authoritative idempotency key is the SDK dedupKey.
 #   - Silent on errors -- hook MUST NEVER crash Gemini CLI.
 #
 # Universal disable switch (matches sibling Gemini hooks).
@@ -67,13 +70,51 @@ if [ -z "$MATCHED" ]; then
   exit 0
 fi
 
-# M7: atomic CAS via noclobber. Closes the read-then-write TOCTOU window
-# between [-f $STATE_FILE] above and this write. If another concurrent fire
-# claims the file first, fall through to a plain allow.
-mkdir -p "$STATE_DIR" 2>/dev/null
-if ! ( set -C; : > "$STATE_FILE" ) 2>/dev/null; then
-  printf '{"decision":"allow"}\n'
-  exit 0
+# T11: Resolve the cli-run.js shim path (same candidates as session-start.sh).
+# Fail-open: if node or the shim is absent, fall back to the legacy direct write.
+_NODE=""
+if command -v node >/dev/null 2>&1; then
+  _NODE="$(command -v node)"
+else
+  for _nc in /opt/homebrew/bin/node /usr/local/bin/node "$HOME/.nvm/versions/node"/*/bin/node "$HOME/.volta/bin/node" /usr/bin/node; do
+    for _nr in $_nc; do [ -x "$_nr" ] && { _NODE="$_nr"; break 2; }; done
+  done
+fi
+_IJFW_CLI_RUN=""
+_HOOK_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+for _cand in \
+    "${GEMINI_PLUGIN_ROOT:-}/mcp-server/src/cli-run.js" \
+    "$HOME/.ijfw/mcp-server/src/cli-run.js" \
+    "$_HOOK_DIR/../../../../mcp-server/src/cli-run.js"; do
+  if [ -f "$_cand" ]; then _IJFW_CLI_RUN="$_cand"; break; fi
+done
+
+# Mark state via SDK route (event.emit, dedupKey = per-session idempotency key).
+# Fail-open on every step: the hook MUST NOT crash Gemini CLI.
+if [ -n "$_NODE" ] && [ -n "$_IJFW_CLI_RUN" ]; then
+  _DEDUP_KEY="compute-nudge:${SESSION_ID}"
+  _PROJECT_ROOT="${IJFW_PROJECT_DIR:-$(pwd -P 2>/dev/null || echo .)}"
+  _PAYLOAD="{\"subagentId\":\"compute-nudge\",\"waveId\":\"hooks\",\"eventType\":\"compute-nudge\",\"data\":{\"session\":\"${SESSION_ID}\",\"match\":\"${MATCHED}\",\"tool\":\"${TOOL_NAME}\"},\"dedupKey\":\"${_DEDUP_KEY}\"}"
+  if "$_NODE" "$_IJFW_CLI_RUN" "state:event.emit" "$_PAYLOAD" \
+      --project-root "$_PROJECT_ROOT" >/dev/null 2>&1; then
+    # SDK write succeeded: create the local sentinel for fast-path reads.
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    ( set -C; : > "$STATE_FILE" ) 2>/dev/null || true
+  else
+    # SDK unavailable or errored: fall back to direct sentinel write.
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    if ! ( set -C; : > "$STATE_FILE" ) 2>/dev/null; then
+      printf '{"decision":"allow"}\n'
+      exit 0
+    fi
+  fi
+else
+  # No node / no shim: legacy direct sentinel write (fail-open fallback).
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  if ! ( set -C; : > "$STATE_FILE" ) 2>/dev/null; then
+    printf '{"decision":"allow"}\n'
+    exit 0
+  fi
 fi
 
 # M4: emit the static envelope via printf -- no node spawn -> <10ms cold start.

@@ -1,0 +1,51 @@
+{
+  "schema_version": "domain-template/v1",
+  "domain": "book",
+  "display_name": "Book / Long-form Narrative",
+  "description": "Novels, memoirs, non-fiction books, anthologies, and other long-form narrative works.",
+  "agent_ids": [
+    "ijfw-narrative-continuity-checker",
+    "ijfw-line-editor",
+    "ijfw-lore-keeper"
+  ],
+  "agent_id_source": "domain-specialist",
+  "workflow_phases": ["outline", "draft", "revise", "review"],
+  "brief_fields": [
+    {
+      "key": "premise",
+      "type": "string",
+      "description": "Core premise or log-line — one to two sentences summarising what the book is about.",
+      "required": true
+    },
+    {
+      "key": "genre",
+      "type": "string",
+      "description": "Genre or sub-genre (e.g. literary fiction, memoir, thriller, cookbook).",
+      "required": false
+    },
+    {
+      "key": "characters",
+      "type": "array",
+      "description": "Named principal characters with a one-sentence description each.",
+      "required": false
+    },
+    {
+      "key": "themes",
+      "type": "array",
+      "description": "Central themes the work explores (e.g. identity, grief, redemption).",
+      "required": false
+    },
+    {
+      "key": "target_length",
+      "type": "string",
+      "description": "Approximate word-count target or chapter count.",
+      "required": false
+    },
+    {
+      "key": "pov",
+      "type": "string",
+      "description": "Narrative point-of-view (first-person, third-person limited, omniscient, etc.).",
+      "required": false
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": "domain-template/v1",
+  "domain": "design",
+  "display_name": "Design / UX",
+  "description": "UI/UX design, design systems, brand identity, wireframes, and visual prototypes.",
+  "agent_ids": [
+    "ijfw-design-critic",
+    "ijfw-accessibility-reviewer"
+  ],
+  "agent_id_source": "domain-specialist",
+  "workflow_phases": ["discovery", "shape", "execute", "review"],
+  "brief_fields": [
+    {
+      "key": "product",
+      "type": "string",
+      "description": "The product or surface being designed (e.g. mobile app, dashboard, landing page).",
+      "required": true
+    },
+    {
+      "key": "design_goal",
+      "type": "string",
+      "description": "Primary design goal (e.g. reduce cognitive load, increase conversion, establish brand).",
+      "required": false
+    },
+    {
+      "key": "platform",
+      "type": "string",
+      "description": "Target platform(s): web, iOS, Android, desktop, cross-platform.",
+      "required": false
+    },
+    {
+      "key": "design_system",
+      "type": "string",
+      "description": "Existing design system or style guide in use (e.g. Material, Tailwind, proprietary).",
+      "required": false
+    },
+    {
+      "key": "accessibility_target",
+      "type": "string",
+      "description": "Accessibility conformance target (e.g. WCAG 2.1 AA, Section 508).",
+      "required": false
+    }
+  ]
+}

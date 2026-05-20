@@ -1,0 +1,1 @@
+{"verb":"workflow.set-phase","verbId":"v-noEv-3-set-phase","phase":"begin","ts":"2026-05-20T12:00:00.000Z","targets":[".ijfw/state/workflow.json"],"payloadDigest":"sha256-fixture-v-noEv-3-set-phase","kind":"overwrite"}

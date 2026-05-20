@@ -26,6 +26,11 @@ import { RELEASE_BLOCKER_GATES, DegradedTridentError } from './trident/dispatch.
 // v1.5.0 wire-W1.B — Anthropic ephemeral-cache TTL heartbeat for long
 // convergence waves. Opt-in via IJFW_CACHE_KEEPALIVE_MS env (1s..5min).
 import { startKeepaliveFromEnv } from './lib/cache-keepalive.js';
+// v1.5.0 T21 (W4) — convergence telemetry via state-SDK telemetry.record verb.
+// Writes `.ijfw/telemetry/convergence.json` with cycles-to-converge, false-
+// positive rate, and cost. Routed through the SDK so the append is journaled,
+// dedup'd, and tap-emitted on the standard observability surface.
+import { query as _stateQuery } from './orchestrator/state-sdk.js';
 
 // ---------------------------------------------------------------------------
 // Per-provider timeout defaults (ms). Codex cold-start can take 120s+ (U2).
@@ -1228,6 +1233,17 @@ export async function runPhaseEConverge({
   const _resolvedProjectDir = projectDir ?? projectRoot ?? process.cwd();
   const _resolvedRunStamp = runStamp ?? new Date().toISOString();
 
+  // v1.5.0 T21 — telemetry accumulators for the three metrics published via
+  // the state-SDK `telemetry.record` verb at finalize time.
+  //   * _telemetryAlarms — count of (lens, cycle) observations whose verdict
+  //     was FAIL or CONDITIONAL (i.e. "raised an alarm"). The false-positive
+  //     rate compares this against the final consensus verdict.
+  //   * _telemetryReachableObs — count of reachable (lens, cycle) observations
+  //     (excludes UNREACHABLE/budget-capped) — the denominator for the rate.
+  // Cost is read off `_lensCosts` (already accumulated) at finalize.
+  let _telemetryAlarms = 0;
+  let _telemetryReachableObs = 0;
+
   // v1.5.0 audit-MED-trident-M6 — cumulative-timeout AbortController.
   // Either an arg-supplied totalTimeoutMs or env var; >0 enables. The signal
   // is checked between iterations + passed to dispatch (dispatchers that
@@ -1300,7 +1316,7 @@ export async function runPhaseEConverge({
   const _lensOverBudget = new Set();
   for (const lens of lenses) _lensCosts[lens] = 0;
 
-  function _finalize(returnVal) {
+  async function _finalize(returnVal) {
     // Clear cumulative-timeout timer so the process can exit cleanly.
     if (_totalTimer) {
       clearTimeout(_totalTimer);
@@ -1367,6 +1383,111 @@ export async function runPhaseEConverge({
     } catch {
       // Receipts are observability; never fail the converge run on a write error.
     }
+
+    // v1.5.0 T21 (W4) — convergence telemetry via state-SDK `telemetry.record`.
+    //
+    // NOTE — this `_finalize` IIFE inside an async function chain: the
+    // telemetry recorder needs to publish BEFORE the function returns so
+    // callers (and tests) can read `.ijfw/telemetry/convergence.json`
+    // synchronously after `await runPhaseEConverge(...)`. We therefore
+    // shape `_finalize` to be async and await the telemetry write here.
+    // The await is inside a try/catch that swallows everything — failure
+    // to write telemetry never changes the convergence verdict.
+    //
+    // The three metrics are computed here AFTER the final verdict is known so
+    // the false-positive rate has a stable consensus reference point. Failure
+    // to record telemetry MUST NOT corrupt or override the convergence verdict:
+    // wrapped in try/catch with full swallow per the off-the-critical-path
+    // discipline. The convergence return value (`enriched`) is unchanged.
+    //
+    // Metric definitions (locked here so downstream dashboards and the
+    // STATE-SDK contract §7 telemetry.record consumers can rely on them):
+    //
+    //   1. cyclesToConverge (integer ≥ 1, ≤ MAX_CONVERGE_ITERATIONS):
+    //        The iteration count at which the loop terminated. Equals
+    //        `enriched.iterations` — i.e. the number of dispatch rounds
+    //        actually executed before a stop condition (PASS consensus,
+    //        non-PASS consensus short-circuit, byte-identical stall,
+    //        cap reached, total-timeout, or all-budget-capped) was met.
+    //        A single-cycle PASS reports 1; a 3-iter stalemate that ends
+    //        in `consensus_failed` reports 3.
+    //
+    //   2. falsePositiveRate (decimal in [0, 1]):
+    //        Numerator: (lens, cycle) observations where a lens raised an
+    //          alarm (verdict FAIL or CONDITIONAL) but the FINAL consensus
+    //          verdict was PASS. UNREACHABLE observations are excluded.
+    //        Denominator: total reachable (lens, cycle) observations across
+    //          all cycles in this run.
+    //        Rationale: a "false positive" is a lens that cried wolf — it
+    //          said "this change is broken" against a run the swarm
+    //          ultimately blessed. When the final verdict is NOT PASS (FAIL,
+    //          CONDITIONAL, consensus_failed, UNREACHABLE), no alarm can be
+    //          retro-classified as false — the numerator is 0 and the rate
+    //          collapses to 0. When the denominator is 0 (no reachable
+    //          observations ever fired — all lenses budget-capped or all
+    //          dispatch threw), the rate is reported as 0 (no signal to
+    //          divide by). 0 ≤ rate ≤ 1 by construction.
+    //
+    //   3. costUsd (decimal ≥ 0):
+    //        Sum across all lenses of cumulative cost attributed to this
+    //        convergence run. Source: `_lensCosts[lens]`, which is fed from
+    //        `dispatch().cost_usd` (or `dispatch().usage.cost_usd`) on every
+    //        per-cycle settlement. Lenses that never returned a cost field
+    //        contribute 0 (their wall-clock time isn't a "USD" cost — that's
+    //        already captured in the receipt's `duration_ms` field). When
+    //        no lens reports cost, costUsd is 0.0; this is the truthful
+    //        signal that the swarm ran on CLI credentials with no per-call
+    //        billing surface, not a missing-data sentinel.
+    try {
+      const finalVerdict = enriched.verdict;
+      const finalIsPass = finalVerdict === VERDICT_PASS;
+      // Numerator: alarms only count as FALSE positives when consensus PASS'd.
+      const _falsePositives = finalIsPass ? _telemetryAlarms : 0;
+      const falsePositiveRate = _telemetryReachableObs > 0
+        ? _falsePositives / _telemetryReachableObs
+        : 0;
+      let _summedCost = 0;
+      for (const v of Object.values(_lensCosts)) {
+        if (typeof v === 'number' && Number.isFinite(v)) _summedCost += v;
+      }
+      const metrics = {
+        cyclesToConverge: enriched.iterations,
+        falsePositiveRate,
+        costUsd: _summedCost,
+        // Diagnostics — not part of the locked three but useful to readers
+        // of `.ijfw/telemetry/convergence.json`. The SDK verb stores the
+        // metrics object opaquely so extra keys are non-breaking.
+        verdict: finalVerdict,
+        commitRange: typeof commitRange === 'string' ? commitRange : null,
+        lensCount: lenses.length,
+        reachableObservations: _telemetryReachableObs,
+        alarmObservations: _telemetryAlarms,
+        durationMs: Date.now() - _startMs,
+      };
+      // Stable, run-scoped dedup key. The verb's append-idempotency (§4)
+      // requires a string; the runStamp is the canonical per-run identity
+      // and the commitRange disambiguates concurrent runs against different
+      // targets. Same (stamp, range) → same key → second record is dedup'd
+      // by the verb (deterministic for tests + safe under double-fire).
+      const dedupKey = `convergence:${_resolvedRunStamp}:${typeof commitRange === 'string' ? commitRange : 'nocommitrange'}`;
+      // Off the critical path: the await is wrapped + swallowed. The verdict
+      // has already been computed; this is observability only.
+      await _stateQuery('telemetry.record', {
+        kind: 'convergence',
+        metrics,
+        dedupKey,
+      }, {
+        projectRoot: _resolvedProjectDir,
+      }).catch(() => {
+        // Telemetry failures must NEVER affect the convergence verdict.
+        // (e.g. read-only FS, missing .ijfw/, lock contention) — swallow.
+      });
+    } catch {
+      // Defensive — should never throw before the `.catch` chain, but the
+      // metric computation itself (e.g. exotic NaN in _lensCosts) must not
+      // break the orchestrator return value.
+    }
+
     return enriched;
   }
 
@@ -1497,6 +1618,21 @@ export async function runPhaseEConverge({
       findingCount: mergedFindings.length,
       lensVerdicts,
     });
+
+    // T21 — false-positive accounting. Every reachable lens observation is
+    // a denominator tick; every FAIL/CONDITIONAL vote is a numerator tick
+    // (it "raised an alarm"). Whether each alarm was a true or false positive
+    // is decided at finalize against the final consensus verdict (see
+    // `_finalize`). UNREACHABLE lenses are excluded from both numerator and
+    // denominator — a CLI that never replied is neither a true nor false
+    // positive, it's a no-data point.
+    for (const r of lensResults) {
+      if (r.verdict === VERDICT_UNREACHABLE) continue;
+      _telemetryReachableObs += 1;
+      if (r.verdict === VERDICT_FAIL || r.verdict === VERDICT_CONDITIONAL) {
+        _telemetryAlarms += 1;
+      }
+    }
 
     // Stop conditions, in priority order.
 

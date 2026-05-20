@@ -1,0 +1,2 @@
+{"seq":1,"verb":"workflow.set-phase","subagentId":"cleanA2","ts":"2026-05-20T12:00:00.000Z","verbId":"v-clean-2-set-phase","outcome":"ok","payloadDigest":"sha256-fixture-v-clean-2-set-phase"}
+{"seq":2,"verb":"subagent.post-done","subagentId":"cleanA2","ts":"2026-05-20T12:00:00.000Z","verbId":"v-clean-2-post-done","outcome":"ok","payloadDigest":"sha256-fixture-v-clean-2-post-done"}

@@ -1,0 +1,2 @@
+{"seq":1,"verb":"workflow.set-phase","subagentId":"errT1","ts":"2026-05-20T12:00:00.000Z","verbId":"v-errT-1-ok","outcome":"ok","payloadDigest":"sha256-fixture-v-errT-1-ok"}
+{"seq":2,"verb":"wave.advance","subagentId":"errT1","ts":"2026-05-20T12:00:00.000Z","verbId":"v-errT-1-partial","outcome":"error","payloadDigest":"sha256-fixture-v-errT-1-partial"}

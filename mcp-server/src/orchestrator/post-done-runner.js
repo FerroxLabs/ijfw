@@ -6,6 +6,12 @@
  * (v1.4.4 N5) into a single callable the orchestrator-LLM invokes via MCP,
  * so the post-DONE contract isn't satisfied by markdown prose.
  *
+ * v1.5.0 T13: the standalone `ijfw_subagent_post_done` MCP tool was retired and
+ * absorbed into the single `ijfw_state` MCP tool as the `subagent.post-done`
+ * verb (see STATE-SDK-CONTRACT §7). `runSelfCheck` is re-exported through
+ * `state-sdk.js` for that verb; `runPostDone` is still exported here for the
+ * direct-import test path (`test-orchestrator-post-done-runner.js`).
+ *
  * Outcome shape (uniform regardless of branch taken):
  *   {
  *     verdict: 'approved' | 'spec_failed' | 'quality_failed',

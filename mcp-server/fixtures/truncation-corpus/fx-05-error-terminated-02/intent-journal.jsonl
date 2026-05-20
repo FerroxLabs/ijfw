@@ -1,0 +1,3 @@
+{"verb":"subagent.checkpoint","verbId":"v-errT-2-ckpt","phase":"begin","ts":"2026-05-20T12:00:00.000Z","targets":[".ijfw/wave-W20-errT-2/subagent-errT2.checkpoint.json"],"payloadDigest":"sha256-fixture-v-errT-2-ckpt","kind":"append","dedupKey":"dk-ckpt-errT-2"}
+{"verb":"subagent.checkpoint","verbId":"v-errT-2-ckpt","phase":"commit","ts":"2026-05-20T12:00:00.000Z","payloadDigest":"sha256-fixture-v-errT-2-ckpt","kind":"append","dedupKey":"dk-ckpt-errT-2"}
+{"verb":"decision.add","verbId":"v-errT-2-partial","phase":"begin","ts":"2026-05-20T12:00:00.000Z","targets":[".ijfw/blackboard/decisions.jsonl"],"payloadDigest":"sha256-fixture-v-errT-2-partial","kind":"append","dedupKey":"dk-errT-2"}

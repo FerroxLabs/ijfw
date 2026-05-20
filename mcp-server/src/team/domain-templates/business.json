@@ -1,0 +1,41 @@
+{
+  "schema_version": "domain-template/v1",
+  "domain": "business",
+  "display_name": "Business / Strategy",
+  "description": "Business plans, strategy memos, GTM plans, investor decks, OKRs, and operational roadmaps.",
+  "agent_ids": [],
+  "agent_id_source": "domain-specialist",
+  "workflow_phases": ["diagnose", "plan", "decide", "review"],
+  "brief_fields": [
+    {
+      "key": "business_objective",
+      "type": "string",
+      "description": "Primary business objective this work must serve (e.g. enter new market, cut costs, raise Series A).",
+      "required": true
+    },
+    {
+      "key": "stakeholders",
+      "type": "array",
+      "description": "Key stakeholders or decision-makers the output is written for.",
+      "required": false
+    },
+    {
+      "key": "time_horizon",
+      "type": "string",
+      "description": "Planning horizon (e.g. 90-day, annual, 3-year).",
+      "required": false
+    },
+    {
+      "key": "constraints",
+      "type": "array",
+      "description": "Known hard constraints: budget, headcount, regulatory, timeline.",
+      "required": false
+    },
+    {
+      "key": "success_metrics",
+      "type": "array",
+      "description": "Measurable success criteria (e.g. revenue target, churn rate, NPS).",
+      "required": false
+    }
+  ]
+}
