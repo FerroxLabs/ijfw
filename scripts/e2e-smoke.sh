@@ -757,14 +757,20 @@ else
   fail "1.1.6: Gemini after-agent.sh missing"
 fi
 
-# Codex Stop hook should emit the status card via systemMessage (in receipt line)
+# Codex Stop hook: opt-in receipt gate.
+# Codex renders Stop hook stdout as a visible warning, so routine notices are
+# default-off to avoid noise. IJFW_CODEX_HOOK_NOTICES=1 opts in. This gate
+# asserts the opt-in path: the hook emits a JSON systemMessage receipt.
+# The status card (update nudge) requires real session token usage (has_usage=1)
+# which is unavailable in a synthetic test payload; the update-nudge path is
+# proven by the Gemini AfterAgent and prelude cross-platform gates above.
 CODEX_HOOK="$REPO_ROOT/codex/.codex/hooks/session-end.sh"
 if [ -f "$CODEX_HOOK" ]; then
-  COD_OUT=$(echo '{"event":"Stop","session_id":"test-12345678"}' | HOME="$SC_HOME" IJFW_HOME="$SC_HOME/.ijfw" bash "$CODEX_HOOK" 2>/dev/null | head -1)
-  if echo "$COD_OUT" | grep -q '1.1.6 available' && echo "$COD_OUT" | grep -q 'systemMessage'; then
-    pass "1.1.6: Codex Stop emits status card with update nudge"
+  COD_OUT=$(echo '{"event":"Stop","session_id":"test-12345678"}' | HOME="$SC_HOME" IJFW_HOME="$SC_HOME/.ijfw" IJFW_CODEX_HOOK_NOTICES=1 bash "$CODEX_HOOK" 2>/dev/null | head -1)
+  if echo "$COD_OUT" | grep -q 'systemMessage'; then
+    pass "1.1.6: Codex Stop emits systemMessage receipt (IJFW_CODEX_HOOK_NOTICES=1 opt-in)"
   else
-    fail "1.1.6: Codex Stop did NOT emit status card: $COD_OUT"
+    fail "1.1.6: Codex Stop did NOT emit systemMessage: $COD_OUT"
   fi
 else
   fail "1.1.6: Codex session-end.sh missing"
