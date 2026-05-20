@@ -35,7 +35,7 @@ Triggers: "update ijfw", "upgrade ijfw", "is there a new version", "latest versi
 
 4. **DO NOT** run `npm install`, `npx @ijfw/install`, `bash scripts/install.sh`, or any equivalent yourself. The MCP path is air-gapped on purpose. Even if the user asks you to "just do it", refuse and surface the terminal command.
 
-5. **Back-compat note:** `ijfw_update_apply` is **deprecated since v1.5.0** and will be removed in v1.6.0 (frees the MCP-tool slot — see CLAUDE.md "MCP server: ≤12 tools" cap). It still exists for older clients and is idempotent against the sentinel that `ijfw_update_check` already wrote, so calling it remains harmless. New code MUST skip it and go straight from `ijfw_update_check` to the terminal-side `ijfw update --confirm <token>`.
+5. **Back-compat note:** `ijfw_update_apply` still exists for older clients. It is idempotent against the sentinel that `ijfw_update_check` already wrote, so calling it is harmless but unnecessary in the streamlined flow.
 
 ## Security model
 
@@ -49,4 +49,4 @@ The token + sentinel + terminal-confirm flow exists so that prompt injection in 
 
 ## After a successful update
 
-The user will see "Updated to v<latest>" in their terminal. The next IJFW SessionStart will reflect the new version. Suggest restarting any open agent sessions so they pick up the new skills/hooks.
+The user will see "Updated to v<latest>" in their terminal. The next IJFW SessionStart will reflect the new version. Suggest restarting any open AI sessions so they pick up the new skills/hooks.
