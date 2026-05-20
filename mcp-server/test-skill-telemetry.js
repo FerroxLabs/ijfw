@@ -73,17 +73,35 @@ test('topKSuccessfulSkills filters by since (ms)', async () => {
 // M3.3 -- sinkSkillTelemetry shim
 // ---------------------------------------------------------------------------
 
-test('sinkSkillTelemetry routes payload through recordSkillExecution', async () => {
+test('sinkSkillTelemetry routes telemetry.record payload through recordSkillExecution', async () => {
   const db = new Database(':memory:');
   await runMigrations(db, 0, 7);
+  // Match the actual state-SDK telemetry.record payload shape:
+  //   { kind, dedupKey, metrics }
   sinkSkillTelemetry(db, {
-    metric: 'skill.execution',
-    labels: { skill_id: 'ijfw-verify', session_id: 's-a' },
-    value: 1,
-    outcome: 'success',
-    latency_ms: 90,
+    kind: 'skill.execution',
+    dedupKey: 'skill-verify-s-a-1',
+    metrics: {
+      skill_id: 'ijfw-verify',
+      session_id: 's-a',
+      outcome: 'success',
+      latency_ms: 90,
+    },
   });
   const row = db.prepare('SELECT * FROM skill_telemetry WHERE skill_id=?').get('ijfw-verify');
   assert.equal(row.outcome, 'success');
   assert.equal(row.latency_ms, 90);
+});
+
+test('sinkSkillTelemetry skips non-skill telemetry payloads', async () => {
+  const db = new Database(':memory:');
+  await runMigrations(db, 0, 7);
+  const out = sinkSkillTelemetry(db, {
+    kind: 'cache.hit',
+    dedupKey: 'k1',
+    metrics: { count: 1 },
+  });
+  assert.equal(out.skipped, true);
+  const c = db.prepare('SELECT COUNT(*) AS c FROM skill_telemetry').get().c;
+  assert.equal(c, 0);
 });

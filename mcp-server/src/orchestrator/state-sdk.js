@@ -1245,6 +1245,27 @@ const handlers = {
       });
       current.updated_at = nowIso();
       writeJson(file, current);
+
+      // v1.5.0 memory-moat M3 (INT.3): when kind === 'skill.execution',
+      // additionally sink the structured row into memory.db's skill_telemetry
+      // table so handlePrelude (INT.4) can surface recommended_skills.
+      // Best-effort: failures here never affect the generic telemetry.record
+      // verb result (which has already written its append-only record above).
+      if (kind === 'skill.execution') {
+        try {
+          const { sinkSkillTelemetry } = await import('./skill-telemetry-sink.js');
+          const Database = (await import('better-sqlite3')).default;
+          const { join: joinP } = await import('node:path');
+          const dbPath = joinP(root, '.ijfw', 'index', 'memory.db');
+          const db = new Database(dbPath);
+          try {
+            sinkSkillTelemetry(db, payload);
+          } finally {
+            try { db.close(); } catch { /* best-effort */ }
+          }
+        } catch { /* best-effort sink — never block the generic record path */ }
+      }
+
       return { ok: true, telemetry: current, deduped: false };
     }, env);
   },
