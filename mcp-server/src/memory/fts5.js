@@ -36,6 +36,7 @@ import {
 } from './migration-runner.js';
 import { autoIndexGraphFromMemoryBody } from '../compute/graph-auto-index.js';
 import { redactSecrets } from '../redactor.js';
+import { indexObsidianRelations } from './obsidian-parser.js';
 
 // D-PILLAR-SPEC section 12 ingest scrub gate. Default-on; the only escape hatch
 // is the IJFW_INGEST_SCRUB=0 env var, used for local debugging only and
@@ -231,6 +232,18 @@ export function indexEntry(db, entry) {
     }
   });
   tx();
+
+  // v1.5.0 memory-moat M1 (INT.1): write Obsidian-grade indexing rows
+  // ([[wikilinks]], #nested/tags, [key:: value] inline metadata) into
+  // memory_links / memory_tags / memory_meta. Best-effort: a missing
+  // migration-006 schema or a parse failure must never block ingest.
+  try {
+    if (inserted && inserted.id != null) {
+      indexObsidianRelations(db, String(inserted.id), row.body);
+    }
+  } catch (e) {
+    try { console.error('[fts5] indexObsidianRelations failed:', e?.message || e); } catch { /* never throw */ }
+  }
 
   // GA-B3: fire D2 graph auto-population on memory ingest. The graph
   // lives in the compute db at the same projectRoot, so we open compute
