@@ -29,7 +29,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { query, payloadDigest } from './src/orchestrator/state-sdk.js';
+import { query, payloadDigest, VERBS } from './src/orchestrator/state-sdk.js';
 
 function mkProject() {
   const root = mkdtempSync(join(tmpdir(), 'state-sdk-idem-'));
@@ -390,5 +390,265 @@ test('replay: a committed append verb is skipped and never re-appended', async (
     );
     assert.equal(stateAfter, stateBefore,
       'STATE.md unchanged — the append verb was not replayed');
+  } finally { cleanup(); }
+});
+
+// ===========================================================================
+// PART G — GENUINELY interrupted query() (issue 5): a real throwing handler
+// drives the dispatcher's actual catch path, producing a real begin-without-
+// commit partial. No hand-written journal/snapshot — the SDK writes them.
+//
+// The "injected throwing handler" wraps the REAL handler: it runs the real
+// handler fully (real `_withLocks` → real `begin` + snapshot + mutation) then
+// throws BEFORE returning, simulating the process dying after the handler's
+// work but before the dispatcher's `_journalCommit`. Real `query()`, real
+// dispatcher catch, real temp dirs.
+// ===========================================================================
+
+/** Run `fn` with `VERBS[verb]` swapped for `wrapper`; always restore after. */
+async function withInjectedHandler(verb, wrapper, fn) {
+  const original = VERBS[verb];
+  VERBS[verb] = wrapper(original);
+  try {
+    return await fn();
+  } finally {
+    VERBS[verb] = original;
+  }
+}
+
+// --- G1 — a genuinely interrupted OVERWRITE verb is snapshot-rolled-back --
+test('rollback (real interruption): an interrupted overwrite verb is rolled back', async () => {
+  const { ctx, root, cleanup } = mkProject();
+  try {
+    // Committed baseline written by a normal query().
+    await query('workflow.set-phase', { phase: 'baseline' }, ctx);
+    const wfPath = join(root, '.ijfw', 'state', 'workflow.json');
+    const baseline = readFileSync(wfPath, 'utf8');
+
+    // Inject: run the real workflow.set-phase handler (real begin + snapshot
+    // + the real workflow.json overwrite), THEN throw — the process "crashes"
+    // after the mutation but before _journalCommit.
+    await assert.rejects(
+      withInjectedHandler(
+        'workflow.set-phase',
+        (real) => async (payload, c, env) => {
+          await real(payload, c, env); // real mutation happens here
+          throw new Error('simulated crash after mutation, before commit');
+        },
+        () => query('workflow.set-phase', { phase: 'INTERRUPTED' }, ctx),
+      ),
+      /simulated crash/,
+      'the interrupted query() rejects through the dispatcher catch path',
+    );
+
+    // The mutation landed but no commit was written → workflow.json now holds
+    // the interrupted value. The journal has a begin and NO commit.
+    const afterCrash = JSON.parse(readFileSync(wfPath, 'utf8'));
+    assert.equal(afterCrash.phase, 'INTERRUPTED',
+      'the interrupted verb did mutate the file before crashing');
+    const journal = readJournal(root);
+    const partial = journal.find(
+      (r) => r.phase === 'begin' && r.verb === 'workflow.set-phase'
+        && r.payloadDigest === payloadDigest({ phase: 'INTERRUPTED' }),
+    );
+    assert.ok(partial, 'a real begin record was written by the SDK');
+    assert.equal(
+      journal.some((r) => r.phase === 'commit' && r.verbId === partial.verbId),
+      false, 'no commit was written — it is a genuine partial',
+    );
+
+    // Replay rolls the overwrite back to its pre-begin snapshot.
+    const replay = await query('state.replay', {}, ctx);
+    assert.ok(replay.rolledBack.includes(partial.verbId),
+      'the genuinely-interrupted overwrite verb was rolled back');
+    assert.equal(readFileSync(wfPath, 'utf8'), baseline,
+      'workflow.json restored to its pre-begin (baseline) content');
+  } finally { cleanup(); }
+});
+
+// --- G2 — a genuinely interrupted APPEND verb keeps its durable record ----
+// The append landed durably before the crash. Replay must NOT revert the file
+// (that would lose a committed record) and must NOT double-apply (the next
+// clean retry with the same dedupKey is a no-op).
+test('rollback (real interruption): an interrupted append verb keeps its durable record', async () => {
+  const { ctx, root, cleanup } = mkProject();
+  try {
+    const log = join(root, '.ijfw', 'blackboard', 'decisions.jsonl');
+
+    // Inject: run the real decision.add handler (real begin + the real,
+    // durable JSONL append), THEN throw — crash after the append, before
+    // _journalCommit.
+    await assert.rejects(
+      withInjectedHandler(
+        'decision.add',
+        (real) => async (payload, c, env) => {
+          await real(payload, c, env); // the durable append happens here
+          throw new Error('simulated crash after append, before commit');
+        },
+        () => query('decision.add', { text: 'durable', dedupKey: 'dk-g2' }, ctx),
+      ),
+      /simulated crash/,
+      'the interrupted append query() rejects through the dispatcher catch path',
+    );
+
+    // The append is durable on disk despite the crash.
+    assert.equal(existsSync(log), true, 'decisions.jsonl exists');
+    let lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+    assert.equal(lines.length, 1, 'the append landed durably before the crash');
+    assert.equal(JSON.parse(lines[0]).dedupKey, 'dk-g2');
+
+    // No snapshot sidecar should exist for an append verb (issue 4 — appends
+    // are not snapshot-rolled-back, so the SDK captures none).
+    const journal0 = readJournal(root);
+    const beginRec = journal0.find(
+      (r) => r.phase === 'begin' && r.verb === 'decision.add'
+        && r.dedupKey === 'dk-g2',
+    );
+    assert.ok(beginRec, 'a real begin record was written');
+    assert.equal(beginRec.kind, 'append', 'the begin record is kind:append');
+    assert.equal(
+      existsSync(join(root, '.ijfw', 'state', 'intent-snapshots', `${beginRec.verbId}.json`)),
+      false, 'append verbs capture NO snapshot sidecar',
+    );
+
+    // Replay seals the partial — it must NOT revert decisions.jsonl.
+    const replay = await query('state.replay', {}, ctx);
+    assert.ok(Array.isArray(replay.sealed) && replay.sealed.includes(beginRec.verbId),
+      'the interrupted append verb was sealed (not rolled back)');
+    assert.equal(replay.rolledBack.includes(beginRec.verbId), false,
+      'an append partial is never in rolledBack — its file is not reverted');
+    lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+    assert.equal(lines.length, 1,
+      'the durably-committed record SURVIVED replay — not lost');
+
+    // The clean retry with the same dedupKey is a no-op — not double-applied.
+    const retry = await query('decision.add', { text: 'durable', dedupKey: 'dk-g2' }, ctx);
+    assert.equal(retry.deduped, true, 'the retry is deduped — no double-apply');
+    lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+    assert.equal(lines.length, 1, 'still exactly one record after the retry');
+  } finally { cleanup(); }
+});
+
+// --- G3 — interrupted append + replay + retry round-trips through query() --
+// Same as G2 but for telemetry.record (a dedupKey verb backed by a JSON
+// records[] array) — proves the append-safe replay split is verb-agnostic.
+test('rollback (real interruption): an interrupted telemetry.record is sealed, not lost', async () => {
+  const { ctx, root, cleanup } = mkProject();
+  try {
+    const file = join(root, '.ijfw', 'telemetry', 'convergence.json');
+
+    await assert.rejects(
+      withInjectedHandler(
+        'telemetry.record',
+        (real) => async (payload, c, env) => {
+          await real(payload, c, env);
+          throw new Error('simulated crash after record, before commit');
+        },
+        () => query('telemetry.record', {
+          kind: 'convergence', metrics: { cycles: 3 }, dedupKey: 'dk-g3',
+        }, ctx),
+      ),
+      /simulated crash/,
+    );
+
+    let obj = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(obj.records.length, 1, 'the record landed durably before crash');
+
+    const replay = await query('state.replay', {}, ctx);
+    const beginRec = readJournal(root).find(
+      (r) => r.phase === 'begin' && r.verb === 'telemetry.record',
+    );
+    assert.ok(replay.sealed.includes(beginRec.verbId), 'sealed, not rolled back');
+
+    obj = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(obj.records.length, 1, 'the durable telemetry record survived replay');
+
+    const retry = await query('telemetry.record', {
+      kind: 'convergence', metrics: { cycles: 3 }, dedupKey: 'dk-g3',
+    }, ctx);
+    assert.equal(retry.deduped, true, 'retry is deduped — no double-apply');
+    obj = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(obj.records.length, 1, 'still exactly one telemetry record');
+  } finally { cleanup(); }
+});
+
+// ===========================================================================
+// PART H — blocker.add / blocker.resolve mutate STATE.md (issue 1)
+// ===========================================================================
+
+/** Parse a wave STATE.md frontmatter into an object (minimal flat-YAML). */
+function readWaveFm(root, waveId) {
+  const p = join(root, '.ijfw', `wave-${waveId}`, 'STATE.md');
+  if (!existsSync(p)) return null;
+  const raw = readFileSync(p, 'utf8');
+  const end = raw.indexOf('\n---', 3);
+  const block = raw.slice(4, end);
+  const fm = {};
+  const lines = block.split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const c = lines[i].indexOf(':');
+    if (c === -1) continue;
+    const key = lines[i].slice(0, c).trim();
+    const rest = lines[i].slice(c + 1).trim();
+    if (rest === '') {
+      const seq = [];
+      let j = i + 1;
+      while (j < lines.length && lines[j].trimStart().startsWith('- ')) {
+        seq.push(lines[j].replace(/^\s*-\s?/, '')); j += 1;
+      }
+      fm[key] = seq; i = j - 1;
+    } else if (rest === '[]') fm[key] = [];
+    else fm[key] = rest;
+  }
+  return fm;
+}
+
+// --- H1 — blocker.add with waveId bumps blockers_open on STATE.md ---------
+test('blocker.add: with waveId, bumps blockers_open on the wave STATE.md', async () => {
+  const { ctx, root, cleanup } = mkProject();
+  try {
+    const r = await query('blocker.add', {
+      id: 'blk-1', text: 'CI red', waveId: 'W7', dedupKey: 'bh-1',
+    }, ctx);
+    assert.equal(r.ok, true);
+
+    const fm = readWaveFm(root, 'W7');
+    assert.ok(fm, 'STATE.md was created for the wave');
+    assert.deepEqual(fm.blockers_open, ['blk-1'],
+      'blockers_open holds the new blocker id');
+  } finally { cleanup(); }
+});
+
+// --- H2 — blocker.resolve with waveId decrements blockers_open -----------
+test('blocker.resolve: with waveId, removes the id from blockers_open', async () => {
+  const { ctx, root, cleanup } = mkProject();
+  try {
+    await query('blocker.add', {
+      id: 'blk-a', text: 'a', waveId: 'W7', dedupKey: 'bh-2a',
+    }, ctx);
+    await query('blocker.add', {
+      id: 'blk-b', text: 'b', waveId: 'W7', dedupKey: 'bh-2b',
+    }, ctx);
+    assert.deepEqual(readWaveFm(root, 'W7').blockers_open, ['blk-a', 'blk-b']);
+
+    const res = await query('blocker.resolve', {
+      id: 'blk-a', resolution: 'fixed', waveId: 'W7', dedupKey: 'bh-2r',
+    }, ctx);
+    assert.equal(res.ok, true);
+    assert.equal(res.resolved, true);
+    assert.deepEqual(readWaveFm(root, 'W7').blockers_open, ['blk-b'],
+      'the resolved blocker id was removed from blockers_open');
+  } finally { cleanup(); }
+});
+
+// --- H3 — without waveId, no STATE.md is created (lock targets match) -----
+test('blocker.add: without waveId, mutates only decisions.jsonl', async () => {
+  const { ctx, root, cleanup } = mkProject();
+  try {
+    await query('blocker.add', { id: 'blk-x', text: 'x', dedupKey: 'bh-3' }, ctx);
+    assert.equal(existsSync(join(root, '.ijfw', 'blackboard', 'decisions.jsonl')), true);
+    // No wave id → no wave dir, and no STATE.md to claim a lock on.
+    assert.equal(existsSync(join(root, '.ijfw', 'wave-undefined')), false,
+      'no spurious wave directory created');
   } finally { cleanup(); }
 });

@@ -101,18 +101,29 @@ const paths = {
 // ---------------------------------------------------------------------------
 
 /**
- * Lock-acquisition seam (T3 — IMPLEMENTED). `lockTargets` is the subset of
- * physical files a verb mutates. The verb core passes its §3-ordered list, but
- * `_withLocks` does NOT trust it: it routes the list through
- * `canonicalLockOrder` (defense in depth) so the acquire-order is always the
- * STATE-SDK-CONTRACT §3 coarse-to-fine order regardless of caller input.
+ * Lock-acquisition seam (T3) + journal-begin source of truth (T4 — issue 2).
  *
- * It then acquires every lock coarse-to-fine and releases in reverse by
- * NESTING `withFsLock` calls — the innermost call runs `fn`, and the `finally`
- * unwind of each `withFsLock` releases in exact reverse order. Because the
- * acquire-order is total and deterministic, two verbs touching an overlapping
- * file set can never form a lock-ordering cycle → the SDK is deadlock-free by
- * construction.
+ * `lockTargets` is the canonical-sorted list of physical files a verb mutates.
+ * It is the verb's SINGLE declaration of its target set — `_withLocks` both
+ * acquires the locks from it AND (for a mutating verb) writes the write-ahead
+ * `begin` record + rollback snapshot from the SAME list. There is no second
+ * place that re-derives a verb's targets.
+ *
+ * `_withLocks` routes the list through `canonicalLockOrder` (defense in depth)
+ * so the acquire-order is always the STATE-SDK-CONTRACT §3 coarse-to-fine
+ * order regardless of caller input, then acquires every lock coarse-to-fine
+ * and releases in reverse by NESTING `withFsLock` calls — the innermost call
+ * runs `fn`, and the `finally` unwind of each `withFsLock` releases in exact
+ * reverse order. Because the acquire-order is total and deterministic, two
+ * verbs touching an overlapping file set can never form a lock-ordering cycle
+ * → the SDK is deadlock-free by construction.
+ *
+ * JOURNAL-BEGIN (T4): when `env` carries `{ isMutating:true }`, `_withLocks`
+ * runs `_journalBegin` AFTER acquiring the intent-journal lock but BEFORE `fn`
+ * — write-ahead by construction. The real journal targets are derived from
+ * `lockTargets` minus the intent-journal path itself (infrastructure, never a
+ * verb target). The resulting handle is stashed on `env.journalHandle` for the
+ * dispatcher's `_journalCommit`.
  *
  * Locks are heartbeat-refreshed (`LOCK_OPTS.heartbeatMs`) so a long-running
  * verb is never wrongly reclaimed; a crashed holder still ages out at
@@ -121,23 +132,53 @@ const paths = {
  *
  * @param {string[]} lockTargets  physical paths the verb mutates (any order)
  * @param {() => Promise<T>} fn   the verb's critical section
+ * @param {object} [env]  per-invocation env — when mutating, carries verbId /
+ *                        verb / dedupKey / payloadDigest / isMutating /
+ *                        appendVerb; `_withLocks` writes `journalHandle` back.
  * @returns {Promise<T>}
  * @template T
  */
-async function _withLocks(lockTargets, fn) {
-  const ordered = canonicalLockOrder(
-    Array.isArray(lockTargets) ? lockTargets : [],
-  );
-  if (ordered.length === 0) return fn();
+async function _withLocks(lockTargets, fn, env) {
+  const declared = Array.isArray(lockTargets) ? lockTargets : [];
+  const ordered = canonicalLockOrder(declared);
+  if (ordered.length === 0) {
+    // No file targets → no locks. A mutating verb with no file targets still
+    // needs a journal begin/commit pair so it is replay-classifiable; the
+    // dispatcher handles that case (env.journalHandle stays null here).
+    return fn();
+  }
 
   // Recursively nest withFsLock: acquire ordered[0] coarse-to-fine; the
   // innermost frame runs `fn`. Each withFsLock's release fires on unwind, so
-  // locks release in exact reverse order automatically.
-  const acquireFrom = (index) => {
+  // locks release in exact reverse order automatically. For a mutating verb,
+  // immediately after the intent-journal lock (always ordered[0] — §3 #1) is
+  // held we run `_journalBegin`: write-ahead, and from the verb's OWN target
+  // list — never a re-derived one.
+  const journalAbs = ordered[0]; // §3 #1 — intent-journal is always first.
+  const realTargets = ordered.filter((t) => t !== journalAbs);
+
+  const acquireFrom = async (index) => {
     if (index >= ordered.length) return fn();
     return withFsLock(
       lockPathFor(ordered[index]),
-      () => acquireFrom(index + 1),
+      async () => {
+        // Just inside the intent-journal lock, before any other lock or `fn`:
+        // write the write-ahead begin record from this verb's real targets.
+        if (index === 0 && env && env.isMutating && !env.journalHandle) {
+          env.journalHandle = await _journalBegin({
+            root: env.root,
+            verb: env.verb,
+            verbId: env.verbId,
+            dedupKey: env.dedupKey,
+            payloadDigest: env.payloadDigest,
+            targets: realTargets,
+            // Append/dedupKey verbs are NOT snapshot-rolled-back (§4) — skip
+            // capturing a snapshot we would never restore.
+            snapshot: !env.appendVerb,
+          });
+        }
+        return acquireFrom(index + 1);
+      },
       LOCK_OPTS,
     );
   };
@@ -162,26 +203,48 @@ function relForJournal(root, abs) {
 //
 // Every mutating verb writes a write-ahead `begin` record to
 // `.ijfw/state/intent-journal.jsonl` BEFORE touching any target file and a
-// `commit` record AFTER the atomic rename(s) succeed. The dispatcher already
-// runs `_journalBegin` / `_journalCommit` inside the §3 intent-journal lock
-// (T3 acquires it as the outermost lock for every mutating verb) — so these
-// writes are serialized for free; T4 adds NO second lock.
+// `commit` record AFTER the atomic rename(s) succeed.
+//
+// SINGLE SOURCE OF TRUTH FOR A VERB'S TARGET SET (T4 spec-review issue 2):
+// `_withLocks(targets, fn, env)` is the ONE place a verb's target list is
+// known. The handler passes its real, canonical-sorted target list there to
+// acquire locks; `_withLocks` *reuses that exact list* to write the `begin`
+// record and capture the rollback snapshot. There is NO second switch that
+// re-derives targets — a handler that changes its target set changes it in
+// exactly one place (its own `_withLocks` call), and journaling follows for
+// free. `_withLocks` runs strictly BEFORE `fn` (the mutation) and is
+// write-ahead by construction; the dispatcher's `_journalCommit` runs after
+// the handler returns, reading the handle `_withLocks` stashed on `env`.
 //
 // Rollback source: alongside the `begin` record, `_journalBegin` captures a
 // pre-write snapshot of every target file into a per-verbId sidecar at
 // `.ijfw/state/intent-snapshots/<verbId>.json`. `_journalCommit` deletes the
 // sidecar (the write is durable — nothing to roll back). `state.replay` reads
-// a partial's sidecar to restore its targets.
+// a partial's sidecar to restore its targets. Append/dedupKey verbs do NOT
+// capture a snapshot (see ROLLBACK MODEL below).
 //
-// DEDUP SOURCE OF TRUTH: the per-target-log scan stays the in-critical-section
-// fast path (it already runs under the same intent-journal lock, atomic). The
-// `commit` record additionally carries the verb's `dedupKey` so the JOURNAL is
-// the authoritative idempotency record for `state.replay`. The two provably
-// AGREE: a verb writes its target-log append and its `commit` record inside
-// ONE critical section under ONE lock — there is no window where one says
-// "present" and the other says "absent". Append verbs are therefore replay-
-// safe two ways: a live double-call is caught by the target-log scan; a replay
-// is caught because the verb's verbId already has a begin+commit pair.
+// ROLLBACK MODEL — by verb kind (T4 spec-review issue 4):
+//   * Overwrite / read-modify-write verbs (no dedupKey — workflow.set-phase,
+//     wave.advance, phase.*, extension.set-active, …): a begin-without-commit
+//     partial is snapshot-rolled-back by `state.replay`. The whole target is
+//     restored to its pre-begin content.
+//   * Append / dedupKey verbs (wave.record-task, subagent.checkpoint,
+//     event.emit, telemetry.record, roster.record, decision.add, blocker.add,
+//     blocker.resolve): a partial append is LEFT IN PLACE. The append is
+//     durable and the `dedupKey` makes the caller's retry a no-op (§4) — so
+//     snapshot-rollback would only DESTROY a durably-committed record. Replay
+//     seals the partial with a commit marker; it never reverts the file.
+//     Append verbs therefore capture no snapshot at all.
+//
+// CRASH-SAFETY — honest scope (T4 spec-review issue 3): the LIVE double-call
+// fast path is atomic — a verb's target-log dedup scan and its mutation run
+// inside the verb's own §3 critical section. The `begin` record and the
+// `commit` record, however, are written by TWO separate intent-journal lock
+// acquisitions with the handler running between them; a crash can land in
+// that window. That is precisely what `state.replay` reconciles — replay-level
+// recovery is BEST-EFFORT across a crash, and the journal is the authority for
+// it. No comment here claims a single-critical-section guarantee that does not
+// exist; the design is a write-ahead log + replay, not a two-phase commit.
 // ---------------------------------------------------------------------------
 
 /** Snapshot-sidecar directory for in-flight (begin-but-not-commit) verbs. */
@@ -195,32 +258,43 @@ function snapshotPath(root, verbId) {
 }
 
 /**
- * LOCKING NOTE — `_journalBegin` and `_journalCommit` run at the DISPATCHER
- * level, strictly BEFORE and AFTER the verb handler. The handler acquires the
- * §3 intent-journal lock (T3, outermost) only for the duration of its own
- * critical section. begin → handler → commit is therefore a SEQUENTIAL chain,
- * never a nested one — so each of begin/commit acquires the intent-journal
- * lock itself with no re-entry and no deadlock (the handler's lock is already
- * released before commit, not yet taken before begin). This serializes journal
- * appends across concurrent verbs without holding a lock across the handler.
+ * LOCKING NOTE — `_journalBegin` runs INSIDE the §3 intent-journal lock that
+ * `_withLocks` already holds (it is the verb's outermost lock, §3 #1). It must
+ * NOT re-acquire that lock — `withFsLock` is a non-re-entrant `mkdir`-based
+ * mutex, so a nested acquire on the same path would deadlock against itself.
+ * `_journalBegin` is therefore lock-free by contract: its sole caller is
+ * `_withLocks`, immediately after the intent-journal lock is held.
+ *
+ * `_journalCommit` runs at the DISPATCHER level, strictly AFTER the handler
+ * has returned and released ALL §3 locks (including the intent-journal lock).
+ * It therefore acquires the intent-journal lock itself — no nesting, no
+ * re-entry. begin (inside the handler's journal lock) → handler → commit
+ * (its own fresh journal lock) is a sequential chain across TWO separate lock
+ * acquisitions; the window between them is reconciled by `state.replay`, not
+ * eliminated (see CRASH-SAFETY note above — this is a WAL + replay design).
  */
 
 /**
- * Intent-journal `begin` seam (T4 — IMPLEMENTED). Under the intent-journal
- * lock: captures a pre-write snapshot of every target, writes the snapshot
- * sidecar, then appends the `begin` record. Returns a handle the matching
- * `_journalCommit` consumes.
+ * Intent-journal `begin` writer (T4). LOCK-FREE — the caller (`_withLocks`)
+ * already holds the intent-journal lock. For overwrite verbs, captures a
+ * pre-write snapshot sidecar of every target; for append verbs
+ * (`record.snapshot === false`) it captures NOTHING (a partial append is
+ * never snapshot-rolled-back — §4). Then appends the `begin` record. Returns a
+ * handle the matching `_journalCommit` consumes.
  *
- * @param {{root:string, verb:string, verbId:string, dedupKey?:string, targets:string[], payloadDigest:string}} record
+ * @param {{root:string, verb:string, verbId:string, dedupKey?:string, targets:string[], payloadDigest:string, snapshot:boolean}} record
  *        `targets` is the absolute-path list the verb mutates (the
  *        intent-journal file itself is excluded — it is infrastructure).
+ *        `snapshot` — false for append/dedupKey verbs (no rollback snapshot).
  * @returns {Promise<object>} journal handle — `{ begun, root, verbId, ... }`
  */
 async function _journalBegin(record) {
-  const { root, verb, verbId, dedupKey, targets } = record;
+  const {
+    root, verb, verbId, dedupKey, targets, snapshot,
+  } = record;
   const journal = paths.intentJournal(root);
-  return withFsLock(lockPathFor(journal), async () => {
-    const relTargets = [];
+  const relTargets = [];
+  if (snapshot) {
     const snapTargets = [];
     for (const abs of targets) {
       const rel = relForJournal(root, abs);
@@ -240,38 +314,56 @@ async function _journalBegin(record) {
     // (the orphan sidecar is harmless — `state.validate` ignores it).
     ensureDir(snapshotDir(root));
     writeAtomic(snapshotPath(root, verbId), JSON.stringify({ verbId, targets: snapTargets }));
-    const begin = {
-      verb, verbId, phase: 'begin', ts: nowIso(), targets: relTargets,
-      payloadDigest: record.payloadDigest,
-    };
-    if (typeof dedupKey === 'string' && dedupKey) begin.dedupKey = dedupKey;
-    ensureDir(join(journal, '..'));
-    appendFileSync(journal, `${JSON.stringify(begin)}\n`, { mode: 0o600 });
-    return { begun: true, root, verbId, verb, dedupKey, payloadDigest: record.payloadDigest };
-  }, LOCK_OPTS);
+  } else {
+    // Append/dedupKey verb — no snapshot. The begin record still lists the
+    // real targets so the journal stays a complete record of intent.
+    for (const abs of targets) relTargets.push(relForJournal(root, abs));
+  }
+  const begin = {
+    verb, verbId, phase: 'begin', ts: nowIso(), targets: relTargets,
+    payloadDigest: record.payloadDigest,
+  };
+  if (typeof dedupKey === 'string' && dedupKey) begin.dedupKey = dedupKey;
+  // `kind` lets `state.replay` decide rollback vs seal-only without re-deriving
+  // verb taxonomy — the begin record is self-describing.
+  begin.kind = snapshot ? 'overwrite' : 'append';
+  ensureDir(join(journal, '..'));
+  appendFileSync(journal, `${JSON.stringify(begin)}\n`, { mode: 0o600 });
+  return {
+    begun: true, root, verbId, verb, dedupKey, snapshot,
+    payloadDigest: record.payloadDigest,
+  };
 }
 
 /**
- * Intent-journal `commit` seam (T4 — IMPLEMENTED). Under the intent-journal
- * lock: appends the `commit` record (durable-applied marker) and deletes the
- * now-redundant snapshot sidecar.
+ * Intent-journal `commit` seam (T4 — IMPLEMENTED). Runs at the dispatcher
+ * level AFTER the handler released all §3 locks — so it acquires the
+ * intent-journal lock itself (no nesting, no re-entry). Appends the `commit`
+ * record (durable-applied marker) and deletes the now-redundant snapshot
+ * sidecar (overwrite verbs only — append verbs never wrote one).
  *
  * @param {object} handle  the handle returned by `_journalBegin`
  */
 async function _journalCommit(handle) {
   if (!handle || !handle.begun) return;
-  const { root, verbId, verb, dedupKey } = handle;
+  const {
+    root, verbId, verb, dedupKey, snapshot,
+  } = handle;
   const journal = paths.intentJournal(root);
   await withFsLock(lockPathFor(journal), async () => {
     const commit = {
       verb, verbId, phase: 'commit', ts: nowIso(),
       payloadDigest: handle.payloadDigest,
+      kind: snapshot ? 'overwrite' : 'append',
     };
     if (typeof dedupKey === 'string' && dedupKey) commit.dedupKey = dedupKey;
     appendFileSync(journal, `${JSON.stringify(commit)}\n`, { mode: 0o600 });
     // The write is durable — the snapshot is no longer needed for rollback.
-    try { const s = snapshotPath(root, verbId); if (existsSync(s)) unlinkSync(s); }
-    catch { /* best-effort; a stale sidecar of a committed verb is harmless */ }
+    // Append verbs never captured one; the unlink is a harmless no-op for them.
+    if (snapshot) {
+      try { const s = snapshotPath(root, verbId); if (existsSync(s)) unlinkSync(s); }
+      catch { /* best-effort; a stale sidecar of a committed verb is harmless */ }
+    }
   }, LOCK_OPTS);
 }
 
@@ -455,6 +547,30 @@ function writeWaveStateFile(root, waveId, frontmatter, body) {
   return { frontmatter, body: body || '', raw };
 }
 
+/**
+ * Apply `transform` to the wave STATE.md `blockers_open` set and write it back.
+ * `blockers_open` is a string[] of open blocker ids — the same flat-YAML
+ * string-array shape `wave-state.js` writes (`blockers_open: [...]`). Day-1:
+ * auto-creates `.ijfw/wave-<waveId>/STATE.md` (status `in_progress`) when
+ * absent so a `blocker.add` with `waveId` always lands its STATE.md bump. Used
+ * by `blocker.add` (append an id) and `blocker.resolve` (remove an id).
+ */
+function bumpWaveBlockers(root, waveId, transform) {
+  const existing = readWaveStateFile(root, waveId);
+  const open = Array.isArray(existing?.frontmatter?.blockers_open)
+    ? [...existing.frontmatter.blockers_open] : [];
+  const next = transform(open);
+  const fm = {
+    ...(existing?.frontmatter || {}),
+    wave_id: waveId,
+    status: existing?.frontmatter?.status ?? 'in_progress',
+    created_at: existing?.frontmatter?.created_at ?? nowIso(),
+    updated_at: nowIso(),
+    blockers_open: next,
+  };
+  writeWaveStateFile(root, waveId, fm, existing?.body ?? '');
+}
+
 // ---------------------------------------------------------------------------
 // Context / payload validation
 // ---------------------------------------------------------------------------
@@ -497,7 +613,7 @@ const handlers = {
   },
 
   // --- workflow.set-phase — write, Day-1 create ----------------------------
-  async 'workflow.set-phase'(payload, ctx) {
+  async 'workflow.set-phase'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const phase = requireStr(payload?.phase, 'phase');
     const file = paths.workflow(root);
@@ -510,7 +626,7 @@ const handlers = {
       if (payload.version !== undefined) next.version = payload.version;
       writeJson(file, next);
       return { ok: true, workflow: next };
-    });
+    }, env);
   },
 
   // --- wave.get — read, Day-1 no-op ----------------------------------------
@@ -521,7 +637,7 @@ const handlers = {
   },
 
   // --- wave.advance — write, Day-1 create ----------------------------------
-  async 'wave.advance'(payload, ctx) {
+  async 'wave.advance'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const waveId = requireId(payload?.waveId, 'waveId');
     const status = requireStr(payload?.status, 'status');
@@ -542,11 +658,11 @@ const handlers = {
       }
       const wave = writeWaveStateFile(root, waveId, fm, existing?.body ?? '');
       return { ok: true, wave };
-    });
+    }, env);
   },
 
   // --- wave.record-task — append, Day-1 create, dedupKey -------------------
-  async 'wave.record-task'(payload, ctx) {
+  async 'wave.record-task'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const waveId = requireId(payload?.waveId, 'waveId');
     const taskId = requireStr(payload?.taskId, 'taskId');
@@ -573,11 +689,11 @@ const handlers = {
       if (existing?.frontmatter?.status === undefined) fm.status = 'in_progress';
       const wave = writeWaveStateFile(root, waveId, fm, existing?.body ?? '');
       return { ok: true, wave, deduped: false };
-    });
+    }, env);
   },
 
   // --- phase.plan-check — write, Day-1 refuse, gate=validatePlan -----------
-  async 'phase.plan-check'(payload, ctx) {
+  async 'phase.plan-check'(payload, ctx, env) {
     const root = requireRoot(ctx);
     let planText = payload?.planText;
     if (typeof planText !== 'string') {
@@ -615,11 +731,11 @@ const handlers = {
       };
       writeJson(file, current);
       return { ok: true, findings: result.findings, verdict: 'pass' };
-    });
+    }, env);
   },
 
   // --- phase.complete — write, Day-1 create, gate=verification ------------
-  async 'phase.complete'(payload, ctx) {
+  async 'phase.complete'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const phase = requireStr(payload?.phase, 'phase');
     const ev = payload?.evidence || {};
@@ -660,11 +776,11 @@ const handlers = {
         return { ok: true, advisory: true, gate: 'verification', reason: gateAdvisory, workflow: next };
       }
       return { ok: true, workflow: next };
-    });
+    }, env);
   },
 
   // --- subagent.dispatch — write, Day-1 create -----------------------------
-  async 'subagent.dispatch'(payload, ctx) {
+  async 'subagent.dispatch'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const subagentId = requireId(payload?.subagentId, 'subagentId');
     const waveId = requireId(payload?.waveId, 'waveId');
@@ -701,11 +817,11 @@ const handlers = {
         brief,
       ].join('\n');
       return { ok: true, dispatchBrief, subagentId, mode };
-    });
+    }, env);
   },
 
   // --- subagent.checkpoint — append, Day-1 create, dedupKey ---------------
-  async 'subagent.checkpoint'(payload, ctx) {
+  async 'subagent.checkpoint'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const waveId = requireId(payload?.waveId, 'waveId');
     const subagentId = requireId(payload?.subagentId, 'subagentId');
@@ -725,7 +841,7 @@ const handlers = {
         checkpoint: payload.checkpoint, updated_at: nowIso(),
       });
       return { ok: true, path: file, deduped: false };
-    });
+    }, env);
   },
 
   // --- subagent.post-done — write, Day-1 create, gate=self-check ----------
@@ -761,10 +877,16 @@ const handlers = {
     };
   },
 
-  // --- event.emit — append, Day-1 create, no §3 lock ----------------------
-  // T5 fleshes out rotation + the post-lock fire-and-forget envelope. The
-  // verb-core handler keeps it minimal: assign a monotonic seq + append.
-  async 'event.emit'(payload, ctx) {
+  // --- event.emit — append, Day-1 create ----------------------------------
+  // The `event.emit` *verb* is a caller-facing append (distinct from the
+  // implicit per-query observability tap `_emitEvent`, which is the §3 #10
+  // fire-and-forget one). §3 says the event-log entry "appears in the list
+  // only so its relative position is defined if a future verb ever needs it
+  // inline" — `event.emit` is that verb. It acquires the intent-journal lock
+  // (for the §4 begin/commit pair) + the event-log lock so its
+  // read-seq-then-append is atomic; both are released before the handler
+  // returns. T5 fleshes out rotation + the post-lock observability envelope.
+  async 'event.emit'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const subagentId = requireId(payload?.subagentId, 'subagentId');
     const waveId = requireId(payload?.waveId, 'waveId');
@@ -774,21 +896,24 @@ const handlers = {
       throw new Error('state-sdk: event.emit needs a data object');
     }
     const log = paths.eventLog(root, waveId, subagentId);
-    const existing = readJsonl(log);
-    const dup = existing.find((e) => e && e.dedupKey === dedupKey);
-    if (dup) return { ok: true, seq: dup.seq, deduped: true };
-    const seq = existing.length
-      ? (existing[existing.length - 1].seq || existing.length) + 1
-      : 1;
-    appendJsonl(log, {
-      seq, eventType, subagentId, waveId,
-      ts: nowIso(), dedupKey, data: payload.data,
-    });
-    return { ok: true, seq, deduped: false };
+    const targets = [paths.intentJournal(root), log];
+    return _withLocks(targets, async () => {
+      const existing = readJsonl(log);
+      const dup = existing.find((e) => e && e.dedupKey === dedupKey);
+      if (dup) return { ok: true, seq: dup.seq, deduped: true };
+      const seq = existing.length
+        ? (existing[existing.length - 1].seq || existing.length) + 1
+        : 1;
+      appendJsonl(log, {
+        seq, eventType, subagentId, waveId,
+        ts: nowIso(), dedupKey, data: payload.data,
+      });
+      return { ok: true, seq, deduped: false };
+    }, env);
   },
 
   // --- telemetry.record — append, Day-1 create, dedupKey -----------------
-  async 'telemetry.record'(payload, ctx) {
+  async 'telemetry.record'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const kind = requireStr(payload?.kind, 'kind');
     const dedupKey = requireStr(payload?.dedupKey, 'dedupKey');
@@ -809,7 +934,7 @@ const handlers = {
       current.updated_at = nowIso();
       writeJson(file, current);
       return { ok: true, telemetry: current, deduped: false };
-    });
+    }, env);
   },
 
   // --- roster.synthesize — read, Day-1 no-op ------------------------------
@@ -844,7 +969,7 @@ const handlers = {
   },
 
   // --- roster.record — append, Day-1 create, dedupKey --------------------
-  async 'roster.record'(payload, ctx) {
+  async 'roster.record'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const dedupKey = requireStr(payload?.dedupKey, 'dedupKey');
     const roster = payload?.roster;
@@ -852,7 +977,9 @@ const handlers = {
       throw new Error('state-sdk: roster.record needs a roster { domain, agents }');
     }
     const file = paths.teamWorkflow(root);
-    const targets = [paths.intentJournal(root), file];
+    // The verb writes BOTH team/workflow.json AND team/charter.json — both are
+    // declared targets so the journal `begin` records the full mutation set.
+    const targets = [paths.intentJournal(root), file, paths.teamCharter(root)];
     return _withLocks(targets, async () => {
       const existing = readJson(file, null);
       if (existing && existing.dedupKey === dedupKey) {
@@ -867,11 +994,11 @@ const handlers = {
         recorded_at: record.recorded_at,
       });
       return { ok: true, path: file, deduped: false };
-    });
+    }, env);
   },
 
   // --- extension.set-active — write, Day-1 create, homedir file ----------
-  async 'extension.set-active'(payload, ctx) {
+  async 'extension.set-active'(payload, ctx, env) {
     requireRoot(ctx);
     const scope = payload?.scope;
     if (!['project', 'org', 'user'].includes(scope)) {
@@ -892,11 +1019,11 @@ const handlers = {
       }
       writeJson(file, { manifest, scope, updated_at: nowIso() });
       return { ok: true, path: file };
-    });
+    }, env);
   },
 
   // --- decision.add — append, Day-1 create, dedupKey --------------------
-  async 'decision.add'(payload, ctx) {
+  async 'decision.add'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const text = requireStr(payload?.text, 'text');
     const dedupKey = requireStr(payload?.dedupKey, 'dedupKey');
@@ -907,11 +1034,16 @@ const handlers = {
       if (jsonlHasDedupKey(log, dedupKey)) return { ok: true, deduped: true };
       appendJsonl(log, { kind, text, dedupKey, ts: nowIso() });
       return { ok: true, deduped: false };
-    });
+    }, env);
   },
 
   // --- blocker.add — append, Day-1 create, dedupKey --------------------
-  async 'blocker.add'(payload, ctx) {
+  // Appends a kind:'blocker' record to decisions.jsonl AND, when `waveId` is
+  // given, bumps the wave STATE.md `blockers_open` set (contract §7) — the
+  // blocker id is added to the `blockers_open` string array. This makes the
+  // verb's real mutations match its declared lock targets: when STATE.md is a
+  // declared target, the verb actually writes it.
+  async 'blocker.add'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const id = requireStr(payload?.id, 'id');
     const text = requireStr(payload?.text, 'text');
@@ -929,12 +1061,21 @@ const handlers = {
         kind: 'blocker', blockerId: id, text, dedupKey,
         waveId: waveId ?? null, resolved: false, ts: nowIso(),
       });
+      // Bump blockers_open on the wave STATE.md when a wave was given.
+      if (waveId) {
+        bumpWaveBlockers(root, waveId, (open) => (
+          open.includes(id) ? open : [...open, id]
+        ));
+      }
       return { ok: true, blockerId: id, deduped: false };
-    });
+    }, env);
   },
 
   // --- blocker.resolve — append, Day-1 refuse, dedupKey ---------------
-  async 'blocker.resolve'(payload, ctx) {
+  // Appends a kind:'blocker-resolution' record AND, when `waveId` is given,
+  // decrements the wave STATE.md `blockers_open` set by removing the resolved
+  // blocker id (contract §7).
+  async 'blocker.resolve'(payload, ctx, env) {
     const root = requireRoot(ctx);
     const id = requireStr(payload?.id, 'id');
     const resolution = requireStr(payload?.resolution, 'resolution');
@@ -963,18 +1104,29 @@ const handlers = {
         kind: 'blocker-resolution', blockerId: id, resolution, dedupKey,
         waveId: waveId ?? null, resolved: resolvable, ts: nowIso(),
       });
+      // Decrement blockers_open: drop this id from the wave STATE.md set. Done
+      // even when not resolvable — the wave should not list an id whose
+      // resolution we just recorded; a no-op when the id was never present.
+      if (waveId) {
+        bumpWaveBlockers(root, waveId, (open) => open.filter((b) => b !== id));
+      }
       return { ok: true, blockerId: id, resolved: resolvable, deduped: false };
-    });
+    }, env);
   },
 
   // --- state.replay — read (recovery), Day-1 no-op -------------------
   // T4 (this task): reads the intent journal, classifies each verbId, and
-  // ROLLS BACK partials. A `begin`+`commit` pair = already applied → skip
-  // (no-op — re-issuing the verb is unnecessary). A `begin` with NO `commit` =
-  // a partial (interrupted before durability) → restore each target from the
-  // pre-`begin` snapshot sidecar, then mark the verbId terminal by appending a
-  // synthetic `commit` record (so a second replay sees it resolved and does
-  // not roll back again). T20 layers truncation-recovery orchestration on top.
+  // resolves partials BY VERB KIND (the begin record's `kind` field):
+  //   * begin + commit          → already applied → skip (no-op).
+  //   * begin, no commit, kind:'overwrite' → snapshot-rollback: restore each
+  //     target from the pre-begin snapshot sidecar (restore-or-delete), then
+  //     seal with a synthetic commit.
+  //   * begin, no commit, kind:'append'    → DO NOT roll back. A partial
+  //     append is durable and its dedupKey makes the caller's retry a no-op
+  //     (§4) — reverting the file would silently destroy a committed record.
+  //     Replay only seals it with a synthetic commit marker.
+  // A second replay sees the synthetic commit and treats the partial as
+  // resolved. T20 layers truncation-recovery orchestration on top.
   async 'state.replay'(payload, ctx) {
     const root = requireRoot(ctx);
     const journal = paths.intentJournal(root);
@@ -1000,6 +1152,7 @@ const handlers = {
       }
       const skipped = [];
       const rolledBack = [];
+      const sealed = [];
       for (const [verbId, beginRec] of begins) {
         if (commits.has(verbId)) {
           // begin + commit → durably applied. Re-issuing it would be a no-op,
@@ -1007,10 +1160,20 @@ const handlers = {
           skipped.push(verbId);
           continue;
         }
-        // Partial: begin without commit. Restore every target from the
-        // snapshot sidecar — restore-or-delete per its pre-begin existence.
+        // Partial: begin without commit. Resolve it by verb kind.
+        //   `kind:'append'`  → seal only; NEVER revert (a durable append's
+        //                      record would be lost). The dedupKey makes the
+        //                      caller's retry a no-op anyway (§4).
+        //   `kind:'overwrite'` (or a legacy begin with no `kind` but a
+        //                      snapshot sidecar) → snapshot-rollback.
+        // The snapshot sidecar's presence is the legacy-safe discriminator:
+        // append verbs never write one.
         const snap = readJson(snapshotPath(root, verbId), null);
-        if (snap && Array.isArray(snap.targets)) {
+        const isAppend = beginRec.kind === 'append'
+          || (beginRec.kind === undefined && snap === null);
+        if (!isAppend && snap && Array.isArray(snap.targets)) {
+          // Overwrite verb: restore every target from the snapshot sidecar —
+          // restore-or-delete per its pre-begin existence.
           for (const t of snap.targets) {
             try {
               if (t.existed) {
@@ -1021,19 +1184,31 @@ const handlers = {
             } catch { /* a single target restore failing must not abort the walk */ }
           }
         }
-        // Discard the snapshot sidecar and seal the verbId with a synthetic
-        // `commit` so a re-run of replay treats this partial as resolved.
+        // Discard any snapshot sidecar (overwrite verbs only — append verbs
+        // never wrote one) and seal the verbId with a synthetic `commit` so a
+        // re-run of replay treats this partial as resolved.
         try {
           const s = snapshotPath(root, verbId);
           if (existsSync(s)) unlinkSync(s);
         } catch { /* best-effort */ }
         appendFileSync(journal, `${JSON.stringify({
           verb: beginRec.verb, verbId, phase: 'commit', ts: nowIso(),
-          payloadDigest: beginRec.payloadDigest, rolledBack: true,
+          payloadDigest: beginRec.payloadDigest,
+          kind: isAppend ? 'append' : 'overwrite',
+          // `rolledBack:true` only for an overwrite verb whose targets were
+          // reverted; an append partial is sealed in place, not rolled back.
+          ...(isAppend ? { sealed: true } : { rolledBack: true }),
         })}\n`, { mode: 0o600 });
-        rolledBack.push(verbId);
+        // `rolledBack[]` = overwrite partials whose targets were restored
+        // (contract §7). `sealed[]` = append partials left durably in place
+        // and only marked terminal — additive, does not redefine the three
+        // documented arrays.
+        if (isAppend) sealed.push(verbId);
+        else rolledBack.push(verbId);
       }
-      return { ok: true, replayed: [], skipped, rolledBack };
+      return {
+        ok: true, replayed: [], skipped, rolledBack, sealed,
+      };
     }, LOCK_OPTS);
   },
 
@@ -1078,70 +1253,35 @@ const handlers = {
 /** The frozen verb registry — verb name → handler. Exported for tests. */
 export const VERBS = handlers;
 
-/** Verbs that mutate state (write a journal record under T4). */
+/**
+ * Verbs that mutate state and therefore write an intent-journal begin/commit
+ * pair (T4). Each one funnels through `_withLocks`, which is the single place
+ * a verb's target set is declared — there is NO parallel `targetsFor` switch
+ * (removed in the T4 spec-review fix; it was a second source of truth that
+ * already drifted from the handlers).
+ *
+ * `subagent.post-done` is NOT here — contract §8 classes it as a `read` verb
+ * (no-op Day-1, no file mutation) and §4 says read verbs write no journal
+ * records. It runs only the post-done self-check gate.
+ */
 const MUTATING = new Set([
   'workflow.set-phase', 'wave.advance', 'wave.record-task', 'phase.plan-check',
   'phase.complete', 'subagent.dispatch', 'subagent.checkpoint',
-  'subagent.post-done', 'event.emit', 'telemetry.record', 'roster.record',
+  'event.emit', 'telemetry.record', 'roster.record',
   'extension.set-active', 'decision.add', 'blocker.add', 'blocker.resolve',
 ]);
 
 /**
- * T4 — resolve the physical target files a mutating verb writes, so the
- * dispatcher can record them in the `begin` record and snapshot them for
- * rollback. This MIRRORS the `targets` list each handler builds for
- * `_withLocks`, minus the intent-journal path itself (infrastructure, not a
- * verb target — it is never rolled back). It is purely a read of `payload` /
- * `ctx`; it performs no I/O and never throws on a malformed payload (it just
- * returns the targets it can resolve — handler validation surfaces real
- * errors). `subagent.post-done` is mutating-for-gating but writes no file →
- * empty target list → no snapshot, an empty begin/commit pair (still recorded
- * so a post-done is replay-classifiable).
+ * Append/dedupKey verbs (contract §8). A partial append is replay-safe via its
+ * `dedupKey` (§4), NOT via snapshot-rollback — so `_journalBegin` captures no
+ * snapshot for these and `state.replay` never reverts their target file (it
+ * would destroy a durably-committed record). All other mutating verbs are
+ * overwrite / read-modify-write and DO snapshot-rollback.
  */
-function targetsFor(verb, payload, ctx) {
-  const root = ctx?.projectRoot;
-  if (typeof root !== 'string' || !root) return [];
-  const p = payload || {};
-  switch (verb) {
-    case 'workflow.set-phase':
-    case 'phase.plan-check':
-    case 'phase.complete':
-      return [paths.workflow(root)];
-    case 'wave.advance':
-      return ID_RE.test(p.waveId)
-        ? [paths.waves(root), paths.waveState(root, p.waveId)] : [];
-    case 'wave.record-task':
-    case 'subagent.dispatch':
-      return ID_RE.test(p.waveId) ? [paths.waveState(root, p.waveId)] : [];
-    case 'subagent.checkpoint':
-      return (ID_RE.test(p.waveId) && ID_RE.test(p.subagentId))
-        ? [paths.checkpoint(root, p.waveId, p.subagentId)] : [];
-    case 'event.emit':
-      return (ID_RE.test(p.waveId) && ID_RE.test(p.subagentId))
-        ? [paths.eventLog(root, p.waveId, p.subagentId)] : [];
-    case 'telemetry.record':
-      return [paths.telemetry(root)];
-    case 'roster.record':
-      return [paths.teamWorkflow(root), paths.teamCharter(root)];
-    case 'extension.set-active': {
-      const home = p.homeDir || ctx?.homeDir || homedir();
-      return [paths.activeExtension(home)];
-    }
-    case 'decision.add':
-      return [paths.decisions(root)];
-    case 'blocker.add':
-    case 'blocker.resolve': {
-      const t = [paths.decisions(root)];
-      if (p.waveId !== undefined && ID_RE.test(p.waveId)) {
-        t.push(paths.waveState(root, p.waveId));
-      }
-      return t;
-    }
-    case 'subagent.post-done':
-    default:
-      return [];
-  }
-}
+const APPEND_VERBS = new Set([
+  'wave.record-task', 'subagent.checkpoint', 'event.emit', 'telemetry.record',
+  'roster.record', 'decision.add', 'blocker.add', 'blocker.resolve',
+]);
 
 // ---------------------------------------------------------------------------
 // THE DISPATCHER
@@ -1170,23 +1310,24 @@ export async function query(verb, payload = {}, ctx = {}) {
   // Per-invocation id — `begin`/`commit` journal records (T4) and every event
   // record (T5) for this query share this verbId.
   const verbId = `v-${randomUUID()}-0000`;
-  const env = { verbId };
   const digest = payloadDigest(payload);
   const isMutating = MUTATING.has(verb);
 
-  // T4 — write-ahead intent `begin` record + pre-write target snapshot. Runs
-  // BEFORE the handler so the snapshot captures pre-mutation state; the handler
-  // (whose §3 locks are sequential to — never nested with — this) then mutates.
-  let journalHandle = null;
+  // The `env` object is the single channel between the dispatcher and the
+  // verb's `_withLocks` call. For a mutating verb it carries everything
+  // `_withLocks` needs to write the write-ahead `begin` record FROM THE VERB'S
+  // OWN TARGET LIST (issue 2 — no re-derivation): `_withLocks` populates
+  // `env.journalHandle` for `_journalCommit` to consume. The journal root is
+  // required up-front so a mutating verb with a malformed ctx fails fast.
+  const env = { verbId };
   if (isMutating) {
-    // The journal lives under the project root; require it up-front so a
-    // mutating verb with a malformed ctx fails fast (handler validation would
-    // surface the same error, but the journal needs the root to even begin).
-    const journalRoot = requireRoot(ctx);
-    journalHandle = await _journalBegin({
-      root: journalRoot, verb, verbId, dedupKey: payload?.dedupKey,
-      targets: targetsFor(verb, payload, ctx), payloadDigest: digest,
-    });
+    env.isMutating = true;
+    env.verb = verb;
+    env.root = requireRoot(ctx);
+    env.dedupKey = payload?.dedupKey;
+    env.payloadDigest = digest;
+    env.appendVerb = APPEND_VERBS.has(verb);
+    env.journalHandle = null;
   }
 
   let result;
@@ -1197,9 +1338,10 @@ export async function query(verb, payload = {}, ctx = {}) {
     else if (result && result.advisory) outcome = 'advisory';
   } catch (err) {
     outcome = 'error';
-    // T4 — the handler threw: the verb is a partial (begin, no commit). Leave
-    // the begin record + snapshot in place so `state.replay` rolls it back.
-    // T5 SEAM — emit the failure event before re-throwing. No-op until T5.
+    // T4 — the handler threw: if a `begin` was written (`env.journalHandle`
+    // set) the verb is a partial. Leave the begin record + snapshot in place
+    // so `state.replay` rolls it back (overwrite verb) or seals it (append
+    // verb). T5 SEAM — emit the failure event before re-throwing.
     _emitEvent({
       verb, subagentId: ctx?.subagentId ?? 'parent', ts: nowIso(),
       verbId, outcome, payloadDigest: digest,
@@ -1207,18 +1349,16 @@ export async function query(verb, payload = {}, ctx = {}) {
     throw err;
   }
 
-  // T4 — `commit` marker after the write(s) succeeded. A refused/non-ok result
-  // means the verb mutated nothing → also drop the begin record's partial
-  // status by committing (the snapshot equals current state; nothing to undo).
-  if (isMutating) {
-    if (result?.ok !== false) {
-      await _journalCommit(journalHandle);
-    } else {
-      // Refused: no file was mutated, so there is no partial to roll back.
-      // Commit anyway to mark the verbId terminal — replay must not treat a
-      // clean refusal as a recoverable partial.
-      await _journalCommit(journalHandle);
-    }
+  // T4 — `commit` marker after the handler returned. `env.journalHandle` is
+  // set iff `_withLocks` ran a `begin` (every mutating verb that reaches its
+  // critical section). A handler that returned early WITHOUT calling
+  // `_withLocks` (e.g. `phase.plan-check` Day-1 refuse / gate refuse) wrote no
+  // `begin` and needs no `commit` — it mutated nothing. When a `begin` exists,
+  // commit regardless of refused/ok: a refused result mutated nothing so the
+  // snapshot equals current state; committing marks the verbId terminal so
+  // replay never treats a clean refusal as a recoverable partial.
+  if (env.journalHandle) {
+    await _journalCommit(env.journalHandle);
   }
 
   // T5 SEAM — fire-and-forget event AFTER the critical section. No-op until T5.

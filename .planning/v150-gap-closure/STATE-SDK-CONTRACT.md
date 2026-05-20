@@ -401,15 +401,15 @@ carries `verbId` (string) and `ok` (boolean).
 - Signature: query('blocker.add', { id, text, waveId?, dedupKey })
 - Payload: `id` (string, required — stable blocker id) · `text` (string, required) · `waveId` (string, optional — associates the blocker to a wave) · `dedupKey` (string, required — append dedup).
 - Returns: `{ ok:true, blockerId: string, deduped: boolean }`.
-- Day-1: create — auto-creates `.ijfw/blackboard/decisions.jsonl` (blockers share the decision log, `kind:'blocker'`) when absent.
-- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl` → `.ijfw/wave-<waveId>/STATE.md` (the wave lock is acquired only when `waveId` is given, to bump `blockers_open`).
+- Day-1: create — auto-creates `.ijfw/blackboard/decisions.jsonl` (blockers share the decision log, `kind:'blocker'`) when absent; when `waveId` is given, also auto-creates `.ijfw/wave-<waveId>/STATE.md` (status `in_progress`) so the `blockers_open` bump always lands.
+- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl` → `.ijfw/wave-<waveId>/STATE.md` (the wave lock is acquired only when `waveId` is given, to bump `blockers_open`). When `waveId` is given the verb DOES write `STATE.md`: it bumps the `blockers_open` set — a `string[]` of open blocker ids (the same flat-YAML array shape `wave-state.js` writes) — by adding `id` (idempotent: a no-op if `id` is already present).
 
 ### verb: blocker.resolve
 - Signature: query('blocker.resolve', { id, resolution, waveId?, dedupKey })
 - Payload: `id` (string, required — the blocker id to resolve) · `resolution` (string, required) · `waveId` (string, optional) · `dedupKey` (string, required — append dedup; the resolution is itself an append).
 - Returns: `{ ok:true, blockerId: string, resolved: boolean, deduped: boolean }` — `resolved:false` when no open blocker with `id` exists.
 - Day-1: refuse — `ok:false` with `reason:'no-blocker-log'` when `decisions.jsonl` is absent (cannot resolve a blocker that was never recorded).
-- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl` → `.ijfw/wave-<waveId>/STATE.md` (wave lock only when `waveId` is given).
+- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/blackboard/decisions.jsonl` → `.ijfw/wave-<waveId>/STATE.md` (wave lock only when `waveId` is given). When `waveId` is given the verb DOES write `STATE.md`: it decrements the `blockers_open` set by removing `id` from the `string[]` of open blocker ids (a no-op if `id` was not present).
 
 ### verb: state.replay
 - Signature: query('state.replay', { sinceVerbId? })
