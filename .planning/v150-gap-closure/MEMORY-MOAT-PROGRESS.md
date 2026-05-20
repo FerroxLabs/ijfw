@@ -11,3 +11,4 @@
 [2026-05-21T01:55Z] M4.4 ✅ — dream/runner.mjs wired (idle gate + per-stage isolation); 4/4 e2e tests pass; legacy cooldown preserved as final stage
 [2026-05-21T02:10Z] INT.1 ✅ — fts5.indexEntry calls indexObsidianRelations; 2/2 e2e tests pass against real openDb path
 [2026-05-21T02:30Z] INT.6 ✅ — ijfw_memory_facts MCP tool def + dispatcher case; tool cap 12→13; 4 test-files synced (test.js, test-tool-cap, test-d2, test-d4); 104/104 npm test pass
+[2026-05-21T02:50Z] INT.5 ✅ — handleSearch routes dv: prefix to dataview executor; lazy-import + best-effort error handling; npm test 104/104 unchanged

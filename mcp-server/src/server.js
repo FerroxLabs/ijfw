@@ -1658,6 +1658,48 @@ async function handleSearch({ query, limit = 10, scope = 'project', label }) {
   }
   if (query.length > 500) query = query.substring(0, 500);
   if (scope !== 'project' && scope !== 'all') scope = 'project';
+
+  // v1.5.0 memory-moat M1 (INT.5): "dv:" prefix routes to the declarative
+  // Dataview-grade query mode. Returns structured rows from the FTS5 +
+  // memory_links/_tags/_meta join populated at write time by M1.3 /
+  // INT.1. Best-effort: errors fall through to the standard NL/FTS5 path
+  // so the new mode never breaks existing callers.
+  if (query.startsWith('dv:')) {
+    try {
+      const body = query.slice(3).trim();
+      const dvMod = await import('./memory/query-dataview.js');
+      const fts5Mod = await import('./memory/fts5.js');
+      const root = process.env.IJFW_PROJECT_DIR || process.cwd();
+      const db = await fts5Mod.openDb(root);
+      try {
+        const parsed = dvMod.parseDataviewQuery(body);
+        const result = dvMod.runDataviewQuery(db, parsed);
+        const rows = result.rows.slice(0, limit);
+        if (rows.length === 0) {
+          return { text: `No results for dataview query: "${body}"`, mode: 'dataview', parsed };
+        }
+        // Render in the existing text shape so MCP clients that expect
+        // a single string field keep working.
+        return {
+          text: rows
+            .map((r) => `[id:${r.id} source:${r.source || '?'} created:${r.created_at}] ${(r.body || '').slice(0, 200)}`)
+            .join('\n'),
+          mode: 'dataview',
+          parsed,
+          rowCount: rows.length,
+        };
+      } finally {
+        try { fts5Mod.closeDb(db); } catch { /* best-effort */ }
+      }
+    } catch (e) {
+      return {
+        text: `Dataview query failed: ${e && e.message ? e.message : String(e)}`,
+        mode: 'dataview',
+        isError: true,
+      };
+    }
+  }
+
   const results = await searchMemory(query, limit, scope);
   if (results.length === 0) {
     const where = scope === 'all' ? ' across all projects' : '';
@@ -2132,7 +2174,7 @@ process.on('unhandledRejection', (err) => {
 // integration test can drive the full pipeline without spawning a subprocess.
 export {
   sanitizeContent, atomicWrite, readMarkdownFile, PROJECT_HASH,
-  handleStore, handleRecall,
+  handleStore, handleRecall, handleSearch, handlePrelude,
   MEMORY_DIR, FACTS_FILE, FACTS_DB_FILE,
   getFactsDb,
 };
