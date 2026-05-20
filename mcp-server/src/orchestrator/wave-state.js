@@ -7,12 +7,30 @@
  *
  * Landed in W10-A0 (v1.4.4 prelude). checkpointWave is a stub;
  * N4 (W10-A2) will flesh out the blackboard→STATE rollup logic.
+ *
+ * v1.5.0 T7 (this task): wave.* writes route through the state-SDK
+ * (`query('wave.advance', ...)`) — tmp+rename + locks + intent/commit
+ * journalling happen inside the SDK. STATE.md frontmatter is the single
+ * source of truth; the `blockers_open` key is now derived FROM
+ * `decisions.jsonl` at checkpoint time (the SDK's `blocker.add`/
+ * `blocker.resolve` verbs append there), giving a single writer and a single
+ * representation. `blockers_open` carries the blocker **id** array (machine-
+ * consumed); a separate `blockers_open_summary` carries human-readable text.
+ *
+ * KNOWN SDK GAP (T7-followup-1): the SDK's `wave.advance` verb does NOT
+ * accept a `body` field — its handler always preserves the existing body.
+ * Until a body-write SDK verb lands, `writeWaveState` does a follow-up raw
+ * atomic write to update the body. The body-write itself is still
+ * tmp+rename+lock-protected and the SDK frontmatter write already committed
+ * via the intent journal — so the worst-case partial state (frontmatter
+ * advanced, body stale) is bounded and self-healing on next checkpoint.
  */
 
 import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
 import { readBlackboard } from '../blackboard.js';
+import { query } from './state-sdk.js';
 
 // Lazy S4 loader. Top-level `await import` would break `node:test` (unsettled
 // top-level await). Resolves on first checkpointWave call instead. Missing
@@ -205,23 +223,70 @@ export async function readWaveState(waveId, projectRoot) {
 }
 
 /**
- * Atomically write a wave's STATE.md using withFsLock + tmp+rename.
- * Auto-creates .ijfw/wave-<waveId>/ if missing.
+ * Atomically write a wave's STATE.md.
+ *
+ * v1.5.0 T7: frontmatter writes route through the state-SDK
+ * (`query('wave.advance', {waveId, status, frontmatter}, {projectRoot})`) so
+ * tmp+rename + locks + intent/commit journalling happen inside the SDK. The
+ * body — which the SDK contract does not yet expose a write verb for — is
+ * applied via a follow-up atomic write inside the same wave-STATE lock. The
+ * SDK's `wave.advance` handler preserves the existing body when it rewrites
+ * frontmatter, so the follow-up write only mutates body content and never
+ * loses an in-flight frontmatter update.
+ *
+ * Auto-creates `.ijfw/wave-<waveId>/` if missing (the SDK handler creates it
+ * on first call).
  *
  * @param {string} waveId
- * @param {{frontmatter: object, body: string}} state
+ * @param {{frontmatter: object, body?: string}} state
  * @param {string} projectRoot
  * @returns {Promise<void>}
  */
 export async function writeWaveState(waveId, state, projectRoot) {
-  const { dir, state: statePath, lock, tmp } = wavePaths(waveId, projectRoot);
-  const payload = `---\n${emitYaml(state.frontmatter)}\n---\n\n${state.body}`;
+  const fm = state.frontmatter || {};
+  // SDK's wave.advance requires `status` — supply 'pending' as a safe default
+  // for callers that haven't materialised one yet (matches deriveStatus's
+  // default-on-empty-blackboard behaviour).
+  const status = (typeof fm.status === 'string' && fm.status.length > 0)
+    ? fm.status : 'pending';
+  // wave.advance MERGES payload.frontmatter into the existing frontmatter;
+  // pass the full requested frontmatter so unrelated keys are overwritten
+  // intentionally (writeWaveState semantics: caller supplies the full
+  // frontmatter shape they want persisted).
+  await query(
+    'wave.advance',
+    { waveId, status, frontmatter: { ...fm } },
+    { projectRoot },
+  );
 
-  await withFsLock(lock, async () => {
-    await mkdir(dir, { recursive: true });
-    await writeFile(tmp, payload, 'utf8');
-    await rename(tmp, statePath);
-  });
+  // Body follow-up: SDK-gap T7-followup-1 — wave.advance preserves existing
+  // body and there is no body-write SDK verb yet. Until one lands, do an
+  // atomic in-place body update. Held under the same wave-STATE lock used by
+  // every wave-state writer, so concurrent checkpoints serialise.
+  if (state.body !== undefined && state.body !== null) {
+    const { dir, state: statePath, lock, tmp } = wavePaths(waveId, projectRoot);
+    await withFsLock(lock, async () => {
+      await mkdir(dir, { recursive: true });
+      let frontmatterRaw;
+      try {
+        const raw = await readFile(statePath, 'utf8');
+        const secondDelim = raw.indexOf('\n---', 3);
+        // Defensive: if the SDK-written STATE.md is somehow malformed, fall
+        // back to re-emitting frontmatter from the in-memory shape rather
+        // than refusing the body write.
+        if (raw.startsWith('---') && secondDelim !== -1) {
+          frontmatterRaw = raw.slice(0, secondDelim + 4); // '---\n…\n---\n'
+        } else {
+          frontmatterRaw = `---\n${emitYaml(fm)}\n---\n`;
+        }
+      } catch {
+        frontmatterRaw = `---\n${emitYaml(fm)}\n---\n`;
+      }
+      const payload = `${frontmatterRaw}\n${state.body}`;
+      await writeFile(tmp, payload, 'utf8');
+      await rename(tmp, statePath);
+    });
+  }
 }
 
 /**
@@ -355,6 +420,49 @@ export function renderBody(filtered, _existing) {
 }
 
 /**
+ * v1.5.0 T7: derive the open-blocker set for a wave from `decisions.jsonl`.
+ *
+ * The SDK's `blocker.add` / `blocker.resolve` verbs append `kind:'blocker'` /
+ * `kind:'blocker-resolution'` records to `.ijfw/blackboard/decisions.jsonl`
+ * (T4 contract §7). A blocker is **open** when:
+ *   - a `kind:'blocker'` record exists for the wave (matched by
+ *     record.waveId === waveId), AND
+ *   - no later `kind:'blocker-resolution'` record carries the same
+ *     `blockerId`.
+ *
+ * Returns parallel arrays of stable ids (for `blockers_open`, machine-
+ * consumed) and human messages (for `blockers_open_summary`, optional UI).
+ *
+ * @param {{recent?: {decisions?: object[]}}} blackboard
+ * @param {string} waveId
+ * @returns {{ids: string[], summaries: string[]}}
+ */
+export function deriveOpenBlockers(blackboard, waveId) {
+  const decisions = Array.isArray(blackboard?.recent?.decisions)
+    ? blackboard.recent.decisions : [];
+  const resolvedIds = new Set();
+  for (const r of decisions) {
+    if (r && r.kind === 'blocker-resolution' && typeof r.blockerId === 'string') {
+      resolvedIds.add(r.blockerId);
+    }
+  }
+  const ids = [];
+  const summaries = [];
+  const seen = new Set();
+  for (const r of decisions) {
+    if (!r || r.kind !== 'blocker') continue;
+    if (typeof r.blockerId !== 'string' || !r.blockerId) continue;
+    if (r.waveId !== waveId) continue;
+    if (resolvedIds.has(r.blockerId)) continue;
+    if (seen.has(r.blockerId)) continue;
+    seen.add(r.blockerId);
+    ids.push(r.blockerId);
+    summaries.push(quoteYamlStr(typeof r.text === 'string' ? r.text : ''));
+  }
+  return { ids, summaries };
+}
+
+/**
  * Roll up the blackboard slice for `waveId` into STATE.md frontmatter+body.
  *
  * Steps:
@@ -362,10 +470,14 @@ export function renderBody(filtered, _existing) {
  *  2. Read blackboard.js — defensive: missing/uninitialized blackboard yields
  *     empty arrays so checkpointing never throws on a clean tree.
  *  3. Filter blackboard entries by wave tag.
- *  4. Derive status + frontmatter; render markdown body.
- *  5. Persist atomically via writeWaveState.
- *  6. Append a SUMMARY.md delta when status transitions.
- *  7. If S4's populateBlackboardBlock is loaded, refresh AGENTS.md (advisory —
+ *  4. Derive `blockers_open` from `decisions.jsonl` (single source of truth —
+ *     the SDK's blocker.add/blocker.resolve verbs append there). Legacy
+ *     `blackboard.recent.blockers` (from `addBlackboardNote(kind:'blocker')`)
+ *     still drives the `status='blocked'` rule for back-compat.
+ *  5. Derive status + frontmatter; render markdown body.
+ *  6. Persist atomically via writeWaveState (SDK-routed).
+ *  7. Append a SUMMARY.md delta when status transitions.
+ *  8. If S4's populateBlackboardBlock is loaded, refresh AGENTS.md (advisory —
  *     silent on failure).
  *
  * @param {string} waveId
@@ -384,12 +496,31 @@ export async function checkpointWave(waveId, projectRoot) {
   } catch {
     blackboard = {
       claims: { data: { claims: [] } },
-      recent: { findings: [], blockers: [] },
+      recent: { findings: [], blockers: [], decisions: [] },
     };
   }
 
   const filtered = filterByWave(blackboard, waveId);
-  const status = deriveStatus(filtered, existing);
+  // T7: single-writer reconciliation. `blockers_open` is now derived from
+  // decisions.jsonl (the SDK's blocker.add/blocker.resolve target) — an array
+  // of stable blocker ids. The legacy blackboard `blockers.jsonl` slice is
+  // still used to drive `status='blocked'` so existing call sites that emit
+  // blockers via `addBlackboardNote(kind:'blocker')` keep working.
+  const openBlockers = deriveOpenBlockers(blackboard, waveId);
+  // For deriveStatus and renderBody, merge legacy filtered blockers with the
+  // SDK-derived ones so any source of an open blocker still flips status.
+  const sdkBlockerEntries = openBlockers.ids.map((id, i) => ({
+    blockerId: id, message: openBlockers.summaries[i], wave_id: waveId,
+  }));
+  // Deduplicate by message text — a legacy blocker and an SDK blocker with
+  // identical text shouldn't appear twice in the body.
+  const blockerMessages = new Set(filtered.blockers.map((b) => b.message ?? ''));
+  const mergedBlockers = [...filtered.blockers];
+  for (const b of sdkBlockerEntries) {
+    if (!blockerMessages.has(b.message)) mergedBlockers.push(b);
+  }
+  const mergedFiltered = { ...filtered, blockers: mergedBlockers };
+  const status = deriveStatus(mergedFiltered, existing);
 
   const next = {
     frontmatter: {
@@ -399,12 +530,15 @@ export async function checkpointWave(waveId, projectRoot) {
       checkpoint_at: now,
       claims_active: filtered.claims.filter((c) => c.status === 'active').length,
       findings_recent: filtered.findings.slice(-5).map((f) => quoteYamlStr(f.message ?? '')),
-      blockers_open: filtered.blockers
-        .filter((b) => !b.resolved)
-        .map((b) => quoteYamlStr(b.message ?? '')),
+      // T7: canonical machine-consumed shape — array of stable blocker ids
+      // sourced from decisions.jsonl. Empty when no SDK blockers are open.
+      blockers_open: openBlockers.ids,
+      // Human-readable summary (optional UI), populated from the same SDK
+      // decisions.jsonl records that fed `blockers_open`.
+      blockers_open_summary: openBlockers.summaries,
       agents: [...new Set(filtered.claims.map((c) => c.agent ?? c.owner).filter(Boolean))],
     },
-    body: renderBody(filtered, existing),
+    body: renderBody(mergedFiltered, existing),
   };
 
   await writeWaveState(waveId, next, projectRoot);

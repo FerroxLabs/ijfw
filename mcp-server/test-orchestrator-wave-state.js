@@ -1,5 +1,6 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import {
   filterByWave,
   renderBody,
   quoteYamlStr,
+  deriveOpenBlockers,
 } from './src/orchestrator/wave-state.js';
 import {
   initBlackboard,
@@ -20,6 +22,7 @@ import {
   addBlackboardNote,
   writeBlackboardTasks,
 } from './src/blackboard.js';
+import { query } from './src/orchestrator/state-sdk.js';
 
 function makeTmp() {
   return mkdtempSync(join(tmpdir(), 'wave-state-'));
@@ -208,20 +211,128 @@ test('S5: checkpointWave filters wave-tagged findings out of mixed blackboard wi
   assert.match(result.frontmatter.findings_recent[2], /\[W11-X\] c/);
 });
 
-test('S5: open blockers force status=blocked and populate blockers_open', async () => {
+test('S5: legacy blackboard blocker (addBlackboardNote) still drives status=blocked', async () => {
+  // T7: legacy blockers (via addBlackboardNote(kind:'blocker'), targeting
+  // blockers.jsonl) keep driving `status='blocked'` for back-compat. They do
+  // NOT populate `blockers_open` — that field is now exclusively sourced from
+  // decisions.jsonl (the SDK blocker.add target). The legacy blocker's
+  // message DOES still appear in the body's "## Open blockers" section so a
+  // human reading STATE.md sees what's wrong.
   const root = makeTmp();
   initBlackboard(root);
-  // Add an active claim plus an open blocker — blocker wins.
   claimArtifact(root, { artifact_id: 'W11-X:file-a', agent: 'agentA', paths: ['a'] });
   addBlackboardNote(root, { kind: 'blocker', author: 'agentA', message: '[W11-X] disk full' });
 
   const result = await checkpointWave('W11-X', root);
 
   assert.equal(result.frontmatter.status, 'blocked');
-  assert.equal(result.frontmatter.blockers_open.length, 1);
-  assert.match(result.frontmatter.blockers_open[0], /disk full/);
+  // Legacy blockers do NOT populate blockers_open (which is now ids-only,
+  // sourced from decisions.jsonl).
+  assert.deepEqual(result.frontmatter.blockers_open, []);
+  // Body still surfaces the legacy blocker for humans.
   assert.match(result.body, /^## Open blockers/m);
   assert.match(result.body, /- \[W11-X\] disk full/);
+});
+
+test('T7 cross-verb: blocker.add then checkpoint surfaces blocker id in blockers_open', async () => {
+  // The falsifiable proof that T4→T7 reconciliation holds: an SDK blocker is
+  // visible in STATE.md frontmatter as a stable id, and a subsequent
+  // blocker.resolve flips it back to absent on next checkpoint.
+  const root = makeTmp();
+  initBlackboard(root);
+
+  const blockerId = 'BLK-W11X-001';
+  const addResult = await query(
+    'blocker.add',
+    {
+      id: blockerId,
+      text: 'disk full',
+      waveId: 'W11-X',
+      dedupKey: `blocker.add:${blockerId}:t1`,
+    },
+    { projectRoot: root },
+  );
+  assert.equal(addResult.ok, true);
+
+  const afterAdd = await checkpointWave('W11-X', root);
+  assert.equal(afterAdd.frontmatter.status, 'blocked');
+  assert.deepEqual(afterAdd.frontmatter.blockers_open, [blockerId]);
+  // The optional human summary mirrors the blocker text.
+  assert.ok(Array.isArray(afterAdd.frontmatter.blockers_open_summary));
+  assert.match(afterAdd.frontmatter.blockers_open_summary[0] ?? '', /disk full/);
+  // Body shows the merged blocker (legacy + SDK source) under H2.
+  assert.match(afterAdd.body, /^## Open blockers/m);
+
+  // The blocker survives a re-read from disk via the SDK-routed write.
+  const persistedAfterAdd = await readWaveState('W11-X', root);
+  assert.deepEqual(persistedAfterAdd?.frontmatter.blockers_open, [blockerId]);
+
+  // Resolve the blocker; next checkpoint must drop it from blockers_open.
+  const resResult = await query(
+    'blocker.resolve',
+    {
+      id: blockerId,
+      resolution: 'cleared disk',
+      waveId: 'W11-X',
+      dedupKey: `blocker.resolve:${blockerId}:t1`,
+    },
+    { projectRoot: root },
+  );
+  assert.equal(resResult.ok, true);
+  assert.equal(resResult.resolved, true);
+
+  const afterResolve = await checkpointWave('W11-X', root);
+  assert.deepEqual(afterResolve.frontmatter.blockers_open, []);
+  // No claims + no open blockers → deriveStatus preserves the prior persisted
+  // status ('blocked' from the previous checkpoint). This is intentional: a
+  // wave that was blocked stays blocked until something positive happens
+  // (a claim is filed or all are released). The persisted blocker history is
+  // the audit trail; `blockers_open` correctly reports zero open blockers.
+  assert.equal(afterResolve.frontmatter.status, 'blocked');
+});
+
+test('T7 cross-verb: SDK blocker on a different wave does NOT leak into this wave', async () => {
+  const root = makeTmp();
+  initBlackboard(root);
+  await query(
+    'blocker.add',
+    {
+      id: 'BLK-OTHER-001',
+      text: 'wrong wave',
+      waveId: 'W99-Z',
+      dedupKey: 'blocker.add:BLK-OTHER-001:t1',
+    },
+    { projectRoot: root },
+  );
+
+  const result = await checkpointWave('W11-X', root);
+  assert.deepEqual(result.frontmatter.blockers_open, []);
+});
+
+test('T7 deriveOpenBlockers unit: filters by waveId and excludes resolved', () => {
+  const blackboard = {
+    recent: {
+      decisions: [
+        { kind: 'blocker', blockerId: 'B1', text: 'one', waveId: 'W11-X' },
+        { kind: 'blocker', blockerId: 'B2', text: 'two', waveId: 'W11-X' },
+        { kind: 'blocker', blockerId: 'B3', text: 'other-wave', waveId: 'W99-Z' },
+        { kind: 'blocker-resolution', blockerId: 'B2', waveId: 'W11-X' },
+      ],
+    },
+  };
+  const { ids, summaries } = deriveOpenBlockers(blackboard, 'W11-X');
+  assert.deepEqual(ids, ['B1']);
+  assert.equal(summaries.length, 1);
+  assert.match(summaries[0], /one/);
+});
+
+test('T7 deriveOpenBlockers unit: empty / missing decisions yields empty arrays', () => {
+  assert.deepEqual(deriveOpenBlockers({}, 'W11-X'), { ids: [], summaries: [] });
+  assert.deepEqual(deriveOpenBlockers({ recent: {} }, 'W11-X'), { ids: [], summaries: [] });
+  assert.deepEqual(
+    deriveOpenBlockers({ recent: { decisions: [] } }, 'W11-X'),
+    { ids: [], summaries: [] },
+  );
 });
 
 test('S5: renderBody returns markdown with H2 sections for findings + blockers', () => {
@@ -344,4 +455,139 @@ test('S5 perf: checkpointWave with 1000 tasks runs under 500ms', async () => {
   await checkpointWave('W11-X', root);
   const elapsed = Date.now() - start;
   assert.ok(elapsed < 500, `checkpointWave took ${elapsed}ms (expected <500ms)`);
+});
+
+// ---------------------------------------------------------------------------
+// T7: SDK regression — wave-state.js routes writes through the state-SDK.
+//
+// Strategy: wrap fs write surfaces in a path-scoped spy AND observe `query()`
+// calls. The legitimacy contract for wave-state.js is:
+//   * Frontmatter writes  → MUST call `query('wave.advance', ...)`.
+//   * SUMMARY.md          → raw append is fine (not §1 canonical state).
+//   * STATE.md body       → raw atomic write is the documented SDK-gap
+//                           workaround (T7-followup-1) until the SDK exposes
+//                           a body-write verb. Allowed.
+// The spy raises if wave-state.js touches a path that wave-state has NEVER
+// owned (workflow.json, waves.json) — i.e. proof it bypassed the SDK to write
+// a sibling state file directly. Intent-journal / decisions.jsonl /
+// events-*.jsonl writes from inside the SDK are EXPECTED (this is the SDK
+// doing its job) — those paths are allow-listed because the SDK itself owns
+// them. The spy is scoped specifically to surfaces wave-state.js was the
+// historical raw-writer of (workflow.json, waves.json) plus any paths that
+// would represent a clear bypass.
+// ---------------------------------------------------------------------------
+
+const WRITE_METHODS = [
+  'writeFile', 'writeFileSync',
+  'open', 'openSync',
+];
+
+// Paths that, if written from wave-state.js directly, would represent an SDK
+// bypass. The SDK ITSELF writes intent-journal / decisions / events / homedir
+// active-extension — those are SDK-internal and DO NOT appear here.
+const BYPASS_PATH_PATTERNS = [
+  /\/\.ijfw\/state\/workflow\.json(\.tmp[^/]*)?$/,
+  /\/\.ijfw\/state\/waves\.json(\.tmp[^/]*)?$/,
+];
+
+function pathFromArgs(args) {
+  const first = args[0];
+  if (typeof first === 'string') return first;
+  if (first && typeof first === 'object' && typeof first.toString === 'function') {
+    const s = first.toString();
+    return typeof s === 'string' ? s : null;
+  }
+  return null;
+}
+
+function isBypassPath(p) {
+  if (typeof p !== 'string' || p.length === 0) return false;
+  return BYPASS_PATH_PATTERNS.some((re) => re.test(p));
+}
+
+function installBypassWriteSpies(blocked) {
+  const replaced = WRITE_METHODS.map((name) => {
+    const original = fs[name];
+    const handle = mock.method(fs, name, function (...args) {
+      const p = pathFromArgs(args);
+      if (isBypassPath(p)) {
+        blocked.push({ method: name, path: p });
+        throw new Error(
+          `wave-state: raw fs.${name} call to SDK-managed path "${p}" — must route through state-SDK query() instead`,
+        );
+      }
+      return original.apply(this, args);
+    });
+    return handle;
+  });
+  return () => replaced.forEach((m) => m.mock.restore());
+}
+
+test('T7 spy: writeWaveState does not raw-write workflow.json / waves.json', async () => {
+  const root = makeTmp();
+  const blocked = [];
+  const restore = installBypassWriteSpies(blocked);
+  try {
+    await writeWaveState(
+      'W14-A',
+      { frontmatter: { wave_id: 'W14-A', status: 'in_progress' }, body: '# body' },
+      root,
+    );
+  } finally {
+    restore();
+  }
+  assert.deepEqual(
+    blocked,
+    [],
+    `writeWaveState bypassed SDK: ${JSON.stringify(blocked)}`,
+  );
+  // Sanity: STATE.md is on disk and contains both frontmatter + body.
+  const raw = readFileSync(join(root, '.ijfw', 'wave-W14-A', 'STATE.md'), 'utf8');
+  assert.match(raw, /wave_id: W14-A/);
+  assert.match(raw, /status: in_progress/);
+  assert.match(raw, /# body/);
+});
+
+test('T7 spy: checkpointWave does not raw-write workflow.json / waves.json', async () => {
+  const root = makeTmp();
+  initBlackboard(root);
+  claimArtifact(root, { artifact_id: 'W14-B:f', agent: 'agentA', paths: ['x'] });
+  addBlackboardNote(root, { kind: 'finding', author: 'agentA', message: '[W14-B] f1' });
+
+  const blocked = [];
+  const restore = installBypassWriteSpies(blocked);
+  try {
+    await checkpointWave('W14-B', root);
+  } finally {
+    restore();
+  }
+  assert.deepEqual(
+    blocked,
+    [],
+    `checkpointWave bypassed SDK: ${JSON.stringify(blocked)}`,
+  );
+});
+
+test('T7 proof-of-routing: writeWaveState writes a wave.advance intent record', async () => {
+  // Read the intent-journal AFTER writeWaveState — if frontmatter writes
+  // routed through `query('wave.advance', ...)`, the SDK will have appended a
+  // begin+commit pair to .ijfw/state/intent-journal.jsonl. We assert exactly
+  // one begin+commit pair with `verb:'wave.advance'`. This is a direct
+  // observation of the SDK doing its job — the canonical proof of routing.
+  const root = makeTmp();
+  await writeWaveState(
+    'W14-D',
+    { frontmatter: { wave_id: 'W14-D', status: 'in_progress' }, body: '' },
+    root,
+  );
+  const journalPath = join(root, '.ijfw', 'state', 'intent-journal.jsonl');
+  assert.ok(existsSync(journalPath), 'SDK must create the intent journal');
+  const lines = readFileSync(journalPath, 'utf8').split('\n').filter(Boolean);
+  const records = lines.map((l) => JSON.parse(l));
+  const begins = records.filter((r) => r.verb === 'wave.advance' && r.phase === 'begin');
+  const commits = records.filter((r) => r.verb === 'wave.advance' && r.phase === 'commit');
+  assert.equal(begins.length, 1, `expected exactly one wave.advance begin; got ${begins.length}`);
+  assert.equal(commits.length, 1, `expected exactly one wave.advance commit; got ${commits.length}`);
+  // begin + commit share the same verbId.
+  assert.equal(begins[0].verbId, commits[0].verbId);
 });
