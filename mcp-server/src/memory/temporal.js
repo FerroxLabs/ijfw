@@ -5,6 +5,25 @@
  * APPENDED forever, so contradictory facts about the same
  * (subject, predicate) accumulated instead of the prior being invalidated.
  *
+ * T23 (v1.5.0 gap-closure): adds decay-on-retrieval via applyDecayToFacts().
+ * The existing write path (storeFactBitemporal) + read path (getValidAt)
+ * were complete, but retrieval returned raw confidence regardless of age.
+ * A 90-day-old fact was indistinguishable from a 1-second-old fact at the
+ * call site. applyDecayToFacts() closes this gap by adding:
+ *   staleness_days      -- float: age from valid_from (or created_at) to now
+ *   decayed_confidence  -- float: confidence * exp(-staleness_days / halflife)
+ *
+ * Decay formula mirrors the existing searchMemory recency decay in server.js
+ * (L821: Math.exp(-ageDays / 90)). Halflives (configurable via options):
+ *   project tier (default): DECAY_HALFLIFE_DAYS = 30 days
+ *   session tier (source contains "session"): DECAY_HALFLIFE_SESSION_DAYS = 1
+ *
+ * Design choice: facts are NOT filtered out -- they are returned with
+ * reduced confidence so callers can rank, display, or filter as needed.
+ * This is backward-compatible: existing handleRecall code that maps r.confidence
+ * directly still works; only callers that opt in to decayed_confidence get the
+ * new behaviour.
+ *
  * Model: each fact carries valid_from + valid_to ISO-8601 timestamps.
  *   valid_to IS NULL  -> currently valid
  *   valid_to = <ts>   -> was valid in [valid_from, valid_to), invalidated at ts
@@ -25,6 +44,12 @@
  *   getHistory(db, subject, predicate)
  *     SELECT * FROM facts WHERE subject=? AND predicate=?
  *       ORDER BY valid_from
+ *
+ *   applyDecayToFacts(rows, now, options)
+ *     T23: Post-process rows from getValidAt (or any fact array) with
+ *     exponential confidence decay based on age. Returns new objects --
+ *     originals are NOT mutated.
+ *     options.halflife  -- override halflife in days for all rows
  *
  *   openTemporalDb(filename)
  *     Bootstrap helper -- opens a better-sqlite3 db at `filename` and applies
@@ -373,6 +398,121 @@ export function getAllFactsWithWindows(db) {
   ).all();
 }
 
+/**
+ * DECAY_HALFLIFE_DAYS
+ *
+ * T23: Default exponential-decay halflife for project-tier facts, in days.
+ * A fact stored exactly DECAY_HALFLIFE_DAYS days ago will have its confidence
+ * multiplied by e^(-1) ≈ 0.368. After 3x the halflife (90 days) confidence
+ * is ≈ 5% of the original. Matches the BM25 recency halflife used in
+ * searchMemory (server.js RECENCY_HALFLIFE_DAYS = 90) but shorter because
+ * facts are higher-signal and more likely to become outdated.
+ */
+export const DECAY_HALFLIFE_DAYS = 30;
+
+/**
+ * DECAY_HALFLIFE_SESSION_DAYS
+ *
+ * T23: Decay halflife for session-tier facts (source field contains
+ * "session"). Session facts are ephemeral -- a 1-day-old session fact has
+ * already decayed by e^(-1) ≈ 0.368.
+ */
+export const DECAY_HALFLIFE_SESSION_DAYS = 1;
+
+/**
+ * applyDecayToFacts(rows, now, options)
+ *
+ * T23: Post-process an array of fact rows (from getValidAt or any other
+ * retrieval path) with time-based exponential confidence decay.
+ *
+ * For each row, computes:
+ *   staleness_days      -- age in days from valid_from (fallback: created_at
+ *                          epoch) to `now`. Clamped to >= 0 to handle
+ *                          clock-skew / future-dated rows.
+ *   decayed_confidence  -- Math.min(confidence, confidence * exp(-staleness_days / halflife))
+ *                          Clamped to [0, original confidence].
+ *
+ * Halflife selection (per row, unless options.halflife is set):
+ *   - If options.halflife is a positive number: use it for all rows.
+ *   - Else if r.source contains "session": DECAY_HALFLIFE_SESSION_DAYS (1 day)
+ *   - Else: DECAY_HALFLIFE_DAYS (30 days)
+ *
+ * Original row objects are NOT mutated -- each output row is a shallow copy
+ * with the two new fields added.
+ *
+ * Parameters:
+ *   rows     -- Array of fact row objects (typically from getValidAt)
+ *   now      -- Date | ISO string | null/undefined (defaults to current time)
+ *   options  -- { halflife?: number }  optional override
+ *
+ * Returns a new array with the same length; order is preserved.
+ */
+export function applyDecayToFacts(rows, now, options = {}) {
+  if (!Array.isArray(rows)) {
+    throw new Error('applyDecayToFacts: rows must be an array.');
+  }
+  if (rows.length === 0) return [];
+
+  // Resolve `now` to a millisecond epoch.
+  let nowMs;
+  if (now == null) {
+    nowMs = Date.now();
+  } else if (now instanceof Date) {
+    nowMs = now.getTime();
+  } else if (typeof now === 'string') {
+    nowMs = new Date(now).getTime();
+    if (!Number.isFinite(nowMs)) {
+      throw new Error('applyDecayToFacts: `now` is not a parseable date string.');
+    }
+  } else {
+    throw new Error('applyDecayToFacts: `now` must be a Date, ISO string, or null/undefined.');
+  }
+
+  // options.halflife overrides per-row logic when it is a positive number.
+  const forcedHalflife = (
+    options && typeof options.halflife === 'number' && options.halflife > 0
+  ) ? options.halflife : null;
+
+  return rows.map(r => {
+    // Resolve the fact's anchor timestamp to a millisecond epoch.
+    // Prefer valid_from (ISO string); fall back to created_at (unix ms).
+    let anchorMs;
+    if (r.valid_from && typeof r.valid_from === 'string') {
+      const parsed = new Date(r.valid_from).getTime();
+      anchorMs = Number.isFinite(parsed) ? parsed : nowMs;
+    } else if (typeof r.created_at === 'number' && Number.isFinite(r.created_at)) {
+      // created_at is stored as unix milliseconds (see applySchema).
+      anchorMs = r.created_at;
+    } else {
+      anchorMs = nowMs;
+    }
+
+    // Clamp staleness to >= 0 to avoid decay > 1 on future-dated rows.
+    const staleness_days = Math.max(0, (nowMs - anchorMs) / 86400000);
+
+    // Determine halflife for this row.
+    let halflife;
+    if (forcedHalflife !== null) {
+      halflife = forcedHalflife;
+    } else if (typeof r.source === 'string' && r.source.includes('session')) {
+      halflife = DECAY_HALFLIFE_SESSION_DAYS;
+    } else {
+      halflife = DECAY_HALFLIFE_DAYS;
+    }
+
+    const confidence = typeof r.confidence === 'number' && Number.isFinite(r.confidence)
+      ? r.confidence
+      : 1.0;
+
+    // exp(-staleness / halflife): 0 days -> 1.0, halflife days -> e^(-1).
+    const factor = Math.exp(-staleness_days / halflife);
+    // Clamp: decayed must not exceed original confidence or go below 0.
+    const decayed_confidence = Math.min(confidence, Math.max(0, confidence * factor));
+
+    return Object.assign({}, r, { staleness_days, decayed_confidence });
+  });
+}
+
 export default {
   openTemporalDb,
   openTemporalDbSync,
@@ -383,4 +523,7 @@ export default {
   getValidAt,
   getHistory,
   getAllFactsWithWindows,
+  applyDecayToFacts,
+  DECAY_HALFLIFE_DAYS,
+  DECAY_HALFLIFE_SESSION_DAYS,
 };
