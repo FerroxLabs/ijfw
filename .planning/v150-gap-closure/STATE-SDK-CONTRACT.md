@@ -352,8 +352,8 @@ carries `verbId` (string) and `ok` (boolean).
 - Signature: query('subagent.post-done', { subagentId, reportText, projectRoot? })
 - Payload: `subagentId` (string, required) · `reportText` (string, required — the subagent's completion report) · `projectRoot` (string, optional — overrides `ctx.projectRoot`).
 - Returns: `{ ok:true, selfCheck: { claimedPaths, claimedCommits, verified } }` on a passing self-check. On a failed self-check: `{ ok:false, refused:true, gate:'post-done-self-check', reason }` (Model 4 verdict-fail). Absorbs the retired `ijfw_subagent_post_done` MCP tool — post-done IS a state transition.
-- Day-1: create — auto-creates `.ijfw/wave-<waveId>/STATE.md` to record the post-done outcome when absent.
-- Locks: `.ijfw/state/intent-journal.jsonl` → `.ijfw/wave-<waveId>/STATE.md`.
+- Day-1: no-op — runs the `runSelfCheck` gate against `reportText` and returns the verdict; writes no STATE.md and creates no physical file. The post-done verdict is pure in-memory: the verb's job is gate enforcement, not persistence.
+- Locks: none — the verb performs no file mutations; it calls `runSelfCheck` (read-only filesystem probe) and returns the result directly.
 
 ### verb: event.emit
 - Signature: query('event.emit', { subagentId, waveId, eventType, data, dedupKey })
@@ -440,7 +440,7 @@ carries `verbId` (string) and `ok` (boolean).
 | `phase.complete`      | write  | create | `enforceVerificationGate` (verdict-fail → refuse) |
 | `subagent.dispatch`   | write  | create | — |
 | `subagent.checkpoint` | append | create | — |
-| `subagent.post-done`  | write  | create | post-done self-check (verdict-fail → refuse) |
+| `subagent.post-done`  | read   | no-op  | post-done self-check (verdict-fail → refuse) |
 | `event.emit`          | append | create | — |
 | `telemetry.record`    | append | create | — |
 | `roster.synthesize`   | read   | no-op  | — |
