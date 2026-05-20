@@ -34,11 +34,12 @@
  */
 
 import {
-  readFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync,
+  readFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, readdirSync,
 } from 'node:fs';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 
 import { writeAtomic, readSafe } from '../lib/atomic-io.js';
 import { rotateJsonlIfNeeded } from '../lib/jsonl-rotation.js';
@@ -454,6 +455,43 @@ function readJsonl(path) {
 /** True when any record in the JSONL log already carries `dedupKey`. */
 function jsonlHasDedupKey(path, dedupKey) {
   return readJsonl(path).some((rec) => rec && rec.dedupKey === dedupKey);
+}
+
+/**
+ * Cross-rotation dedup helper for the `event.emit` verb. Scans the MOST
+ * RECENT `.jsonl.gz` archive sibling of `path` (produced by
+ * `jsonl-rotation.js` — date-stamped `<stem>.<date>[.<n>].jsonl.gz`) for a
+ * record carrying `dedupKey`. Returns the matched record (so the caller can
+ * surface its `seq`) or `null` when no archive exists / no match. Scope is
+ * intentionally bounded to the newest archive only — that matches normal-
+ * operation rotation windows and avoids unbounded gzip-decompression on every
+ * `event.emit` call. Errors (corrupt archive, gunzip failure, missing dir)
+ * are swallowed and treated as "no match" — the live-file scan is the
+ * authoritative path; the archive scan is best-effort cross-rotation safety.
+ */
+function findDedupKeyInNewestArchive(path, dedupKey) {
+  try {
+    const dir = dirname(path);
+    if (!existsSync(dir)) return null;
+    const base = basename(path);
+    const stem = base.endsWith('.jsonl') ? base.slice(0, -'.jsonl'.length) : base;
+    const archives = readdirSync(dir)
+      .filter((n) => n.startsWith(`${stem}.`) && n.endsWith('.jsonl.gz'))
+      .sort();
+    if (archives.length === 0) return null;
+    const newest = archives[archives.length - 1]; // lexicographic == chronological
+    const raw = gunzipSync(readFileSync(join(dir, newest))).toString('utf8');
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      let rec;
+      try { rec = JSON.parse(t); } catch { continue; }
+      if (rec && rec.dedupKey === dedupKey) return rec;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -902,22 +940,45 @@ const handlers = {
     const log = paths.eventLog(root, waveId, subagentId);
     const targets = [paths.intentJournal(root), log];
     return _withLocks(targets, async () => {
-      // Dedup against any prior record with the same dedupKey -- both in the
-      // live file (cheap) and, if absent there, in the most-recent archive
-      // (cross-rotation dedup). Live-file scan first for the hot path.
+      // Dedup against any prior record with the same dedupKey -- check the
+      // live file (cheap hot path), then the most-recent archive
+      // (cross-rotation dedup -- a normal-operation rotation must not silently
+      // re-append a record with a previously-seen dedupKey). Scope is limited
+      // to the most-recent archive (not the full archive history); that
+      // matches the contract's append/dedup semantics — recent-enough to cover
+      // a rotation window without scanning unbounded gzip blobs on every emit.
       const liveRecords = readJsonl(log);
-      const dup = liveRecords.find((e) => e && e.dedupKey === dedupKey);
-      if (dup) return { ok: true, seq: dup.seq, deduped: true };
+      const liveDup = liveRecords.find((e) => e && e.dedupKey === dedupKey);
+      if (liveDup) return { ok: true, seq: liveDup.seq, deduped: true };
+      const archiveDup = findDedupKeyInNewestArchive(log, dedupKey);
+      if (archiveDup) return { ok: true, seq: archiveDup.seq, deduped: true };
 
       // T5: seq is assigned by the shared `state-events` helper so the verb's
       // seq stream + the dispatcher tap's seq stream are ONE stream, monotonic
       // across rotation. We are under the §3 event-log lock here, so we use
       // the under-lock path that bypasses the in-process tap mutex.
+      //
+      // Envelope shape is the §5 base shape (`{seq, verb, subagentId, ts,
+      // verbId, outcome, payloadDigest}`) plus the verb-path-only extension
+      // fields `eventType`, `data`, and `dedupKey`. §5 documents both shapes —
+      // the dispatcher tap leaves `eventType` / `data` undefined; the verb
+      // populates them. `verb` is the literal string `'event.emit'` (not
+      // `eventType`) so consumers can branch on the canonical §5 field.
+      const verbId = env?.verbId || `v-${randomUUID()}`;
       const record = appendEventUnderHeldLock({
         path: log,
         envelope: {
-          eventType, subagentId, waveId,
-          ts: nowIso(), dedupKey, data: payload.data,
+          verb: 'event.emit',
+          subagentId,
+          ts: nowIso(),
+          verbId,
+          outcome: 'ok',
+          payloadDigest: payloadDigest(payload.data),
+          // Verb-path extension fields (documented in §5 — optional, present
+          // when the writer is the `event.emit` verb; undefined for taps).
+          eventType,
+          data: payload.data,
+          dedupKey,
         },
       });
       return { ok: true, seq: record.seq, deduped: false };

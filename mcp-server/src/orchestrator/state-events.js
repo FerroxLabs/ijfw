@@ -68,11 +68,19 @@ export const EVENT_MAX_LINE_BYTES = 4 * 1024;
  * Per-subagent event-log path per contract §1 + §5.
  * `<projectRoot>/.ijfw/wave-<waveId>/events-<subId>.jsonl`
  *
- * When BOTH `waveId` and `subagentId` are absent, the tap routes to a stable
- * fallback at `<projectRoot>/.ijfw/state/events-system.jsonl` (a dispatcher
- * tap fired by a non-subagent caller -- e.g. an MCP front-end). When only the
- * waveId is missing, the fallback is `<projectRoot>/.ijfw/state/events-<sub>.jsonl`.
- * Either way, the routing is total -- the tap never silently drops.
+ * Routing is total -- the tap never silently drops:
+ * - Both present: `<projectRoot>/.ijfw/wave-<waveId>/events-<subId>.jsonl`.
+ * - waveId present, subagentId absent: route under the wave dir with the
+ *   §5-canonical `'parent'` subId fallback —
+ *   `<projectRoot>/.ijfw/wave-<waveId>/events-parent.jsonl`. The waveId is
+ *   honored; the no-subagent caller surfaces as `subagentId:'parent'` per §5.
+ * - subagentId present, waveId absent: legacy fallback under the system dir,
+ *   `<projectRoot>/.ijfw/state/events-<sub>.jsonl`, because there is no wave
+ *   directory to anchor to. (Rare in practice — verbs that carry a subagent
+ *   carry a wave too.)
+ * - Both absent: system fallback `<projectRoot>/.ijfw/state/events-system.jsonl`
+ *   (e.g. dispatcher-tap events for verbs called without a `waveId` payload,
+ *   like `state.validate`). Ratified by contract §5 (see Model 3 note).
  */
 export function resolveEventLogPath(projectRoot, waveId, subagentId) {
   if (typeof projectRoot !== 'string' || !projectRoot) {
@@ -82,6 +90,7 @@ export function resolveEventLogPath(projectRoot, waveId, subagentId) {
   const wid = safeId(waveId);
   const sid = safeId(subagentId);
   if (wid && sid) return join(projectRoot, '.ijfw', `wave-${wid}`, `events-${sid}.jsonl`);
+  if (wid) return join(projectRoot, '.ijfw', `wave-${wid}`, 'events-parent.jsonl');
   if (sid) return join(projectRoot, '.ijfw', 'state', `events-${sid}.jsonl`);
   return join(projectRoot, '.ijfw', 'state', 'events-system.jsonl');
 }
@@ -234,10 +243,14 @@ function applySizeCap(record) {
 /**
  * Rotate the live event log if it has crossed the byte OR line ceiling.
  * Reuses the shared `jsonl-rotation` primitive for the byte ceiling (it
- * gzip-archives + truncates atomically); a line-ceiling crossing is forced
- * via the same primitive by passing `maxBytes: -1`-style override -- but the
- * library only handles bytes, so we implement the line check by inflating
- * `maxBytes` to 0 (always rotate) when the line ceiling is hit.
+ * gzip-archives + truncates atomically). The library is byte-only, so we
+ * implement the line ceiling by re-calling the primitive with `maxBytes: 1`
+ * once the line count is at the ceiling -- which forces a rotation because
+ * any non-empty file is necessarily larger than 1 byte. Choosing `1` (rather
+ * than `0`) is deliberate: `jsonl-rotation.js`'s argument-normaliser treats
+ * `maxBytes <= 0` as "fall back to DEFAULT_ROTATE_SIZE", which would silently
+ * defeat the force-rotate. `1` survives the normaliser and is unconditionally
+ * below any real file's size.
  *
  * Test override: `rotateOptions.maxBytes` / `rotateOptions.maxLines` allow
  * tests to force rotation at small thresholds without writing megabytes.
@@ -253,10 +266,12 @@ function rotateIfNeeded(eventLogPath, rotateOptions = {}) {
   if (byteResult.rotated) return byteResult;
 
   // Line path -- the library is byte-only, so we force a rotation by
-  // calling it again with maxBytes=0 IF the live line count is past the ceiling.
+  // calling it again with maxBytes=1 IF the live line count is at/past the
+  // ceiling. `1` (not `0`) is critical: the lib normalises `maxBytes <= 0`
+  // back to DEFAULT_ROTATE_SIZE (4 MiB), so `0` would not actually force.
   const lineCount = countLines(eventLogPath);
   if (lineCount >= maxLines && existsSync(eventLogPath) && statSync(eventLogPath).size > 0) {
-    return rotateJsonlIfNeeded(eventLogPath, { maxBytes: 0 });
+    return rotateJsonlIfNeeded(eventLogPath, { maxBytes: 1 });
   }
   return byteResult;
 }

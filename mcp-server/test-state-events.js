@@ -327,6 +327,93 @@ test('event.emit verb: shares the same seq source as the tap (no reset across ro
 // Rotation -- the active log rotates at the contract ceiling.
 // ---------------------------------------------------------------------------
 
+test('rotation: log rotates when LINE ceiling hit (byte ceiling un-tripped)', async () => {
+  // Regression test for the line-ceiling force-rotate path.
+  // The byte ceiling is set well above what we'll write so byte-rotation can
+  // NEVER fire — if rotation happens here, it MUST be the line-ceiling path.
+  // This test fails against any implementation that passes `maxBytes: 0` to
+  // `rotateJsonlIfNeeded` (which normalises 0 -> DEFAULT_ROTATE_SIZE = 4 MiB
+  // and silently no-ops).
+  const { root, cleanup } = mkProject();
+  try {
+    const path = resolveEventLogPath(root, 'W12-A', 'W12-A1');
+    for (let i = 0; i < 6; i += 1) {
+      await emitEvent({
+        projectRoot: root, waveId: 'W12-A', subagentId: 'W12-A1',
+        verb: 'workflow.get', verbId: `v-${i}`, outcome: 'ok',
+        payloadDigest: `sha256-${i}`,
+        // Lines-only: tiny line ceiling, byte ceiling absurdly large so it
+        // cannot fire. The 6th emit (after the live file already has 5
+        // lines) MUST force a rotation via the line path.
+        rotateOptions: { maxLines: 5, maxBytes: 10 * 1024 * 1024 },
+      });
+    }
+    const dir = dirname(path);
+    const archives = readdirSync(dir).filter(
+      (n) => n.startsWith('events-W12-A1.') && n.endsWith('.jsonl.gz'),
+    );
+    assert.ok(archives.length >= 1,
+      `line-ceiling rotation must produce an archive (got ${archives.length})`);
+
+    // Active file must have been truncated + restarted post-rotation —
+    // i.e. its line count is strictly less than the pre-rotation 5+.
+    const liveLines = readJsonl(path);
+    assert.ok(liveLines.length < 5,
+      `post-rotation live file restarted (got ${liveLines.length} lines)`);
+
+    // seq stayed monotonic across the rotation — the LAST event's seq is 6.
+    assert.equal(liveLines[liveLines.length - 1].seq, 6,
+      'seq monotonic across line-ceiling rotation');
+  } finally { cleanup(); }
+});
+
+test('event.emit verb: cross-rotation dedup -- archive scan catches replay', async () => {
+  // T4 idempotency contract for the verb across a rotation boundary:
+  // a previously-emitted dedupKey that has been rotated into the gzipped
+  // archive must STILL be deduped on replay. Live-file scan alone misses it.
+  const { root, ctx, cleanup } = mkProject();
+  try {
+    // 1. Emit the first record with a stable dedupKey.
+    const r1 = await query('event.emit', {
+      waveId: 'W12-A', subagentId: 'W12-A1', eventType: 'progress',
+      data: { step: 1 }, dedupKey: 'rotated-key-1',
+    }, ctx);
+    assert.equal(r1.ok, true);
+    assert.equal(r1.deduped, false);
+    const originalSeq = r1.seq;
+
+    // 2. Force a rotation: fill the log past a tiny line ceiling via the tap
+    //    surface (no dedupKey clash), so the first record is now in the gz
+    //    archive and the live file is empty/freshly restarted.
+    const path = resolveEventLogPath(root, 'W12-A', 'W12-A1');
+    for (let i = 0; i < 6; i += 1) {
+      await emitEvent({
+        projectRoot: root, waveId: 'W12-A', subagentId: 'W12-A1',
+        verb: 'workflow.get', verbId: `pad-${i}`, outcome: 'ok',
+        payloadDigest: `sha256-pad-${i}`,
+        rotateOptions: { maxBytes: 10 * 1024 * 1024, maxLines: 3 },
+      });
+    }
+    // Confirm an archive exists (rotation actually happened).
+    const dir = dirname(path);
+    const archives = readdirSync(dir).filter(
+      (n) => n.startsWith('events-W12-A1.') && n.endsWith('.jsonl.gz'),
+    );
+    assert.ok(archives.length >= 1, 'archive present after rotation');
+
+    // 3. Replay the SAME dedupKey. The live file no longer contains it (it
+    //    rotated into the archive). The verb MUST scan the newest archive
+    //    and return deduped:true with the ORIGINAL seq.
+    const r2 = await query('event.emit', {
+      waveId: 'W12-A', subagentId: 'W12-A1', eventType: 'progress',
+      data: { step: 1 }, dedupKey: 'rotated-key-1',
+    }, ctx);
+    assert.equal(r2.ok, true, 'replay succeeded');
+    assert.equal(r2.deduped, true, 'replay was deduped via the archive scan');
+    assert.equal(r2.seq, originalSeq, 'deduped result surfaces the original seq');
+  } finally { cleanup(); }
+});
+
 test('rotation: log rotates when byte ceiling exceeded', async () => {
   const { root, cleanup } = mkProject();
   try {

@@ -206,7 +206,12 @@ log by **explicit-interval polling** (`pollEvents(since)`) — never `fs.watch`
 (unreliable across 13 platforms).
 
 **Event log path:** `.ijfw/wave-<waveId>/events-<subId>.jsonl`
-(`<subId>` falls back to `parent` when no subagent context is set).
+(`<subId>` falls back to `parent` when no subagent context is set). When **both**
+`waveId` AND `subagentId` are absent — e.g. a dispatcher-tap event fired by a
+verb whose payload carries no wave context (`state.validate`, `workflow.get`
+from an MCP front-end) — the tap routes to the **system-fallback** path
+`.ijfw/state/events-system.jsonl`. Routing is total; the tap never silently
+drops.
 
 **Literal JSON shape — one line in `events-<subId>.jsonl`:**
 
@@ -234,6 +239,16 @@ Field contract:
   verdict-fail blocked the verb (Model 4); `advisory` = a gate execution-fail
   degraded but the verb proceeded; `error` = the verb itself threw.
 - `payloadDigest` — string, `sha256-<hex>`; same digest as the intent record.
+
+**Verb-path extension fields (event.emit only).** Records written by the
+`event.emit` verb (§7) extend the base envelope with three optional fields:
+`eventType` (string, the caller-supplied event type), `data` (object, the
+caller-supplied body ≤ 4 KiB), and `dedupKey` (string, the verb's append-dedup
+key). The base envelope fields (`seq`/`verb`/`subagentId`/`ts`/`verbId`/
+`outcome`/`payloadDigest`) are still required — `verb` is the literal
+`'event.emit'`, NOT the caller's `eventType`. Dispatcher-tap records leave
+these three extension fields undefined. Consumers discriminate by field
+presence.
 
 **Per-event size cap:** 4 KiB. An event line exceeding the cap is truncated to
 its envelope fields (`seq`, `verb`, `subagentId`, `ts`, `verbId`, `outcome`)
