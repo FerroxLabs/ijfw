@@ -12,15 +12,18 @@ captured below).
 
 **Repo:** `/Users/seandonahoe/dev/ijfw`
 **Branch:** `main`
-**HEAD:** `4d89300`
-**Tag:** `v1.5.0` → `4d89300` (LOCAL ONLY; not pushed to gitlab/github)
+**HEAD:** `87adab9`
+**Tag:** `v1.5.0` → `87adab9` (LOCAL ONLY; not pushed to gitlab/github)
 **Prior v1.5.0 baseline:** `e0f1c4e` (was where v1.5.0 tag pointed before W1)
-**Commits past prior baseline:** 5
-**Tests:** 1984 pass / 0 fail / 1 skip across 178 test files
-**Pre-existing failures (unchanged from baseline):** 4
+**Commits past prior baseline:** 8 (7 substantive + 1 docs)
+**Tests:** `node --test` 2013 / 2012 pass / **0 fail** / 1 skip; `npm test` 103/103
+**Pre-existing failures:** 0 — all 4 closed in W5 (see §11)
 **Working tree drift (pre-existing, unrelated):** AGENTS.md + mcp-server/CLAUDE.md
 
 ```
+87adab9  fix(v1.5.0 wire-W5): close 4 pre-existing node --test failures (stale test-debt)
+fcf5a02  fix(v1.5.0 wire-W5 r21): close 1 HIGH + 3 MED + 1 LOW from Trident r21 cross-audit
+022c815  docs(v1.5.0 wire-up): complete handoff for post-compact cross-audit
 4d89300  fix(v1.5.0 wire-W4 r20): close 1 HIGH + 5 actionable MEDs from Trident r20
 7189ef8  fix(v1.5.0 wire-W4 prep): widen auditor field fallback + harden parallelism witness
 6dccd65  docs(v1.5.0 wire-W3): close 8 LOWs + CHANGELOG + iframe live-browser smoke
@@ -308,4 +311,55 @@ From the original handoff §10:
 - [x] **Re-tagged** v1.5.0 at the new final HEAD (4d89300)
 - [ ] **Phase F**: awaiting operator authorization (last remaining step)
 
-**v1.5.0 is ready to ship.** Cross-audit + push authorization remaining.
+**v1.5.0 is ready to ship.** Cross-audit done; push authorization remaining.
+
+---
+
+## 11. WAVE-W5 — POST-COMPACT CROSS-AUDIT (2026-05-20)
+
+The post-compact session ran the full cross-audit promised in §8-§9 and
+closed every actionable finding plus the pre-existing test debt.
+
+### Trident r21 cross-audit — `fcf5a02`
+
+Fired against the cumulative diff `e0f1c4e..HEAD` (164.5 KB, 4-chunk
+codex+gemini). 6 findings: **1 HIGH + 4 MED + 1 LOW**. 5 fixed, 1 false
+positive. Ship gate PASS (0 consensus HIGH). Per-finding adjudication in
+`.planning/v150-wireup/W5-R21-ADJUDICATION.md`; raw output in
+`W5-R21-RAW-OUTPUT.log`.
+
+| ID | Sev | Disposition |
+|---|---|---|
+| r21-HIGH-1 | HIGH | `gradeInteraction` false-PASS — FIXED + regression test |
+| r21-MED-1 | MED | keepalive `isActive()` sampled after `cancel()` — FIXED |
+| r21-MED-2 | MED | `gradeSecurity` evaluator calls not failure-isolated — FIXED |
+| r21-MED-3 | MED | `search-hybrid` modelId "hard-code" — FALSE POSITIVE |
+| r21-MED-4 | MED | keepalive test scheduling slack too thin — FIXED |
+| r21-LOW-1 | LOW | tick counter skipped on custom onTick path — FIXED |
+
+Also fixed a pre-existing DESIGN-picker prelude regression (handlePrelude's
+thin-memory abstention path discarded the picker block).
+
+### Pre-existing test-debt close-out — `87adab9`
+
+The cross-audit surfaced 4 long-standing `node --test` failures (the 4 the
+prior handoff §3/§6 documented as "pre-existing, accepted"). All 4 were
+stale tests/manifests lagging deliberate code — closed:
+- swarm-worktree: merge assertion → deliberate `ijfw merge:` contract.
+- orchestrator-specialists ×2: scoped to software-family project types
+  (audit-MED-teams-#6 domain benches); new test 7b pins the contract.
+- platform-capabilities: claude skill manifest 22 → 34 (verified).
+
+### Worktree cleanup
+
+93 stale git worktree records (62 orphan + 31 on-disk, all from completed
+W10/W11/W12 waves, locked by a dead PID) unlocked, pruned, and removed.
+~501M reclaimed. `git worktree list` is now just the main checkout.
+
+### Final state
+
+- **`node --test` 2013 / 2012 pass / 0 fail / 1 skip** — first v1.5.0
+  state with zero failing tests.
+- **`npm test` (`node test.js`) 103/103.**
+- v1.5.0 tag retagged at `87adab9` (local only).
+- Phase F push still operator-gated — no push without explicit "yes, push".
