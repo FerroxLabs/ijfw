@@ -222,7 +222,7 @@ export async function withFsLock(lockPath, fn, opts = {}) {
           throw new FsLockStaleError(lockPath, rmErr);
         }
         try {
-          await tryAcquireOnce(lockPath);
+          heldHolder = await tryAcquireOnce(lockPath);
           break;
         } catch (retryErr) {
           if (retryErr && retryErr.code === 'EEXIST') {

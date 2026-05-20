@@ -229,12 +229,6 @@ test('SDK concurrency: overlapping multi-lock verbs both complete — no deadloc
     assert.equal(results.length, 12);
     assert.ok(results.every((r) => r.ok === true), 'every verb succeeded');
 
-    // No lock dirs leaked.
-    const lockDir = join(root, '.ijfw', 'state');
-    if (existsSync(lockDir)) {
-      const leaked = readFileSync ? [] : [];
-      assert.deepEqual(leaked, [], 'no leaked lock dirs');
-    }
   } finally { cleanup(); }
 });
 
