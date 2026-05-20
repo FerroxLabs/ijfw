@@ -2,14 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
+  SOFTWARE_CORE_AGENT_IDS,
   createTeamAssembly,
   detectTeamArchetype,
   loadTeamTemplate,
   readTeamAssembly,
+  resolveSoftwareCoreAgentIds,
   scoreBrief,
 } from './src/team/generator.js';
+import { SOFTWARE_CORE_AGENT_IDS as SCHEMA_SOFTWARE_CORE_AGENT_IDS } from './src/team/schemas.js';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function makeTmp() {
   return mkdtempSync(join(tmpdir(), 'ijfw-team-generator-test-'));
@@ -173,6 +179,133 @@ test('normalizeArchetype canonicalizes detector language labels to software', ()
     assert.equal(detectTeamArchetype(dir, { archetype: 'novel' }), 'book');
     // Unknown still collapses to mixed.
     assert.equal(detectTeamArchetype(dir, { archetype: 'martian-poetry-slam' }), 'mixed');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// --- T24 (G7-core): software-core agent set wiring -----------------------
+
+test('SOFTWARE_CORE_AGENT_IDS exposes exactly the 4 G7-core agents in deterministic order', () => {
+  // Contract: order and membership are stable. T25 / T27 / T30 all key off
+  // this list; any drift would cascade.
+  assert.deepEqual(SOFTWARE_CORE_AGENT_IDS, [
+    'ijfw-doc-verifier',
+    'ijfw-integration-checker',
+    'ijfw-nyquist-auditor',
+    'ijfw-code-fixer',
+  ]);
+});
+
+test('generator.js and schemas.js export the same canonical software-core set', () => {
+  // Single-source-of-truth contract: schemas.js owns the literal; generator.js
+  // re-exports it. If they ever diverge we want to know via a test, not a bug.
+  assert.deepEqual(
+    SOFTWARE_CORE_AGENT_IDS,
+    SCHEMA_SOFTWARE_CORE_AGENT_IDS,
+    'generator.SOFTWARE_CORE_AGENT_IDS must equal schemas.SOFTWARE_CORE_AGENT_IDS',
+  );
+});
+
+test('every G7-core agent id resolves to an existing claude/agents/<id>.md file', () => {
+  // Verify contract from the task: each id must map to an on-disk markdown
+  // file. This is the wiring proof — if any of the 4 ids is missing a file,
+  // the installer will deploy a roster reference to a non-existent agent.
+  for (const id of SOFTWARE_CORE_AGENT_IDS) {
+    const agentPath = join(REPO_ROOT, 'claude', 'agents', `${id}.md`);
+    assert.ok(
+      existsSync(agentPath),
+      `expected agent file to exist on disk: ${agentPath}`,
+    );
+  }
+});
+
+test('each G7-core agent .md has the required frontmatter (name, model, allowed-tools)', () => {
+  // Stronger version of the file-existence check: a stub or accidentally
+  // truncated agent file would still pass existsSync. Confirm the frontmatter
+  // names match the id and the basic shape is present.
+  for (const id of SOFTWARE_CORE_AGENT_IDS) {
+    const agentPath = join(REPO_ROOT, 'claude', 'agents', `${id}.md`);
+    const content = readFileSync(agentPath, 'utf8');
+    assert.match(content, /^---\n/, `${id}: missing opening frontmatter`);
+    assert.match(content, new RegExp(`\\nname:\\s*${id}\\b`), `${id}: name in frontmatter does not match filename`);
+    assert.match(content, /\nmodel:\s*\w+/, `${id}: missing model: line in frontmatter`);
+    assert.match(content, /\nallowed-tools:\s*[\w,\s-]+/, `${id}: missing allowed-tools: line in frontmatter`);
+  }
+});
+
+test('resolveSoftwareCoreAgentIds returns all 4 ids for software archetype', () => {
+  const ids = resolveSoftwareCoreAgentIds('software');
+  assert.deepEqual(ids, [
+    'ijfw-doc-verifier',
+    'ijfw-integration-checker',
+    'ijfw-nyquist-auditor',
+    'ijfw-code-fixer',
+  ]);
+});
+
+test('resolveSoftwareCoreAgentIds returns an empty list for non-software archetypes', () => {
+  // Today only `software` triggers the static set. Non-software archetypes
+  // get []. T25 may extend this to other archetypes via the domain-aware
+  // generator; that change MUST update this test.
+  for (const archetype of ['book', 'content', 'design', 'research', 'business', 'mixed']) {
+    const ids = resolveSoftwareCoreAgentIds(archetype);
+    assert.deepEqual(ids, [], `expected [] for archetype "${archetype}"`);
+  }
+});
+
+test('resolveSoftwareCoreAgentIds canonicalises language-flavoured archetypes via alias map', () => {
+  // typescript / javascript / python all collapse to `software` upstream; the
+  // resolver MUST honour that so a detector that surfaces a language label
+  // still gets the full software-core set.
+  for (const lang of ['typescript', 'javascript', 'python', 'rust', 'go']) {
+    const ids = resolveSoftwareCoreAgentIds(lang);
+    assert.equal(ids.length, 4, `expected 4 ids for "${lang}" (alias of software)`);
+  }
+});
+
+test('resolveSoftwareCoreAgentIds returns a fresh array (callers cannot mutate the canonical set)', () => {
+  const ids = resolveSoftwareCoreAgentIds('software');
+  ids.push('synthetic-attacker-id');
+  // Second call must NOT see the mutation.
+  const fresh = resolveSoftwareCoreAgentIds('software');
+  assert.equal(fresh.length, 4);
+  assert.equal(fresh.includes('synthetic-attacker-id'), false);
+});
+
+test('createTeamAssembly returns softwareCoreAgentIds for a software project', () => {
+  // The wiring contract from the task brief: for a software project the
+  // generator output lists all 4 agent ids AND each maps to an existing
+  // claude/agents/<id>.md file on disk.
+  const dir = makeTmp();
+  try {
+    const result = createTeamAssembly(dir, { archetype: 'software' });
+    assert.equal(result.ok, true);
+    assert.equal(result.archetype, 'software');
+    assert.ok(Array.isArray(result.softwareCoreAgentIds), 'softwareCoreAgentIds must be an array');
+    assert.deepEqual(result.softwareCoreAgentIds, [
+      'ijfw-doc-verifier',
+      'ijfw-integration-checker',
+      'ijfw-nyquist-auditor',
+      'ijfw-code-fixer',
+    ]);
+    // And the on-disk proof — same loop the T24 verify contract names.
+    for (const id of result.softwareCoreAgentIds) {
+      const agentPath = join(REPO_ROOT, 'claude', 'agents', `${id}.md`);
+      assert.ok(existsSync(agentPath), `agent file missing: ${agentPath}`);
+    }
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('createTeamAssembly returns empty softwareCoreAgentIds for non-software archetypes', () => {
+  const dir = makeTmp();
+  try {
+    const result = createTeamAssembly(dir, { archetype: 'content', teamName: 'content-team' });
+    assert.equal(result.ok, true);
+    assert.ok(Array.isArray(result.softwareCoreAgentIds));
+    assert.equal(result.softwareCoreAgentIds.length, 0);
   } finally {
     cleanup(dir);
   }

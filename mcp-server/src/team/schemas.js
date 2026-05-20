@@ -10,6 +10,19 @@ const ARCHETYPES = new Set([
   'mixed',
 ]);
 
+// T24 / G7-core: canonical software-core agent ids. Mirrored by
+// `SOFTWARE_CORE_AGENT_IDS` in generator.js — this re-export gives
+// schema-side consumers (validators, downstream tools, T25's domain-aware
+// generator) a single source of truth without circular import on
+// generator.js. Any change to the set MUST update both locations and the
+// matching `claude/agents/<id>.md` files on disk.
+export const SOFTWARE_CORE_AGENT_IDS = Object.freeze([
+  'ijfw-doc-verifier',
+  'ijfw-integration-checker',
+  'ijfw-nyquist-auditor',
+  'ijfw-code-fixer',
+]);
+
 const ROLE_TYPES = new Set([
   'lead',
   'software',
