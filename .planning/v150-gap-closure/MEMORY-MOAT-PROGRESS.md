@@ -1,3 +1,3 @@
-# Memory Moat Progress Log
+# Memory Moat Progress
 
-[2026-05-21T00:10:00Z] M2.1 ✅ — llm-call.js wrapper (5 tests: IJFW_AUTOLINK_OFF, budget_exhausted, parseLlmJsonResponse fenced/bare/garbage)
+[2026-05-21T00:07Z] M5.1 ✅ — memory-facts-handler.js + test-memory-facts-mcp.js; 3/3 tests pass; plan seed timestamps fixed (Date not number)
