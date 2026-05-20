@@ -37,6 +37,7 @@ import {
 import { autoIndexGraphFromMemoryBody } from '../compute/graph-auto-index.js';
 import { redactSecrets } from '../redactor.js';
 import { indexObsidianRelations } from './obsidian-parser.js';
+import { autoLink } from './auto-linker.js';
 
 // D-PILLAR-SPEC section 12 ingest scrub gate. Default-on; the only escape hatch
 // is the IJFW_INGEST_SCRUB=0 env var, used for local debugging only and
@@ -243,6 +244,31 @@ export function indexEntry(db, entry) {
     }
   } catch (e) {
     try { console.error('[fts5] indexObsidianRelations failed:', e?.message || e); } catch { /* never throw */ }
+  }
+
+  // v1.5.0 memory-moat M2 (INT.2): fire A-Mem-style auto-linker. Asks the
+  // LLM (Claude Haiku 4.5 by default, env-gated) for (classification,
+  // link-proposals, neighbor-edits) over top-k lexical neighbors, then
+  // applies the proposal to memory_links + memory_tags atomically.
+  //
+  // Fire-and-forget — the indexEntry contract stays synchronous, and any
+  // failure (parse, budget, network, no key) returns skipped from autoLink
+  // without writes. IJFW_AUTOLINK_OFF=1 is the kill switch.
+  if (inserted && inserted.id != null) {
+    try {
+      // Don't await — let the LLM round-trip happen in the background.
+      // Capture for diagnostic visibility only.
+      const p = autoLink(db, {
+        id: inserted.id,
+        body: row.body,
+      }).catch((e) => {
+        try { console.error('[fts5] autoLink failed:', e?.message || e); } catch { /* never throw */ }
+      });
+      // expose for tests that want to await deterministic completion
+      indexEntry.__lastAutoLinkPromise = p;
+    } catch (e) {
+      try { console.error('[fts5] autoLink dispatch failed:', e?.message || e); } catch { /* never throw */ }
+    }
   }
 
   // GA-B3: fire D2 graph auto-population on memory ingest. The graph

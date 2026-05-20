@@ -14,3 +14,4 @@
 [2026-05-21T02:50Z] INT.5 ✅ — handleSearch routes dv: prefix to dataview executor; lazy-import + best-effort error handling; npm test 104/104 unchanged
 [2026-05-21T03:00Z] INT.4 ✅ — handlePrelude surfaces <ijfw-recommended-skills> block from skill_telemetry top-K; best-effort read-only; npm test 104/104 still green
 [2026-05-21T03:15Z] INT.3 ✅ — state-SDK telemetry.record sinks kind=skill.execution to skill_telemetry; best-effort, sink payload shape sync; npm test 104/104
+[2026-05-21T03:30Z] INT.2 ✅ — autoLink wired into fts5.indexEntry (fire-and-forget); env-gate moved to top of autoLink to short-circuit before db work; test stderr clean; npm test 104/104

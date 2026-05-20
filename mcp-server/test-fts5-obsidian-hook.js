@@ -16,6 +16,12 @@ function makeRoot() {
   return mkdtempSync(join(tmpdir(), 'ijfw-fts5-obsidian-'));
 }
 
+// Suppress the M2 (INT.2) fire-and-forget autoLink — these tests assert
+// the M1 (INT.1) indexObsidianRelations side-effect only. Keeping
+// IJFW_AUTOLINK_OFF=1 here also prevents stderr noise from race against
+// the db.close() at the bottom of each test.
+process.env.IJFW_AUTOLINK_OFF = '1';
+
 test('indexEntry triggers indexObsidianRelations as a side-effect', async () => {
   const root = makeRoot();
   try {

@@ -106,6 +106,22 @@ function applyProposal(db, entry, proposal) {
 }
 
 export async function autoLink(db, entry, opts = {}) {
+  // Env-gate check FIRST — before any DB work — so the off-path is a
+  // true no-op (no SELECT against memory_entries, no race against
+  // fire-and-forget db.close calls in test harnesses).
+  if (!opts.dryProposal && !opts.neighborsOnly) {
+    if (process.env.IJFW_AUTOLINK_OFF === '1') {
+      return { skipped: true, reason: 'autolink_off' };
+    }
+    const budget = process.env.IJFW_AUTOLINK_BUDGET_USD;
+    if (budget !== undefined && Number(budget) <= 0) {
+      return { skipped: true, reason: 'budget_exhausted' };
+    }
+    const hasKey = !!(process.env.IJFW_AUTOLINK_API_KEY || process.env.ANTHROPIC_API_KEY);
+    if (!hasKey) {
+      return { skipped: true, reason: 'no_key' };
+    }
+  }
   const neighbors = selectNeighbors(db, entry, opts.k || DEFAULT_TOPK);
   if (opts.neighborsOnly) return { skipped: true, neighbors };
 
