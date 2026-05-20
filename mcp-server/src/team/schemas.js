@@ -23,6 +23,41 @@ export const SOFTWARE_CORE_AGENT_IDS = Object.freeze([
   'ijfw-code-fixer',
 ]);
 
+// T25 / G7-gen: canonical domain-specialist agent ids by archetype. The map
+// is the single source of truth for which specialist ids the generator
+// returns for each domain — T26 will author the matching
+// `claude/agents/<id>.md` files so the installer can deploy them; T25 just
+// makes the generator hand them back per archetype.
+//
+// Contract:
+//   - keys are normalized archetypes (post-alias-map). `book`, `content`,
+//     and `design` are populated today; other archetypes get `[]` until
+//     T26 expands the set.
+//   - values are deterministic arrays; insertion order is roster-display order.
+//   - software domain's specialists are the SOFTWARE_CORE_AGENT_IDS — this
+//     map intentionally does NOT duplicate them (`resolveDomainSpecialistAgentIds`
+//     in generator.js returns the union for software). Non-software domains
+//     own their own specialist lists exclusively.
+//
+// Choice of three+ domains (`book`, `content`, `design`) satisfies the
+// "≥3 non-software domains" constraint and gives T26 concrete templates
+// to flesh out. Other archetypes will gain rosters in later tasks.
+export const DOMAIN_SPECIALIST_AGENT_IDS = Object.freeze({
+  book: Object.freeze([
+    'ijfw-narrative-continuity-checker',
+    'ijfw-line-editor',
+    'ijfw-lore-keeper',
+  ]),
+  content: Object.freeze([
+    'ijfw-campaign-strategist',
+    'ijfw-copy-reviewer',
+  ]),
+  design: Object.freeze([
+    'ijfw-design-critic',
+    'ijfw-accessibility-reviewer',
+  ]),
+});
+
 const ROLE_TYPES = new Set([
   'lead',
   'software',

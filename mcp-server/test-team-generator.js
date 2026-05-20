@@ -5,15 +5,21 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  DOMAIN_SPECIALIST_AGENT_IDS,
   SOFTWARE_CORE_AGENT_IDS,
   createTeamAssembly,
   detectTeamArchetype,
   loadTeamTemplate,
   readTeamAssembly,
+  resolveDomainSpecialistAgentIds,
+  resolveRosterForDomain,
   resolveSoftwareCoreAgentIds,
   scoreBrief,
 } from './src/team/generator.js';
-import { SOFTWARE_CORE_AGENT_IDS as SCHEMA_SOFTWARE_CORE_AGENT_IDS } from './src/team/schemas.js';
+import {
+  DOMAIN_SPECIALIST_AGENT_IDS as SCHEMA_DOMAIN_SPECIALIST_AGENT_IDS,
+  SOFTWARE_CORE_AGENT_IDS as SCHEMA_SOFTWARE_CORE_AGENT_IDS,
+} from './src/team/schemas.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -306,6 +312,289 @@ test('createTeamAssembly returns empty softwareCoreAgentIds for non-software arc
     assert.equal(result.ok, true);
     assert.ok(Array.isArray(result.softwareCoreAgentIds));
     assert.equal(result.softwareCoreAgentIds.length, 0);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// --- T25 (G7-gen): domain-aware team generator --------------------------
+
+test('DOMAIN_SPECIALIST_AGENT_IDS exposes specialists for at least 3 non-software domains', () => {
+  // Contract from the task brief: book / content (campaign) / design must
+  // all have populated specialist lists. The ≥3 threshold guarantees T26's
+  // template work has real targets and that the generator can produce
+  // measurably different rosters across domains.
+  const populated = Object.keys(DOMAIN_SPECIALIST_AGENT_IDS).filter(
+    (domain) => Array.isArray(DOMAIN_SPECIALIST_AGENT_IDS[domain])
+      && DOMAIN_SPECIALIST_AGENT_IDS[domain].length > 0,
+  );
+  assert.ok(
+    populated.length >= 3,
+    `expected ≥3 populated specialist domains, got ${populated.length}: ${populated.join(', ')}`,
+  );
+  // Spot-check the three named in the task brief.
+  for (const domain of ['book', 'content', 'design']) {
+    assert.ok(
+      DOMAIN_SPECIALIST_AGENT_IDS[domain] && DOMAIN_SPECIALIST_AGENT_IDS[domain].length > 0,
+      `domain "${domain}" must have ≥1 specialist`,
+    );
+  }
+});
+
+test('DOMAIN_SPECIALIST_AGENT_IDS contains the brief-named specialist ids', () => {
+  // The task brief names specific specialist ids; the generator must
+  // surface them so T26 knows exactly which agent .md files to author.
+  // Book: narrative-continuity-checker / line-editor / lore-keeper.
+  // Campaign (content): campaign-strategist / copy-reviewer.
+  assert.deepEqual(
+    DOMAIN_SPECIALIST_AGENT_IDS.book,
+    ['ijfw-narrative-continuity-checker', 'ijfw-line-editor', 'ijfw-lore-keeper'],
+  );
+  assert.deepEqual(
+    DOMAIN_SPECIALIST_AGENT_IDS.content,
+    ['ijfw-campaign-strategist', 'ijfw-copy-reviewer'],
+  );
+});
+
+test('generator.js and schemas.js export the same canonical domain specialist map', () => {
+  // Single-source-of-truth contract mirrors the SOFTWARE_CORE assertion.
+  assert.deepEqual(
+    DOMAIN_SPECIALIST_AGENT_IDS,
+    SCHEMA_DOMAIN_SPECIALIST_AGENT_IDS,
+    'generator.DOMAIN_SPECIALIST_AGENT_IDS must equal schemas.DOMAIN_SPECIALIST_AGENT_IDS',
+  );
+});
+
+test('resolveDomainSpecialistAgentIds returns the right ids per archetype', () => {
+  assert.deepEqual(
+    resolveDomainSpecialistAgentIds('book'),
+    ['ijfw-narrative-continuity-checker', 'ijfw-line-editor', 'ijfw-lore-keeper'],
+  );
+  assert.deepEqual(
+    resolveDomainSpecialistAgentIds('content'),
+    ['ijfw-campaign-strategist', 'ijfw-copy-reviewer'],
+  );
+  assert.deepEqual(
+    resolveDomainSpecialistAgentIds('design'),
+    ['ijfw-design-critic', 'ijfw-accessibility-reviewer'],
+  );
+  // Software intentionally exposes [] here — its roster is covered by
+  // resolveSoftwareCoreAgentIds. The split keeps "core" and "specialist"
+  // concerns separable.
+  assert.deepEqual(resolveDomainSpecialistAgentIds('software'), []);
+  // Archetypes with no template yet return [].
+  for (const archetype of ['research', 'business', 'mixed']) {
+    assert.deepEqual(
+      resolveDomainSpecialistAgentIds(archetype),
+      [],
+      `expected [] for archetype "${archetype}"`,
+    );
+  }
+});
+
+test('resolveDomainSpecialistAgentIds canonicalises aliases via the alias map', () => {
+  // `campaign` should route to `content` (per the alias map) and surface
+  // the campaign-strategist / copy-reviewer specialists. Likewise `novel`
+  // → book.
+  assert.deepEqual(
+    resolveDomainSpecialistAgentIds('campaign'),
+    ['ijfw-campaign-strategist', 'ijfw-copy-reviewer'],
+  );
+  assert.deepEqual(
+    resolveDomainSpecialistAgentIds('novel'),
+    ['ijfw-narrative-continuity-checker', 'ijfw-line-editor', 'ijfw-lore-keeper'],
+  );
+});
+
+test('resolveDomainSpecialistAgentIds returns a fresh array (mutations do not leak)', () => {
+  const ids = resolveDomainSpecialistAgentIds('book');
+  ids.push('synthetic-attacker-id');
+  const fresh = resolveDomainSpecialistAgentIds('book');
+  assert.equal(fresh.includes('synthetic-attacker-id'), false);
+  assert.equal(fresh.length, 3);
+});
+
+test('resolveRosterForDomain returns software-core for software archetype', () => {
+  // Software: the full G7-core software set, no domain specialists.
+  const roster = resolveRosterForDomain('software');
+  assert.deepEqual(roster, [
+    'ijfw-doc-verifier',
+    'ijfw-integration-checker',
+    'ijfw-nyquist-auditor',
+    'ijfw-code-fixer',
+  ]);
+});
+
+test('resolveRosterForDomain returns specialists for non-software archetypes', () => {
+  // Book: only domain specialists, no software-core agents.
+  assert.deepEqual(
+    resolveRosterForDomain('book'),
+    ['ijfw-narrative-continuity-checker', 'ijfw-line-editor', 'ijfw-lore-keeper'],
+  );
+  // Content (campaign): only domain specialists.
+  assert.deepEqual(
+    resolveRosterForDomain('content'),
+    ['ijfw-campaign-strategist', 'ijfw-copy-reviewer'],
+  );
+});
+
+test('resolveRosterForDomain yields PROVABLY DIFFERENT rosters per domain', () => {
+  // T25 acceptance criterion from the task brief: "software vs ≥2
+  // non-software domains yield provably different rosters". This is the
+  // structural test that proves it.
+  const software = resolveRosterForDomain('software');
+  const book = resolveRosterForDomain('book');
+  const content = resolveRosterForDomain('content');
+  const design = resolveRosterForDomain('design');
+
+  // Each pair must differ in at least one element.
+  function differ(a, b) {
+    if (a.length !== b.length) return true;
+    return a.some((id, i) => b[i] !== id);
+  }
+  assert.ok(differ(software, book), 'software vs book must differ');
+  assert.ok(differ(software, content), 'software vs content must differ');
+  assert.ok(differ(software, design), 'software vs design must differ');
+  assert.ok(differ(book, content), 'book vs content must differ');
+  assert.ok(differ(book, design), 'book vs design must differ');
+  assert.ok(differ(content, design), 'content vs design must differ');
+
+  // And no shared ids between software-core and any domain specialist set
+  // — proves the "core" / "specialist" namespaces don't accidentally
+  // overlap. If they ever do, the union dedupe in resolveRosterForDomain
+  // would mask the bug.
+  const softwareSet = new Set(software);
+  for (const id of [...book, ...content, ...design]) {
+    assert.equal(
+      softwareSet.has(id),
+      false,
+      `specialist id "${id}" must not collide with a software-core id`,
+    );
+  }
+});
+
+test('createTeamAssembly returns domain-specific rosterAgentIds for a book project', () => {
+  const dir = makeTmp();
+  try {
+    const result = createTeamAssembly(dir, { archetype: 'book', teamName: 'novel-team' });
+    assert.equal(result.ok, true);
+    assert.equal(result.archetype, 'book');
+    assert.ok(Array.isArray(result.domainSpecialistAgentIds));
+    assert.deepEqual(result.domainSpecialistAgentIds, [
+      'ijfw-narrative-continuity-checker',
+      'ijfw-line-editor',
+      'ijfw-lore-keeper',
+    ]);
+    // No software-core in a book roster.
+    assert.deepEqual(result.softwareCoreAgentIds, []);
+    // The merged roster equals the specialists for a book project.
+    assert.deepEqual(result.rosterAgentIds, result.domainSpecialistAgentIds);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('createTeamAssembly returns campaign specialists when archetype routes to content', () => {
+  const dir = makeTmp();
+  try {
+    // Explicit content archetype: campaign-strategist + copy-reviewer.
+    const result = createTeamAssembly(dir, { archetype: 'content', teamName: 'launch-team' });
+    assert.equal(result.ok, true);
+    assert.equal(result.archetype, 'content');
+    assert.deepEqual(result.domainSpecialistAgentIds, [
+      'ijfw-campaign-strategist',
+      'ijfw-copy-reviewer',
+    ]);
+    assert.deepEqual(result.rosterAgentIds, result.domainSpecialistAgentIds);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('createTeamAssembly returns software-core for a software project (rosterAgentIds union)', () => {
+  const dir = makeTmp();
+  try {
+    const result = createTeamAssembly(dir, { archetype: 'software' });
+    assert.equal(result.ok, true);
+    // Software project: core ids populated, specialists empty, roster = core.
+    assert.deepEqual(result.softwareCoreAgentIds, [
+      'ijfw-doc-verifier',
+      'ijfw-integration-checker',
+      'ijfw-nyquist-auditor',
+      'ijfw-code-fixer',
+    ]);
+    assert.deepEqual(result.domainSpecialistAgentIds, []);
+    assert.deepEqual(result.rosterAgentIds, result.softwareCoreAgentIds);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('createTeamAssembly produces PROVABLY DIFFERENT rosters across software / book / content', () => {
+  // End-to-end proof at the createTeamAssembly surface: three projects,
+  // three archetypes, three different rosters. This is the contract the
+  // brief asks for: "software vs ≥2 non-software domains yield provably
+  // different rosters".
+  const dirSoftware = makeTmp();
+  const dirBook = makeTmp();
+  const dirContent = makeTmp();
+  try {
+    const sw = createTeamAssembly(dirSoftware, { archetype: 'software' });
+    const bk = createTeamAssembly(dirBook, { archetype: 'book' });
+    const cn = createTeamAssembly(dirContent, { archetype: 'content' });
+
+    assert.equal(sw.ok, true);
+    assert.equal(bk.ok, true);
+    assert.equal(cn.ok, true);
+
+    // All three rosters must be non-empty.
+    assert.ok(sw.rosterAgentIds.length > 0, 'software roster must not be empty');
+    assert.ok(bk.rosterAgentIds.length > 0, 'book roster must not be empty');
+    assert.ok(cn.rosterAgentIds.length > 0, 'content roster must not be empty');
+
+    // And they must be pairwise distinct.
+    assert.notDeepEqual(sw.rosterAgentIds, bk.rosterAgentIds, 'software vs book rosters must differ');
+    assert.notDeepEqual(sw.rosterAgentIds, cn.rosterAgentIds, 'software vs content rosters must differ');
+    assert.notDeepEqual(bk.rosterAgentIds, cn.rosterAgentIds, 'book vs content rosters must differ');
+  } finally {
+    cleanup(dirSoftware);
+    cleanup(dirBook);
+    cleanup(dirContent);
+  }
+});
+
+test('createTeamAssembly routes a book brief from an empty dir to a book roster', () => {
+  // Domain-detection mechanism end-to-end: a brief alone — no
+  // filesystem signal — must steer the generator to the right specialist
+  // set. This is the "read the project brief / domain" path the task
+  // brief calls out.
+  const dir = makeTmp();
+  try {
+    const brief = 'I want to write a novel about a chef. Five chapters of literary fiction prose.';
+    const result = createTeamAssembly(dir, { brief });
+    assert.equal(result.ok, true);
+    assert.equal(result.archetype, 'book');
+    assert.deepEqual(result.domainSpecialistAgentIds, [
+      'ijfw-narrative-continuity-checker',
+      'ijfw-line-editor',
+      'ijfw-lore-keeper',
+    ]);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('createTeamAssembly routes a campaign brief from an empty dir to content specialists', () => {
+  const dir = makeTmp();
+  try {
+    const brief = 'Launch marketing campaign with blog posts, social media, and SEO copy.';
+    const result = createTeamAssembly(dir, { brief });
+    assert.equal(result.ok, true);
+    assert.equal(result.archetype, 'content');
+    assert.deepEqual(result.domainSpecialistAgentIds, [
+      'ijfw-campaign-strategist',
+      'ijfw-copy-reviewer',
+    ]);
   } finally {
     cleanup(dir);
   }
