@@ -1,21 +1,30 @@
-# IJFW v1.6.0 — DEEP-DIVE BRAINSTORM HANDOFF
+# IJFW v1.5.0 — GAP-CLOSURE DEEP-DIVE BRAINSTORM HANDOFF
 
 **Created:** 2026-05-20
 **For:** the next session — a **brainstorm + roadmap** session, NOT an execute session.
-**Working milestone name:** v1.6.0 (the brainstorm finalises the name + version).
-**Mandate (operator, verbatim intent):** "Where we have gaps, we need to address
-them. Where we have weaknesses, we need to be better. Close all the gaps, be
-better than the competition, be more solid where we're weak and stronger than
-the rest. This gives us the roadmap. We're NOT doing it in 1.5.1."
+**This is still v1.5.0.** Not v1.5.1, not v1.6.0. Every gap below is closed
+*inside v1.5.0, before it ships*.
+**Mandate (operator, verbatim intent):** "Where we have gaps, we need to
+address them. Where we have weaknesses, we need to be better. Close all the
+gaps, be better than the competition, be more solid where we're weak and
+stronger than the rest. We are addressing and fixing all of this in 1.5.0.
+That's why we are not pushing anything yet."
 
 ---
 
 ## 0. STATE PIN (do not regenerate)
 
 **Repo:** `/Users/seandonahoe/dev/ijfw` · **Branch:** `main`
-**HEAD:** `78cecd1` · **Tag:** `v1.5.0` → `282bad8` (LOCAL ONLY — not pushed)
-**v1.5.0 status:** ship-ready; **Phase F push (gitlab + npm publish) is
-operator-gated** and still pending an explicit "yes, push".
+**HEAD:** `dec3d08` · **Tag:** `v1.5.0` → `282bad8` — **provisional, LOCAL
+ONLY.** The tag is a moving local marker; it has been re-pointed at each
+milestone HEAD all the way through the wire-up. It moves again as
+gap-closure lands and is only final when v1.5.0 actually ships.
+
+**Why nothing is pushed:** v1.5.0 is **not done**. It claims to replace GSD
++ Superpowers — until every gap below is closed and IJFW genuinely beats the
+field, that claim is not earned, so it does not ship. This is the
+no-half-shipping rule applied honestly (same as the v1.4.0 → v1.4.1
+fold-in: a milestone with a "backlog" is a half-shipped milestone).
 
 **Test posture (all green):**
 - `node --test`: 2013 tests / 2012 pass / 0 fail / 1 skip
@@ -23,34 +32,37 @@ operator-gated** and still pending an explicit "yes, push".
 - `scripts/e2e-smoke.sh`: 3 gate failures, all triaged as non-bugs
   (live-session artifact / unpublished-version / codex opt-in design)
 
-**What v1.5.0 already shipped** (so the brainstorm does not re-propose it):
-foundation S1-S10 + 6 fold-ins; major W12 ~30 scope items; N-series;
-W1-W5 wire-up; r19/r20/r21 cross-audits. Full inventory in
+**What v1.5.0 has shipped SO FAR** (so the brainstorm does not re-propose
+it): foundation S1-S10 + 6 fold-ins; major W12 ~30 scope items; N-series;
+W1-W5 wire-up; r19/r20/r21 cross-audits; E2E close-out. Full inventory in
 `CHANGELOG.md` `[1.5.0]` + `[1.5.0-foundation]` + `[Unreleased]` W1-W5.
+This handoff is about what v1.5.0 still has to do **before** that ship.
 
-**This handoff supersedes** the v1.5.1/v1.6.0 split in
-`.planning/audit-cross-system/GAP-MATRIX.md` — that split assumed a tight
-10-14 day v1.5.1. The operator has rejected the small version. v1.6.0 is
-the ambitious "close everything + win" milestone.
+**Supersedes the milestone split.** `.planning/audit-cross-system/
+GAP-MATRIX.md` split the gap backlog into a "v1.5.1" + a "v1.6.0". That
+split is **rejected**. All of it folds into v1.5.0. (The CHANGELOG
+`[1.5.0]` section + lock-in #46 still carry stale forward-references to
+"v1.5.1 work" / "next milestone" — those get reconciled to "v1.5.0" as
+each gap closes; do not treat them as a real deferral.)
 
 ---
 
-## 1. THE BAR FOR v1.6.0
+## 1. THE BAR FOR v1.5.0 SHIP
 
-v1.5.0 closed ~7 of 8 cross-system audit dimensions and moved IJFW from a
-**2.0/5** average to **~3.9/5** against Superpowers 5.1.0 + GSD 1.41.2.
-That is parity-plus. **The operator does not want parity-plus. v1.6.0's
-bar is: on every dimension, IJFW is the one to beat.**
+So far v1.5.0 has closed ~7 of 8 cross-system audit dimensions and moved
+IJFW from a **2.0/5** average to **~3.9/5** against Superpowers 5.1.0 +
+GSD 1.41.2. That is parity-plus. **Parity-plus is not a shippable v1.5.0.**
 
-Three success tests for the brainstorm to make concrete + measurable:
+v1.5.0 ships only when all three hold:
 1. **No "documented soft spot."** Every v1.5.0 caveat ("mechanism shipped,
    not auto-exercised", "advisory not enforced", "retroactive receipt")
-   either becomes fully real or is deleted. No half-shipping survives.
-2. **No dimension where a competitor is cleaner.** Specifically: GSD's
-   state architecture and GSD's specialist depth (the two places v1.5.0
-   is genuinely *behind*).
+   becomes fully real or is deleted. No half-shipping survives into the
+   shipped tag.
+2. **No dimension where a competitor is cleaner.** Specifically GSD's
+   state architecture and GSD's specialist depth — the two places v1.5.0
+   is genuinely *behind* today.
 3. **At least 2 capabilities no competitor can match** beyond today's
-   cross-AI audit — net-new moat, not just gap-closing.
+   cross-AI audit — a net-new moat, not just gap-closing.
 
 ---
 
@@ -60,7 +72,8 @@ The operator asked to "brainstorm this and dive deep" before fixing. Do
 NOT walk into the next session with a pre-baked plan. The next session:
 1. Runs a real deep brainstorm (ijfw-workflow Deep mode, or
    superpowers:brainstorming) over the material in §4-§6.
-2. Produces a **locked brief** + a **roadmap** (phase breakdown, wave plan).
+2. Produces a **locked brief** + a **roadmap** (phase breakdown, wave
+   plan) for the v1.5.0 gap-closure.
 3. Only then plans execution.
 
 The gap register below is **raw material**, not decisions. Several items
@@ -71,11 +84,12 @@ those are the brainstorm's job.
 
 ## 3. THE HONEST v1.5.0 SCORECARD (8 dimensions)
 
-Baseline = `GAP-MATRIX.md` (2026-05-18, pre-v1.5.0-major). "Now" = post
-v1.5.0-major + wire-up. Rank 1 = worst, 5 = at/above best-in-class.
+Baseline = `GAP-MATRIX.md` (2026-05-18, pre-v1.5.0-major). "Now" = current
+v1.5.0 state. "Ship" = where v1.5.0 must land before it goes out. Rank 1 =
+worst, 5 = at/above best-in-class.
 
-| # | Dimension | Was | Now | v1.6.0 target |
-|---|-----------|----:|----:|---------------|
+| # | Dimension | Was | Now | v1.5.0 SHIP target |
+|---|-----------|----:|----:|--------------------|
 | 1 | Subagent dispatch | 2 | 3-4 | **5** — executor agent + deviation rules must actually run, not be read |
 | 2 | Subagent recovery / truncation | 1 | 3 | **5** — checkpoints must be REAL-TIME, auto-injected |
 | 3 | Code review pipeline | 2 | 4 | **5** — close the code-fixer loop |
@@ -85,19 +99,21 @@ v1.5.0-major + wire-up. Rank 1 = worst, 5 = at/above best-in-class.
 | 7 | Specialist roster | 2 | 4 | **5** — close the depth gap deliberately |
 | 8 | Cross-AI audit | 3 | 5 | **5+** — extend the moat |
 
-Average now ~3.9. v1.6.0 target: **5.0 with a moat on #8 and 2 net-new.**
+Average now ~3.9. v1.5.0 ship target: **5.0 with a moat on #8 and 2
+net-new.**
 
 ---
 
-## 4. GAP REGISTER (things not done / half-done)
+## 4. GAP REGISTER (things not done / half-done — all must close in v1.5.0)
 
 Each gap: evidence · current state · "what DECISIVE looks like" · open question.
 
-### G1 — Checkpoint auto-injection (the one real "half" in v1.5.0)
+### G1 — Checkpoint auto-injection (v1.5.0's one real "half")
 - **Evidence:** `CHANGELOG.md` `[1.5.0]` "Dogfooding receipt" — all 38
   v1.5.0 checkpoints were *retroactively synthesised*; the subagent
   `ijfw checkpoint` CLI shipped but the dispatcher never auto-invoked it.
-  Lock-in #46 explicitly scopes auto-injection to "next milestone".
+  Lock-in #46 currently scopes auto-injection to "next milestone" — that
+  reference is now stale; it lands in v1.5.0.
 - **Current:** mechanism = canonical + tested (`subagent-telemetry.js`,
   `ijfw checkpoint` CLI, `IJFW_PARENT_PROJECT_ROOT` passthrough,
   `ijfw worktree-drain`). Real-time exercise = NOT wired.
@@ -139,7 +155,7 @@ Each gap: evidence · current state · "what DECISIVE looks like" · open questi
 - **Open question:** can a cross-platform tool (8+ agents, not all with
   the same hook surface) have GSD-grade enforcement at all? Or is
   "best-effort enforcement + honest disclosure" the actual ceiling? Name
-  the ceiling.
+  the ceiling — and if it is a ceiling, v1.5.0 must hit it, not sit below it.
 
 ### G4 — code-fixer loop (gap-matrix v151-S07 — partial)
 - **Evidence:** recovery-sentinel pattern shipped (`worktree-recovery.js`,
@@ -154,10 +170,13 @@ Each gap: evidence · current state · "what DECISIVE looks like" · open questi
 ### G5 — Multi-machine wave coordination
 - **Evidence:** `docs/MULTI-MACHINE-DESIGN.md` — a 4-phase stub
   (distributed lock / signed checkpoints / CRDT STATE.md / cluster CLI).
-- **Current:** design only, zero implementation. Deferred from v1.5.0.
-- **Open question:** is multi-machine actually in v1.6.0 scope, or a
-  v1.7.0 item? It is large. The brainstorm decides — but it is a real
-  differentiator nobody else has.
+- **Current:** design only, zero implementation.
+- **Open question:** the operator said "fix all of this" — so the default
+  is *in v1.5.0*. But it is large (a 4-phase effort) and could balloon
+  the milestone. The brainstorm must decide honestly: is multi-machine a
+  v1.5.0 gap, or is it genuinely net-new scope (a feature, not a gap)
+  that the no-half-shipping rule does NOT force into v1.5.0? Decide with
+  the operator, do not assume.
 
 ### G6 — Codex Stop status card (E2E smoke gate #5)
 - **Evidence:** `scripts/e2e-smoke.sh` gate expects the codex Stop hook
@@ -167,7 +186,7 @@ Each gap: evidence · current state · "what DECISIVE looks like" · open questi
 - **Current:** test/design mismatch. Small. Either update the test to
   enable the opt-in it is testing, OR un-gate the update-nudge portion.
 - **Decisive:** decide the codex Stop UX deliberately and make the gate
-  match. Trivial — but it is a live ship-gate red.
+  match. Trivial — but it is a live ship-gate red, so it blocks ship.
 
 ### G7 — Specialist depth vs GSD (~14 agents not built)
 - **Evidence:** GSD ships 33 named agents; IJFW ~20. Missing, with
@@ -186,7 +205,7 @@ Each gap: evidence · current state · "what DECISIVE looks like" · open questi
 
 ---
 
-## 5. WEAKNESS REGISTER (shipped, but not best-in-class)
+## 5. WEAKNESS REGISTER (shipped, but not best-in-class — all must reach best-in-class for v1.5.0)
 
 ### W1 — Plan-checker is a library, not a gate
 `plan-checker.js` (`validatePlan`, 6 mechanical checks) ships *inside*
@@ -236,7 +255,7 @@ those systems — is IJFW's memory actually ahead, or just adequate?
 - Code review — GSD's worktree-isolated code-fixer is best-in-class.
 - Debug — GSD's 3-layer is the reference; IJFW matched the shape, not the miles.
 
-**BEHIND (must close):**
+**BEHIND (must close inside v1.5.0):**
 - State architecture — GSD `gsd-sdk query state.*` (see G2).
 - Specialist depth — GSD 33 vs IJFW ~20 (see G7).
 
@@ -252,8 +271,10 @@ warrant a look. Fresh competitive intel is a candidate first wave.
 
 Work these in order. Each produces a decision recorded in the brief.
 
-1. **Scope the milestone.** Is v1.6.0 "close all gaps" (G1-G7 + W1-W5),
-   or is multi-machine (G5) split to v1.7.0? Name + version the milestone.
+1. **Confirm v1.5.0 scope.** G1-G7 + W1-W5 all land in v1.5.0. The one
+   genuine call: is G5 (multi-machine) a *gap* the no-half-shipping rule
+   forces in, or *net-new scope* that is allowed to be a later feature?
+   Decide explicitly with the operator.
 2. **Resolve the architecture forks** — the items with open questions:
    - G1: how does the dispatcher auto-inject checkpointing?
    - G2: is a verb-namespace state-SDK right for IJFW?
@@ -290,7 +311,7 @@ Do not treat as a plan. Brainstorm fodder only.
 - **Bucket A — Audit moat:** W4 (Trident telemetry), audit re-run,
   net-new audit capability.
 - **Bucket D — Depth:** G7 (specialist roster), domain specialists.
-- **Bucket M — Multi-machine:** G5 (if in scope).
+- **Bucket M — Multi-machine:** G5 (pending the §7.1 scope decision).
 - **Bucket P — Polish:** G6 (codex Stop), any new cross-audit findings.
 
 ---
@@ -310,9 +331,10 @@ brainstorm must respect these:
   the 7 non-Claude platforms.
 - **Do NOT raise the Node floor** past 18, or chase Anthropic-specific
   SDK deps.
-- **No half-shipping.** Every v1.6.0 feature has a runtime caller OR a
+- **No half-shipping.** Every v1.5.0 feature has a runtime caller OR a
   hard-block MCP signal — AND a falsifiable proof it fires (§7.7). This
-  is the lesson v1.5.0's checkpoint caveat taught.
+  is the lesson v1.5.0's checkpoint caveat taught. v1.5.0 does not ship
+  with a single "documented soft spot" surviving.
 - **Core skill `ijfw-core/SKILL.md` hard cap: 55 lines.**
 - **Startup report: positive framing only.**
 
@@ -321,10 +343,12 @@ brainstorm must respect these:
 ## 10. EVIDENCE & REFERENCE INDEX
 
 - `CHANGELOG.md` — `[1.5.0]`, `[1.5.0-foundation]`, `[Unreleased]` W1-W5:
-  the complete v1.5.0 feature inventory.
+  the v1.5.0 feature inventory so far. (Carries stale "v1.5.1"/"next
+  milestone" forward-refs — reconcile to v1.5.0 as gaps close.)
 - `.planning/audit-cross-system/GAP-MATRIX.md` — the 8-dimension matrix +
-  the 10-item v151-S backlog + "where we fucked up" honesty section.
-  **Dated 2026-05-18 — pre-v1.5.0-major. Read with that in mind.**
+  the 10-item gap backlog + "where we fucked up" honesty section.
+  **Dated 2026-05-18 — pre-v1.5.0-major. Its v1.5.1/v1.6.0 split is
+  rejected; it all folds into v1.5.0.**
 - `.planning/audit-cross-system/SUPERPOWERS-AUDIT.md` — Superpowers 5.1.0.
 - `.planning/audit-cross-system/GSD-AUDIT.md` — GSD 1.41.2.
 - `.planning/audit-cross-system/IJFW-CURRENT.md` — IJFW pre-major state.
@@ -339,31 +363,36 @@ brainstorm must respect these:
 ## 11. RESUME PROTOCOL — START THE NEXT SESSION HERE
 
 ```
-This session is the v1.6.0 DEEP-DIVE BRAINSTORM. Full handoff:
-.planning/v160-brainstorm/HANDOFF-v160-BRAINSTORM.md — read it first,
+This session is the v1.5.0 GAP-CLOSURE DEEP-DIVE BRAINSTORM. Full handoff:
+.planning/v150-gap-closure/HANDOFF-v150-GAP-CLOSURE.md — read it first,
 top to bottom.
 
-State: v1.5.0 is ship-ready (tag v1.5.0 → 282bad8, local only, Phase F
-push still operator-gated). HEAD 78cecd1. Tests fully green.
+This is still v1.5.0. Every gap closes inside v1.5.0, before it ships.
+v1.5.0 is NOT pushed precisely because these gaps are open — that is the
+no-half-shipping rule, not an oversight.
+
+State: HEAD dec3d08. Tag v1.5.0 -> 282bad8 (provisional, local only — it
+moves as gap-closure lands). Tests fully green.
 
 Task: run a DEEP brainstorm (ijfw-workflow Deep mode OR
 superpowers:brainstorming) over the gap register (§4), weakness register
 (§5), and competitive map (§6). Work the §7 agenda in order. Resolve the
 3 architecture forks (G1 dispatcher checkpoint injection, G2 state-SDK,
-G3 enforcement ceiling) — they are load-bearing. Produce a LOCKED brief
-+ a roadmap (phase/wave breakdown with falsifiable proof per gap).
+G3 enforcement ceiling) — they are load-bearing. Decide G5 (multi-machine)
+scope explicitly with the operator. Produce a LOCKED brief + a roadmap
+(phase/wave breakdown with falsifiable proof per gap).
 
-The bar (§1): not parity-plus. v1.6.0 makes IJFW the one to beat on every
-dimension, with ≥2 net-new capabilities no competitor can match.
+The bar (§1): v1.5.0 ships only when no competitor is cleaner on any
+dimension AND there are >=2 net-new capabilities no competitor can match.
 
 Do NOT pre-bake a plan. Brainstorm first. Respect the §9 anti-patterns.
-Do NOT push v1.5.0 — that is a separate operator-gated decision.
+v1.5.0 does not ship until the roadmap from this session is fully done.
 ```
 
 **First actions for the next session:**
 1. Read this handoff fully.
 2. Read `GAP-MATRIX.md` (note: pre-major; the "Now" column in §3 here is
-   the current truth).
+   the current truth; its v1.5.1/v1.6.0 split is rejected).
 3. Decide whether to spawn a fresh cross-system competitive audit
    (Superpowers / GSD / new entrants) as wave 1 — recommended; the
    existing audits are 2+ days and one major release stale.
