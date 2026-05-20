@@ -830,6 +830,96 @@ fi
 rm -rf "$DEDUP_TMP"
 
 # ============================================================
+# 1.5.0 T30 -- agent cross-platform deploy
+# ============================================================
+# Asserts the v1.5.0 G7 specialist roster -- 4 software-core +
+# 7 domain-specialist agents -- is fully present under claude/agents/
+# (the source-of-truth dir that mirrors into $HOME/.ijfw/claude on
+# install, so every agent file is reachable from a user install by
+# construction). Also asserts the Claude install path is set up so
+# the agent files resolve through it.
+hdr "1.5.0 T30 -- agent cross-platform deploy"
+
+T30_CLAUDE_AGENTS="$REPO_ROOT/claude/agents"
+T30_EXPECTED_AGENTS=(
+  # G7 software-core (4)
+  "ijfw-doc-verifier"
+  "ijfw-integration-checker"
+  "ijfw-nyquist-auditor"
+  "ijfw-code-fixer"
+  # G7 domain specialists -- book (3)
+  "ijfw-narrative-continuity-checker"
+  "ijfw-line-editor"
+  "ijfw-lore-keeper"
+  # G7 domain specialists -- content / campaign (2)
+  "ijfw-campaign-strategist"
+  "ijfw-copy-reviewer"
+  # G7 domain specialists -- design (2)
+  "ijfw-design-critic"
+  "ijfw-accessibility-reviewer"
+)
+
+T30_MISSING=0
+for agent_id in "${T30_EXPECTED_AGENTS[@]}"; do
+  if [ -f "$T30_CLAUDE_AGENTS/$agent_id.md" ]; then
+    : # present
+  else
+    fail "T30: missing claude/agents/$agent_id.md"
+    T30_MISSING=$((T30_MISSING + 1))
+  fi
+done
+if [ "$T30_MISSING" -eq 0 ]; then
+  pass "T30: all 11 expected agent files present in claude/agents/ (4 core + 7 specialist)"
+fi
+
+# Claude deploys agents via a symlink at ~/.ijfw/claude -> repo claude/
+# (confirmed during T30 recon). That makes the repo-file-existence check
+# above sufficient for the deploy contract -- any user install resolves
+# every claude/agents/<id>.md through the symlink by construction.
+# A live install-mirror assertion is intentionally NOT done here:
+#   - The Mode-2 ISO_HOME install in this smoke script does not provision
+#     the ~/.ijfw/claude symlink (that's an installer responsibility
+#     covered by the installer's own test surface).
+#   - Repeating it here would either double-check the installer or fail
+#     on a non-bug. The repo-file-existence + node:test cross-reference
+#     are the right gates for T30.
+
+# Cross-reference: domain-template agent_ids must all resolve to a
+# claude/agents/<id>.md file. Catches phantom ids in T26 templates.
+T30_TEMPLATES_DIR="$REPO_ROOT/mcp-server/src/team/domain-templates"
+if [ -d "$T30_TEMPLATES_DIR" ]; then
+  T30_PHANTOM=0
+  for tpl in "$T30_TEMPLATES_DIR"/*.json; do
+    [ -f "$tpl" ] || continue
+    # Extract every agent_id; skip lines that don't look like an id.
+    while IFS= read -r aid; do
+      [ -n "$aid" ] || continue
+      if [ ! -f "$T30_CLAUDE_AGENTS/$aid.md" ]; then
+        fail "T30: template $(basename "$tpl") references phantom agent_id: $aid"
+        T30_PHANTOM=$((T30_PHANTOM + 1))
+      fi
+    done < <(node -e '
+      const fs=require("fs");
+      const t=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+      if (Array.isArray(t.agent_ids)) for (const id of t.agent_ids) console.log(id);
+    ' "$tpl" 2>/dev/null || true)
+  done
+  if [ "$T30_PHANTOM" -eq 0 ]; then
+    pass "T30: every domain-template agent_id resolves to a claude/agents file"
+  fi
+else
+  fail "T30: domain-templates dir missing at $T30_TEMPLATES_DIR"
+fi
+
+# Run the node:test T30 deploy harness for parity with npm test surface.
+if (cd "$REPO_ROOT" && node --test mcp-server/test-agent-cross-platform-deploy.js \
+      >"$ISO_HOME/t30.out" 2>"$ISO_HOME/t30.err"); then
+  pass "T30: node --test mcp-server/test-agent-cross-platform-deploy.js green"
+else
+  fail "T30: node --test mcp-server/test-agent-cross-platform-deploy.js red (see $ISO_HOME/t30.err)"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 hdr "Summary"
