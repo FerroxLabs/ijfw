@@ -1,13 +1,18 @@
 // IJFW v1.5.0 -- dream-cycle state file (Wayland pattern + idempotency).
 //
-// Lives at `<repoRoot>/.ijfw/.dream-state.json`. Tracks:
+// Lives at `<repoRoot>/.ijfw/.dream-state-v2.json` (legacy cooldown.js owns
+// `.dream-state.json` and writes an ISO-string last_run_at incompatible
+// with this module's numeric unix-ms; using a separate path avoids the
+// schema collision while letting both layers coexist).
+//
+// Tracks:
 //   - last_run_at: unix-ms timestamp of last completed dream cycle (idle gate)
 //   - runs_total:  cumulative count
 //   - stages:      per-stage status for the current/most-recent run
 //
-// The legacy `cooldown.js` file (4h marker) is preserved upstream — runner.mjs
-// still calls markCompleted() at the end of the cycle so any downstream code
-// reading the old marker keeps working. This module is the additive layer.
+// The legacy cooldown.markCompleted() is still called as the final stage
+// in runner.mjs so any downstream code reading the old marker keeps working.
+// This module is the additive layer.
 //
 // Pattern lift from sibling project Wayland's
 // `crates/wcore-memory/src/consolidate.rs` DreamThrottle.
@@ -20,7 +25,7 @@ import { join } from 'node:path';
 const DEFAULT = { version: 1, last_run_at: null, runs_total: 0, stages: {} };
 
 function pathOf(root) {
-  return join(root, '.ijfw', '.dream-state.json');
+  return join(root, '.ijfw', '.dream-state-v2.json');
 }
 
 export function readDreamState(root) {

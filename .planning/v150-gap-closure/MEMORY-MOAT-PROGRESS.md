@@ -8,3 +8,4 @@
 [2026-05-21T00:45Z] M1.4+1.5 ✅ — query-dataview parser+executor + grammar doc; 10/10 tests pass; schema-fit fix (production memory_entries has integer id, no title)
 [2026-05-21T01:10Z] M2.2+2.3 ✅ — auto-linker (A-Mem) + budget integration; 7/7 tests pass; tokenized body LIKE, production-schema-fit
 [2026-05-21T01:30Z] M4.1+4.2+4.3 ✅ — migration 008 (origin) + dream/state-file + dream/stage-runner; 13/13 tests pass
+[2026-05-21T01:55Z] M4.4 ✅ — dream/runner.mjs wired (idle gate + per-stage isolation); 4/4 e2e tests pass; legacy cooldown preserved as final stage

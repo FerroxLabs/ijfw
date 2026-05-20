@@ -38,6 +38,8 @@ import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isOnCooldown, markCompleted } from './cooldown.js';
+import { shouldRunNow } from './state-file.js';
+import { runStages } from './stage-runner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -91,12 +93,23 @@ function log(line) {
 }
 
 // ---------------------------------------------------------------------------
-// Cooldown gate
+// Idle gate (M4 — replaces legacy 4h cooldown with min_idle_minutes
+// gate, default 30 min, override via IJFW_DREAM_MIN_IDLE_MIN).
+// Legacy cooldown.markCompleted() is still called as a final stage so
+// downstream code reading the old marker keeps working.
 // ---------------------------------------------------------------------------
 
-if (isOnCooldown(stateDir)) {
-  log(`skip: cooldown active (host=${opts.host}, reason=${opts.reason})`);
+const MIN_IDLE_MIN = Number(process.env.IJFW_DREAM_MIN_IDLE_MIN || 30);
+if (!shouldRunNow(opts.projectRoot, { min_idle_minutes: MIN_IDLE_MIN })) {
+  log(`skip: idle gate <${MIN_IDLE_MIN}min since last run`);
   process.exit(0);
+}
+// Legacy cooldown is now informational only — the new idle gate above is
+// strictly stricter (30 min) than the old 4h. We still consult it as a
+// belt-and-braces signal, but ONLY for visibility in the log; it does not
+// block the run.
+if (isOnCooldown(stateDir)) {
+  log(`note: legacy 4h cooldown also active (host=${opts.host}, reason=${opts.reason}) — proceeding under idle gate`);
 }
 
 log(`start: host=${opts.host}, reason=${opts.reason}, project=${opts.projectRoot}`);
@@ -351,14 +364,37 @@ function safeJournalSummary() {
 
 (async () => {
   try {
-    const summary = safeJournalSummary();
-    log(`journal: ${summary.entries} entries across ${summary.sessions} sessions`);
-
-    await runTierPromotion();
-
-    const ok = markCompleted(stateDir);
-    log(`mark-completed: ${ok ? 'ok' : 'failed (non-fatal)'}`);
-    log('end: clean');
+    // M4 hardening: lift each step into a stage-runner stage so a failure
+    // in one stage logs + continues; downstream stages still execute.
+    // State file records each stage's status independently.
+    const summary = await runStages(opts.projectRoot, [
+      {
+        name: 'journal_summary',
+        run: async () => {
+          const s = safeJournalSummary();
+          log(`journal: ${s.entries} entries across ${s.sessions} sessions`);
+          return s;
+        },
+      },
+      {
+        name: 'tier_promotion',
+        run: async () => {
+          const out = await runTierPromotion();
+          return out || { skipped: 'no-op' };
+        },
+      },
+      {
+        name: 'mark_completed_legacy',
+        run: async () => {
+          // Preserve the legacy 4h cooldown marker so any downstream code
+          // still reading .dream-state.json continues to work.
+          const ok = markCompleted(stateDir);
+          log(`mark-completed: ${ok ? 'ok' : 'failed (non-fatal)'}`);
+          return { ok };
+        },
+      },
+    ]);
+    log(`end: completed=${summary.completed.length} failed=${summary.failed.length}`);
   } catch (err) {
     // Defensive: any unexpected throw lands in the log but never
     // surfaces a non-zero exit to the parent hook.

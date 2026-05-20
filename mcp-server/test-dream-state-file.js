@@ -66,7 +66,7 @@ test('readDreamState fail-safe on corrupt file', () => {
   const root = makeRoot();
   try {
     mkdirSync(join(root, '.ijfw'), { recursive: true });
-    writeFileSync(join(root, '.ijfw', '.dream-state.json'), 'NOT JSON');
+    writeFileSync(join(root, '.ijfw', '.dream-state-v2.json'), 'NOT JSON');
     const s = readDreamState(root);
     assert.equal(s.runs_total, 0);
     assert.equal(s.last_run_at, null);
