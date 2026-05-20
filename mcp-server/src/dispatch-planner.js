@@ -4,7 +4,9 @@
 // computes a dispatch manifest: each sub-wave is either SHARED (no file overlap
 // with peers in the same wave) or WORKTREE (overlaps -> needs isolation).
 //
-// Pure + synchronous. ESM. Zero deps. Filesystem only touched by caller.
+// Pure + synchronous. ESM. Zero deps. No filesystem writes — all state
+// persistence is the caller's responsibility via state-SDK query() (T6).
+// A spy regression test in test-dispatch-planner.js enforces this permanently.
 
 // eslint-disable-next-line security/detect-unsafe-regex -- plan markdown is bounded human-authored text; pattern is line-anchored and token-sized.
 const WAVE_HEADER = /^###\s+Wave\s+([0-9]+[A-Z])(?:-([A-Za-z0-9_+]+))?\b/;
