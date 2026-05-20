@@ -64,7 +64,7 @@ const TEST_SKIP_REGEX = /\b(skip\s+(?:the\s+)?tests?|tests?\s+not\s+required|no\
 
 /**
  * @typedef {Object} Finding
- * @property {'BLOCK'|'WARN'|'INFO'} severity
+ * @property {'BLOCK'|'HIGH'|'WARN'|'INFO'} severity
  * @property {string} code
  * @property {string} message
  * @property {string} [locationHint]
@@ -74,6 +74,32 @@ function mkFinding(severity, code, message, locationHint) {
   const f = { severity, code, message };
   if (locationHint) f.locationHint = locationHint;
   return f;
+}
+
+/**
+ * v1.5.0 T17 (W1 plan-check hard-BLOCK): the canonical set of severities that
+ * structurally REFUSE dispatch when emitted by `validatePlan`.
+ *
+ * The codebase historically used `BLOCK` (this module) and `HIGH` (newer
+ * `termination.js` vocabulary — see `mcp-server/src/orchestrator/termination.js`
+ * §"FindingSeverity"). The STATE-SDK contract §7 `phase.plan-check` block + the
+ * T16 enforcement matrix both name the dispatch-blocking tier as a "HIGH
+ * finding". We treat the two labels as synonyms here so that:
+ *
+ *   (a) legacy callers emitting `BLOCK` keep working unchanged, AND
+ *   (b) any future rule emitting the canonical `HIGH` label also fails dispatch.
+ *
+ * This is the single source of truth — `phase.plan-check` in state-sdk.js
+ * imports the predicate so the gate cannot drift from `validatePlan`'s output.
+ */
+const HIGH_TIER_SEVERITIES = Object.freeze(new Set(['BLOCK', 'HIGH']));
+
+/**
+ * @param {Finding} finding
+ * @returns {boolean}
+ */
+function isHighFinding(finding) {
+  return !!finding && HIGH_TIER_SEVERITIES.has(finding.severity);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +446,12 @@ function validatePlan(planText, opts = {}) {
     }
   }
 
-  const ok = !findings.some((f) => f.severity === 'BLOCK');
+  // v1.5.0 T17 (W1 plan-check hard-BLOCK): a finding in `HIGH_TIER_SEVERITIES`
+  // (BLOCK or HIGH — see comment on `HIGH_TIER_SEVERITIES`) is structurally
+  // dispatch-blocking. `strict` mode promotes placeholder WARNs to BLOCKs (the
+  // historical behaviour); a HIGH-tier finding from any check — strict or not —
+  // makes `ok=false` and the `phase.plan-check` verb refuses pre-dispatch.
+  const ok = !findings.some(isHighFinding);
   return { ok, findings };
 }
 
@@ -432,4 +463,6 @@ export {
   extractDependencyRefs,
   findEmptySteps,
   PLACEHOLDER_PATTERNS,
+  HIGH_TIER_SEVERITIES,
+  isHighFinding,
 };

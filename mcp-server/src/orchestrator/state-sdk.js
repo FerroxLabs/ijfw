@@ -48,7 +48,10 @@ import {
   enforceVerificationGate as _realEnforceVerificationGate,
   VerificationGateViolation,
 } from './verification-gate.js';
-import { validatePlan as _realValidatePlan } from './plan-checker.js';
+import {
+  validatePlan as _realValidatePlan,
+  isHighFinding,
+} from './plan-checker.js';
 import { runSelfCheck as _realRunSelfCheck } from './post-done-runner.js';
 import {
   emitEvent as emitEventToLog,
@@ -837,7 +840,17 @@ const handlers = {
       process.stderr.write(`[state-sdk] WARN phase.plan-check gate execution-fail: ${e.message}\n`);
       return { ok: true, advisory: true, gate: 'plan-check', reason: e.message, findings: [] };
     }
-    if (!result.ok) {
+    // v1.5.0 T17 (W1 plan-check hard-BLOCK): structurally REFUSE on any
+    // HIGH-tier finding (severity in {BLOCK, HIGH} per `isHighFinding`).
+    // This is the dispatch-blocking precondition — execute cannot proceed.
+    // We don't rely on `result.ok` alone: even if a future `validatePlan`
+    // regression set `ok:true` while a HIGH-tier finding slipped into the
+    // list, the gate stays correct. Pre-`_withLocks` early-return guarantees
+    // NO state mutation (no intent-journal append, no workflow.json write).
+    const highFindings = Array.isArray(result.findings)
+      ? result.findings.filter(isHighFinding)
+      : [];
+    if (!result.ok || highFindings.length > 0) {
       return {
         ok: false, refused: true, gate: 'plan-check',
         findings: result.findings, reason: 'plan-check HIGH finding',
