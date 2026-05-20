@@ -1,0 +1,2 @@
+{"verb":"workflow.set-phase","verbId":"v-clean-1-set-phase","phase":"begin","ts":"2026-05-20T12:00:00.000Z","targets":[".ijfw/state/workflow.json"],"payloadDigest":"sha256-fixture-v-clean-1-set-phase","kind":"overwrite"}
+{"verb":"workflow.set-phase","verbId":"v-clean-1-set-phase","phase":"commit","ts":"2026-05-20T12:00:00.000Z","payloadDigest":"sha256-fixture-v-clean-1-set-phase","kind":"overwrite"}

@@ -1,0 +1,18 @@
+{
+  "id": "fx-03-mid-append-02",
+  "category": "mid-append",
+  "waveId": "W20-midA-2",
+  "subId": "midA2",
+  "notes": "append verb partial — sealed in place; durable append preserved",
+  "expectedDetection": {
+    "truncated": "open-partial",
+    "reasonContains": "open begin"
+  },
+  "expectedRecovery": {
+    "recovered": true
+  },
+  "expectedFinalState": {
+    ".ijfw/blackboard/decisions.jsonl": "{\"id\":\"d-2\",\"text\":\"decision 2\",\"dedupKey\":\"dk-midA-2\"}\n"
+  },
+  "expectedTerminalVerb": "subagent.post-done"
+}

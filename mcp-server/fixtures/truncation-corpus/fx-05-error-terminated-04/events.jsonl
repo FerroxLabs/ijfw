@@ -1,0 +1,2 @@
+{"seq":1,"verb":"subagent.checkpoint","subagentId":"errT4","ts":"2026-05-20T12:00:00.000Z","verbId":"v-errT-4-ckpt","outcome":"ok","payloadDigest":"sha256-fixture-v-errT-4-ckpt"}
+{"seq":2,"verb":"decision.add","subagentId":"errT4","ts":"2026-05-20T12:00:00.000Z","verbId":"v-errT-4-partial","outcome":"error","payloadDigest":"sha256-fixture-v-errT-4-partial"}

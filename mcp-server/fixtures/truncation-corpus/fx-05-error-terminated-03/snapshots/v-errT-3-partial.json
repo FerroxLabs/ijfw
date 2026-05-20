@@ -1,0 +1,11 @@
+{
+  "verbId": "v-errT-3-partial",
+  "targets": [
+    {
+      "relPath": ".ijfw/state/workflow.json",
+      "absPath": "<<ABS>>",
+      "existed": true,
+      "content": "{\"phase\":\"errT-pre-3\"}"
+    }
+  ]
+}

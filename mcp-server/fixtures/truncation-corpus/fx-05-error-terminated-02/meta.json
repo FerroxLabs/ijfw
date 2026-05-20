@@ -1,0 +1,18 @@
+{
+  "id": "fx-05-error-terminated-02",
+  "category": "error-terminated",
+  "waveId": "W20-errT-2",
+  "subId": "errT2",
+  "notes": "error-terminated with append partial — seal-in-place preserves record",
+  "expectedDetection": {
+    "truncated": "error-terminated",
+    "reasonContains": "outcome='error'"
+  },
+  "expectedRecovery": {
+    "recovered": true
+  },
+  "expectedFinalState": {
+    ".ijfw/blackboard/decisions.jsonl": "{\"id\":\"d-errT-2\",\"text\":\"errT 2\",\"dedupKey\":\"dk-errT-2\"}\n"
+  },
+  "expectedTerminalVerb": "subagent.post-done"
+}

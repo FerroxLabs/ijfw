@@ -1,0 +1,18 @@
+{
+  "id": "fx-02-mid-overwrite-01",
+  "category": "mid-overwrite",
+  "waveId": "W20-midO-1",
+  "subId": "midO1",
+  "notes": "overwrite verb partial — snapshot-rollback restores wfBefore",
+  "expectedDetection": {
+    "truncated": "open-partial",
+    "reasonContains": "open begin"
+  },
+  "expectedRecovery": {
+    "recovered": true
+  },
+  "expectedFinalState": {
+    ".ijfw/state/workflow.json": "{\"phase\":\"midO-pre-1\"}"
+  },
+  "expectedTerminalVerb": "subagent.post-done"
+}
