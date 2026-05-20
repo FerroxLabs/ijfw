@@ -42,6 +42,7 @@ import { randomUUID, createHash } from 'node:crypto';
 
 import { writeAtomic, readSafe } from '../lib/atomic-io.js';
 import { rotateJsonlIfNeeded } from '../lib/jsonl-rotation.js';
+import { withFsLock, canonicalLockOrder, lockPathFor } from '../fs-lock.js';
 import { enforceVerificationGate, VerificationGateViolation } from './verification-gate.js';
 import { validatePlan } from './plan-checker.js';
 import { runSelfCheck } from './post-done-runner.js';
@@ -55,6 +56,20 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Env escape hatch for the gate subsystem (Model 4 MCP-unavailable row). */
 const GATE_BYPASS = process.env.IJFW_STATE_GATE_BYPASS === '1';
+
+/**
+ * Lock-acquisition tuning (T3). `staleMs` is the window after which a holder
+ * that has STOPPED refreshing (a crashed process) is reclaimed; `heartbeatMs`
+ * is well under it so a *live* long-running verb always renews its lock before
+ * a concurrent caller's stale check fires. `acquireTimeoutMs` is generous so a
+ * legitimate queue of concurrent verbs all get their turn rather than throwing
+ * `FsLockBusyError` under a burst.
+ */
+const LOCK_OPTS = {
+  staleMs: 10_000,
+  heartbeatMs: 2_000,
+  acquireTimeoutMs: 30_000,
+};
 
 // ---------------------------------------------------------------------------
 // Physical-path resolvers — every canonical state file from contract §1.
@@ -86,19 +101,47 @@ const paths = {
 // ---------------------------------------------------------------------------
 
 /**
- * Lock-acquisition seam (T3). `lockTargets` is the §3-ordered subset of
- * physical files the verb mutates — handlers pass it so T3 can acquire locks
- * in canonical coarse-to-fine order. Today: runs `fn` directly (no lock).
+ * Lock-acquisition seam (T3 — IMPLEMENTED). `lockTargets` is the subset of
+ * physical files a verb mutates. The verb core passes its §3-ordered list, but
+ * `_withLocks` does NOT trust it: it routes the list through
+ * `canonicalLockOrder` (defense in depth) so the acquire-order is always the
+ * STATE-SDK-CONTRACT §3 coarse-to-fine order regardless of caller input.
  *
- * @param {string[]} _lockTargets  ordered physical paths (canonical acquire-order)
- * @param {() => Promise<T>} fn
+ * It then acquires every lock coarse-to-fine and releases in reverse by
+ * NESTING `withFsLock` calls — the innermost call runs `fn`, and the `finally`
+ * unwind of each `withFsLock` releases in exact reverse order. Because the
+ * acquire-order is total and deterministic, two verbs touching an overlapping
+ * file set can never form a lock-ordering cycle → the SDK is deadlock-free by
+ * construction.
+ *
+ * Locks are heartbeat-refreshed (`LOCK_OPTS.heartbeatMs`) so a long-running
+ * verb is never wrongly reclaimed; a crashed holder still ages out at
+ * `LOCK_OPTS.staleMs`. No subprocess is spawned anywhere inside the lock
+ * (the verb core does no spawning — confirmed for T3).
+ *
+ * @param {string[]} lockTargets  physical paths the verb mutates (any order)
+ * @param {() => Promise<T>} fn   the verb's critical section
  * @returns {Promise<T>}
  * @template T
  */
-async function _withLocks(_lockTargets, fn) {
-  // T3 replaces this body with §3 lock-hierarchy acquisition (withFsLock,
-  // coarse-to-fine, release in reverse). Until then: pass-through.
-  return fn();
+async function _withLocks(lockTargets, fn) {
+  const ordered = canonicalLockOrder(
+    Array.isArray(lockTargets) ? lockTargets : [],
+  );
+  if (ordered.length === 0) return fn();
+
+  // Recursively nest withFsLock: acquire ordered[0] coarse-to-fine; the
+  // innermost frame runs `fn`. Each withFsLock's release fires on unwind, so
+  // locks release in exact reverse order automatically.
+  const acquireFrom = (index) => {
+    if (index >= ordered.length) return fn();
+    return withFsLock(
+      lockPathFor(ordered[index]),
+      () => acquireFrom(index + 1),
+      LOCK_OPTS,
+    );
+  };
+  return acquireFrom(0);
 }
 
 /**
