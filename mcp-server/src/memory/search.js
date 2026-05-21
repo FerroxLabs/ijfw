@@ -60,12 +60,18 @@ async function loadMemoryMigrationsSync() {
   const v3 = await import('./migrations/003-stale-candidate.js');
   const v4 = await import('./migrations/004-bitemporal.js');
   const v5 = await import('./migrations/005-vector-cache.js');
+  const v6 = await import('./migrations/006-obsidian-graph.js');
+  const v7 = await import('./migrations/007-skill-telemetry.js');
+  const v8 = await import('./migrations/008-write-provenance.js');
   return [
     { version: v1.VERSION, description: v1.DESCRIPTION, up: v1.up },
     { version: v2.VERSION, description: v2.DESCRIPTION, up: v2.up },
     { version: v3.VERSION, description: v3.DESCRIPTION, up: v3.up },
     { version: v4.VERSION, description: v4.DESCRIPTION, up: v4.up },
     { version: v5.VERSION, description: v5.DESCRIPTION, up: v5.up },
+    { version: v6.VERSION, description: v6.DESCRIPTION, up: v6.up },
+    { version: v7.VERSION, description: v7.DESCRIPTION, up: v7.up },
+    { version: v8.VERSION, description: v8.DESCRIPTION, up: v8.up },
   ].sort((a, b) => a.version - b.version);
 }
 
