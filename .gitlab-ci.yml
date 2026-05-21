@@ -380,11 +380,16 @@ publish:mcp-server:
     # Env var name MATTERS: npmjs's official GitLab+OIDC pattern requires
     # the JWT in $NPM_TOKEN (not NPM_ID_TOKEN), written to .npmrc as the
     # per-registry _authToken. npmjs recognises the JWT shape and runs the
-    # trusted-publisher exchange. NPM_CONFIG_TOKEN — what we tried in commit
-    # 3e6e0c5 — is rejected with "Unknown env config 'token'" because npm
-    # parses NPM_CONFIG_* as config keys and `token` isn't a valid key.
+    # trusted-publisher exchange.
     NPM_TOKEN:
       aud: https://registry.npmjs.org
+    # --provenance requires a SECOND JWT with audience "sigstore" — npm CLI
+    # uses it to sign the in-toto provenance attestation that gets attached
+    # to the published tarball. Without this, npm errors EUSAGE:
+    #   "Provenance generation in GitLab CI requires SIGSTORE_ID_TOKEN".
+    # See https://docs.gitlab.com/ee/ci/secrets/id_token_authentication.html.
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
   variables:
     NPM_CONFIG_PROVENANCE: "true"
   before_script:
@@ -408,9 +413,12 @@ publish:installer:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   id_tokens:
-    # See publish:mcp-server above for env-var-name rationale.
+    # See publish:mcp-server above for env-var-name rationale + the
+    # SIGSTORE_ID_TOKEN required by --provenance.
     NPM_TOKEN:
       aud: https://registry.npmjs.org
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
   variables:
     NPM_CONFIG_PROVENANCE: "true"
   before_script:
