@@ -377,21 +377,24 @@ publish:mcp-server:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   id_tokens:
-    NPM_ID_TOKEN:
+    # Env var name MATTERS: npmjs's official GitLab+OIDC pattern requires
+    # the JWT in $NPM_TOKEN (not NPM_ID_TOKEN), written to .npmrc as the
+    # per-registry _authToken. npmjs recognises the JWT shape and runs the
+    # trusted-publisher exchange. NPM_CONFIG_TOKEN — what we tried in commit
+    # 3e6e0c5 — is rejected with "Unknown env config 'token'" because npm
+    # parses NPM_CONFIG_* as config keys and `token` isn't a valid key.
+    NPM_TOKEN:
       aud: https://registry.npmjs.org
   variables:
     NPM_CONFIG_PROVENANCE: "true"
   before_script:
-    # node:22-bookworm ships npm 10.x; OIDC trusted-publisher publish needs
-    # npm >= 11.5.1. Pin to a known-good major to avoid registry drift.
+    # Pin npm@11 — node:22-bookworm ships npm 10.x; OIDC publish needs >=11.5.
     - npm install -g npm@11
-    - node -v
-    - npm -v
-    # NPM_ID_TOKEN was issued by gitlab (aud=https://registry.npmjs.org).
-    # Older npm releases (< 11.5.x) needed the JWT in NPM_CONFIG_TOKEN to
-    # trigger the publisher exchange; current npm reads NPM_ID_TOKEN by
-    # name when invoked via `npm publish`. Mirror it as a safety net.
-    - export NPM_CONFIG_TOKEN="${NPM_ID_TOKEN}"
+    - node -v && npm -v
+    # Official npmjs GitLab+OIDC pattern: write the JWT to .npmrc as the
+    # per-registry _authToken. npmjs identifies it as an OIDC token (not a
+    # static auth token) and performs the trusted-publisher exchange server-side.
+    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
     - cd mcp-server
     - npm ci --no-audit --no-fund
   script:
@@ -405,16 +408,15 @@ publish:installer:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   id_tokens:
-    NPM_ID_TOKEN:
+    # See publish:mcp-server above for env-var-name rationale.
+    NPM_TOKEN:
       aud: https://registry.npmjs.org
   variables:
     NPM_CONFIG_PROVENANCE: "true"
   before_script:
-    # See publish:mcp-server above — same npm upgrade + token mirror.
     - npm install -g npm@11
-    - node -v
-    - npm -v
-    - export NPM_CONFIG_TOKEN="${NPM_ID_TOKEN}"
+    - node -v && npm -v
+    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
     - cd installer
     - npm ci --no-audit --no-fund
     - npm run build
