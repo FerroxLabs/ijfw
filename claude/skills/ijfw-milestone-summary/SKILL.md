@@ -37,7 +37,7 @@ Read whatever exists, skip whatever doesn't. Missing files are normal -- the doc
 Compose the doc with these six sections in this order. Plain English. No jargon a new contributor wouldn't know.
 
 ### What shipped
-One paragraph, 3-5 sentences. Lead with the user-visible outcome ("v1.5.0 shipped runtime honesty + pluggability completion -- the workflow now self-audits, dispatches parallel subagents, and runs cross-AI critique unattended"). Avoid implementation detail. Adapt the noun:
+One paragraph, 3-5 sentences. Lead with the user-visible outcome ("v1.5.0 shipped runtime honesty + pluggability completion -- the workflow now self-audits, dispatches parallel subagents, and runs cross-model critique unattended"). Avoid implementation detail. Adapt the noun:
 - software: features shipped
 - book: chapters drafted, edits landed
 - campaign: launches that landed, channels lit up
