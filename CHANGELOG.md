@@ -250,6 +250,92 @@ deliberate-design). Unit + curated harnesses remain fully green.
 
 ## [1.5.0] -- 2026-05-19 (MAJOR — "The All-in-One That Just Fucking Works") — RETAGGED
 
+### Memory Moat amendment (2026-05-21) — 18-commit overnight build closing the largest field gaps vs mem0 / Zep / Graphiti / Letta / A-Mem / Hermes / Wayland
+
+Deep-dive cross-audit of v1.5.0's memory layer against 6 academic / industry
+systems + 2 sibling projects (Hermes Agent, Wayland engine) surfaced 5 closable
+gaps. Folded into v1.5.0 instead of split to v1.6 — no half-shipping. Trident r22
+single-lens fallback per documented T32 pattern (codex 404 / gemini timeout).
+
+- **M1 — Obsidian-grade indexing** Migration 006 adds `memory_links`,
+  `memory_tags`, `memory_meta` tables. `memory/obsidian-parser.js` parses
+  `[[wikilinks]]`, `#nested/tags`, and `[key:: value]` inline metadata at write
+  time (code-fence masked). `memory/query-dataview.js` exposes a v1 declarative
+  query grammar (`tag = #path`, `linked_to = "target"`, `created_after = N`,
+  `created_before = N`) callable via `ijfw_memory_search({ query: "dv: tag = #ship and created_after = N" })`.
+  Grammar reference: `docs/MEMORY-QUERY-GRAMMAR.md`. Plain-text bodies parse to
+  no-op; obsidian markup populates aux tables idempotently.
+
+- **M2 — A-Mem-style auto-linking on write (arxiv 2502.12110, NeurIPS 2025)**
+  Every `indexEntry` fires `autoLink` as fire-and-forget: top-k tokenised body
+  LIKE neighbours → one LLM round-trip (Claude Haiku 4.5 by default) →
+  `{classification: ADD|UPDATE|NOOP, links, neighbor_edits}` JSON proposal →
+  atomic apply to `memory_links`/`memory_tags`. Env-gated by `IJFW_AUTOLINK_OFF`
+  (kill switch, env-gate-at-top so off-path is true no-op), `IJFW_AUTOLINK_BUDGET_USD`
+  (daily cap; JSONL spend at `.ijfw/.llm-spend.jsonl`), and missing API key.
+  Academically-validated "smarter with use" keystone — IJFW is now the only
+  agent-memory layer that ships A-Mem auto-linking + Obsidian-grade indexing
+  together.
+
+- **M3 — Skills-telemetry feedback loop** Migration 007 adds `skill_telemetry`
+  table with CHECK-constrained outcome enum. `orchestrator/skill-telemetry.js`
+  exposes `recordSkillExecution` + `topKSuccessfulSkills(db, { k, since })`.
+  State-SDK `telemetry.record` verb sinks `kind: 'skill.execution'` payloads
+  into the table via `skill-telemetry-sink.js`. `handlePrelude` now surfaces a
+  `<ijfw-recommended-skills>` block with top-5 successful skills from the last
+  30 days — the system literally learns what works for *this* user (Wayland
+  evolution pattern).
+
+- **M4 — Letta-pattern dream-cycle hardening (arxiv 2504.13171)** Migration 008
+  adds `origin` column to `memory_entries` (default `'foreground'`; Hermes
+  BACKGROUND_REVIEW pattern). `dream/state-file.js` writes
+  `.ijfw/.dream-state-v2.json` with numeric-ms `last_run_at` (legacy
+  `cooldown.js` preserved as final stage to keep `.dream-state.json` writers
+  intact). `dream/stage-runner.js` runs each stage in its own try/catch so a
+  failing stage no longer cascades. `dream/runner.mjs` rewired: 4h cooldown
+  replaced by `shouldRunNow({ min_idle_minutes: process.env.IJFW_DREAM_MIN_IDLE_MIN || 30 })`;
+  legacy `markCompleted` lifted to final stage of the new pipeline.
+
+- **M5 — Bi-temporal MCP read path** `memory-facts-handler.js` surfaces the
+  existing `getValidAt` / `getHistory` / `getAllFactsWithWindows` from
+  `temporal.js` through a new MCP tool `ijfw_memory_facts({ subject, predicate, valid_at, history })`.
+  MCP tool cap raised 12 → 13 (slot 13 = `ijfw_memory_facts`). Test surface +
+  tool-count assertions updated across `test.js`, `test-tool-cap.js`,
+  `test-d2-symbol-graph.js`, `test-d4-cascading-staleness.js`.
+
+- **M-INT — Integration wave** Wired every M-keystone into a live production
+  code path: `fts5.indexEntry` → `indexObsidianRelations` (INT.1) + `autoLink`
+  fire-and-forget (INT.2); state-SDK `telemetry.record` → skill-telemetry table
+  (INT.3); `handlePrelude` → recommended-skills block (INT.4); `handleSearch`
+  → `dv:` prefix → dataview executor (INT.5); `server.js` → new
+  `ijfw_memory_facts` MCP tool (INT.6). No isolated tests with zero callers —
+  every shipped capability has a production call site.
+
+- **INT.7 hotfix — `search.js` migration registry mirror** Closed the only
+  HIGH that the post-build Trident r22 cross-audit would have surfaced.
+  `search.js` maintained its own `MEMORY_MIGRATIONS` registry (independent
+  from `migration-runner.js`'s disk-discovery path) and hardcoded v1-v5. The
+  new migrations 006/007/008 made `openDb` bring dbs to user_version=8 while
+  `search.js`'s `highestMigrationVersion()` still returned 5 — every
+  `searchMemory` call against a v1.5.0 db silently downgraded to linear file
+  search. Fix: add v6/v7/v8 to `loadMemoryMigrationsSync()`. Caught and
+  repaired before tag move. Class problem (dual migration registries);
+  full consolidation onto `migration-runner.js`'s discovery flagged for
+  v1.5.1.
+
+**The pitch nobody else can credibly make after this amendment:**
+
+> IJFW v1.5.0 — the only agent memory layer that's Obsidian-grade *and*
+> Letta-grade *and* A-Mem-grade — at once. Your vault is the source of
+> truth. The dream cycle improves it while you're away. Backlinks, tags,
+> and Dataview queries work natively. The system literally learns what
+> works for *you*.
+
+Verified at HEAD: `npm test` 104/104, 12 new memory-moat test files 59/59,
+search-impacted regression set 100/100 + 1 skip, `e2e-smoke.sh` green modulo
+the 2 documented pre-existing fails (`scope leak`, version mismatch).
+TRIDENT-r22.md verdict: SHIPPABLE.
+
 ### Gap-closure milestone (2026-05-19 → 2026-05-20) — 32 swarm tasks + 7 plan/docs commits closing v1.4.4 spec-vs-impl gaps
 
 After the wire-up + r19/r20/r21 close-outs landed (CHANGELOG §Unreleased above) we
