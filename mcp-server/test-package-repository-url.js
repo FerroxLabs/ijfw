@@ -7,9 +7,9 @@ const REPO_ROOT = join(import.meta.dirname, '..');
 const INSTALLER_PKG = JSON.parse(readFileSync(join(REPO_ROOT, 'installer/package.json'), 'utf8'));
 const MCP_PKG = JSON.parse(readFileSync(join(REPO_ROOT, 'mcp-server/package.json'), 'utf8'));
 
-const EXPECTED_PROJECT = 'therealseandonahoe1/ijfw';
+const EXPECTED_PROJECT = 'therealseandonahoe/ijfw';
 
-test('installer/package.json repository.url points at therealseandonahoe1/ijfw', () => {
+test('installer/package.json repository.url points at therealseandonahoe/ijfw', () => {
   assert.ok(INSTALLER_PKG.repository, 'installer/package.json missing repository field');
   assert.match(INSTALLER_PKG.repository.url, new RegExp(EXPECTED_PROJECT.replace('/', '\\/') + '\\.git$'),
     `installer repository.url should end in ${EXPECTED_PROJECT}.git, got: ${INSTALLER_PKG.repository.url}`);

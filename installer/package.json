@@ -46,13 +46,13 @@
   ],
   "license": "MIT",
   "author": "Sean Donahoe",
-  "homepage": "https://gitlab.com/therealseandonahoe1/ijfw",
+  "homepage": "https://gitlab.com/therealseandonahoe/ijfw",
   "bugs": {
-    "url": "https://gitlab.com/therealseandonahoe1/ijfw/-/issues"
+    "url": "https://gitlab.com/therealseandonahoe/ijfw/-/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitlab.com/therealseandonahoe1/ijfw.git"
+    "url": "git+https://gitlab.com/therealseandonahoe/ijfw.git"
   },
   "publishConfig": {
     "access": "public",

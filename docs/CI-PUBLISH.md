@@ -20,7 +20,7 @@ At `https://www.npmjs.com/package/@ijfw/install/access` (then same for `@ijfw/me
 1. Sign in as the package owner.
 2. Click **Trusted Publisher → Add**.
 3. Provider: **GitLab**.
-4. Organization/User: `therealseandonahoe1`.
+4. Organization/User: `therealseandonahoe`.
 5. Project name: `ijfw`.
 6. Workflow path: `.gitlab-ci.yml`.
 7. Environment: `production`.
