@@ -396,6 +396,13 @@ publish:mcp-server:
     # Pin npm@11 — node:22-bookworm ships npm 10.x; OIDC publish needs >=11.5.
     - npm install -g npm@11
     - node -v && npm -v
+    # Diagnostic: decode the JWT's claims payload (middle segment) so we can
+    # see exactly what GitLab is signing for npmjs's trusted-publisher match.
+    # Strips out the signature; the claims themselves are not secret —
+    # npmjs publishes the matching set on the trusted-publisher config page.
+    - 'echo "=== JWT claims being sent to npmjs ==="'
+    - 'echo "$NPM_TOKEN" | cut -d. -f2 | tr ''_-'' ''/+'' | base64 -d 2>/dev/null | tr "," "\n" | grep -E "sub|aud|iss|ref|project_path|namespace_path|environment|project_visibility" || true'
+    - 'echo "=== end JWT claims ==="'
     # Official npmjs GitLab+OIDC pattern: write the JWT to .npmrc as the
     # per-registry _authToken. npmjs identifies it as an OIDC token (not a
     # static auth token) and performs the trusted-publisher exchange server-side.
@@ -424,6 +431,9 @@ publish:installer:
   before_script:
     - npm install -g npm@11
     - node -v && npm -v
+    - 'echo "=== JWT claims being sent to npmjs ==="'
+    - 'echo "$NPM_TOKEN" | cut -d. -f2 | tr ''_-'' ''/+'' | base64 -d 2>/dev/null | tr "," "\n" | grep -E "sub|aud|iss|ref|project_path|namespace_path|environment|project_visibility" || true'
+    - 'echo "=== end JWT claims ==="'
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
     - cd installer
     - npm ci --no-audit --no-fund
