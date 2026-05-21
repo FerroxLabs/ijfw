@@ -292,7 +292,16 @@ Decisions, patterns, handoffs, and journal entries persist as plain markdown in 
 | Warm | BM25 ranked retrieval | Always on. Scales to around 10,000 entries. |
 | Cold | Optional semantic vectors (hybrid BM25 + cosine rerank) | Off by default. Enable with `IJFW_VECTORS=on` and `npm i @xenova/transformers` (one-time ~23MB MiniLM model cached locally). Pure no-op fallback to BM25 if disabled, the package isn't installed, or the model fails to load. |
 
-Twelve MCP tool endpoints (10 user-facing in `tools/list` + 2 admin handlers for `ijfw_update_check` / `ijfw_update_apply`; cap raised 8→10 in v1.1.6 and 10→12 in v1.5.0 to land `ijfw_subagent_post_done` and `ijfw_cross_audit_converge`) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
+Thirteen MCP tool endpoints (11 user-facing in `tools/list` + 2 admin handlers for `ijfw_update_check` / `ijfw_update_apply`) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
+
+**v1.5.0 memory moat — six capabilities no other agent-memory layer ships together.** The moat-amendment closed the gaps that separated IJFW from the field (mem0, Zep, Graphiti, Letta, A-Mem, Claude mem-agent):
+
+- **Obsidian-grade indexing.** `[[wikilinks]]`, `#nested/tags`, and `[key:: value]` inline metadata parsed at write time into queryable tables. Your vault is the source of truth -- write notes the way you already write them.
+- **Dataview-grade declarative queries.** `ijfw_memory_search({ query: "dv: tag = #ship and created_after = N" })`. Grammar reference: [`docs/MEMORY-QUERY-GRAMMAR.md`](docs/MEMORY-QUERY-GRAMMAR.md). Uncontested whitespace -- nobody in the agent-memory category ships this.
+- **A-Mem auto-linking on write** ([arxiv 2502.12110](https://arxiv.org/abs/2502.12110), NeurIPS 2025). Every memory store fires a one-shot LLM proposal (Claude Haiku 4.5 by default) that links the new memory to its top-k neighbors and updates their tags atomically. Academically-validated "smarter with use." Env-gated kill switch (`IJFW_AUTOLINK_OFF=1`) + daily budget cap (`IJFW_AUTOLINK_BUDGET_USD`).
+- **Skill-telemetry feedback loop.** Every successful skill execution gets recorded. The next session's prelude surfaces the top-K skills that worked for *this* user. The system learns what to recommend you.
+- **Bi-temporal facts** ([`ijfw_memory_facts`](docs/MEMORY-QUERY-GRAMMAR.md)). Point-in-time queries: what was true on date X, when did fact Y change, full audit trail. Graphiti-grade temporal model, MCP-native surface.
+- **Letta-pattern dream cycle.** Idle gate (30 min default, env-tunable) replaces the old 4h cooldown; per-stage error isolation so one failing stage no longer cascades; write-origin provenance (`memory_entries.origin` tags every row as `foreground` / `auto-linker` / `dream-cycle` so future curators only modify what they themselves wrote).
 
 **Dream reconciliation.** On demand (`/consolidate` or "run a dream cycle"), IJFW sweeps your memory: it promotes observed patterns into the knowledge base, prunes stale entries, reconciles contradictions, and optionally lifts winners into your global memory so every future project benefits. You end up with a memory that grows sharper over time instead of heavier.
 
@@ -346,10 +355,10 @@ A detached background check fires on every session start (Claude + Codex), polls
 
 | Where | When | What you see |
 |---|---|---|
-| Claude Code statusLine | Always visible | `^ 1.2.6 available  \|  #####..... 49% left` (autocompact-aware bar) |
-| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.2.6 available` (tokens via existing PreCompact estimate) |
-| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.2.6 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.2.4 -> v1.2.5 -- run 'ijfw update' in your TERMINAL` |
+| Claude Code statusLine | Always visible | `^ 1.5.1 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.5.1 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.5.1 available` injected via `additionalContext` |
+| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.5.0 -> v1.5.1 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
@@ -408,24 +417,25 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 ### The MCP memory server
 
-Node.js. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Twelve tool endpoints (10 in `tools/list`, 2 admin handlers) at the CLAUDE.md cap of 12.
+Node.js. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Thirteen tool endpoints (11 in `tools/list`, 2 admin handlers) at the CLAUDE.md cap of 13.
 
 | Tool | Purpose |
 |------|---------|
 | `ijfw_memory_recall` | Wake up with full project context. Cross-project via `from_project`. New in v1.5.0: `context_hint: "facts"` returns the structured-fact ledger built by the ingest pipeline. |
-| `ijfw_memory_store` | Persist decisions, patterns, handoffs, preferences, observations. v1.5.0 ingest pipeline: redact → sanitize → near-duplicate dedup → journal append → structured-fact extraction. |
-| `ijfw_memory_search` | BM25-ranked search over local memory. `scope:"all"` routes through BM25 cross-project search (v1.5.0: was naive keyword count). `scope:"sandbox"` retrieves sandboxed command output. |
+| `ijfw_memory_store` | Persist decisions, patterns, handoffs, preferences, observations. v1.5.0 ingest pipeline: redact → sanitize → near-duplicate dedup → journal append → structured-fact extraction → A-Mem auto-linking (write-time evolution, env-gated). |
+| `ijfw_memory_search` | BM25-ranked search over local memory. `scope:"all"` routes through BM25 cross-project search (v1.5.0: was naive keyword count). `scope:"sandbox"` retrieves sandboxed command output. v1.5.0 memory-moat: `query: "dv: …"` prefix routes to the declarative Dataview-style grammar (`tag`, `linked_to`, `created_after`, `created_before`). |
 | `ijfw_memory_status` | Roughly 200-token project brief. Mode, pending, last handoff. |
-| `ijfw_memory_prelude` | Full first-turn memory bundle for agents without SessionStart hooks. |
+| `ijfw_memory_prelude` | Full first-turn memory bundle for agents without SessionStart hooks. v1.5.0 memory-moat: now also surfaces a `<ijfw-recommended-skills>` block with the top-K skills that have succeeded for *this* user, drawn from the skill-telemetry feedback loop. |
 | `ijfw_prompt_check` | Deterministic regex detector for vague prompts. Zero LLM cost. |
 | `ijfw_metrics` | Tokens, cost, routing mix, session totals. Model-aware in v1.5.0 (Opus/Haiku rates correct, not Sonnet-only). |
 | `ijfw_cross_project_search` | BM25 across every registered IJFW project on the machine. v1.5.0: realpath + containment check refuses symlinks pointing outside `$HOME`. |
 | `ijfw_run` | Token sandbox for large command output. Spawns the command, streams stdout/stderr to `~/.ijfw/session-sandbox/`, returns a terse domain-aware summary (test runner / build / grep / log / raw). Triggers on >40 lines or >50 KB. Saves 90%+ context tokens on builds, test suites, grep -r, and log tails. Full output retrievable via `ijfw_memory_search(scope: "sandbox", label: "...")`. |
-| `ijfw_subagent_post_done` | **(v1.5.0, slot 11)** Runtime contract enforcement called after every subagent dispatch completes. Verifies the 4-value status protocol (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED), commit freshness, and Iron-Law completion-claim coverage before the orchestrator advances. |
-| `ijfw_cross_audit_converge` | **(v1.5.0, slot 12)** Trident-as-a-service: multi-lens consensus convergence loop. Bounded `maxIterations` (cap 10), receipts logged per cycle, cycleSummary placed AFTER cacheable target for prompt-cache friendliness. |
+| `ijfw_state` | **(v1.5.0, slot 11)** Single MCP face for the state-SDK verb facade. All 20 frozen verbs (`workflow.*`, `wave.*`, `phase.*`, `subagent.*`, `event.emit`, `telemetry.record`, `roster.*`, `extension.set-active`, `decision.add`, `blocker.*`, `state.replay`, `state.validate`) reachable through one call. Absorbed the retired `ijfw_subagent_post_done` tool — runtime contract enforcement (4-value status protocol, commit freshness, Iron-Law completion-claim coverage) now lives behind the `subagent.post-done` verb. |
+| `ijfw_cross_audit_converge` | **(v1.5.0, slot 12)** Trident-as-a-service: multi-lens consensus convergence loop. Bounded `maxIterations` (cap 10), receipts logged per cycle, `cycleSummary` placed AFTER cacheable target for prompt-cache friendliness. |
+| `ijfw_memory_facts` | **(v1.5.0 memory-moat, slot 13)** Bi-temporal read path. Point-in-time answers — `{ subject, predicate, valid_at }` returns the truth as of that moment; `{ subject, predicate, history: true }` returns the full valid-from/valid-to audit trail. Graphiti-grade temporal model on the IJFW-native fact ledger. |
 | `ijfw_update_check` / `ijfw_update_apply` *(admin)* | Air-gapped self-update flow. `check` issues a 5-minute crypto-random token; `apply` writes a pending sentinel and returns the literal terminal command. v1.5.0: shasum cross-verify against the source release as a second factor on top of `npm audit signatures`. |
 
-Hard cap at 12 (raised from 10 in v1.5.0; previously 8 → 10 in v1.1.6 to land update-check + update-apply). Every tool earns its slot or it gets cut; future growth triggers a retirement review, not another cap raise.
+Hard cap at 13 (raised 12 → 13 in v1.5.0 memory-moat to land `ijfw_memory_facts`; previously 10 → 12 in v1.5.0 major to land `ijfw_state` and `ijfw_cross_audit_converge`; 8 → 10 in v1.1.6 to land update-check + update-apply). The combined-tool pattern (one tool with `action`/`verb` param, exemplified by `ijfw_state`) is preferred over individual additions — combine before raise; raise only when combine breaks user-facing semantics.
 
 ### The `ijfw` CLI
 
@@ -515,9 +525,9 @@ Same engine behind all of them. Native affordances on each.
        |              |            |            |
        v              v            v            v
    Token economy   Workflow     Teams        Memory
-   (right model,   (Quick and   (per-project  (12 MCP tools,
-    output rules,   Deep modes,  agents +      hot, warm,
-    cache)          audit gates) swarm)        cold + facts)
+   (right model,   (Quick and   (per-project  (13 MCP tools,
+    output rules,   Deep modes,  agents +      hot/warm/cold
+    cache)          audit gates) swarm)        + moat layer)
        |              |            |            |
        +--------------+------+-----+------------+
                 |            |             |
@@ -595,7 +605,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of fourteen platforms shipping in 1.2.6. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other thirteen (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, and Aider) through their native MCP and rules-file integrations. Cline ships as opt-in today (1.1.9) pending live VS Code runtime verification.
+No. Claude Code is one of fourteen platforms in v1.5.0. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other thirteen (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, and Aider) through their native MCP and rules-file integrations. Cline ships as opt-in today pending live VS Code runtime verification.
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.
@@ -651,6 +661,6 @@ If you ship code with AI, you need this. If you write with AI, run a business wi
 
 * * *
 
-[gitlab.com/therealseandonahoe/ijfw](https://gitlab.com/therealseandonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, fourteen platforms, six engines, three AI families, zero apologies.
+[gitlab.com/therealseandonahoe/ijfw](https://gitlab.com/therealseandonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, fourteen platforms, seven engines, three AI families, zero apologies.
 
 **Install it. Inspect it. Fork it. Ship it. It just fucking works.**
