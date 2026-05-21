@@ -15,3 +15,4 @@
 [2026-05-21T03:00Z] INT.4 ✅ — handlePrelude surfaces <ijfw-recommended-skills> block from skill_telemetry top-K; best-effort read-only; npm test 104/104 still green
 [2026-05-21T03:15Z] INT.3 ✅ — state-SDK telemetry.record sinks kind=skill.execution to skill_telemetry; best-effort, sink payload shape sync; npm test 104/104
 [2026-05-21T03:30Z] INT.2 ✅ — autoLink wired into fts5.indexEntry (fire-and-forget); env-gate moved to top of autoLink to short-circuit before db work; test stderr clean; npm test 104/104
+[2026-05-21T03:45Z] Mid-build handoff written — HANDOFF-v150-MEMORY-MOAT.md; F-phase remaining (F.1 proof-walk + F.2 Trident r22 + F.3 CHANGELOG + F.4 tag-move + F.5 stop); T34 stays gated
