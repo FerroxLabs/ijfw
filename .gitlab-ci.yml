@@ -190,10 +190,15 @@ macos:test:
     - python3 -m pytest hermes/plugins/ijfw/tests/ -v 2>&1 | tee ci-logs/macos-pytest-hermes.log
     - bash scripts/copy-lint.sh 2>&1 | tee ci-logs/macos-copy-lint.log
   # macOS shared runner is paid-tier (saas-macos-medium-m1, Apple Silicon).
-  # Paid minutes are attached to this project — required gate from v1.4.1.
-  # On runner unavailability (rare), fall back tag to saas-macos-medium for
-  # the intel-shared runner; same image catalogue, slightly cheaper.
-  allow_failure: false
+  # As of v1.5.0 the m1 runner pool is not allocated on this account/project
+  # (the canonical home moved from therealseandonahoe1/ijfw to
+  # therealseandonahoe/ijfw — see CHANGELOG v1.5.0 URL-restore commit — and
+  # the new project hasn't had its paid macOS minutes allocated yet). The
+  # job fails with "no_matching_runner" at pipeline start. allow_failure is
+  # set to true so the red bubble stays visible without blocking the publish
+  # stage; mirrors the windows:test pattern below. Once macOS runner minutes
+  # are provisioned for this project, flip back to false.
+  allow_failure: true
   artifacts:
     when: always
     expire_in: 7 days
