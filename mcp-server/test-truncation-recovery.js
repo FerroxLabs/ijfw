@@ -98,10 +98,29 @@ function materialise(fixture, projectRoot) {
   // Target files — copy preserving relative layout.
   const tgtSrcDir = join(dir, 'target');
   if (existsSync(tgtSrcDir)) {
-    cpSync(tgtSrcDir, projectRoot, { recursive: true });
+    // Manual recursive walk: node 22's cpSync({recursive:true}) silently
+    // skips files when the destination subdir already exists (which it does
+    // here — the journal/events writes above created projectRoot/.ijfw/...
+    // ahead of this merge). Node 25 merges correctly. Walk file-by-file so
+    // the test is identical on every node version + OS.
+    copyTreeMerging(tgtSrcDir, projectRoot);
   }
 
   return { fixtureId: id, projectRoot };
+}
+
+function copyTreeMerging(srcDir, dstDir) {
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    const src = join(srcDir, entry.name);
+    const dst = join(dstDir, entry.name);
+    if (entry.isDirectory()) {
+      mkdirSync(dst, { recursive: true });
+      copyTreeMerging(src, dst);
+    } else if (entry.isFile()) {
+      mkdirSync(dirname(dst), { recursive: true });
+      cpSync(src, dst, { force: true });
+    }
+  }
 }
 
 function readJsonlFile(absPath) {

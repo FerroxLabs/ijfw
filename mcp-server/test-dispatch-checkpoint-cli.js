@@ -22,7 +22,17 @@ test('checkpoint: happy path returns ok + writes checkpoint file', async (t) => 
 
   const file = join(root, '.ijfw', 'wave-W11-A0', 'subagent-W11-A1.checkpoint.json');
   assert.ok(existsSync(file), 'checkpoint file should exist');
-  const stored = JSON.parse(readFileSync(file, 'utf8'));
+  // v1.5.0 T9 changed the on-disk shape: the recordCheckpoint envelope is
+  // now NESTED under `.checkpoint` because the state-SDK `subagent.checkpoint`
+  // verb wraps it with `{ waveId, subagentId, dedupKey, checkpoint, updated_at }`.
+  // Runtime readers (readLastCheckpoint) auto-unwrap; raw-file readers like
+  // this test need to descend into `.checkpoint`. Both the wrapper-level
+  // (waveId / subagentId) and the nested envelope (wave_id / sub_id / payload
+  // fields) are asserted below.
+  const raw = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(raw.waveId, 'W11-A0');
+  assert.equal(raw.subagentId, 'W11-A1');
+  const stored = raw.checkpoint;
   assert.equal(stored.wave_id, 'W11-A0');
   assert.equal(stored.sub_id, 'W11-A1');
   assert.equal(stored.tool_use_count, 5);

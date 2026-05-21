@@ -196,9 +196,14 @@ test('drainCheckpoints copies all subagent checkpoints from worktree to parent',
     'subagent-sub-3.checkpoint.json',
   ]);
 
-  // Content preserved.
+  // Content preserved. v1.5.0 T9 nests the recordCheckpoint envelope under
+  // `.checkpoint` because the state-SDK `subagent.checkpoint` verb wraps with
+  // { waveId, subagentId, dedupKey, checkpoint, updated_at }. Descend in.
   const raw = await readFile(join(parentDir, 'subagent-sub-2.checkpoint.json'), 'utf8');
-  const parsed = JSON.parse(raw);
+  const wrapped = JSON.parse(raw);
+  assert.equal(wrapped.waveId, 'W12-A0');
+  assert.equal(wrapped.subagentId, 'sub-2');
+  const parsed = wrapped.checkpoint;
   assert.equal(parsed.last_action, 'two');
   assert.equal(parsed.sub_id, 'sub-2');
 
@@ -261,8 +266,9 @@ test('drainCheckpoints is idempotent across repeated runs', async (t) => {
   const entries = readdirSync(parentDir).filter((n) => n.startsWith('subagent-') && n.endsWith('.checkpoint.json'));
   assert.equal(entries.length, 1, 'no duplicate checkpoint files');
 
-  // Content preserved.
+  // Content preserved. Descend into `.checkpoint` (v1.5.0 T9 SDK envelope).
   const raw = await readFile(join(parentDir, entries[0]), 'utf8');
-  const parsed = JSON.parse(raw);
+  const wrapped = JSON.parse(raw);
+  const parsed = wrapped.checkpoint;
   assert.equal(parsed.last_action, 'first');
 });
