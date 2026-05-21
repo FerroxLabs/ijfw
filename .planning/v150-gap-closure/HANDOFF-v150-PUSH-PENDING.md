@@ -1,8 +1,98 @@
 # IJFW v1.5.0 — PUSH-PENDING HANDOFF
 
+---
+
+## STATE UPDATE — 2026-05-21 (post Memory Moat amendment)
+
+**The memory-layer field-parity verification the 2026-05-20 handoff (below) called for is DONE.** It resulted in a 21-commit overnight build (M1-M5 + M-INT.1-7 + handoff + CHANGELOG + Trident r22 synthesis) that closed the 5 biggest gaps vs mem0 / Zep / Graphiti / Letta / A-Mem / Hermes / Wayland. The amendment + F-phase ship-gate (proof-walk + Trident r22 + CHANGELOG/lock-in #54 + tag-move) are complete. T34 (push + npm publish) remains the only outstanding task and STAYS GATED until explicit operator "yes, push."
+
+### Current state pin (verify on resume)
+
+| Thing | Value |
+|---|---|
+| Repo | `/Users/seandonahoe/dev/ijfw` |
+| `main` HEAD | `cab6477` (chore: CHANGELOG + lock-in #54 — memory-moat amendment) |
+| Tag `v1.5.0` | `cab6477` (force-moved from `3d8536c` in F.4 on 2026-05-21) |
+| `gitlab/main` | unchanged — `main` is now 316 commits ahead, NOT PUSHED |
+| Working tree | only `AGENTS.md` + `mcp-server/CLAUDE.md` pre-existing drift (DO NOT stage) |
+| npm `@ijfw/install` | still `1.4.4` (T34 publishes `1.5.0`) |
+
+**Verify on resume:**
+```
+git rev-parse HEAD          # == cab6477
+git rev-parse v1.5.0        # == cab6477 (same)
+git status --short          # ONLY AGENTS.md + mcp-server/CLAUDE.md
+```
+
+### Memory Moat amendment — 21 commits on top of the original 33-task milestone
+
+The amendment's full mid-build handoff is `.planning/v150-gap-closure/HANDOFF-v150-MEMORY-MOAT.md` (state pin, all 17 build commits, 9 architecture gotchas, hard rules). The per-commit log is `MEMORY-MOAT-PROGRESS.md`.
+
+Build commits (in commit order):
+- M2.1 `46eedb4` — llm-call (Anthropic Haiku-4.5 wrapper, env-gated)
+- M5.1 `3981e49` — memory-facts handler (bi-temporal MCP read path)
+- M3.1 `b917475` — migration 007 (skill_telemetry)
+- M3.2 `87c8ae5` — skill-telemetry recorder + topKSuccessfulSkills
+- M3.3 `5000b0f` — skill-telemetry-sink (state-SDK verb shim)
+- M1.1+1.2+1.3 `4b5201c` — obsidian-graph indexing (migration 006 + parser + writer)
+- M1.4+1.5 `fcda8f9` — query-dataview (declarative grammar + docs)
+- M2.2+2.3 `7baadcd` — auto-linker (A-Mem style write-time evolution)
+- M4.1+4.2+4.3 `56e7b89` — dream-cycle hardening (migration 008 + state-file-v2 + stage-runner)
+- M4.4 `9e0a5d7` — dream/runner.mjs idle gate + per-stage isolation
+- INT.1 `4450b04` — fts5.indexEntry → indexObsidianRelations
+- INT.6 `e670eb2` — ijfw_memory_facts MCP tool (cap raised 12 → 13)
+- INT.5 `6e79a65` — handleSearch routes `dv:` prefix to dataview executor
+- INT.4 `fc7f6ae` — handlePrelude surfaces recommended_skills block
+- INT.3 `5c1b117` — state-SDK telemetry.record sinks `kind=skill.execution`
+- INT.2 `13ddc99` — fts5.indexEntry fires autoLink (fire-and-forget)
+- (mid-build handoff `eb86441`)
+- **INT.7** `071c9e4` — **search.js migration registry mirror — CLOSED THE ONLY HIGH** that Trident r22 would have surfaced (dual migration registry; full consolidation deferred to v1.5.1)
+- F.3 `cab6477` — CHANGELOG + lock-in #54 amendment + r22 audit artifact
+
+### F-phase ship-gate status — COMPLETE except T34
+
+| Step | Description | Status |
+|---|---|---|
+| F.1 | Full proof-walk (`node --test test-*.js` + `npm test` + `e2e-smoke.sh`) | ✅ DONE — npm test 104/104, memory-moat tests 59/59, search regression 100/100 + 1 skip, e2e green modulo 2 pre-existing fails (`scope leak`, version mismatch) |
+| F.2 | Trident r22 cross-audit on `3d8536c..HEAD` | ✅ DONE — single-lens fallback per documented T32 pattern (codex 404 / gemini timeout deferred to v1.5.1 H1.6). Verdict: SHIPPABLE. 1 HIGH (closed by INT.7), 0 MED, 4 LOW (defer-to-v1.5.1). Synthesis: `.planning/v150-gap-closure/TRIDENT-r22.md` |
+| F.3 | CHANGELOG + lock-in #54 amendment | ✅ DONE — commit `cab6477` |
+| F.4 | Force-move v1.5.0 tag to current HEAD | ✅ DONE — tag now at `cab6477` (was `3d8536c`) |
+| F.5 | Update this handoff + HALT | ✅ DONE (this update) |
+| T34 | gitlab push + CI OIDC npm publish | ⏸ **OPERATOR-GATED** |
+
+### T34 — verbatim push commands (operator-authorized only)
+
+When operator says **"yes, push"** explicitly:
+
+```
+cd /Users/seandonahoe/dev/ijfw
+git push gitlab main
+git push gitlab v1.5.0          # or: git push gitlab --tags
+
+# CI OIDC trusted-publisher auto-fires on the tag push.
+# Fallback (manual): cd installer && npm publish --provenance
+
+# Verify ship:
+npm view @ijfw/install version  # expect: 1.5.0
+```
+
+### Hard rules (unchanged from operator's discipline)
+
+1. NEVER stage `AGENTS.md` or `mcp-server/CLAUDE.md` (pre-existing drift)
+2. Stage explicit paths only — never `git add -A` or `.`
+3. `.planning/` + `.ijfw/` are gitignored — `git add -f` for audit artifacts
+4. No `--no-verify`, no force-push to `main`
+5. T34 stays gated until explicit operator authorization
+
+---
+
+## Original handoff — 2026-05-20 (pre-amendment context, preserved for history)
+
 **Created:** 2026-05-20
 **State:** SHIP-READY, NOT PUSHED. T34 is the only outstanding task and it is operator-gated.
 **Operator intent for the next session:** verify IJFW's memory layer against Claude mem-agent memory + other field implementations before pushing. Any adjustments land in this same v1.5.0 release (the tag and branch are local-only — they move freely until push).
+
+> **2026-05-21 note:** that memory-layer verification is what produced the memory-moat amendment landed above. The intent described below has been honored — every shipped behavior delta lives in v1.5.0 itself, no v1.6 split.
 
 ---
 
