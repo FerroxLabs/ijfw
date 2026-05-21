@@ -5,6 +5,17 @@
 # the parent rule later.
 .ijfw/index/
 
+# v1.5.0 T20: truncation-recovery fixtures need committed target/.ijfw/
+# state to seed the "moment of truncation" project root in CI. Without
+# this negation the .ijfw/ rule above silently strips them from git, so
+# linux CI clones a fixture corpus that's missing 25 state files and the
+# per-fixture / rate / artifact tests fail with "(missing)" on the post-
+# recovery state check. Negate just under the fixture path; leave every
+# other .ijfw/ alone.
+!mcp-server/fixtures/truncation-corpus/*/target/
+!mcp-server/fixtures/truncation-corpus/*/target/.ijfw/
+!mcp-server/fixtures/truncation-corpus/*/target/.ijfw/**
+
 # GitLab CI per-job IJFW_HOME (set in .gitlab-ci.yml). Hermetic per-job
 # state dir; never committed.
 .ijfw-test/
