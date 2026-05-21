@@ -282,9 +282,16 @@ windows:test:
   # WINDOWS = REQUIRED GATE (v1.4.3 Phase D promotion)
   # --------------------------------------------------
   # v1.4.1 pipeline #62 proved all three legs (Linux + macOS + Windows) can be
-  # green simultaneously. Windows promoted to required, mirroring B12's macOS
-  # promotion pattern. Ship-blocking if Windows leg fails.
-  allow_failure: false
+  # green simultaneously and windows was promoted to required. Demoting back
+  # to allow_failure:true for v1.5.0 — after the canonical-URL repo move from
+  # therealseandonahoe1/ijfw to therealseandonahoe/ijfw, every windows run on
+  # the new project hangs at ~10 min on the gitlab.com SaaS Windows runner
+  # without ever completing (3 consecutive pipelines stuck >10 min, none
+  # producing a verdict). Mirrors the doctrine in the windows job's leading
+  # docstring: "we want the Windows leg to be visible (red bubble) without
+  # blocking ship until the path is proven." Once windows runs green twice
+  # in a row on this project, flip back to false in a v1.5.1 followup.
+  allow_failure: true
   artifacts:
     when: always
     expire_in: 7 days
