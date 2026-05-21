@@ -57,7 +57,7 @@ export function markStageStarted(root, stage) {
 export function markStageCompleted(root, stage, extras = {}) {
   const s = readDreamState(root);
   s.stages[stage] = {
-    ...(s.stages[stage] || {}),
+    ...s.stages[stage],
     status: 'completed',
     completed_at: Date.now(),
     ...extras,
@@ -68,7 +68,7 @@ export function markStageCompleted(root, stage, extras = {}) {
 export function markStageFailed(root, stage, reason) {
   const s = readDreamState(root);
   s.stages[stage] = {
-    ...(s.stages[stage] || {}),
+    ...s.stages[stage],
     status: 'failed',
     failed_at: Date.now(),
     reason: String(reason || 'unknown'),

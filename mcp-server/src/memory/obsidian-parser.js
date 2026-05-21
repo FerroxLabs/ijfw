@@ -12,6 +12,7 @@
 
 const FENCE_RE = /```[\s\S]*?```/g;
 const INLINE_CODE_RE = /`[^`\n]+`/g;
+// eslint-disable-next-line security/detect-unsafe-regex -- parses developer-authored markdown notes on local disk; negated [^\]\n] classes bound match to one line per token
 const WIKILINK_RE = /\[\[([^\]\n|]+)(?:\|[^\]\n]+)?\]\]/g;
 const TAG_RE = /(?:^|[^\w&])#([\w/-]+)/g;
 const META_RE = /\[([A-Za-z_][\w-]*)::\s*([^\]\n]+?)\]/g;

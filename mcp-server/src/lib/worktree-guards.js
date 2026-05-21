@@ -45,7 +45,7 @@ export function assertNoCwdDrift(capturedToplevel, cwd = process.cwd()) {
   let currentTop;
   try {
     currentTop = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
-  } catch (err) {
+  } catch {
     throw new Error(`worktree-guards: cwd is not a git tree: ${cwd}`);
   }
   if (currentTop !== capturedToplevel) {

@@ -92,8 +92,14 @@ export const LOW_CONFIDENCE_PATTERNS = [
 // segments on real shell separators (`;`, `&&`, `||`, `|`) and require a
 // verify verb at the START of at least one segment (after an optional
 // env-var prefix like `NODE_ENV=production`).
+/* eslint-disable security/detect-unsafe-regex --
+ * Matches verify-cmd strings from developer-authored plan/spec files (not
+ * network input). Fixed-suffix alternations + bounded env-var prefix loop
+ * are not backtrack-exploitable.
+ */
 const VERIFY_VERB_RE =
   /^(?:[A-Z_][A-Z0-9_]*=\S+\s+)*(?:npm test|node --test|cargo test|pytest|preflight|ijfw preflight|npm run build|yarn build|pnpm build|bun build|cargo build|tsc --build|tsc -b|make(?:\s|$))/i;
+/* eslint-enable security/detect-unsafe-regex */
 
 const SHELL_SEGMENT_SPLIT_RE = /\s*(?:&&|\|\||;|\|)\s*/;
 

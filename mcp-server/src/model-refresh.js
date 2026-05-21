@@ -29,7 +29,7 @@
 //     }
 //   }
 
-import { readFileSync, writeFileSync, renameSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 
@@ -242,7 +242,7 @@ async function probeGoogle(env, fetchImpl) {
     const candidates = list
       .map(m => typeof m.name === 'string' ? m.name.replace(/^models\//, '') : '')
       .filter(Boolean)
-      .filter(n => /^gemini-/.test(n))
+      .filter(n => n.startsWith('gemini-'))
       .filter(n => /-pro\b/.test(n))                  // prefer pro tier
       .filter(n => !/preview|exp|deprecated/i.test(n))
       .sort(compareModelIds);                         // semver-aware: gemini-10.0 > gemini-2.5

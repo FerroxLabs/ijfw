@@ -159,7 +159,7 @@ export function compareToBaseline(opts) {
         baselinePath: baseline,
         reason: pass ? 'within-threshold' : `diff ${diffPercent.toFixed(2)}% > threshold ${threshold}%`,
       };
-    } catch (e) {
+    } catch {
       // Fall through to hash-based fallback.
     }
   }

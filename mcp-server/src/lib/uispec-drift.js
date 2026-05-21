@@ -221,6 +221,7 @@ export function scanCodeForTailwind(scope, opts = {}) {
           }
           files += 1;
           // Tailwind color tokens, e.g. bg-slate-900, text-rose-500/50.
+          // eslint-disable-next-line security/detect-unsafe-regex -- scans developer-authored Tailwind class strings in local source files; bounded {2,3} digit count
           for (const m of body.matchAll(/\b((?:bg|text|border|ring|from|to|via|fill|stroke)-[a-z]+-\d{2,3})(?:\/\d+)?\b/g)) {
             tokens.add(m[1]);
           }

@@ -102,6 +102,7 @@ export function extractFacts(content) {
     // ---- Pattern: "decided to <verb> [obj]" / "decision: <text>"
     //              Confidence 0.85.
     {
+      // eslint-disable-next-line security/detect-unsafe-regex -- bounded {0,12} quantifier on internal markdown line, not network input
       const m = line.match(/\bdecided\s+to\s+(\w+(?:\s+\S+){0,12})/i);
       if (m) {
         add(facts, 'team', 'decided_to', m[1], 0.85);
@@ -118,6 +119,7 @@ export function extractFacts(content) {
     //              Confidence 0.80. Both ends Title-Case to avoid matching prose like
     //              "the team uses redis" (which would be too noisy).
     {
+      // eslint-disable-next-line security/detect-unsafe-regex -- bounded {1,40} quantifiers on internal markdown line, not network input
       const m = line.match(/\b([A-Z][A-Za-z0-9_-]{1,40}(?:\s+[A-Z][A-Za-z0-9_-]{1,40})?)\s+uses\s+([A-Z][A-Za-z0-9_.+-]{1,40}(?:\s+[A-Za-z0-9_.+-]{1,40})?)/);
       if (m) {
         add(facts, m[1], 'uses', m[2], 0.80);
@@ -130,7 +132,8 @@ export function extractFacts(content) {
     //              "it is fine" / "this is broken" noise.
     //              Cap object phrase at 6 words to keep facts terse.
     {
-      const m = line.match(/^\s*([A-Z][A-Za-z0-9_.\-]{1,40}(?:\s+[A-Za-z0-9_.\-]{1,40})?)\s+is\s+((?:[\w-]+(?:\s+[\w-]+){0,5}))[.!?]?\s*$/);
+      // eslint-disable-next-line security/detect-unsafe-regex -- bounded {1,40} and {0,5} quantifiers on internal markdown line, not network input
+      const m = line.match(/^\s*([A-Z][A-Za-z0-9_.-]{1,40}(?:\s+[A-Za-z0-9_.-]{1,40})?)\s+is\s+((?:[\w-]+(?:\s+[\w-]+){0,5}))[.!?]?\s*$/);
       if (m) {
         // Skip pronouns and bare articles disguised as subjects.
         const subj = m[1];

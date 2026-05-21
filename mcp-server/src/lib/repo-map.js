@@ -186,6 +186,13 @@ function* walkFiles(rootDir, matchers, extensions) {
 //   - Go: func Foo
 //   - Markdown: ^# heading text
 // The goal is "stable enough to rank importance", not perfect AST parsing.
+/* eslint-disable security/detect-unsafe-regex --
+ * SYMBOL_PATTERNS scans developer-authored source code files on the local
+ * filesystem (not untrusted network input). Each alternation segment is
+ * bounded by the source file's line length and the identifier character
+ * class is bounded by line content. ReDoS attack surface is not present
+ * because the input is repo content the developer chose to add.
+ */
 const SYMBOL_PATTERNS = [
   /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g,
   /(?:^|\n)\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/g,
@@ -194,6 +201,7 @@ const SYMBOL_PATTERNS = [
   /(?:^|\n)\s*func\s+(?:\([^)]*\)\s+)?([A-Z][\w]*)/g,
   /(?:^|\n)#{1,3}\s+(.{1,80})/g,
 ];
+/* eslint-enable security/detect-unsafe-regex */
 
 function extractSymbols(content) {
   const symbols = [];
@@ -288,7 +296,7 @@ export function buildRepoMap({ rootDir, budgetTokens = DEFAULT_BUDGET_TOKENS, ma
     if (content.length > 256 * 1024) content = content.slice(0, 256 * 1024);
 
     const symbols = extractSymbols(content);
-    const pathTokens = rel.split(/[/\.]/).filter(t => t.length > 1);
+    const pathTokens = rel.split(/[/.]/).filter(t => t.length > 1);
     perFileTokens.set(rel, [...symbols, ...pathTokens]);
 
     const distinct = [...new Set(symbols)].slice(0, 3);

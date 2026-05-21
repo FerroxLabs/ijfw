@@ -23,15 +23,12 @@
 // user's own Playwright). The runner consumes the peer outputs via
 // `peerInputs` and adapts them through the evaluator libs.
 
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname, extname, relative, sep } from 'node:path';
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname, extname } from 'node:path';
 import {
   parseUISpec,
   scanCodeForTailwind,
   diffPaletteDrift,
-  evaluateBundleBudget,
-  measureBundleSize,
-  loadUISpec,
 } from './uispec-drift.js';
 import {
   evaluateA11y,
@@ -112,7 +109,7 @@ function readSafe(file) {
 // findings: Array<{ severity, text, file?, line? }>
 // ---------------------------------------------------------------------------
 
-function gradeLayout({ spec, files, projectRoot }) {
+function gradeLayout({ spec, files, projectRoot: _projectRoot }) {
   const startedAt = Date.now();
   const findings = [];
   // Surface presence is hard to derive from a spec we only parse loosely.
@@ -251,6 +248,7 @@ function gradeComponents({ spec, files }) {
   let componentDecls = 0;
   for (const f of files.slice(0, 300)) {
     const txt = readSafe(f);
+    // eslint-disable-next-line security/detect-unsafe-regex -- scans developer-authored source files on local disk; bounded by file line length, not exploitable
     if (/export\s+(?:default\s+)?(?:function|class|const)\s+[A-Z]/.test(txt)) componentDecls += 1;
   }
   if (componentDecls === 0) {

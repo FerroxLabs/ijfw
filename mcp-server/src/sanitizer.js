@@ -27,6 +27,7 @@ export function sanitizeContent(s) {
   // instruction like "ignore all prior" inside otherwise-benign memory content.
   // v1.5.1 H1.4 (audit memory-engine.md F-SEC-3).
   // Ref: https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/
+  // eslint-disable-next-line security/detect-unsafe-regex -- single-char Unicode range class; no quantifier; not backtrack-exploitable
   out = out.replace(/[\u{E0000}-\u{E007F}]/gu, '');
 
   // 3. Defang ANY heading prefix (1+ hashes, optional whitespace) -- entry must

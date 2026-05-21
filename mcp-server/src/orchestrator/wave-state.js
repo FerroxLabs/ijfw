@@ -389,7 +389,7 @@ export function filterByWave(blackboard, waveId) {
  */
 export function quoteYamlStr(s) {
   if (typeof s !== 'string') return String(s);
-  if (/[:#\[\]{}"\n]|\s-/.test(s)) return `"${s.replace(/"/g, '\\"')}"`;
+  if (/[:#[\]{}"\n]|\s-/.test(s)) return `"${s.replace(/"/g, '\\"')}"`;
   return s;
 }
 

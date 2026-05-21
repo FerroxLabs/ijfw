@@ -55,8 +55,14 @@ const EMPTY_STEP_THRESHOLD = 20;
  * Test-skip contradictions — if a task says it adds tests AND also says to
  * skip them, that's a BLOCK regardless of strict mode.
  */
+/* eslint-disable security/detect-unsafe-regex --
+ * Matches developer-authored plan markdown on local disk (not network input).
+ * Word boundaries + short fixed alternations bound the match — no exponential
+ * backtracking risk on any input the planner would actually see.
+ */
 const TEST_ADD_REGEX  = /\b(add(?:ing)?|write|writing|create|creating)\s+(?:the\s+)?tests?\b/i;
 const TEST_SKIP_REGEX = /\b(skip\s+(?:the\s+)?tests?|tests?\s+not\s+required|no\s+tests?\s+needed)\b/i;
+/* eslint-enable security/detect-unsafe-regex */
 
 // ---------------------------------------------------------------------------
 // Finding helpers
@@ -206,6 +212,7 @@ function findEmptySteps(body, bodyLineOffset) {
     const payload = m[1].trim();
     // Strip any leading "implement/do/fix" filler and re-measure to catch
     // "implement the thing" style placeholders.
+    // eslint-disable-next-line security/detect-unsafe-regex -- short fixed alternation against developer-authored plan markdown on local disk
     const stripped = payload.replace(/^(?:implement|do|fix|handle)\s+(?:the\s+)?/i, '').trim();
     if (stripped.length < EMPTY_STEP_THRESHOLD) {
       out.push({ text: payload, line: bodyLineOffset + i });

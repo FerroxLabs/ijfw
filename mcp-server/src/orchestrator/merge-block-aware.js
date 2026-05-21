@@ -43,7 +43,7 @@ import {
   readFileSync, existsSync, copyFileSync, mkdirSync, statSync, readdirSync,
   unlinkSync,
 } from 'node:fs';
-import { join, dirname, basename, resolve as pathResolve } from 'node:path';
+import { join, dirname, resolve as pathResolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';

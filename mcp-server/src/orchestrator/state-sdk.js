@@ -809,7 +809,7 @@ const handlers = {
     return _withLocks(targets, async () => {
       const existing = readWaveStateFile(root, waveId);
       const fm = {
-        ...(existing?.frontmatter || {}),
+        ...existing?.frontmatter,
         wave_id: waveId,
         status,
         created_at: existing?.frontmatter?.created_at ?? nowIso(),
@@ -851,7 +851,7 @@ const handlers = {
       }
       tasks.push(`${taskId}:${status}:${dedupKey}`);
       const fm = {
-        ...(existing?.frontmatter || {}),
+        ...existing?.frontmatter,
         wave_id: waveId,
         created_at: existing?.frontmatter?.created_at ?? nowIso(),
         updated_at: nowIso(),
@@ -1035,7 +1035,7 @@ const handlers = {
         ? [...existing.frontmatter.subagents] : [];
       if (!roster.includes(subagentId)) roster.push(subagentId);
       const fm = {
-        ...(existing?.frontmatter || {}),
+        ...existing?.frontmatter,
         wave_id: waveId,
         status: existing?.frontmatter?.status ?? 'in_progress',
         created_at: existing?.frontmatter?.created_at ?? nowIso(),
@@ -1109,7 +1109,10 @@ const handlers = {
   // --- subagent.post-done — write, Day-1 create, gate=self-check ----------
   async 'subagent.post-done'(payload, ctx) {
     const root = requireRoot(ctx);
-    const subagentId = requireId(payload?.subagentId, 'subagentId');
+    // requireId is called for its side-effecting validation (throws on bad
+    // input). The actual subagentId is consumed downstream by the gate; the
+    // local binding stays prefixed with `_` to signal "intentionally unused".
+    const _subagentId = requireId(payload?.subagentId, 'subagentId');
     const reportText = requireStr(payload?.reportText, 'reportText');
     const projectRoot = typeof payload?.projectRoot === 'string' && payload.projectRoot
       ? payload.projectRoot : root;

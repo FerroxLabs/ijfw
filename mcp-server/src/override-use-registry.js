@@ -46,10 +46,12 @@ const MAX_PROJECT_ROOT_LEN = 4096;
 // points historically used to hide prompt-injection payloads inside text the
 // model sees but the human doesn't. Closed at the prelude in H1.4; we also
 // reject at registry-write time to prevent contamination at the source.
+// eslint-disable-next-line security/detect-unsafe-regex -- single-char Unicode range class; no quantifier; not backtrack-exploitable
 const UNICODE_TAG_BLOCK_RE = /[\u{E0000}-\u{E007F}]/u;
 
 // ASCII control characters (excluding nothing — \n \r \t \0 etc are ALL
 // rejected when present in a path key).
+// eslint-disable-next-line no-control-regex -- this regex EXISTS to reject control chars; lint hit is a false positive on the gate itself
 const CONTROL_CHAR_RE = /[\x00-\x1F\x7F]/;
 
 // ---------------------------------------------------------------------------

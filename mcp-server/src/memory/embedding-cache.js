@@ -51,7 +51,7 @@ export function decodeVector(buf) {
   if (!buf || typeof buf.length !== 'number' || buf.length === 0) return null;
   if (buf.length % 4 !== 0) return null;
   const n = buf.length / 4;
-  const out = new Array(n);
+  const out = Array.from({ length: n });
   // Work via DataView so we accept Uint8Array (better-sqlite3 BLOB return)
   // and a plain Buffer interchangeably.
   const view = ArrayBuffer.isView(buf)

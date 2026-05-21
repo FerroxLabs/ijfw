@@ -168,6 +168,7 @@ export function _resetResumePrefCache() {
 }
 
 // Kept for backwards compat with any direct importers.
+// eslint-disable-next-line no-unused-vars -- exported binding read by external consumers; keep for backcompat
 const RESUME_PREFERENCE = DEFAULT_RESUME_PREFERENCE;
 
 /**

@@ -26,7 +26,7 @@
 
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
-import { join, extname, dirname, relative, isAbsolute, resolve as resolvePath } from 'node:path';
+import { join, extname, relative, isAbsolute, resolve as resolvePath } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
