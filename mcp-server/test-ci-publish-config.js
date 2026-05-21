@@ -17,9 +17,12 @@ test('both publish jobs use strict v* tag pattern (no rc/beta slip-through)', ()
   assert.ok(matches.length >= 2, `expected strict tag pattern on both publish jobs, got ${matches.length} match(es)`);
 });
 
-test('both publish jobs declare NPM_ID_TOKEN with npmjs audience', () => {
-  // Look for the id_tokens NPM_ID_TOKEN block + aud field.
-  assert.match(CI, /NPM_ID_TOKEN:/);
+test('both publish jobs declare NPM_TOKEN with npmjs audience', () => {
+  // The id_tokens env var name MUST be NPM_TOKEN — that's the env var the
+  // official npmjs+GitLab trusted-publisher pattern reads (via .npmrc
+  // _authToken). Earlier v1.5.0 commits used NPM_ID_TOKEN, which the npm
+  // CLI rejected — see commit f1ad5c9 for the rename.
+  assert.match(CI, /\bNPM_TOKEN:/);
   assert.match(CI, /aud:\s*https:\/\/registry\.npmjs\.org/);
 });
 
