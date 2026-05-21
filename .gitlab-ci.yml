@@ -380,6 +380,12 @@ publish:mcp-server:
     NPM_ID_TOKEN:
       aud: https://registry.npmjs.org
   before_script:
+    # node:22-bookworm ships npm 10.x; OIDC trusted-publisher publish needs
+    # npm >= 11.5.1 (the version that exchanges NPM_ID_TOKEN for a registry
+    # auth token). Without this upgrade, npm goes straight to ENEEDAUTH
+    # without ever trying the OIDC handshake — even though id_tokens above
+    # is correctly set. Verified on pipeline 2543398388 (job 14484977432).
+    - npm install -g npm@latest
     - cd mcp-server
     - npm ci --no-audit --no-fund
   script:
@@ -396,6 +402,9 @@ publish:installer:
     NPM_ID_TOKEN:
       aud: https://registry.npmjs.org
   before_script:
+    # See publish:mcp-server above — same npm@latest upgrade required for
+    # OIDC trusted-publisher publish to actually exchange the ID token.
+    - npm install -g npm@latest
     - cd installer
     - npm ci --no-audit --no-fund
     - npm run build
