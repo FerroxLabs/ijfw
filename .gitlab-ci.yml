@@ -411,8 +411,6 @@ publish:mcp-server:
     - npm ci --no-audit --no-fund
   script:
     - npm publish --provenance --access public
-  environment:
-    name: production
 
 publish:installer:
   stage: publish
@@ -440,5 +438,3 @@ publish:installer:
     - npm run build
   script:
     - npm publish --provenance --access public
-  environment:
-    name: production
