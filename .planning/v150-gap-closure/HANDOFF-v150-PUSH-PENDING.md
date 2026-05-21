@@ -2,27 +2,47 @@
 
 ---
 
-## STATE UPDATE — 2026-05-21 (post Memory Moat amendment)
+## STATE UPDATE — 2026-05-21 (post Memory Moat amendment + repo cleanup + README rewrite)
 
-**The memory-layer field-parity verification the 2026-05-20 handoff (below) called for is DONE.** It resulted in a 21-commit overnight build (M1-M5 + M-INT.1-7 + handoff + CHANGELOG + Trident r22 synthesis) that closed the 5 biggest gaps vs mem0 / Zep / Graphiti / Letta / A-Mem / Hermes / Wayland. The amendment + F-phase ship-gate (proof-walk + Trident r22 + CHANGELOG/lock-in #54 + tag-move) are complete. T34 (push + npm publish) remains the only outstanding task and STAYS GATED until explicit operator "yes, push."
+**Three things happened in this session:**
+
+1. **Memory-moat amendment shipped locally.** 21-commit overnight build (M1-M5 + M-INT.1-7) closed the 5 biggest field gaps vs mem0 / Zep / Graphiti / Letta / A-Mem / Hermes / Wayland. F-phase ship-gate complete (proof-walk + Trident r22 + CHANGELOG + lock-in #54).
+
+2. **Canonical gitlab URL restored.** Drift from a prior session had switched repo refs to `gitlab.com/therealseandonahoe1/ijfw` (the "1" account). Operator confirmed the correct target is `gitlab.com/therealseandonahoe/ijfw` (no "1"). Flipped the git remote + 4 file refs (`installer/package.json`, `mcp-server/test-package-repository-url.js`, `docs/CI-PUBLISH.md`); preserved the historical CHANGELOG[1.4.0] entry as honest record.
+
+3. **Repo cleanup + README master-copywriter pass.** Branches 164 → 3 (deleted 114 merged + 37 worktree-agent + 10 stale; kept main + 2 protected wave/* for post-ship review). 4 stashes dropped. README rewritten for cap 12 → 13, slot 11 now `ijfw_state`, new slot 13 `ijfw_memory_facts`, full memory-moat capability block, stale version examples bumped, footer "six engines" → "seven engines".
+
+**T34 (push + npm publish) remains the only outstanding task and STAYS GATED until explicit operator "yes, push."**
 
 ### Current state pin (verify on resume)
 
 | Thing | Value |
 |---|---|
 | Repo | `/Users/seandonahoe/dev/ijfw` |
-| `main` HEAD | `cab6477` (chore: CHANGELOG + lock-in #54 — memory-moat amendment) |
-| Tag `v1.5.0` | `cab6477` (force-moved from `3d8536c` in F.4 on 2026-05-21) |
-| `gitlab/main` | unchanged — `main` is now 316 commits ahead, NOT PUSHED |
+| `main` HEAD | `10e1488` (docs: README master-copywriter pass for memory-moat) |
+| Tag `v1.5.0` | `10e1488` (force-moved 3x this session: `3d8536c` → `cab6477` → `10e1488`) |
+| Gitlab remote (push target) | `git@gitlab.com:therealseandonahoe/ijfw.git` (no "1" — restored canonical URL) |
+| `gitlab/main` | unchanged — `main` is now **320 commits ahead** of `gitlab/main` (was 297 at session start), NOT PUSHED |
 | Working tree | only `AGENTS.md` + `mcp-server/CLAUDE.md` pre-existing drift (DO NOT stage) |
+| Branches | 3 total: `main` (active), `wave/W11-A0/subagent-telemetry` + `wave/W12-F/F4-verification-gate-strict` (kept for post-ship review; pure local) |
+| Stashes | 0 |
 | npm `@ijfw/install` | still `1.4.4` (T34 publishes `1.5.0`) |
 
 **Verify on resume:**
 ```
-git rev-parse HEAD          # == cab6477
-git rev-parse v1.5.0        # == cab6477 (same)
+git rev-parse HEAD          # == 10e1488
+git rev-parse v1.5.0        # == 10e1488 (same)
 git status --short          # ONLY AGENTS.md + mcp-server/CLAUDE.md
+git remote -v               # gitlab → git@gitlab.com:therealseandonahoe/ijfw.git
+git branch                  # main + 2 wave/* — total 3
 ```
+
+### New commits since the original F.5 handoff (4 commits, `c56093a..HEAD`)
+
+- `c56093a` chore(v1.5.0): F.5 — update push-pending handoff (the original write of THIS block)
+- `75e88fb` fix(v1.5.0): restore canonical gitlab URL — therealseandonahoe (no '1') — 3 files
+- `10e1488` docs(v1.5.0): README master-copywriter pass for memory-moat amendment — cap 12→13, slot 11 + slot 13, memory-moat capability block, stale version refs bumped, engine-count footer fix
+- (cleanup pre-cleanup manifest at `.planning/cleanup-2026-05-21/pre-cleanup-branches.txt` — uncommitted, gitignored)
 
 ### Memory Moat amendment — 21 commits on top of the original 33-task milestone
 
