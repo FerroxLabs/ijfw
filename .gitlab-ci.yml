@@ -379,13 +379,19 @@ publish:mcp-server:
   id_tokens:
     NPM_ID_TOKEN:
       aud: https://registry.npmjs.org
+  variables:
+    NPM_CONFIG_PROVENANCE: "true"
   before_script:
     # node:22-bookworm ships npm 10.x; OIDC trusted-publisher publish needs
-    # npm >= 11.5.1 (the version that exchanges NPM_ID_TOKEN for a registry
-    # auth token). Without this upgrade, npm goes straight to ENEEDAUTH
-    # without ever trying the OIDC handshake — even though id_tokens above
-    # is correctly set. Verified on pipeline 2543398388 (job 14484977432).
-    - npm install -g npm@latest
+    # npm >= 11.5.1. Pin to a known-good major to avoid registry drift.
+    - npm install -g npm@11
+    - node -v
+    - npm -v
+    # NPM_ID_TOKEN was issued by gitlab (aud=https://registry.npmjs.org).
+    # Older npm releases (< 11.5.x) needed the JWT in NPM_CONFIG_TOKEN to
+    # trigger the publisher exchange; current npm reads NPM_ID_TOKEN by
+    # name when invoked via `npm publish`. Mirror it as a safety net.
+    - export NPM_CONFIG_TOKEN="${NPM_ID_TOKEN}"
     - cd mcp-server
     - npm ci --no-audit --no-fund
   script:
@@ -401,10 +407,14 @@ publish:installer:
   id_tokens:
     NPM_ID_TOKEN:
       aud: https://registry.npmjs.org
+  variables:
+    NPM_CONFIG_PROVENANCE: "true"
   before_script:
-    # See publish:mcp-server above — same npm@latest upgrade required for
-    # OIDC trusted-publisher publish to actually exchange the ID token.
-    - npm install -g npm@latest
+    # See publish:mcp-server above — same npm upgrade + token mirror.
+    - npm install -g npm@11
+    - node -v
+    - npm -v
+    - export NPM_CONFIG_TOKEN="${NPM_ID_TOKEN}"
     - cd installer
     - npm ci --no-audit --no-fund
     - npm run build
