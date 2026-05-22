@@ -70,7 +70,7 @@ bash scripts/install.sh copilot
 
 ### Any Other Agent
 
-Paste the contents of `universal/ijfw-rules.md` into your agent's system prompt or rules file. 15 lines. Works everywhere.
+Paste the contents of `universal/ijfw-rules.md` into your agent's system prompt or rules file. 20 lines. Works everywhere.
 
 </details>
 
@@ -164,7 +164,7 @@ ijfw/
 ├── cursor/          Cursor MCP + .cursorrules
 ├── windsurf/        Windsurf MCP + rules
 ├── copilot/         Copilot MCP + instructions
-├── universal/       15-line paste-anywhere rules
+├── universal/       20-line paste-anywhere rules
 ├── mcp-server/      Cross-platform MCP memory server
 └── docs/            Documentation
 ```

@@ -14,7 +14,7 @@ Author: Sean Donahoe
 - `hermes/` -- Hermes CLI HERMES.md + MCP registration for ~/.hermes/config.yaml
 - `wayland/` -- Wayland CLI WAYLAND.md + MCP registration for ~/.wayland/config.yaml
 - `aider/` -- Aider rules-only tier (`~/.aider.conf.yml` + `~/CONVENTIONS.md`)
-- `universal/` -- 15-line paste-anywhere rules file
+- `universal/` -- 20-line paste-anywhere rules file
 - `mcp-server/` -- Cross-platform MCP memory server (Node.js, zero deps)
 - `scripts/e2e-smoke.sh` -- end-to-end test harness (30+ gates across 2 modes); must pass before publish
 - `scripts/dashboard/` -- local observability dashboard (`ijfw dashboard start`)

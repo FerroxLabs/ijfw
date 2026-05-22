@@ -13,10 +13,10 @@
 ```
 1   ijfw memory recall    ->  742 things, 95% token savings
 2   ijfw cross-audit      ->  3 AIs in parallel, 1,382 findings
-3   ijfw ship             ->  preflight passed, deployed
+3   ijfw preflight        ->  release gate green, ready to ship
 ```
 
-**Claude. Codex. Gemini. Cursor. Windsurf. + 9 more.** If your AI codes, IJFW already runs there.
+**Claude. Codex. Gemini. Cursor. Windsurf. + 10 more.** If your AI codes, IJFW already runs there.
 
 * * *
 
