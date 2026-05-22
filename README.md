@@ -22,7 +22,7 @@
 
 Your AI is brilliant. It's also forgetful, undisciplined, alone, and quietly burning tokens you never needed to spend. One install fixes all four.
 
-Fourteen AI coding agents share one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.
+14 AI coding agents share one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.
 
 An on-demand three-AI critique puts a second lineage in the room so one model's blind spot never reaches production. Tasks dispatched to the right model for the job, output rules that strip the padding, prompt-cache discipline that compounds every session. Your bill goes down while your quality goes up.
 
@@ -40,7 +40,7 @@ A portable design contract keeps every AI on-brand: drop a `DESIGN.md` in your p
 npm install -g @ijfw/install && ijfw-install
 ```
 
-One command. Fourteen AI coding agents configured. Nothing to log into.
+One command. 14 AI coding agents configured. Nothing to log into.
 
 **Windows** (PowerShell 5.1 or 7+):
 
@@ -246,7 +246,7 @@ IJFW is not one thing. It is seven connected engines under one install.
 | **Skill hot-load** | A 55-line core is always resident. 19 other skills load on trigger and unload after, instead of sitting in context all day | Architecture fact: only one always-on skill by design |
 | **Command sandbox** | Large-output commands (builds, test suites, grep -r, log tails) route to `ijfw_run`, which streams to disk and returns a terse summary instead of flooding context. Git, nav, and quick ops go through Bash. 90%+ context tokens saved on large commands | Mechanical: full output in `~/.ijfw/session-sandbox/`, summary in context |
 | **Memory recall** | `ijfw_memory_prelude` replaces the 10-20-tool grep cascade every session normally starts with. One MCP call, indexed answer | Mechanical fact: one call vs N |
-| **Compression** | `/compress` shrinks handoffs and memory artifacts 40-50% | Measurable per artifact |
+| **Compression** | The compress skill shrinks handoffs and memory artifacts 40-50% | Measurable per artifact |
 
 Each lever is logged. Every session ends with a receipt so the savings are not a claim, they are an entry:
 
@@ -292,7 +292,7 @@ Decisions, patterns, handoffs, and journal entries persist as plain markdown in 
 | Warm | BM25 ranked retrieval | Always on. Scales to around 10,000 entries. |
 | Cold | Optional semantic vectors (hybrid BM25 + cosine rerank) | Off by default. Enable with `IJFW_VECTORS=on` and `npm i @xenova/transformers` (one-time ~23MB MiniLM model cached locally). Pure no-op fallback to BM25 if disabled, the package isn't installed, or the model fails to load. |
 
-Thirteen MCP tool endpoints (11 user-facing in `tools/list` + 2 admin handlers for `ijfw_update_check` / `ijfw_update_apply`) talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
+Thirteen MCP tool endpoints, all surfaced via `tools/list`, talk to that memory from every MCP-integrated AI. Cross-project search lets you find a decision from a different project two months ago. The team tier (`.ijfw/team/`) is git-committed so your team's conventions ride along with the repo. A new hire's first session inherits all of it.
 
 **v1.5.0 memory moat — six capabilities no other agent-memory layer ships together.** The moat-amendment closed the gaps that separated IJFW from the field (mem0, Zep, Graphiti, Letta, A-Mem, Claude mem-agent):
 
@@ -303,7 +303,7 @@ Thirteen MCP tool endpoints (11 user-facing in `tools/list` + 2 admin handlers f
 - **Bi-temporal facts** ([`ijfw_memory_facts`](docs/MEMORY-QUERY-GRAMMAR.md)). Point-in-time queries: what was true on date X, when did fact Y change, full audit trail. Graphiti-grade temporal model, MCP-native surface.
 - **Letta-pattern dream cycle.** Idle gate (30 min default, env-tunable) replaces the old 4h cooldown; per-stage error isolation so one failing stage no longer cascades; write-origin provenance (`memory_entries.origin` tags every row as `foreground` / `auto-linker` / `dream-cycle` so future curators only modify what they themselves wrote).
 
-**Dream reconciliation.** On demand (`/consolidate` or "run a dream cycle"), IJFW sweeps your memory: it promotes observed patterns into the knowledge base, prunes stale entries, reconciles contradictions, and optionally lifts winners into your global memory so every future project benefits. You end up with a memory that grows sharper over time instead of heavier.
+**Dream reconciliation.** On demand ("run a dream cycle" via the consolidate skill), IJFW sweeps your memory: it promotes observed patterns into the knowledge base, prunes stale entries, reconciles contradictions, and optionally lifts winners into your global memory so every future project benefits. You end up with a memory that grows sharper over time instead of heavier.
 
 ### 5\. Multi-AI Trident
 
@@ -329,7 +329,7 @@ Three parallel audits, findings reconciled into a consolidated table with a cons
 
 ### 6\. Design contract
 
-**One `DESIGN.md`, every AI builds on-brand.** Design is a first-class surface across every platform IJFW configures. The eight full-skill-tree platforms (Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland) ship the picker + 12 templates + brand atlas natively. The 1.1.7 additions (OpenCode, Qwen Code, Kimi Code, OpenClaw) reach the same 12-template catalog in 1.2.0 via the MCP server -- `ijfw_memory_recall` with `context_hint: "design_template"` returns the catalog, `design_template:<name>` returns the full body, so any MCP-connected agent can pick and write `DESIGN.md` without a local skill. Aider reads `DESIGN.md` once written and carries picker instructions inline in `~/CONVENTIONS.md`. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
+**One `DESIGN.md`, every AI builds on-brand.** Design is a first-class surface across every platform IJFW configures. The full-skill-tree platforms (Claude Code, Codex, Gemini, Hermes, Wayland) ship the picker + 12 templates + brand atlas natively. The MCP+rules-only tier (Cursor, Windsurf, Copilot) reaches the same catalog through the MCP server rather than a local skill tree -- they get the templates, the picker output, and the brand atlas, but lack the full hook lifecycle and skill bundle the native platforms ship. The 1.1.7 additions (OpenCode, Qwen Code, Kimi Code, OpenClaw) reach the same 12-template catalog in 1.2.0 via the MCP server -- `ijfw_memory_recall` with `context_hint: "design_template"` returns the catalog, `design_template:<name>` returns the full body, so any MCP-connected agent can pick and write `DESIGN.md` without a local skill. Aider reads `DESIGN.md` once written and carries picker instructions inline in `~/CONVENTIONS.md`. Drop a `DESIGN.md` in your project root and every agent reads the same visual contract -- colors, typography, component rules, layout, responsive behavior, do's and don'ts. No more "make it look nice" as a prompt. No more cross-agent drift where Claude ships one aesthetic and Codex ships another.
 
 No `DESIGN.md` yet? Run a design task and `ijfw-design` fires a three-option picker:
 
@@ -358,7 +358,7 @@ A detached background check fires on every session start (Claude + Codex), polls
 | Claude Code statusLine | Always visible | `^ 1.5.1 available  \|  #####..... 49% left` (autocompact-aware bar) |
 | Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.5.1 available` (tokens via existing PreCompact estimate) |
 | Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.5.1 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 12 MCP platforms | `IJFW update available v1.5.0 -> v1.5.1 -- run 'ijfw update' in your TERMINAL` |
+| Memory prelude | First turn, all 14 MCP platforms | `IJFW update available v1.5.0 -> v1.5.1 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
@@ -406,9 +406,9 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 ### Native Claude + Codex command surfaces
 
--   **Claude Code slash commands for every move**: `/workflow`, `/handoff`, `/cross-audit`, `/cross-research`, `/cross-critique`, `/memory-audit`, `/memory-consent`, `/memory-why`, `/metrics`, `/mode`, `/team`, `/consolidate`, `/compress`, `/status`, `/doctor`, `/ijfw-plan`, `/ijfw-execute`, `/ijfw-verify`, `/ijfw-ship`, `/ijfw-audit`, `/ijfw` (help).
+-   **Claude Code slash commands for every move**: `/cross-audit`, `/cross-research`, `/cross-critique`, `/team`, `/status`, `/doctor`, `/ijfw` (help).
 
--   **Codex command aliases with Claude parity**: the same 22 command files ship under `codex/commands/`, install to `~/.codex/commands`, and also land in project `.codex/commands` when a project already has IJFW/Codex state. The terminal mirrors the same intents through `ijfw cross-audit`, `ijfw workflow`, `ijfw memory-audit`, `ijfw ijfw-verify`, and the canonical `ijfw cross audit <target>`.
+-   **Codex command aliases with Claude parity**: the Claude command files ship under `codex/commands/`, install to `~/.codex/commands`, and also land in project `.codex/commands` when a project already has IJFW/Codex state. The terminal mirrors the cross-audit intents through `ijfw cross-audit`, `ijfw cross-critique`, `ijfw cross-research`, and the canonical `ijfw cross audit <target>`.
     
 -   **6 lifecycle hook events / 12 scripts**: SessionStart (memory injection + welcome-back beat), SessionStart-dashboard (auto-spawn local observability), SessionEnd (token-savings receipt + memory pointer), UserPromptSubmit (vague-prompt detector) + its capture pair, PreToolUse (pattern detection), PostToolUse (output trim + signal capture), PreCompact (session preservation), Observation-capture.
     
@@ -417,15 +417,14 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 ### The MCP memory server
 
-Node.js. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Thirteen tool endpoints (11 in `tools/list`, 2 admin handlers) at the CLAUDE.md cap of 13.
+Node.js. Zero runtime dependencies. Stdio transport. No sockets, no daemon, no listening port. Thirteen tool endpoints, all surfaced via `tools/list`, at the CLAUDE.md cap of 13.
 
 | Tool | Purpose |
 |------|---------|
 | `ijfw_memory_recall` | Wake up with full project context. Cross-project via `from_project`. New in v1.5.0: `context_hint: "facts"` returns the structured-fact ledger built by the ingest pipeline. |
 | `ijfw_memory_store` | Persist decisions, patterns, handoffs, preferences, observations. v1.5.0 ingest pipeline: redact → sanitize → near-duplicate dedup → journal append → structured-fact extraction → A-Mem auto-linking (write-time evolution, env-gated). |
 | `ijfw_memory_search` | BM25-ranked search over local memory. `scope:"all"` routes through BM25 cross-project search (v1.5.0: was naive keyword count). `scope:"sandbox"` retrieves sandboxed command output. v1.5.0 memory-moat: `query: "dv: …"` prefix routes to the declarative Dataview-style grammar (`tag`, `linked_to`, `created_after`, `created_before`). |
-| `ijfw_memory_status` | Roughly 200-token project brief. Mode, pending, last handoff. |
-| `ijfw_memory_prelude` | Full first-turn memory bundle for agents without SessionStart hooks. v1.5.0 memory-moat: now also surfaces a `<ijfw-recommended-skills>` block with the top-K skills that have succeeded for *this* user, drawn from the skill-telemetry feedback loop. |
+| `ijfw_memory_prelude` | Full first-turn memory bundle for agents without SessionStart hooks. Also surfaces the roughly 200-token project brief (mode, pending, last handoff) when called with `detail_level: "summary"`. v1.5.0 memory-moat: surfaces a `<ijfw-recommended-skills>` block with the top-K skills that have succeeded for *this* user, drawn from the skill-telemetry feedback loop. |
 | `ijfw_prompt_check` | Deterministic regex detector for vague prompts. Zero LLM cost. |
 | `ijfw_metrics` | Tokens, cost, routing mix, session totals. Model-aware in v1.5.0 (Opus/Haiku rates correct, not Sonnet-only). |
 | `ijfw_cross_project_search` | BM25 across every registered IJFW project on the machine. v1.5.0: realpath + containment check refuses symlinks pointing outside `$HOME`. |
@@ -477,7 +476,7 @@ ijfw insight                       Alias for ijfw dashboard start.
 ijfw receipt last                  Redacted, shareable block from the last Trident run.
 ```
 
-### Fourteen platforms, one install, one workflow
+### 14 platforms, one install, one workflow
 
 | Platform | What ships |
 |----------|------------|
@@ -556,9 +555,6 @@ Seven engines. One workflow. One memory. One Trident. One install. Token economy
 | Cross audit | `/cross-audit` | `ijfw cross audit <file>` | "cross audit this file" |
 | Cross research | `/cross-research` | `ijfw cross research <topic>` | "research this topic" |
 | Cross critique | `/cross-critique` | `ijfw cross critique <range>` | "critique the last commit" |
-| Handoff | `/handoff` | `ijfw handoff` | "save a handoff" |
-| Plan | `/ijfw-plan` | (via workflow) | "plan this feature" |
-| Ship | `/ijfw-ship` | (via workflow) | "ship it" |
 | Preflight | (via skill trigger) | `ijfw preflight` | "run preflight" |
 | Observations | (auto on PostToolUse) | `~/.ijfw/observations.jsonl` | built-in |
 | Dashboard | (via skill trigger) | `ijfw dashboard start` | "open the dashboard" |
@@ -605,7 +601,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of fourteen platforms in v1.5.0. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other thirteen (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, and Aider) through their native MCP and rules-file integrations. Cline ships as opt-in today pending live VS Code runtime verification.
+No. Claude Code is one of 14 platforms in v1.5.0. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other 13 (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, and Aider) through their native MCP and rules-file integrations. Cline ships as opt-in today pending live VS Code runtime verification.
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.
@@ -661,6 +657,6 @@ If you ship code with AI, you need this. If you write with AI, run a business wi
 
 * * *
 
-[gitlab.com/therealseandonahoe/ijfw](https://gitlab.com/therealseandonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, fourteen platforms, seven engines, three AI families, zero apologies.
+[gitlab.com/therealseandonahoe/ijfw](https://gitlab.com/therealseandonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, 14 platforms, seven engines, three AI families, zero apologies.
 
 **Install it. Inspect it. Fork it. Ship it. It just fucking works.**
