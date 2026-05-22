@@ -355,10 +355,10 @@ A detached background check fires on every session start (Claude + Codex), polls
 
 | Where | When | What you see |
 |---|---|---|
-| Claude Code statusLine | Always visible | `^ 1.5.1 available  \|  #####..... 49% left` (autocompact-aware bar) |
-| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.5.1 available` (tokens via existing PreCompact estimate) |
-| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.5.1 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 15 MCP platforms | `IJFW update available v1.5.0 -> v1.5.1 -- run 'ijfw update' in your TERMINAL` |
+| Claude Code statusLine | Always visible | `^ 1.6.0 available  \|  #####..... 49% left` (autocompact-aware bar) |
+| Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.6.0 available` (tokens via existing PreCompact estimate) |
+| Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.6.0 available` injected via `additionalContext` |
+| Memory prelude | First turn, all 15 MCP platforms | `IJFW update available v1.5.1 -> v1.6.0 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
@@ -398,7 +398,7 @@ ijfw import claude-mem --dry-run
 "import my claude-mem memory"
 ```
 
-Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). More tools land through point releases. If you have a memory tool IJFW should absorb, the `ijfw import` contract is open and documented.
+Importers shipped today: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). More tools land through point releases. If you have a memory tool IJFW should absorb, the `ijfw import` contract is open and documented.
 
 * * *
 
@@ -410,7 +410,7 @@ Importers in v1.0: `claude-mem` (full, SQLite). `rtk` (metrics-only, opt-in). Mo
 
 -   **Codex command aliases with Claude parity**: the Claude command files ship under `codex/commands/`, install to `~/.codex/commands`, and also land in project `.codex/commands` when a project already has IJFW/Codex state. The terminal mirrors the cross-audit intents through `ijfw cross-audit`, `ijfw cross-critique`, `ijfw cross-research`, and the canonical `ijfw cross audit <target>`.
     
--   **6 lifecycle hook events / 12 scripts**: SessionStart (memory injection + welcome-back beat), SessionStart-dashboard (auto-spawn local observability), SessionEnd (token-savings receipt + memory pointer), UserPromptSubmit (vague-prompt detector) + its capture pair, PreToolUse (pattern detection), PostToolUse (output trim + signal capture), PreCompact (session preservation), Observation-capture.
+-   **6 lifecycle hook events / 17 scripts**: SessionStart (memory injection + welcome-back beat), SessionStart-dashboard (auto-spawn local observability), SessionEnd (token-savings receipt + memory pointer), UserPromptSubmit (vague-prompt detector) + its capture pair, PreToolUse (pattern detection), PostToolUse (output trim + signal capture), PreCompact (session preservation), Observation-capture.
     
 -   **On-demand skills**: workflow, memory, commit, handoff, review, critique, compress, team setup, debug, cross-audit, **design (DESIGN.md picker + 12 templates + 12-domain brand atlas, cross-platform)**, recall, dashboard, preflight, and more. Hot-loaded when triggered, unloaded when done.
     
@@ -480,7 +480,7 @@ ijfw receipt last                  Redacted, shareable block from the last Tride
 
 | Platform | What ships |
 |----------|------------|
-| Claude Code | Native plugin via marketplace, MCP auto-registered, 6 hook events / 12 scripts, 22 on-demand skills, 22 slash commands |
+| Claude Code | Native plugin via marketplace, MCP auto-registered, 6 hook events / 17 scripts, 34 on-demand skills, 22 slash commands |
 | Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 19 skills, 22 command aliases, 6 hook events, MCP registered, `.codex/agents` generation from Team Assembly, marketplace-ready |
 | Gemini CLI | Native extension (`gemini-extension.json`), 19 skills, 11 hook events, 19 TOML slash commands, policy engine, BeforeModel injection, checkpointing; observation ledger + dashboard write |
 | Cursor | `.cursor/mcp.json` + `.cursor/rules/ijfw.mdc`; dashboard view-only (no hook lifecycle) |
@@ -492,7 +492,7 @@ ijfw receipt last                  Redacted, shareable block from the last Tride
 | **Qwen Code** (1.1.7, live-verified in 1.1.8) | `~/.qwen/settings.json` mcpServers block -- `qwen mcp list` reports connected |
 | **Kimi Code** (1.1.7, live-verified in 1.1.8) | `~/.kimi/mcp.json` (matches `kimi mcp add` format) -- `kimi mcp list` reports connected |
 | **OpenClaw** (1.1.8, live-verified) | `~/.openclaw/openclaw.json` `mcp.servers.<name>` + `openclaw mcp set` when CLI on PATH -- `openclaw mcp list` reports connected |
-| Cline (1.1.9, opt-in today) | VS Code per-extension globalStorage (`saoudrizwan.claude-dev`); helper + path wired, VS Code runtime verification pending. Install today with `bash scripts/install.sh cline` |
+| Cline (1.1.9, opt-in today) | VS Code per-extension globalStorage (`saoudrizwan.claude-dev`); helper + path wired, VS Code runtime verification pending. Install today with `node installer/src/install.js cline` |
 | Antigravity | `~/.gemini/antigravity/mcp_config.json` (Google's VS Code-fork agentic IDE, ex-Windsurf team; Windsurf-identical MCP schema). Agent context via shared `AGENTS.md` |
 | Aider (1.1.7, rules-only) | `~/.aider.conf.yml` + `~/CONVENTIONS.md` -- no native MCP, IJFW conventions injected via Aider's read: convention |
 | Universal | `universal/ijfw-rules.md`, paste into anything else |

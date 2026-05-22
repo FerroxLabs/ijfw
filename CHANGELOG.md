@@ -250,6 +250,8 @@ deliberate-design). Unit + curated harnesses remain fully green.
 
 ## [1.5.0] -- 2026-05-19 (MAJOR — "The All-in-One That Just Fucking Works") — RETAGGED
 
+> Released artifact: tag `v1.5.0` (retagged after the Memory Moat amendment); the published npm packages ship the 2026-05-21 amendment state below.
+
 ### Memory Moat amendment (2026-05-21) — 18-commit overnight build closing the largest field gaps vs mem0 / Zep / Graphiti / Letta / A-Mem / Hermes / Wayland
 
 Deep-dive cross-audit of v1.5.0's memory layer against 6 academic / industry
@@ -302,6 +304,9 @@ single-lens fallback per documented T32 pattern (codex 404 / gemini timeout).
   MCP tool cap raised 12 → 13 (slot 13 = `ijfw_memory_facts`). Test surface +
   tool-count assertions updated across `test.js`, `test-tool-cap.js`,
   `test-d2-symbol-graph.js`, `test-d4-cascading-staleness.js`.
+  **Current MCP tool cap: 13/13, fully populated.** Earlier lines in this
+  entry that read "10→12" describe the pre-amendment v1.5.0 ship; the 12→13
+  raise above is the canonical final state.
 
 - **M-INT — Integration wave** Wired every M-keystone into a live production
   code path: `fts5.indexEntry` → `indexObsidianRelations` (INT.1) + `autoLink`
@@ -374,7 +379,7 @@ the merge commit.
 **Enforcement-as-precondition (T15-T18, T29) — G3 gates fire BEFORE the verb runs:**
 - **T15** Gates as verb preconditions + strict fail-mode tests: writes that would
   violate a gate are refused at the SDK boundary, not just flagged post-facto.
-- **T16** Per-platform enforcement matrix (`docs/PLATFORM-ENFORCEMENT.md`):
+- **T16** Per-platform enforcement matrix (`docs/ENFORCEMENT-MATRIX.md`):
   documents the deterministic-vs-prompt-template split (Claude has real subagent
   primitive; codex/gemini/cursor/windsurf/copilot route through prompt-templates).
   Accuracy check + drift tests.

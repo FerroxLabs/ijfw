@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://gitlab.com/therealseandonahoe/ijfw/releases/download/v1.1.1/ijfw-hero.png" alt="IJFW" width="100%"/>
+  <img src="guide/assets/hero.png" alt="IJFW" width="100%"/>
 </p>
 
 # The IJFW Guide
@@ -533,7 +533,7 @@ MCP handshake is about 50 ms. Hooks are under 30 ms. Memory recall across thousa
 `ijfw update` pulls latest and reinstalls merge-safely. Your memory is preserved.
 
 **Does it work on Windows?**
-Yes. Git Bash (bundled with Git for Windows) is the supported shell. A PowerShell entry point lives at `installer/src/install.ps1` for users who prefer native PowerShell.
+Yes. The installer is Node-native end to end -- no bash, no WSL, no Git for Windows shell required. A PowerShell entry point lives at `installer/src/install.ps1`; if execution policy blocks it, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 
 **Can my team share memory?**
 Yes. `.ijfw/team/` is git-committed by default. Decisions, patterns, and stack conventions travel with the repo. A new hire's first session inherits all of it.

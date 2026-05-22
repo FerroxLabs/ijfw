@@ -24,5 +24,5 @@ fi
 
 # Hand off to the Node entry. install.js delegates to install-flow.js which
 # orchestrates preflight, state seed, statusline, plugin link, MCP-sibling
-# link, and the per-target loop across all 14 platforms.
+# link, and the per-target loop across all 15 platforms.
 exec node "$REPO_ROOT/installer/src/install.js" "$@"
