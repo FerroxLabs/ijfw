@@ -3,7 +3,10 @@
   "domain": "business",
   "display_name": "Business / Strategy",
   "description": "Business plans, strategy memos, GTM plans, investor decks, OKRs, and operational roadmaps.",
-  "agent_ids": [],
+  "agent_ids": [
+    "ijfw-strategy-lead",
+    "ijfw-risk-reviewer"
+  ],
   "agent_id_source": "domain-specialist",
   "workflow_phases": ["diagnose", "plan", "decide", "review"],
   "brief_fields": [

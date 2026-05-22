@@ -3,7 +3,10 @@
   "domain": "research",
   "display_name": "Research / Analysis",
   "description": "Academic papers, whitepapers, literature reviews, studies, and investigative analysis.",
-  "agent_ids": [],
+  "agent_ids": [
+    "ijfw-research-lead",
+    "ijfw-method-reviewer"
+  ],
   "agent_id_source": "domain-specialist",
   "workflow_phases": ["question", "collect", "synthesize", "review"],
   "brief_fields": [
