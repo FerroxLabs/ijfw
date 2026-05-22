@@ -268,8 +268,15 @@ export function installAider(ctx) {
 // skills/hooks/commands/agents surface. Antigravity's MCP schema is identical
 // to Windsurf's (same team, same flat `mcpServers` block in mcp_config.json).
 //
+// Antigravity ships TWO surfaces, both Gemini-family, both using the same
+// `{"mcpServers":{...}}` schema but reading from DIFFERENT paths:
+//   - IDE:  ~/.gemini/antigravity/mcp_config.json
+//   - CLI:  ~/.gemini/config/mcp_config.json  (the `agy` binary, confirmed
+//           via the CLI's own discovery.go log)
+//
 // Writes:
-//   - ~/.gemini/antigravity/mcp_config.json (mergeJson)
+//   - ~/.gemini/antigravity/mcp_config.json (mergeJson -- IDE)
+//   - ~/.gemini/config/mcp_config.json      (mergeJson -- CLI `agy`)
 //
 // Agent context: Antigravity uses the AGENTS.md convention, which IJFW
 // already deploys/manages -- so Antigravity inherits IJFW context through the
@@ -284,9 +291,19 @@ export function installAntigravity(ctx) {
     return { status: 'noop' };
   }
 
-  const dst = path.join(ctx.home, '.gemini', 'antigravity', 'mcp_config.json');
-  ensureDir(path.dirname(dst));
-  mergeJson(dst, ctx.serverJsNative || ctx.serverJs);
-  printOk(`Merged MCP into ${dst} (Antigravity)`);
+  const serverJs = ctx.serverJsNative || ctx.serverJs;
+
+  // Surface 1 -- Antigravity IDE.
+  const ideDst = path.join(ctx.home, '.gemini', 'antigravity', 'mcp_config.json');
+  ensureDir(path.dirname(ideDst));
+  mergeJson(ideDst, serverJs);
+
+  // Surface 2 -- Antigravity CLI (`agy`). Reads from a different path; ships
+  // mcp_config.json as a 0-byte file -- mergeJson treats empty files as {}.
+  const cliDst = path.join(ctx.home, '.gemini', 'config', 'mcp_config.json');
+  ensureDir(path.dirname(cliDst));
+  mergeJson(cliDst, serverJs);
+
+  printOk(`Merged MCP into ${ideDst} + ${cliDst} (Antigravity IDE + CLI)`);
   return { status: 'ok' };
 }

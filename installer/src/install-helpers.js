@@ -274,8 +274,11 @@ export function isLive(targetId, home) {
     case 'aider':
       return hasBin('aider') || existsSync(join(H, '.aider.conf.yml'));
     case 'antigravity':
+      // Two surfaces: the Antigravity IDE and the Antigravity CLI (`agy`).
       return (
         hasBin('antigravity') ||
+        hasBin('agy') ||
+        existsSync(join(H, '.local', 'bin', 'agy')) ||
         existsSync(join(H, '.gemini', 'antigravity')) ||
         existsSync('/Applications/Antigravity.app')
       );
@@ -321,7 +324,11 @@ export function prettyName(targetId) {
 function readJsonOrEmpty(path) {
   if (!existsSync(path)) return {};
   try {
-    const raw = readFileSync(path, 'utf8') || '{}';
+    const raw = readFileSync(path, 'utf8');
+    // Treat an empty or whitespace-only file as an empty object. Some tools
+    // (e.g. the Antigravity CLI `agy`) ship mcp_config.json as a 0-byte file;
+    // JSON.parse on '' or '   \n' throws "unexpected end of JSON input".
+    if (!raw || raw.trim() === '') return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return parsed;
