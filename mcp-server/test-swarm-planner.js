@@ -50,7 +50,7 @@ test('buildSwarmPlan produces project-artifact waves from team workflow', () => 
     assert.equal(plan.waves[1].mode, 'review');
 
     const appTask = plan.waves[0].tasks.find((task) => task.artifact_id === 'app-shell');
-    assert.equal(appTask.owner, 'app-engineer');
+    assert.equal(appTask.owner, 'ijfw-app-engineer');
     assert.deepEqual(appTask.verification, ['npm test']);
   } finally {
     cleanup(dir);
@@ -88,7 +88,7 @@ test('buildSwarmPlan allows owner to hold its own artifact claim', () => {
     initBlackboard(dir);
     assert.equal(claimArtifact(dir, {
       artifact: 'runtime-module',
-      owner: 'implementation-engineer',
+      owner: 'ijfw-code-fixer',
       paths: ['src/**/*.js'],
     }).ok, true);
 
@@ -108,7 +108,7 @@ test('swarmPlanSummary includes owners and verification', () => {
     initBlackboard(dir);
     const summary = swarmPlanSummary(buildSwarmPlan(dir));
     assert.match(summary, /Swarm plan for content-team/);
-    assert.match(summary, /campaign-brief -> content-strategist/);
+    assert.match(summary, /campaign-brief -> ijfw-campaign-strategist/);
     assert.match(summary, /verify: brand voice review/);
   } finally {
     cleanup(dir);
@@ -162,7 +162,7 @@ test('prepareSwarmTasks can include blocked review tasks', () => {
     initBlackboard(dir);
     const prepared = prepareSwarmTasks(dir, { includeReviews: true });
     assert.equal(prepared.ok, true);
-    const review = prepared.tasks.find((task) => task.id === 'review:w1:runtime-module:test-reviewer');
+    const review = prepared.tasks.find((task) => task.id === 'review:w1:runtime-module:ijfw-integration-checker');
     assert.ok(review);
     assert.equal(review.status, 'blocked');
     assert.deepEqual(review.depends_on, ['swarm:w1:runtime-module']);

@@ -115,7 +115,10 @@ test('6. ijfw-e2e-runner declares HARD CONTRACT in DO NOT section', () => {
 // domain-specific benches (story-architect, campaign-strategist, ...) that do
 // NOT carry the software-oriented v1.5.0 specialist roster. The 8 v1.5.0
 // specialists register only for the software-family project types.
-const SOFTWARE_FAMILY = ['node', 'python', 'typed', 'go', 'rust', 'other', 'software', 'business', 'mixed'];
+// v1.5.1 W1.5.D: `business` and `mixed` were re-mapped off SOFTWARE_BENCH
+// (BUSINESS_BENCH / MIXED_BENCH) because the prior software mapping was a
+// mis-map -- they no longer carry the v1.5.0 software specialist roster.
+const SOFTWARE_FAMILY = ['node', 'python', 'typed', 'go', 'rust', 'other', 'software'];
 const DOMAIN_FAMILY = ['book', 'content', 'marketing', 'research', 'design'];
 
 test('7. All 8 new specialists registered in DEFAULT_SPECIALISTS for every software-family project type', () => {

@@ -39,7 +39,7 @@ const REPO_ROOT = join(__dirname, '..');
 const SERVER_JS = join(REPO_ROOT, 'mcp-server', 'src', 'server.js');
 
 // Canonical TARGETS list -- mirrors installer/src/install-flow.js:CANONICAL_ORDER.
-// 14 platforms.
+// 15 platforms.
 const PLATFORMS = [
   // 5 critical platforms (live-verified by sibling test suites; smoke
   // re-asserts install-path landing for matrix completeness).
@@ -59,9 +59,11 @@ const PLATFORMS = [
   { id: 'openclaw', tier: 'mcp-config', name: 'OpenClaw' },
   // 1 universal-rules tier (Aider has no native MCP -- ships rules + conventions).
   { id: 'aider',    tier: 'rules-only', name: 'Aider' },
+  // Platform #15 (v1.5.1) -- Antigravity.
+  { id: 'antigravity', tier: 'mcp-config', name: 'Antigravity' },
 ];
 
-assert.equal(PLATFORMS.length, 14, '14-platform matrix invariant');
+assert.equal(PLATFORMS.length, 15, '15-platform matrix invariant');
 
 // -------------------------------------------------------------------------
 // Per-platform expected landing site under a sandbox HOME.
@@ -185,11 +187,11 @@ function cleanup(sandbox) {
 // OR (rules-only tier) validates the conventions doc lands.
 // -------------------------------------------------------------------------
 
-test('matrix: 14 platforms canonical (no drift)', () => {
+test('matrix: 15 platforms canonical (no drift)', () => {
   // Mirror installer/src/install-flow.js:CANONICAL_ORDER. If this drifts, the
   // matrix is out of sync and Phase 5 docs (PHASE-5-SMOKE-MATRIX.md) need
   // updating.
-  assert.equal(CANONICAL_ORDER.length, 14, 'CANONICAL_ORDER must list 14 platforms');
+  assert.equal(CANONICAL_ORDER.length, 15, 'CANONICAL_ORDER must list 15 platforms');
   const canonicalSet = new Set(CANONICAL_ORDER);
   for (const p of PLATFORMS) {
     assert.ok(canonicalSet.has(p.id), `CANONICAL_ORDER missing platform '${p.id}'`);

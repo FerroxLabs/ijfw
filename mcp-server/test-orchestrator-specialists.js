@@ -104,7 +104,10 @@ test('DEFAULT_SPECIALISTS includes all 5 new specialists in node project type', 
 // that carry only the domain-agnostic v1.4.4 specialists (doc-verifier +
 // nyquist-auditor). The full v1.4.4 software roster registers for the
 // software-family project types only.
-const SOFTWARE_FAMILY = ['node', 'python', 'typed', 'go', 'rust', 'other', 'software', 'business', 'mixed'];
+// v1.5.1 W1.5.D: `business` and `mixed` were re-mapped off SOFTWARE_BENCH
+// (BUSINESS_BENCH / MIXED_BENCH) because the prior software mapping was a
+// mis-map -- they no longer carry the v1.4.4/v1.5.0 software roster.
+const SOFTWARE_FAMILY = ['node', 'python', 'typed', 'go', 'rust', 'other', 'software'];
 
 test('DEFAULT_SPECIALISTS spreads new specialists across every software-family project type', () => {
   for (const type of SOFTWARE_FAMILY) {

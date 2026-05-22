@@ -23,10 +23,10 @@ test('deriveReviewTasks creates software review tasks from workflow fixtures', (
     charter: bundle.charter,
   });
 
-  const review = tasks.find((task) => task.id === 'review:w1:runtime-module:test-reviewer');
+  const review = tasks.find((task) => task.id === 'review:w1:runtime-module:ijfw-integration-checker');
   assert.ok(review);
   assert.equal(review.status, 'ready');
-  assert.equal(review.owner, 'test-reviewer');
+  assert.equal(review.owner, 'ijfw-integration-checker');
   assert.deepEqual(review.artifact_ids, ['runtime-module']);
   assert.deepEqual(review.depends_on, ['swarm:w1:runtime-module']);
   assert.deepEqual(review.verification, ['npm test']);
@@ -47,7 +47,7 @@ test('deriveReviewTasks blocks design reviews when prepared implementation tasks
       charter: team.charter,
     });
 
-    const review = tasks.find((task) => task.id === 'review:w1:screen-system:visual-qa');
+    const review = tasks.find((task) => task.id === 'review:w1:screen-system:ijfw-accessibility-reviewer');
     assert.ok(review);
     assert.equal(review.status, 'blocked');
     assert.deepEqual(review.depends_on, ['swarm:w1:screen-system']);
@@ -75,7 +75,7 @@ test('deriveReviewTasks marks prepared design reviews ready when implementation 
       charter: team.charter,
     });
 
-    const review = tasks.find((task) => task.id === 'review:w1:screen-system:visual-qa');
+    const review = tasks.find((task) => task.id === 'review:w1:screen-system:ijfw-accessibility-reviewer');
     assert.ok(review);
     assert.equal(review.status, 'ready');
     assert.deepEqual(review.blocked_by, []);
@@ -95,7 +95,7 @@ test('deriveReviewTasks can use prepared swarm task records directly', () => {
     ));
 
     const tasks = deriveReviewTasks(doneTasks);
-    const review = tasks.find((task) => task.id === 'review:w1:screen-system:visual-qa');
+    const review = tasks.find((task) => task.id === 'review:w1:screen-system:ijfw-accessibility-reviewer');
     assert.ok(review);
     assert.equal(review.status, 'ready');
     assert.deepEqual(review.depends_on, ['swarm:w1:screen-system']);
@@ -112,8 +112,8 @@ test('deriveReviewTasks creates mixed-fixture review tasks for each artifact rev
     charter: bundle.charter,
   });
 
-  const appReview = tasks.find((task) => task.id === 'review:w1:product-screens:app-engineer');
-  const copyReview = tasks.find((task) => task.id === 'review:w1:product-screens:launch-editor');
+  const appReview = tasks.find((task) => task.id === 'review:w1:product-screens:ijfw-app-engineer');
+  const copyReview = tasks.find((task) => task.id === 'review:w1:product-screens:ijfw-launch-editor');
   assert.ok(appReview);
   assert.ok(copyReview);
   assert.deepEqual(appReview.depends_on, ['swarm:w1:product-screens']);
