@@ -1188,8 +1188,15 @@ function buildCycleSummary(iteration, prior) {
 //                  convergence the consensus code-fixer (recovery/code-fixer.js)
 //                  fires on HIGH findings that 2+ lenses agreed on. `true`
 //                  uses defaults; an object is forwarded to runConsensusFix
-//                  (minLenses, dryRun, verifyCmd, ...). Mutates the working
-//                  tree + writes per-finding atomic commits — off by default.
+//                  (minLenses, dryRun, verifyCmd, maxAutoFixFiles, ...).
+//                  Mutates the working tree + writes per-finding atomic
+//                  commits — off by default.
+//                  SAFETY BOUNDARY (R5-1.10): the fixer can only modify files
+//                  inside `projectRoot` (path containment — out-of-root
+//                  findings are refused) and `maxAutoFixFiles` (default 10,
+//                  ceiling 50) caps the distinct files one run may touch;
+//                  beyond the cap it stops + reports rather than mass-rewrite.
+//                  `dryRun: true` reports what it WOULD fix without writing.
 // Returns:
 //   { verdict, iterations, findings, divergence?, stalled?, perIteration,
 //     timedOutTotal?, lensesOverBudget?, lensCosts, autoFix? }

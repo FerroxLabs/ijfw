@@ -32,8 +32,13 @@ import {
   verifyTier3,
   runTridentVerify,
   atomicCommit,
+  isPathContained,
+  runConsensusFix,
+  consensusHighFindings,
+  DEFAULT_MAX_AUTOFIX_FILES,
   _makeTridentDispatch,
 } from './src/recovery/code-fixer.js';
+import { symlinkSync } from 'node:fs';
 
 function freshTmp(prefix = 'ijfw-cf-test-') {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -605,5 +610,279 @@ test('recovery: commit-sentinel directory exists after a successful fix', async 
     const { readdirSync } = await import('node:fs');
     const remaining = readdirSync(sentinelDir).filter(n => n.startsWith('.worktree-recovery-pending.'));
     assert.equal(remaining.length, 0, 'no stale sentinels after successful commit');
+  } finally { cleanup(dir); }
+});
+
+/* ───────────────── R5-1.10: auto-fix safety boundary ─────────────────────── */
+
+// --- path containment (isPathContained unit) ---
+
+test('isPathContained: file inside root → ok', () => {
+  const dir = initRepo();
+  try {
+    writeFileSync(join(dir, 'inside.js'), 'x\n');
+    const r = isPathContained(join(dir, 'inside.js'), dir);
+    assert.equal(r.ok, true);
+  } finally { cleanup(dir); }
+});
+
+test('isPathContained: absolute path outside root → refused', () => {
+  const dir = initRepo();
+  try {
+    const r = isPathContained('/etc/passwd', dir);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /escapes project root/);
+  } finally { cleanup(dir); }
+});
+
+test('isPathContained: ../ traversal escaping root → refused', () => {
+  const dir = initRepo();
+  try {
+    const r = isPathContained('../../../../tmp/evil.js', dir);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /escapes project root/);
+  } finally { cleanup(dir); }
+});
+
+test('isPathContained: sibling dir impersonation → refused', () => {
+  // `<root>-evil` must NOT count as inside `<root>`.
+  const dir = initRepo();
+  try {
+    const sibling = `${dir}-evil`;
+    mkdirSync(sibling, { recursive: true });
+    try {
+      const r = isPathContained(join(sibling, 'x.js'), dir);
+      assert.equal(r.ok, false);
+    } finally { cleanup(sibling); }
+  } finally { cleanup(dir); }
+});
+
+test('isPathContained: symlink inside root pointing outside → refused', () => {
+  const dir = initRepo();
+  const outside = freshTmp('ijfw-cf-outside-');
+  try {
+    writeFileSync(join(outside, 'target.js'), 'const evil = 1;\n');
+    const linkPath = join(dir, 'link.js');
+    try {
+      symlinkSync(join(outside, 'target.js'), linkPath);
+    } catch {
+      // Symlink creation can fail on some platforms (Windows w/o privilege);
+      // skip gracefully — the absolute/traversal cases still prove the guard.
+      return;
+    }
+    const r = isPathContained(linkPath, dir);
+    assert.equal(r.ok, false, 'symlink escaping the root must be refused');
+  } finally { cleanup(dir); cleanup(outside); }
+});
+
+test('isPathContained: not-yet-existing file inside root → ok (creating fix)', () => {
+  const dir = initRepo();
+  try {
+    const r = isPathContained(join(dir, 'subdir', 'new-file.js'), dir);
+    assert.equal(r.ok, true);
+  } finally { cleanup(dir); }
+});
+
+// --- path containment (fixFinding refuses out-of-root) ---
+
+test('fixFinding: out-of-root file (absolute) → OUT_OF_ROOT, file untouched', async () => {
+  const dir = initRepo();
+  const outside = freshTmp('ijfw-cf-outside-');
+  try {
+    const victim = join(outside, 'victim.js');
+    writeFileSync(victim, 'const secret = 1;\n');
+    git(dir, ['add', '.']);
+    const finding = {
+      finding_id: 'ESCAPE-ABS',
+      file: victim, // absolute path OUTSIDE the audited project root
+      category: 'typo', severity: 'HIGH', description: 'flip',
+      fix: { old_string: 'secret = 1', new_string: 'secret = 2' },
+    };
+    const r = await fixFinding({
+      finding, projectRoot: dir, dispatch: _makeTridentDispatch('pass'),
+    });
+    assert.equal(r.status, STATUS.OUT_OF_ROOT);
+    assert.match(r.evidence, /refused/);
+    // The out-of-root file must be byte-identical — never written.
+    assert.equal(readFileSync(victim, 'utf8'), 'const secret = 1;\n');
+  } finally { cleanup(dir); cleanup(outside); }
+});
+
+test('fixFinding: out-of-root file (../ traversal) → OUT_OF_ROOT', async () => {
+  const dir = initRepo();
+  try {
+    const finding = {
+      finding_id: 'ESCAPE-REL',
+      file: '../../../../tmp/escape.js',
+      category: 'typo', severity: 'HIGH', description: 'flip',
+      fix: { old_string: 'a', new_string: 'b' },
+    };
+    const r = await fixFinding({
+      finding, projectRoot: dir, dispatch: _makeTridentDispatch('pass'),
+    });
+    assert.equal(r.status, STATUS.OUT_OF_ROOT);
+  } finally { cleanup(dir); }
+});
+
+// --- change cap ---
+
+test('fixFindings: change cap stops after N files + reports remainder', async () => {
+  const dir = initRepo();
+  try {
+    // 5 fixable files, but cap at 2 → only 2 get touched, 3 → CAP_REACHED.
+    const findings = [];
+    for (let i = 0; i < 5; i++) {
+      writeFileSync(join(dir, `f${i}.js`), `const v = ${i};\n`);
+      findings.push({
+        finding_id: `CAP-${i}`,
+        file: `f${i}.js`, category: 'typo', severity: 'HIGH',
+        description: 'flip', fix: { old_string: `v = ${i}`, new_string: `v = ${i + 10}` },
+      });
+    }
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-m', 'initial']);
+
+    const { results, summary, capped, filesTouched, maxAutoFixFiles } =
+      await fixFindings(findings, {
+        projectRoot: dir,
+        dispatch: _makeTridentDispatch('pass'),
+        maxAutoFixFiles: 2,
+      });
+    assert.equal(maxAutoFixFiles, 2);
+    assert.equal(capped, true, 'cap should have been hit');
+    assert.equal(filesTouched, 2, 'exactly 2 distinct files touched');
+    assert.equal(summary.verified, 2);
+    assert.equal(summary.cap_reached, 3, '3 findings short-circuited by the cap');
+    // The capped findings carry the CAP_REACHED status + an explanatory reason.
+    const cappedRecs = results.filter(r => r.status === STATUS.CAP_REACHED);
+    assert.equal(cappedRecs.length, 3);
+    assert.match(cappedRecs[0].evidence, /change cap reached/);
+    // Files 2,3,4 were never written — still at their original content.
+    for (const i of [2, 3, 4]) {
+      assert.equal(readFileSync(join(dir, `f${i}.js`), 'utf8'), `const v = ${i};\n`);
+    }
+  } finally { cleanup(dir); }
+});
+
+test('fixFindings: default change cap is DEFAULT_MAX_AUTOFIX_FILES', async () => {
+  const dir = initRepo();
+  try {
+    writeFileSync(join(dir, 'a.js'), 'const a = 1;\n');
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-m', 'initial']);
+    const { maxAutoFixFiles } = await fixFindings([], {
+      projectRoot: dir, dispatch: _makeTridentDispatch('pass'),
+    });
+    assert.equal(maxAutoFixFiles, DEFAULT_MAX_AUTOFIX_FILES);
+    assert.equal(DEFAULT_MAX_AUTOFIX_FILES, 10);
+  } finally { cleanup(dir); }
+});
+
+test('fixFindings: maxAutoFixFiles clamped to the 50 ceiling', async () => {
+  const dir = initRepo();
+  try {
+    const { maxAutoFixFiles } = await fixFindings([], {
+      projectRoot: dir, dispatch: _makeTridentDispatch('pass'),
+      maxAutoFixFiles: 9999,
+    });
+    assert.equal(maxAutoFixFiles, 50, 'an absurd cap is clamped to the ceiling');
+  } finally { cleanup(dir); }
+});
+
+// --- runConsensusFix end-to-end with both guards ---
+
+test('runConsensusFix: consensus HIGHs respect change cap', async () => {
+  const dir = initRepo();
+  try {
+    const findings = [];
+    for (let i = 0; i < 4; i++) {
+      writeFileSync(join(dir, `c${i}.js`), `const v = ${i};\n`);
+      findings.push({
+        file: `c${i}.js`, severity: 'high', category: 'typo',
+        description: `consensus issue ${i}`,
+        fix: { old_string: `v = ${i}`, new_string: `v = ${i + 100}` },
+      });
+    }
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-m', 'initial']);
+
+    // Build a perIteration shape where 2 lenses agree on all 4 HIGHs.
+    const perIteration = [{
+      lensResults: [
+        { lens: 'codex', findings },
+        { lens: 'gemini', findings },
+      ],
+    }];
+    const r = await runConsensusFix({
+      perIteration,
+      projectRoot: dir,
+      dispatch: _makeTridentDispatch('pass'),
+      maxAutoFixFiles: 2,
+      skipTrident: true,
+    });
+    assert.equal(r.triggered, true);
+    assert.equal(r.consensusCount, 4);
+    assert.equal(r.capped, true);
+    assert.equal(r.filesTouched, 2);
+    assert.equal(r.maxAutoFixFiles, 2);
+    assert.equal(r.summary.cap_reached, 2);
+  } finally { cleanup(dir); }
+});
+
+test('runConsensusFix: out-of-root consensus finding refused, never written', async () => {
+  const dir = initRepo();
+  const outside = freshTmp('ijfw-cf-outside-');
+  try {
+    const victim = join(outside, 'victim.js');
+    writeFileSync(victim, 'const x = 1;\n');
+    const escaping = {
+      file: victim, severity: 'high', category: 'typo',
+      description: 'escaping consensus finding',
+      fix: { old_string: 'x = 1', new_string: 'x = 2' },
+    };
+    const perIteration = [{
+      lensResults: [
+        { lens: 'codex', findings: [escaping] },
+        { lens: 'gemini', findings: [escaping] },
+      ],
+    }];
+    const r = await runConsensusFix({
+      perIteration,
+      projectRoot: dir,
+      dispatch: _makeTridentDispatch('pass'),
+      skipTrident: true,
+    });
+    assert.equal(r.triggered, true);
+    assert.equal(r.summary.out_of_root, 1);
+    // The out-of-root victim is untouched.
+    assert.equal(readFileSync(victim, 'utf8'), 'const x = 1;\n');
+  } finally { cleanup(dir); cleanup(outside); }
+});
+
+test('runConsensusFix: dryRun reports without writing', async () => {
+  const dir = initRepo();
+  try {
+    writeFileSync(join(dir, 'd.js'), 'const d = 1;\n');
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-m', 'initial']);
+    const finding = {
+      file: 'd.js', severity: 'high', category: 'typo',
+      description: 'dry run finding',
+      fix: { old_string: 'd = 1', new_string: 'd = 2' },
+    };
+    const perIteration = [{
+      lensResults: [
+        { lens: 'codex', findings: [finding] },
+        { lens: 'gemini', findings: [finding] },
+      ],
+    }];
+    const r = await runConsensusFix({
+      perIteration, projectRoot: dir,
+      dispatch: _makeTridentDispatch('pass'),
+      dryRun: true, skipTrident: true,
+    });
+    assert.equal(r.triggered, true);
+    // dry-run defers without writing — file content unchanged.
+    assert.equal(readFileSync(join(dir, 'd.js'), 'utf8'), 'const d = 1;\n');
   } finally { cleanup(dir); }
 });

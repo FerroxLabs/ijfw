@@ -1107,7 +1107,7 @@ const TOOLS = [
         commitRange:   { type: 'string',  description: 'Git commit range to audit (e.g. "HEAD~1..HEAD", "main..feature/x"). Required.' },
         maxIterations: { type: 'number',  minimum: 1, maximum: 10, description: 'Max convergence iterations (default 3, capped at 10). 1 → single-shot (fallback mode).' },
         lenses:        { type: 'array',   items: { type: 'string' }, description: 'Lens ids to dispatch (default ["codex","gemini","claude"]).' },
-        autoFix:       { type: 'boolean', description: 'v1.5.1 (T27) — opt-in consensus auto-fix. When true, after a non-PASS convergence the consensus code-fixer runs an atomic per-finding fix loop over 2+-lens-agreed HIGH findings. Mutates the working tree; results surface on result.autoFix without changing the verdict. Default false.' },
+        autoFix:       { type: 'boolean', description: 'v1.5.1 (T27) — opt-in consensus auto-fix. When true, after a non-PASS convergence the consensus code-fixer AUTOMATICALLY MODIFIES CODE: it runs an atomic per-finding fix loop (one revertable git commit per fix) over HIGH findings that 2+ lenses agreed on. SAFETY BOUNDS: the fixer can only write files inside the audited project root (path-containment guard refuses out-of-root paths) and touches at most 10 distinct files per run (change cap — beyond it it stops and reports rather than mass-rewriting). Logic bugs are deferred to humans, never auto-patched. Results surface on result.autoFix without changing the verdict. Default false — the audit is read-only unless you explicitly opt in.' },
       },
       required: ['commitRange'],
     },

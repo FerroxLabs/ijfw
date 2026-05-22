@@ -32,9 +32,11 @@
  * Zero new prod deps. ESM. Node ≥18.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
-import { join, extname, relative, isAbsolute, resolve as resolvePath } from 'node:path';
+import {
+  join, extname, relative, isAbsolute, resolve as resolvePath, dirname,
+} from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -42,6 +44,82 @@ import { promisify } from 'node:util';
 import { withRecoverySentinel } from '../lib/worktree-recovery.js';
 
 const execFileAsync = promisify(execFile);
+
+/* ────────────────────── R5-1.10: auto-fix safety boundary ────────────────── */
+
+/**
+ * Default ceiling on the number of distinct files a single `runConsensusFix`
+ * call may write. Auto-fix is opt-in, but even when enabled it must not be
+ * able to mass-rewrite a repository — past this cap the loop stops and
+ * reports the remainder rather than continuing to mutate. Callers can lower
+ * (never silently raise past sanity) this via `maxAutoFixFiles`.
+ */
+export const DEFAULT_MAX_AUTOFIX_FILES = 10;
+// Hard ceiling — a caller cannot pass `maxAutoFixFiles` above this.
+const MAX_AUTOFIX_FILES_CEILING = 50;
+
+/**
+ * isPathContained(filePath, projectRoot) — true iff `filePath` resolves to a
+ * location at or under `projectRoot`. Symlinks are resolved on BOTH sides
+ * (realpath) so a symlink inside the repo that points outside it is rejected.
+ *
+ * Mirrors the containment prior art in cross-project-search.js#isUnder /
+ * safeResolveProjectPath: realpath the root, realpath the entry (falling back
+ * to the un-resolved absolute when the entry doesn't exist yet — e.g. a fix
+ * that would create a file — and in that case realpath the parent dir), then
+ * a trailing-separator boundary check so `/repo-evil` is NOT inside `/repo`.
+ *
+ * Returns { ok, reason, canonical? }.
+ */
+export function isPathContained(filePath, projectRoot) {
+  if (!filePath || typeof filePath !== 'string') {
+    return { ok: false, reason: 'no-file-path' };
+  }
+  if (!projectRoot || typeof projectRoot !== 'string') {
+    return { ok: false, reason: 'no-project-root' };
+  }
+  // Canonicalise the root. If it doesn't resolve, fall back to absolute.
+  let canonRoot;
+  try {
+    canonRoot = realpathSync(resolvePath(projectRoot));
+  } catch {
+    canonRoot = resolvePath(projectRoot);
+  }
+  // Canonicalise the target. The file may not exist yet (a creating fix), so
+  // realpath the deepest existing ancestor and re-join the missing tail.
+  const absTarget = isAbsolute(filePath)
+    ? filePath
+    : resolvePath(canonRoot, filePath);
+  let canonTarget;
+  try {
+    canonTarget = realpathSync(absTarget);
+  } catch {
+    let probe = absTarget;
+    const tail = [];
+    // Walk up until we hit something that exists (or the fs root).
+    while (probe && !existsSync(probe) && dirname(probe) !== probe) {
+      tail.unshift(probe.slice(dirname(probe).length).replace(/^[\\/]/, ''));
+      probe = dirname(probe);
+    }
+    let canonProbe;
+    try { canonProbe = realpathSync(probe); }
+    catch { canonProbe = resolvePath(probe); }
+    canonTarget = tail.length ? join(canonProbe, ...tail) : canonProbe;
+  }
+  // Boundary check with trailing separator so siblings can't impersonate.
+  const rel = relative(canonRoot, canonTarget);
+  const escapes = rel === '..'
+    || rel.startsWith(`..${'/'}`) || rel.startsWith(`..${'\\'}`)
+    || isAbsolute(rel);
+  if (escapes) {
+    return {
+      ok: false,
+      reason: `path escapes project root (${canonTarget} not under ${canonRoot})`,
+      canonical: canonTarget,
+    };
+  }
+  return { ok: true, reason: '', canonical: canonTarget };
+}
 
 /* ────────────────────────────── status codes ────────────────────────────── */
 
@@ -54,6 +132,12 @@ export const STATUS = Object.freeze({
   FALLBACK_FAIL: 'FALLBACK_FAIL',
   TRIDENT_FAIL:  'TRIDENT_FAIL',
   COMMIT_FAIL:   'COMMIT_FAIL',
+  // R5-1.10 — finding's target file resolves outside the audited project
+  // root. The fixer refuses to touch it (path-containment guard).
+  OUT_OF_ROOT:   'OUT_OF_ROOT',
+  // R5-1.10 — the per-run change cap was reached; this finding (and any
+  // after it) was skipped without being applied.
+  CAP_REACHED:   'CAP_REACHED',
 });
 
 /* ────────────────────────────── logic-bug heuristic ─────────────────────── */
@@ -454,9 +538,27 @@ export async function fixFinding({
   }
 
   // 2. confirm target exists + snapshot
+  const root = projectRoot || process.cwd();
   const filePath = isAbsolute(finding.file)
     ? finding.file
-    : resolvePath(projectRoot || process.cwd(), finding.file);
+    : resolvePath(root, finding.file);
+
+  // R5-1.10 — PATH CONTAINMENT. Auto-fix mutates the working tree; it must
+  // only ever touch files inside the project root being audited. A finding
+  // whose `file` resolves outside the root (absolute escape, `../` traversal,
+  // or a symlink pointing out) is REFUSED before any read/write happens.
+  // This is checked before existsSync so an out-of-root path can't even be
+  // probed for existence.
+  const contained = isPathContained(filePath, root);
+  if (!contained.ok) {
+    return {
+      ...base,
+      status: STATUS.OUT_OF_ROOT,
+      tier_reached: 'n/a',
+      evidence: `auto-fix refused: ${contained.reason}`,
+    };
+  }
+
   if (!existsSync(filePath)) {
     return { ...base, status: STATUS.STALE, tier_reached: 'n/a',
              evidence: `target file does not exist: ${filePath}` };
@@ -591,9 +693,21 @@ export async function fixFinding({
  * the Trident step needs a stable commit range. Parallel fixes would shred
  * the atomicity guarantee.
  *
+ * R5-1.10 — CHANGE CAP. `opts.maxAutoFixFiles` (default
+ * DEFAULT_MAX_AUTOFIX_FILES = 10, hard-ceilinged at 50) bounds the number of
+ * DISTINCT files this batch may successfully apply a fix to. Once that many
+ * files have been touched, every remaining finding that targets a not-yet-
+ * seen file is short-circuited with status CAP_REACHED (no read, no write) —
+ * the loop stops mutating and reports the remainder instead of mass-
+ * rewriting the repo. Findings that re-target an already-fixed file are
+ * still allowed through (they don't grow the blast radius). Statuses that
+ * don't write a file (DEFERRED / STALE / OUT_OF_ROOT / *_FAIL) never count
+ * against the cap.
+ *
  * Returns { results: Array<fixFinding-record>, summary: { verified, deferred,
  *           stale, verify_fail, syntax_fail, fallback_fail, trident_fail,
- *           commit_fail } }.
+ *           commit_fail, out_of_root, cap_reached }, capped: boolean,
+ *           filesTouched: number, maxAutoFixFiles: number }.
  */
 export async function fixFindings(findings, opts = {}) {
   const results = [];
@@ -601,15 +715,66 @@ export async function fixFindings(findings, opts = {}) {
     verified: 0, deferred: 0, stale: 0,
     verify_fail: 0, syntax_fail: 0, fallback_fail: 0,
     trident_fail: 0, commit_fail: 0,
+    out_of_root: 0, cap_reached: 0,
   };
+
+  // Resolve the per-run change cap. Clamp to [1, MAX_AUTOFIX_FILES_CEILING];
+  // a non-positive or non-numeric value falls back to the default.
+  const reqCap = Number(opts.maxAutoFixFiles);
+  const cap = Number.isFinite(reqCap) && reqCap > 0
+    ? Math.min(Math.floor(reqCap), MAX_AUTOFIX_FILES_CEILING)
+    : DEFAULT_MAX_AUTOFIX_FILES;
+
+  // Distinct files this batch has successfully written to. A fix counts as
+  // "touching" a file only if it actually applied an edit — VERIFIED or any
+  // failure mode that happens AFTER applyEdit (VERIFY_FAIL/SYNTAX_FAIL/
+  // FALLBACK_FAIL/TRIDENT_FAIL/COMMIT_FAIL all roll the file back, but the
+  // file WAS written then reverted, so they still count toward blast radius).
+  const APPLIED = new Set([
+    STATUS.VERIFIED, STATUS.VERIFY_FAIL, STATUS.SYNTAX_FAIL,
+    STATUS.FALLBACK_FAIL, STATUS.TRIDENT_FAIL, STATUS.COMMIT_FAIL,
+  ]);
+  const filesTouched = new Set();
+  let capped = false;
+
   for (const finding of (findings || [])) {
+    const targetFile = finding && typeof finding.file === 'string'
+      ? finding.file : null;
+    const alreadyTouched = targetFile && filesTouched.has(targetFile);
+
+    // Cap gate: if we've hit the ceiling AND this finding would touch a NEW
+    // file, refuse it without reading/writing anything.
+    if (filesTouched.size >= cap && !alreadyTouched) {
+      capped = true;
+      results.push({
+        finding_id: finding?.finding_id || finding?.id || 'unknown',
+        file: targetFile,
+        status: STATUS.CAP_REACHED,
+        tier_reached: 'n/a',
+        evidence: `auto-fix change cap reached (${cap} files); skipped without applying`,
+      });
+      summary.cap_reached += 1;
+      continue;
+    }
+
     // eslint-disable-next-line no-await-in-loop -- sequential is the contract
     const r = await fixFinding({ ...opts, finding });
     results.push(r);
     const k = String(r.status || '').toLowerCase();
     if (k in summary) summary[k] += 1;
+
+    // Record blast radius: any status that got past applyEdit touched a file.
+    if (APPLIED.has(r.status) && r.file) {
+      filesTouched.add(r.file);
+    }
   }
-  return { results, summary };
+  return {
+    results,
+    summary,
+    capped,
+    filesTouched: filesTouched.size,
+    maxAutoFixFiles: cap,
+  };
 }
 
 /* ────────────────────── consensus-HIGH extraction (T27 wire-up) ──────────── */
@@ -699,12 +864,22 @@ export function consensusHighFindings(perIteration, opts = {}) {
  * `runPhaseEConverge` run and runs the per-finding atomic fixer loop over
  * them.
  *
+ * R5-1.10 SAFETY BOUNDARY — auto-fix mutates code, so two hard guards apply
+ * (both inherited from `fixFindings` / `fixFinding`, surfaced here):
+ *   • Path containment — any finding whose target file resolves outside
+ *     `projectRoot` is REFUSED (status OUT_OF_ROOT); the fixer can never
+ *     write outside the audited project.
+ *   • Change cap — `maxAutoFixFiles` (default 10, ceiling 50) bounds the
+ *     distinct files a single run may touch; beyond it the loop STOPS and
+ *     reports the remainder (status CAP_REACHED) instead of mass-rewriting.
+ * Pass `dryRun: true` for detect-only (reports what it WOULD fix, no edits).
+ *
  * Returns:
  *   { triggered: false, reason }                     — nothing to fix
- *   { triggered: true, consensusCount, results, summary }  — fixer ran
+ *   { triggered: true, consensusCount, results, summary, capped,
+ *     filesTouched, maxAutoFixFiles }                — fixer ran
  *
- * `dispatch` is required so each fix's Trident re-verify can run. Callers
- * that want to detect-only (no edits) can pass `dryRun: true`.
+ * `dispatch` is required so each fix's Trident re-verify can run.
  */
 export async function runConsensusFix({
   perIteration,
@@ -717,16 +892,20 @@ export async function runConsensusFix({
   if (consensus.length === 0) {
     return { triggered: false, reason: 'no consensus HIGH findings' };
   }
-  const { results, summary } = await fixFindings(consensus, {
-    ...fixOpts,
-    projectRoot,
-    dispatch,
-  });
+  const { results, summary, capped, filesTouched, maxAutoFixFiles } =
+    await fixFindings(consensus, {
+      ...fixOpts,
+      projectRoot,
+      dispatch,
+    });
   return {
     triggered: true,
     consensusCount: consensus.length,
     results,
     summary,
+    capped,
+    filesTouched,
+    maxAutoFixFiles,
   };
 }
 
