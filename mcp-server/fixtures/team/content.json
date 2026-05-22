@@ -5,7 +5,7 @@
     "project_archetypes": ["content"],
     "roles": [
       {
-        "name": "content-strategist",
+        "name": "ijfw-campaign-strategist",
         "role_type": "content",
         "model": "sonnet",
         "effort": "medium",
@@ -16,7 +16,7 @@
         "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
       },
       {
-        "name": "editor",
+        "name": "ijfw-copy-reviewer",
         "role_type": "review",
         "model": "sonnet",
         "effort": "medium",
@@ -32,8 +32,8 @@
     "schema_version": "team-workflow/v1",
     "project_archetypes": ["content"],
     "artifacts": [
-      {"id": "campaign-brief", "type": "brief", "paths": ["content/briefs/campaign.md"], "owner": "content-strategist", "reviewers": ["editor"], "depends_on": [], "verification": ["brand voice review"]},
-      {"id": "article-draft", "type": "article", "paths": ["content/posts/*.mdx"], "owner": "editor", "reviewers": ["content-strategist"], "depends_on": ["campaign-brief"], "verification": ["seo checklist"]}
+      {"id": "campaign-brief", "type": "brief", "paths": ["content/briefs/campaign.md"], "owner": "ijfw-campaign-strategist", "reviewers": ["ijfw-copy-reviewer"], "depends_on": [], "verification": ["brand voice review"]},
+      {"id": "article-draft", "type": "article", "paths": ["content/posts/*.mdx"], "owner": "ijfw-copy-reviewer", "reviewers": ["ijfw-campaign-strategist"], "depends_on": ["campaign-brief"], "verification": ["seo checklist"]}
     ],
     "waves": [
       {"id": "w1", "mode": "sequential", "artifact_ids": ["campaign-brief"]},
@@ -41,7 +41,7 @@
     ]
   },
   "blackboard": {
-    "tasks": [{"id": "task-brief", "title": "Prepare campaign brief", "status": "ready", "artifact_ids": ["campaign-brief"], "owner": "content-strategist"}],
-    "claims": [{"id": "claim-brief", "artifact_id": "campaign-brief", "agent": "content-strategist", "status": "active", "paths": ["content/briefs/campaign.md"]}]
+    "tasks": [{"id": "task-brief", "title": "Prepare campaign brief", "status": "ready", "artifact_ids": ["campaign-brief"], "owner": "ijfw-campaign-strategist"}],
+    "claims": [{"id": "claim-brief", "artifact_id": "campaign-brief", "agent": "ijfw-campaign-strategist", "status": "active", "paths": ["content/briefs/campaign.md"]}]
   }
 }

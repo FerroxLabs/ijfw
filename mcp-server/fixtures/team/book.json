@@ -5,7 +5,7 @@
     "project_archetypes": ["book"],
     "roles": [
       {
-        "name": "chapter-writer",
+        "name": "ijfw-line-editor",
         "role_type": "book",
         "model": "sonnet",
         "effort": "medium",
@@ -16,7 +16,7 @@
         "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": ["manuscript/chapters/**"]}
       },
       {
-        "name": "continuity-editor",
+        "name": "ijfw-narrative-continuity-checker",
         "role_type": "review",
         "model": "sonnet",
         "effort": "medium",
@@ -32,8 +32,8 @@
     "schema_version": "team-workflow/v1",
     "project_archetypes": ["book"],
     "artifacts": [
-      {"id": "chapter-draft", "type": "chapter", "paths": ["manuscript/chapters/ch01.md"], "owner": "chapter-writer", "reviewers": ["continuity-editor"], "depends_on": [], "verification": ["continuity review"]},
-      {"id": "continuity-notes", "type": "continuity_notes", "paths": ["manuscript/notes/continuity.md"], "owner": "continuity-editor", "reviewers": ["chapter-writer"], "depends_on": ["chapter-draft"], "verification": ["open thread audit"]}
+      {"id": "chapter-draft", "type": "chapter", "paths": ["manuscript/chapters/ch01.md"], "owner": "ijfw-line-editor", "reviewers": ["ijfw-narrative-continuity-checker"], "depends_on": [], "verification": ["continuity review"]},
+      {"id": "continuity-notes", "type": "continuity_notes", "paths": ["manuscript/notes/continuity.md"], "owner": "ijfw-narrative-continuity-checker", "reviewers": ["ijfw-line-editor"], "depends_on": ["chapter-draft"], "verification": ["open thread audit"]}
     ],
     "waves": [
       {"id": "w1", "mode": "parallel", "artifact_ids": ["chapter-draft"]},
@@ -41,7 +41,7 @@
     ]
   },
   "blackboard": {
-    "tasks": [{"id": "task-chapter", "title": "Draft chapter one", "status": "ready", "artifact_ids": ["chapter-draft"], "owner": "chapter-writer"}],
-    "claims": [{"id": "claim-chapter", "artifact_id": "chapter-draft", "agent": "chapter-writer", "status": "active", "paths": ["manuscript/chapters/ch01.md"]}]
+    "tasks": [{"id": "task-chapter", "title": "Draft chapter one", "status": "ready", "artifact_ids": ["chapter-draft"], "owner": "ijfw-line-editor"}],
+    "claims": [{"id": "claim-chapter", "artifact_id": "chapter-draft", "agent": "ijfw-line-editor", "status": "active", "paths": ["manuscript/chapters/ch01.md"]}]
   }
 }
