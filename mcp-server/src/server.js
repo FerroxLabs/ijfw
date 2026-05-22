@@ -596,23 +596,6 @@ function readGlobalKnowledge() {
   ).join('\n\n');
 }
 
-function getSessionCount() {
-  try {
-    if (!existsSync(SESSIONS_DIR)) return 0;
-    return readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.md')).length;
-  } catch {
-    return 0;
-  }
-}
-
-function getDecisionCount() {
-  const journal = readOr(join(MEMORY_DIR, 'project-journal.md'));
-  if (!journal) return 0;
-  // Match only journal entry lines (we now prefix with - [timestamp]) -- not
-  // arbitrary list bullets that might appear in seeded content.
-  return (journal.match(/^- \[\d{4}-\d{2}-\d{2}T/gm) || []).length;
-}
-
 function getRecentJournalEntries(count = 5) {
   const journal = readOr(join(MEMORY_DIR, 'project-journal.md'));
   if (!journal) return '';

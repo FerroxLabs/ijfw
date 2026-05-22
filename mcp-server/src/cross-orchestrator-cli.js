@@ -76,7 +76,6 @@ import {
 // import sibling-package style, matching extension-installer.js precedent.
 import {
   COMMAND_REGISTRY,
-  commandsByTier,
 } from '../../installer/src/command-registry.js';
 
 // ---------------------------------------------------------------------------
@@ -490,64 +489,6 @@ function parseArgsInner(args) {
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
-
-function printUsage() {
-  // v1.5.1 W3.A.4 — registry-driven usage block. The orchestrator now
-  // generates its own Usage + Commands sections from command-registry.js
-  // (single source of truth) so it can never drift from `ijfw --help` /
-  // `ijfw commands` again. The prose footer (Modes, Options, Environment,
-  // Examples) stays static — that content is cross-specific, not command-level.
-  //
-  // Previously (W1.D+E) this was a no-op pointing users at `ijfw --help`,
-  // but the orchestrator is still reachable as a standalone CLI (post-install
-  // bin), so a generated usage view is the right answer.
-  const t = commandsByTier();
-  const visible = [...t.primary, ...t.coordination, ...t.plumbing];
-
-  console.log(`
-ijfw -- It Just Fucking Works CLI
-Fire 2-4 AIs at any target. Receipts logged. Cache hits tracked. Memory follows you.
-`.trim());
-  console.log('');
-  console.log('Usage:');
-  for (const e of visible) console.log(`  ijfw ${e.name}`);
-  console.log('');
-  console.log('Commands:');
-  const pad = Math.max(...visible.map(e => e.name.length)) + 2;
-  for (const e of visible) {
-    console.log(`  ${e.name.padEnd(pad)}${e.description}`);
-  }
-  console.log(`
-Modes (for ijfw cross):
-  audit           Adversarial review of a file, module, or path
-  research        Multi-source research on a topic
-  critique        Structured counter-argument generation
-  project-audit   Run the same audit across every registered IJFW project
-                  Usage: ijfw cross project-audit <rule-file> [--dry-run]
-
-Options for ijfw cross:
-  --with <id>   Force a specific auditor (comma-separated for multiple)
-  --confirm     Prompt for confirmation before firing
-  --expand      Include extended swarm when available
-  --chunk       Boundary-aware chunked dispatch (v1.5.1 H1.6)
-
-Global flags:
-  --json    Emit JSON instead of human output.
-
-Environment:
-  IJFW_AUDIT_BUDGET_USD   Session spend cap (default $2.00). First call always
-                          allowed; cap enforced from the 2nd call on.
-
-Examples:
-  ijfw demo
-  ijfw cross audit README.md
-  ijfw cross research "vector search approaches"
-  ijfw cross critique HEAD~3..HEAD
-  ijfw cross audit CLAUDE.md --with codex,gemini
-  ijfw status
-  ijfw doctor
-`.trimEnd());
-}
 
 function printMemoryHelp() {
   console.log(`
