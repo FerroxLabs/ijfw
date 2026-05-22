@@ -15,9 +15,9 @@
       "memory": true,
       "rules": true,
       "skills": 34,
-      "agents": 33,
+      "agents": 34,
       "commands": 22,
-      "hooks": 18,
+      "hooks": 17,
       "hookEvents": 6,
       "skillsPath": "claude/skills",
       "hooksPath": "claude/hooks/hooks.json",
@@ -44,14 +44,14 @@
       "memory": true,
       "rules": true,
       "skills": 19,
-      "agents": 3,
+      "agents": 0,
       "commands": 19,
       "hooks": 16,
       "hookEvents": 11,
       "skillsPath": "gemini/extensions/ijfw/skills",
       "hooksPath": "gemini/extensions/ijfw/hooks/hooks.json",
       "displayName": "Gemini CLI",
-      "notes": "Richest hook surface of any platform (11 events including BeforeModel/AfterModel/PreCompress/Notification)."
+      "notes": "Richest hook surface of any platform (11 events including BeforeModel/AfterModel/PreCompress/Notification). gemini/extensions/ijfw/agents/ holds only a .gitkeep placeholder; the installer ships 0 agent templates."
     },
     "shared": {
       "tier": "shared",
