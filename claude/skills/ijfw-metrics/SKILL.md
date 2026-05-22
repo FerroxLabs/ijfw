@@ -1,4 +1,3 @@
-<!-- IJFW: narration-not-applicable -->
 ---
 name: ijfw-metrics
 description: "Internal session metrics tracking. Auto-triggered at session boundaries. Tracks tokens, agent usage, efficiency gains. View with /ijfw-status."

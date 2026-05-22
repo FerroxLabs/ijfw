@@ -2,7 +2,7 @@
 name: ijfw-debug-session-manager
 description: "Use when managing a multi-cycle debug session that needs checkpoint/continuation across context resets."
 model: sonnet
-allowed-tools: Read, Write, Bash, Grep, Glob, Agent
+allowed-tools: Read, Write, Bash, Grep, Glob, Task
 since: '1.5.0'
 ---
 

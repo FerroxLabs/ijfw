@@ -2,7 +2,7 @@
 name: ijfw-extract-learnings
 description: "Use after a phase or milestone completes to mine artifacts for decisions, lessons, patterns, and surprises that should feed forward."
 model: sonnet
-allowed-tools: Read, Write, Bash, Grep, Glob
+allowed-tools: Read, Write, Bash, Grep, Glob, mcp__ijfw-memory__ijfw_memory_store, mcp__ijfw-memory__ijfw_memory_search
 since: '1.5.0'
 ---
 

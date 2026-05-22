@@ -991,7 +991,7 @@ const TOOLS = [
   },
   {
     name: 'ijfw_memory_search',
-    description: 'Keyword search across memory sources. Up to 20 results. Scope defaults to current project; pass scope:"all" to search across every IJFW project ever opened on this machine (results tagged [project:<name>]). Pass scope:"sandbox" to retrieve sandboxed ijfw_run output -- include label to get the full output of a specific run, or omit label to list all available sandbox entries.',
+    description: 'Keyword search across memory sources. Up to 20 results. Scope defaults to current project; pass scope:"all" to search across every IJFW project ever opened on this machine (results tagged [project:<name>]). Pass scope:"sandbox" to retrieve sandboxed ijfw_run output -- include label to get the full output of a specific run, or omit label to list all available sandbox entries. The query field also accepts colon-namespaced commands: "compute:<query>" hits the per-project FTS5 index, "graph:<query>" routes through the knowledge-graph search.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1050,8 +1050,8 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        period: { type: 'string', enum: ['today', '7d', '30d', 'all'], description: 'Time window (default 7d).' },
-        metric: { type: 'string', enum: ['tokens', 'cost', 'sessions', 'routing'], description: 'Which metric to render (default tokens).' }
+        period: { type: 'string', enum: ['today', '7d', '30d', 'all'], default: '7d', description: 'Time window (default 7d).' },
+        metric: { type: 'string', enum: ['tokens', 'cost', 'sessions', 'routing'], default: 'tokens', description: 'Which metric to render (default tokens).' }
       },
       required: []
     }
@@ -1072,7 +1072,7 @@ const TOOLS = [
   UPDATE_APPLY_TOOL,
   {
     name: 'ijfw_run',
-    description: 'Run a shell command. For commands likely to produce large output (builds, test suites, grep -r, log tails), use this instead of Bash -- full output is sandboxed to disk and a smart summary is returned to context. For git/nav/quick ops, use Bash directly.',
+    description: 'Run a shell command. For commands likely to produce large output (builds, test suites, grep -r, log tails), use this instead of Bash -- full output is sandboxed to disk and a smart summary is returned to context. For git/nav/quick ops, use Bash directly. Also accepts colon-namespaced commands instead of a shell line: "compute:python", "compute:js", "index:<source>", "detect:project_type".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1088,10 +1088,10 @@ const TOOLS = [
     // Absorbs the retired ijfw_subagent_post_done tool (post-done IS a state
     // transition → reachable as the `subagent.post-done` verb). All 20 frozen
     // verbs from STATE-SDK-CONTRACT §7 are reachable through this one tool,
-    // keeping the MCP cap at 12/12. The same `query(verb, payload, ctx)` core
+    // keeping the MCP cap at 13/13. The same `query(verb, payload, ctx)` core
     // is also exposed as a JS import and a CLI colon-namespace (`ijfw state:<verb>`).
     name: 'ijfw_state',
-    description: 'State-SDK verb facade — invoke any of the 20 frozen verbs (workflow.*, wave.*, phase.*, subagent.*, event.emit, telemetry.record, roster.*, extension.set-active, decision.add, blocker.*, state.replay, state.validate) over the canonical physical state files. Single MCP face for the state-SDK; subagent.post-done is the verb that absorbed the retired ijfw_subagent_post_done tool. Returns the verb result with `ok` + `verbId` + verb-specific fields (see STATE-SDK-CONTRACT §7).',
+    description: 'State-SDK verb facade — invoke any of the 20 frozen verbs over the canonical physical state files. The 20 verbs: workflow.get, workflow.set-phase, wave.get, wave.advance, wave.record-task, phase.plan-check, phase.complete, subagent.dispatch, subagent.checkpoint, subagent.post-done, event.emit, telemetry.record, roster.synthesize, roster.record, extension.set-active, decision.add, blocker.add, blocker.resolve, state.replay, state.validate. Single MCP face for the state-SDK; subagent.post-done is the verb that absorbed the retired ijfw_subagent_post_done tool. Returns the verb result with `ok` + `verbId` + verb-specific fields (see STATE-SDK-CONTRACT §7).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1110,14 +1110,14 @@ const TOOLS = [
     // (codex/gemini/claude by default) in parallel; if verdicts diverge,
     // re-runs with a CYCLE_SUMMARY of the disagreement until consensus or
     // maxIterations (default 3).  Stall breaker halts on byte-identical
-    // iterations.  Fills the 12th tool-cap slot.
+    // iterations.  Slot 12 of the 13/13 tool cap.
     name: 'ijfw_cross_audit_converge',
     description: 'Multi-lens Trident audit with consensus convergence loop. Dispatches codex/gemini/claude in parallel against a commit range, detects verdict divergence, and re-runs with a cycle summary until consensus or maxIterations. Returns {verdict, iterations, findings, divergence?, stalled?}. Verdict: PASS / CONDITIONAL / FAIL / consensus_failed / UNREACHABLE.',
     inputSchema: {
       type: 'object',
       properties: {
         commitRange:   { type: 'string',  description: 'Git commit range to audit (e.g. "HEAD~1..HEAD", "main..feature/x"). Required.' },
-        maxIterations: { type: 'number',  description: 'Max convergence iterations (default 3). 1 → single-shot (fallback mode).' },
+        maxIterations: { type: 'number',  minimum: 1, maximum: 10, description: 'Max convergence iterations (default 3, capped at 10). 1 → single-shot (fallback mode).' },
         lenses:        { type: 'array',   items: { type: 'string' }, description: 'Lens ids to dispatch (default ["codex","gemini","claude"]).' },
       },
       required: ['commitRange'],

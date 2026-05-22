@@ -233,7 +233,7 @@ Each generated agent follows this structure:
 name: <role-name>
 model: <haiku|sonnet|opus>
 effort: <low|medium|high>
-description: "Use when the user says: 'set up a team', 'create agents for', 'team for this project', 'who should work on this', or after Discovery in a project setup flow."
+description: <when to use this agent -- 1-2 lines>
 allowed-tools: <relevant tools for this role>
 ---
 

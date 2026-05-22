@@ -1,0 +1,4 @@
+# Gemini ships no platform-shipped agent templates. Project agents are
+# generated at runtime by Team Assembly (same model as Codex). This file
+# keeps the agents/ directory tracked in git so the installer copy step and
+# test-gemini-bundle.js find it. See v1.5.1 medlow audit (AG-H2 parity).

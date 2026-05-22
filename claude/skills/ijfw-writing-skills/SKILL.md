@@ -1,4 +1,3 @@
-<!-- IJFW: narration-not-applicable -->
 ---
 name: ijfw-writing-skills
 description: "Authoring discipline for new IJFW skills. Use when creating a new skill, writing a skill, making a skill that does X, or asked to add a skill. Trigger: create a new skill, write a skill, new skill, make me a skill, skill that does, /ijfw-writing-skills"

@@ -1,4 +1,3 @@
-<!-- IJFW: narration-not-applicable -->
 ---
 name: ijfw-compress
 description: "Compress memory/context files into terse form. Trigger: /compress, compress file"

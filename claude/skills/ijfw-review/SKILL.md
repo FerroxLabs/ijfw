@@ -1,4 +1,3 @@
-<!-- IJFW: narration-not-applicable -->
 ---
 name: ijfw-review
 since: '1.5.0'

@@ -1,4 +1,3 @@
-<!-- IJFW: narration-not-applicable -->
 ---
 name: ijfw-tdd
 description: "RED-GREEN-REFACTOR enforcement. Use when implementing a feature or bugfix before writing implementation code. Trigger: tdd, test first, red green refactor, /ijfw-tdd"

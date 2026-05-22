@@ -1,4 +1,3 @@
-<!-- IJFW: narration-not-applicable -->
 ---
 name: ijfw-receiving-review
 description: "Reply to code review without blind agreement or performative pushback. Use when you have received feedback, need to address review, respond to review, handle review comments, or PR comments came back. Trigger: received feedback, address review, respond to review, review comments to handle, PR comments came back, /ijfw-receiving-review"
