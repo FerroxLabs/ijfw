@@ -2,58 +2,237 @@
   "charter": {
     "schema_version": "team-charter/v1",
     "team_name": "mixed-launch-team",
-    "project_archetypes": ["software", "design", "content", "mixed"],
+    "project_archetypes": [
+      "software",
+      "design",
+      "content",
+      "mixed"
+    ],
     "roles": [
       {
-        "name": "app-engineer",
+        "name": "ijfw-app-engineer",
         "role_type": "software",
         "model": "sonnet",
         "effort": "medium",
-        "phase_scope": ["execute", "verify"],
-        "owns": [{"artifact_type": "app", "paths": ["app/**"]}],
-        "reviews": [{"artifact_type": "screen", "criteria": ["integration", "accessibility"]}],
-        "handoff": {"format": "markdown", "required_sections": ["changed_artifacts", "tests", "risks"]},
-        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": ["app/routes/**"]}
+        "phase_scope": [
+          "execute",
+          "verify"
+        ],
+        "owns": [
+          {
+            "artifact_type": "app",
+            "paths": [
+              "app/**"
+            ]
+          }
+        ],
+        "reviews": [
+          {
+            "artifact_type": "screen",
+            "criteria": [
+              "integration",
+              "accessibility"
+            ]
+          }
+        ],
+        "handoff": {
+          "format": "markdown",
+          "required_sections": [
+            "changed_artifacts",
+            "tests",
+            "risks"
+          ]
+        },
+        "coordination": {
+          "parallel_safe": true,
+          "claim_required": true,
+          "conflicts_with": [
+            "app/routes/**"
+          ]
+        }
       },
       {
-        "name": "ux-designer",
+        "name": "ijfw-ux-designer",
         "role_type": "design",
         "model": "sonnet",
         "effort": "medium",
-        "phase_scope": ["shape", "review"],
-        "owns": [{"artifact_type": "screen", "paths": ["design/**"]}],
-        "reviews": [{"artifact_type": "app", "criteria": ["usability", "visual-fit"]}],
-        "handoff": {"format": "markdown", "required_sections": ["rationale", "screens", "review_notes"]},
-        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": ["design/tokens/**"]}
+        "phase_scope": [
+          "shape",
+          "review"
+        ],
+        "owns": [
+          {
+            "artifact_type": "screen",
+            "paths": [
+              "design/**"
+            ]
+          }
+        ],
+        "reviews": [
+          {
+            "artifact_type": "app",
+            "criteria": [
+              "usability",
+              "visual-fit"
+            ]
+          }
+        ],
+        "handoff": {
+          "format": "markdown",
+          "required_sections": [
+            "rationale",
+            "screens",
+            "review_notes"
+          ]
+        },
+        "coordination": {
+          "parallel_safe": true,
+          "claim_required": true,
+          "conflicts_with": [
+            "design/tokens/**"
+          ]
+        }
       },
       {
-        "name": "launch-editor",
+        "name": "ijfw-launch-editor",
         "role_type": "content",
         "model": "sonnet",
         "effort": "low",
-        "phase_scope": ["execute", "review"],
-        "owns": [{"artifact_type": "launch_copy", "paths": ["content/launch/**"]}],
-        "reviews": [{"artifact_type": "screen", "criteria": ["message-match", "voice"]}],
-        "handoff": {"format": "markdown", "required_sections": ["copy_changes", "voice_notes"]},
-        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+        "phase_scope": [
+          "execute",
+          "review"
+        ],
+        "owns": [
+          {
+            "artifact_type": "launch_copy",
+            "paths": [
+              "content/launch/**"
+            ]
+          }
+        ],
+        "reviews": [
+          {
+            "artifact_type": "screen",
+            "criteria": [
+              "message-match",
+              "voice"
+            ]
+          }
+        ],
+        "handoff": {
+          "format": "markdown",
+          "required_sections": [
+            "copy_changes",
+            "voice_notes"
+          ]
+        },
+        "coordination": {
+          "parallel_safe": true,
+          "claim_required": true,
+          "conflicts_with": []
+        }
       }
     ]
   },
   "workflow": {
     "schema_version": "team-workflow/v1",
-    "project_archetypes": ["software", "design", "content", "mixed"],
+    "project_archetypes": [
+      "software",
+      "design",
+      "content",
+      "mixed"
+    ],
     "artifacts": [
-      {"id": "app-shell", "type": "app", "paths": ["app/**"], "owner": "app-engineer", "reviewers": ["ux-designer"], "depends_on": [], "verification": ["npm test"]},
-      {"id": "product-screens", "type": "screen", "paths": ["design/**"], "owner": "ux-designer", "reviewers": ["app-engineer", "launch-editor"], "depends_on": [], "verification": ["visual audit"]},
-      {"id": "launch-copy", "type": "launch_copy", "paths": ["content/launch/**"], "owner": "launch-editor", "reviewers": ["ux-designer"], "depends_on": ["product-screens"], "verification": ["brand voice review"]}
+      {
+        "id": "app-shell",
+        "type": "app",
+        "paths": [
+          "app/**"
+        ],
+        "owner": "ijfw-app-engineer",
+        "reviewers": [
+          "ijfw-ux-designer"
+        ],
+        "depends_on": [],
+        "verification": [
+          "npm test"
+        ]
+      },
+      {
+        "id": "product-screens",
+        "type": "screen",
+        "paths": [
+          "design/**"
+        ],
+        "owner": "ijfw-ux-designer",
+        "reviewers": [
+          "ijfw-app-engineer",
+          "ijfw-launch-editor"
+        ],
+        "depends_on": [],
+        "verification": [
+          "visual audit"
+        ]
+      },
+      {
+        "id": "launch-copy",
+        "type": "launch_copy",
+        "paths": [
+          "content/launch/**"
+        ],
+        "owner": "ijfw-launch-editor",
+        "reviewers": [
+          "ijfw-ux-designer"
+        ],
+        "depends_on": [
+          "product-screens"
+        ],
+        "verification": [
+          "brand voice review"
+        ]
+      }
     ],
     "waves": [
-      {"id": "w1", "mode": "parallel", "artifact_ids": ["app-shell", "product-screens"]},
-      {"id": "w2", "mode": "review", "artifact_ids": ["launch-copy"]}
+      {
+        "id": "w1",
+        "mode": "parallel",
+        "artifact_ids": [
+          "app-shell",
+          "product-screens"
+        ]
+      },
+      {
+        "id": "w2",
+        "mode": "review",
+        "artifact_ids": [
+          "launch-copy"
+        ]
+      }
     ]
   },
   "blackboard": {
-    "tasks": [{"id": "task-launch", "title": "Coordinate launch surface", "status": "ready", "artifact_ids": ["app-shell", "product-screens"], "owner": "app-engineer"}],
-    "claims": [{"id": "claim-copy", "artifact_id": "launch-copy", "agent": "launch-editor", "status": "active", "paths": ["content/launch/**"]}]
+    "tasks": [
+      {
+        "id": "task-launch",
+        "title": "Coordinate launch surface",
+        "status": "ready",
+        "artifact_ids": [
+          "app-shell",
+          "product-screens"
+        ],
+        "owner": "ijfw-app-engineer"
+      }
+    ],
+    "claims": [
+      {
+        "id": "claim-copy",
+        "artifact_id": "launch-copy",
+        "agent": "ijfw-launch-editor",
+        "status": "active",
+        "paths": [
+          "content/launch/**"
+        ]
+      }
+    ]
   }
 }

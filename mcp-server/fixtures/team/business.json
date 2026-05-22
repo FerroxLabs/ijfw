@@ -2,46 +2,172 @@
   "charter": {
     "schema_version": "team-charter/v1",
     "team_name": "strategy-operations-team",
-    "project_archetypes": ["business"],
+    "project_archetypes": [
+      "business"
+    ],
     "roles": [
       {
-        "name": "strategy-lead",
+        "name": "ijfw-strategy-lead",
         "role_type": "business",
         "model": "sonnet",
         "effort": "medium",
-        "phase_scope": ["diagnose", "plan", "decide"],
-        "owns": [{"artifact_type": "strategy_doc", "paths": ["strategy/**"]}],
-        "reviews": [{"artifact_type": "risk_register", "criteria": ["assumptions", "decision-quality"]}],
-        "handoff": {"format": "markdown", "required_sections": ["recommendation", "assumptions", "tradeoffs"]},
-        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+        "phase_scope": [
+          "diagnose",
+          "plan",
+          "decide"
+        ],
+        "owns": [
+          {
+            "artifact_type": "strategy_doc",
+            "paths": [
+              "strategy/**"
+            ]
+          }
+        ],
+        "reviews": [
+          {
+            "artifact_type": "risk_register",
+            "criteria": [
+              "assumptions",
+              "decision-quality"
+            ]
+          }
+        ],
+        "handoff": {
+          "format": "markdown",
+          "required_sections": [
+            "recommendation",
+            "assumptions",
+            "tradeoffs"
+          ]
+        },
+        "coordination": {
+          "parallel_safe": true,
+          "claim_required": true,
+          "conflicts_with": []
+        }
       },
       {
-        "name": "risk-reviewer",
+        "name": "ijfw-risk-reviewer",
         "role_type": "review",
         "model": "sonnet",
         "effort": "medium",
-        "phase_scope": ["review", "verify"],
-        "owns": [{"artifact_type": "risk_register", "paths": ["strategy/risks/**"]}],
-        "reviews": [{"artifact_type": "strategy_doc", "criteria": ["feasibility", "downside", "metrics"]}],
-        "handoff": {"format": "markdown", "required_sections": ["risks", "mitigations", "decision_points"]},
-        "coordination": {"parallel_safe": true, "claim_required": true, "conflicts_with": []}
+        "phase_scope": [
+          "review",
+          "verify"
+        ],
+        "owns": [
+          {
+            "artifact_type": "risk_register",
+            "paths": [
+              "strategy/risks/**"
+            ]
+          }
+        ],
+        "reviews": [
+          {
+            "artifact_type": "strategy_doc",
+            "criteria": [
+              "feasibility",
+              "downside",
+              "metrics"
+            ]
+          }
+        ],
+        "handoff": {
+          "format": "markdown",
+          "required_sections": [
+            "risks",
+            "mitigations",
+            "decision_points"
+          ]
+        },
+        "coordination": {
+          "parallel_safe": true,
+          "claim_required": true,
+          "conflicts_with": []
+        }
       }
     ]
   },
   "workflow": {
     "schema_version": "team-workflow/v1",
-    "project_archetypes": ["business"],
+    "project_archetypes": [
+      "business"
+    ],
     "artifacts": [
-      {"id": "operating-plan", "type": "strategy_doc", "paths": ["strategy/operating-plan.md"], "owner": "strategy-lead", "reviewers": ["risk-reviewer"], "depends_on": [], "verification": ["decision review"]},
-      {"id": "risk-register", "type": "risk_register", "paths": ["strategy/risks/register.md"], "owner": "risk-reviewer", "reviewers": ["strategy-lead"], "depends_on": ["operating-plan"], "verification": ["assumption audit"]}
+      {
+        "id": "operating-plan",
+        "type": "strategy_doc",
+        "paths": [
+          "strategy/operating-plan.md"
+        ],
+        "owner": "ijfw-strategy-lead",
+        "reviewers": [
+          "ijfw-risk-reviewer"
+        ],
+        "depends_on": [],
+        "verification": [
+          "decision review"
+        ]
+      },
+      {
+        "id": "risk-register",
+        "type": "risk_register",
+        "paths": [
+          "strategy/risks/register.md"
+        ],
+        "owner": "ijfw-risk-reviewer",
+        "reviewers": [
+          "ijfw-strategy-lead"
+        ],
+        "depends_on": [
+          "operating-plan"
+        ],
+        "verification": [
+          "assumption audit"
+        ]
+      }
     ],
     "waves": [
-      {"id": "w1", "mode": "sequential", "artifact_ids": ["operating-plan"]},
-      {"id": "w2", "mode": "review", "artifact_ids": ["risk-register"]}
+      {
+        "id": "w1",
+        "mode": "sequential",
+        "artifact_ids": [
+          "operating-plan"
+        ]
+      },
+      {
+        "id": "w2",
+        "mode": "review",
+        "artifact_ids": [
+          "risk-register"
+        ]
+      }
     ]
   },
   "blackboard": {
-    "tasks": [{"id": "task-plan", "title": "Draft operating plan", "status": "ready", "artifact_ids": ["operating-plan"], "owner": "strategy-lead"}],
-    "claims": [{"id": "claim-plan", "artifact_id": "operating-plan", "agent": "strategy-lead", "status": "active", "paths": ["strategy/operating-plan.md"]}]
+    "tasks": [
+      {
+        "id": "task-plan",
+        "title": "Draft operating plan",
+        "status": "ready",
+        "artifact_ids": [
+          "operating-plan"
+        ],
+        "owner": "ijfw-strategy-lead"
+      }
+    ],
+    "claims": [
+      {
+        "id": "claim-plan",
+        "artifact_id": "operating-plan",
+        "agent": "ijfw-strategy-lead",
+        "status": "active",
+        "paths": [
+          "strategy/operating-plan.md"
+        ]
+      }
+    ]
   }
 }
