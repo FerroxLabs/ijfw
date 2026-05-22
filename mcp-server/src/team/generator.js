@@ -19,7 +19,19 @@ import {
 } from './schemas.js';
 
 const FIXTURE_DIR = resolve(fileURLToPath(new URL('../../fixtures/team/', import.meta.url)));
+// W1.5.B (ADR W1.5 Option C "merge"): domain-templates is the canonical
+// agent-id spec; fixtures remain canonical for the executable team bundle.
+// `loadTeamTemplate` cross-validates the two sources at load time so any
+// future drift surfaces as a load-time signal rather than a silent
+// runtime mismatch. See `.planning/1.5.1/decisions/W1.5-canonical-source.md`.
+const DOMAIN_TEMPLATES_DIR = resolve(fileURLToPath(new URL('./domain-templates/', import.meta.url)));
 const SUPPORTED_ARCHETYPES = new Set(['software', 'design', 'content', 'book', 'research', 'business', 'mixed']);
+
+// W1.5.B: one-time warning suppression per archetype so drift between
+// fixtures and domain-templates emits a single, clearly-attributed
+// warning rather than spamming stderr on every loadTeamTemplate call
+// (tests + the CLI may both call into the loader inside the same process).
+const _crossValidationWarned = new Set();
 
 // T24 / G7-core: the four universal software-core agents. Any software-
 // domain roster MUST include all four. The ids resolve to static markdown
@@ -273,7 +285,119 @@ export function loadTeamTemplate(archetype) {
   const path = join(FIXTURE_DIR, `${normalized}.json`);
   const bundle = JSON.parse(readFileSync(path, 'utf8'));
   assertValidTeamBundle(bundle);
+
+  // W1.5.B cross-validation gate. Read the matching T26 domain-template
+  // (if any) and cross-check that the fixture's `charter.roles[].name`
+  // set agrees with the template's `agent_ids`. Two sources of truth
+  // that SHOULD agree by construction (ADR W1.5 Option C "merge"); this
+  // gate makes future drift self-detect at load time rather than as a
+  // silent runtime miss far from the cause.
+  //
+  // Behaviour:
+  //   - template file missing
+  //       → e.g. `mixed` (deliberately template-free per ADR W1.5).
+  //         Fixture is the sole source of truth; gate is a no-op.
+  //   - template present but `agent_ids` empty
+  //       → fall back to fixture as ground truth; emit a one-time
+  //         warning so the unpopulated template is visible. W1.5.C
+  //         populated research + business; if any other archetype ever
+  //         lands empty in future, operators see it immediately.
+  //   - template populated AND agrees with fixture role names
+  //         (every fixture role name appears in template `agent_ids`)
+  //       → silent pass; the canonical contract holds.
+  //   - template populated AND disagrees
+  //       → emit a one-time warning naming the drifting role(s) and the
+  //         template ids they failed to match. Fail-loud at load time
+  //         via `process.emitWarning` so CI logs and operators see the
+  //         drift, but DON'T throw during the v1.5.1 transitional
+  //         window where W1.5.E (fixture rename) and W1.5.B (this gate)
+  //         ship in separate commits. Once W1.5.E lands and shipped
+  //         fixtures are realigned, this warning never fires in the
+  //         normal codepath; downstream may graduate the warning to a
+  //         thrown error once the steady state is confirmed.
+  //
+  // The contract for callers: a non-throwing return ALWAYS means the
+  // fixture bundle is structurally valid (assertValidTeamBundle above);
+  // drift between fixture role names and the domain-template agent_ids
+  // surfaces as a one-time `IjfwTeamFixtureDrift` warning on stderr.
+  crossValidateAgainstDomainTemplate(normalized, bundle);
+
   return structuredClone(bundle);
+}
+
+// W1.5.B: read the T26 domain-template for an archetype (if any) and
+// compare it against the fixture bundle's role names. See
+// loadTeamTemplate above for the contract and ADR W1.5 for the rationale.
+function crossValidateAgainstDomainTemplate(archetype, bundle) {
+  const templatePath = join(DOMAIN_TEMPLATES_DIR, `${archetype}.json`);
+  if (!existsSync(templatePath)) {
+    // No T26 template for this archetype (e.g. `mixed` — deliberately
+    // template-free per ADR W1.5). Fixture is the sole source of truth.
+    return;
+  }
+
+  let template;
+  try {
+    template = JSON.parse(readFileSync(templatePath, 'utf8'));
+  } catch (err) {
+    // Unparseable template should not silently bypass the gate, but a
+    // parse error in the template is a separate failure mode from
+    // drift; emit a warning so the broken file is visible without
+    // breaking the generator for users whose fixture is structurally fine.
+    warnOnce(
+      `team-generator: domain-template "${archetype}.json" is unreadable (${err.message}); ` +
+        'falling back to fixture as ground truth.',
+      `parse:${archetype}`,
+    );
+    return;
+  }
+
+  const templateIds = Array.isArray(template.agent_ids) ? template.agent_ids : [];
+  if (templateIds.length === 0) {
+    // ADR W1.5 step 5: T26 empty. Fall back to fixture as ground truth
+    // and emit a one-time warning so the gap is visible to operators.
+    warnOnce(
+      `team-generator: domain-template "${archetype}" has empty agent_ids — ` +
+        'falling back to fixture as ground truth.',
+      `empty:${archetype}`,
+    );
+    return;
+  }
+
+  const fixtureRoleNames = (bundle.charter && Array.isArray(bundle.charter.roles))
+    ? bundle.charter.roles.map((role) => role && role.name).filter(Boolean)
+    : [];
+
+  // The contract (ADR W1.5 Option C): every shipped-fixture role.name
+  // MUST appear in the template's agent_ids set. Drift is a load-time
+  // observability signal — emitted as a one-time warning so CI/operators
+  // see it, but NOT thrown during the v1.5.1 transitional window where
+  // W1.5.E (fixture rename) and W1.5.B (this gate) ship in separate
+  // commits. Steady state post-W1.5.E: this warning never fires; the
+  // gate becomes effectively-throw because mismatch can no longer exist.
+  const templateSet = new Set(templateIds);
+  const missing = fixtureRoleNames.filter((name) => !templateSet.has(name));
+  if (missing.length === 0) return;
+
+  warnOnce(
+    `team-generator: fixtures/team/${archetype}.json drifted from ` +
+      `domain-templates/${archetype}.json — role name(s) ${missing.map((m) => `"${m}"`).join(', ')} ` +
+      `not present in template agent_ids [${templateIds.join(', ')}]. ` +
+      'See ADR .planning/1.5.1/decisions/W1.5-canonical-source.md (Option C "merge"): ' +
+      'fixture roles MUST be a subset of the domain-template agent_ids. ' +
+      'W1.5.E (fixture rename) will close any remaining drift; until then ' +
+      'the fixture is treated as ground truth for the executable team bundle.',
+    `drift:${archetype}`,
+  );
+}
+
+function warnOnce(message, key) {
+  if (_crossValidationWarned.has(key)) return;
+  _crossValidationWarned.add(key);
+  // process.emitWarning is the Node-canonical channel for non-fatal
+  // load-time signals — visible to CI logs, suppressible via
+  // --no-warnings, and includes a stack so the source is traceable.
+  process.emitWarning(message, { type: 'IjfwTeamFixtureDrift', code: 'IJFW_W1_5_B_DRIFT' });
 }
 
 export function createTeamAssembly(projectRoot = process.cwd(), options = {}) {
@@ -306,10 +430,12 @@ export function createTeamAssembly(projectRoot = process.cwd(), options = {}) {
   writeAtomic(workflowPath, `${JSON.stringify(bundle.workflow, null, 2)}\n`, { mode: 0o600 });
 
   const agentFiles = [];
+  const writtenAgentNames = new Set();
   for (const role of bundle.charter.roles) {
     const agentPath = join(agentsDir, `${role.name}.md`);
     writeAtomic(agentPath, renderAgent(role, bundle), { mode: 0o600 });
     agentFiles.push(agentPath);
+    writtenAgentNames.add(role.name);
   }
   const codexAgents = syncCodexAgents(root, { bundle });
 
@@ -327,6 +453,30 @@ export function createTeamAssembly(projectRoot = process.cwd(), options = {}) {
   // a missing file as "deploy stub" rather than fail-closed.
   const domainSpecialistAgentIds = resolveDomainSpecialistAgentIds(archetype);
   const rosterAgentIds = resolveRosterForDomain(archetype);
+
+  // W1.5.B: wire DOMAIN_SPECIALIST_AGENT_IDS through to file creation.
+  // Previously the canonical specialist ids were surfaced in the return
+  // value (`domainSpecialistAgentIds`, `rosterAgentIds`) but no matching
+  // `.md` files were written into `.ijfw/agents/` — so a swarm
+  // dispatcher resolving "the book domain specialists" by id got a list
+  // pointing at non-existent local files. This loop closes that gap by
+  // emitting a stub agent .md for every canonical specialist id that
+  // the fixture role-write loop above did NOT already cover. When
+  // fixture role names already match the canonical ids (the steady
+  // state post-W1.5.E), this loop is a no-op because `writtenAgentNames`
+  // already contains them.
+  //
+  // The stub references the canonical `claude/agents/<id>.md` so a
+  // swarm dispatcher resolving by id still gets a discoverable local
+  // entry; the installer is responsible for materialising the full
+  // agent spec.
+  for (const specialistId of domainSpecialistAgentIds) {
+    if (writtenAgentNames.has(specialistId)) continue;
+    const agentPath = join(agentsDir, `${specialistId}.md`);
+    writeAtomic(agentPath, renderSpecialistStub(specialistId, archetype, bundle), { mode: 0o600 });
+    agentFiles.push(agentPath);
+    writtenAgentNames.add(specialistId);
+  }
 
   return {
     ok: true,
@@ -381,6 +531,18 @@ function normalizeArchetype(value) {
   const aliased = ARCHETYPE_ALIASES.get(archetype);
   if (aliased && SUPPORTED_ARCHETYPES.has(aliased)) return aliased;
   return 'mixed';
+}
+
+// W1.5.B: stub renderer for canonical domain-specialist ids that the
+// shipped fixture doesn't yet name as a `charter.roles[].name`. Keeps
+// the `.ijfw/agents/<id>.md` directory in agreement with
+// `domainSpecialistAgentIds` so downstream swarm dispatchers resolving
+// by id always find a local file. The stub is intentionally minimal —
+// the full agent spec lives in `claude/agents/<id>.md` and is deployed
+// by the installer; this is a discovery breadcrumb, not a duplicated spec.
+function renderSpecialistStub(specialistId, archetype, bundle) {
+  const archetypes = bundle.charter.project_archetypes.join(', ');
+  return `---\nname: ${specialistId}\nmodel: sonnet\neffort: medium\ndescription: ${specialistId} — canonical ${archetype} domain specialist (T26 domain-template).\nallowed-tools: Read, Write, Edit, Bash\n---\n\n# ${specialistId}\n\nCanonical domain specialist for ${archetypes} projects.\n\nFull agent specification: claude/agents/${specialistId}.md (deployed by the IJFW installer).\n\nThis stub exists so swarm dispatchers resolving by id find a local entry; the canonical spec is the source of truth.\n\nRecord claims, findings, blockers, and decisions in .ijfw/blackboard/ when swarm execution is active.\n`;
 }
 
 function renderAgent(role, bundle) {
