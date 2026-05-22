@@ -1975,7 +1975,67 @@ function handleMessage(msg) {
                 projectRoot: process.cwd(),
               });
               const isErr = r.verdict === 'consensus_failed' || r.verdict === 'FAIL' || r.verdict === 'UNREACHABLE';
-              result = { text: JSON.stringify(r, null, 2), isError: isErr };
+              // v1.5.1 W2.D — emit a canonical gate-result block through the
+              // gate-result-formatter so this Trident-as-a-service surface is
+              // consistent with the Trident gate (dispatch.js) and preflight
+              // gates. appendGateResult guarantees the fenced block is the
+              // LAST content emitted and is idempotent. Failure to format the
+              // block must NOT clobber the verdict payload — observability,
+              // not correctness.
+              let convergeText = JSON.stringify(r, null, 2);
+              try {
+                const { emitGateResult } = await import('./gate-result.js');
+                const { appendGateResult } = await import('./gate-result-formatter.js');
+                // Map the converge verdict onto a schema-valid gate status.
+                const VERDICT_TO_STATUS = {
+                  PASS: 'PASS',
+                  CONDITIONAL: 'CONDITIONAL',
+                  WARN: 'WARN',
+                  FLAG: 'FLAG',
+                  FAIL: 'FAIL',
+                  consensus_failed: 'FAIL',
+                  UNREACHABLE: 'FAIL',
+                  INCONCLUSIVE: 'FLAG',
+                };
+                const gateStatus = VERDICT_TO_STATUS[r.verdict] || 'FLAG';
+                const block = await emitGateResult(
+                  {
+                    gate: 'cross-audit',
+                    status: gateStatus,
+                    lenses: [],
+                    affected_artifacts: [],
+                    accounting: {
+                      duration_ms:
+                        typeof r.duration_ms === 'number' ? r.duration_ms : 0,
+                      lenses_invoked: Array.isArray(a.lenses)
+                        ? a.lenses.length
+                        : 0,
+                      cost_usd: null,
+                    },
+                    remediation: [],
+                  },
+                  { projectRoot: process.cwd() },
+                );
+                // emitGateResult returns the fenced block as a string; the
+                // formatter validates it back into an object before append.
+                const parsed = JSON.parse(
+                  block.replace(/^```gate-result\n/, '').replace(/\n```$/, ''),
+                );
+                convergeText = appendGateResult(convergeText, parsed);
+              } catch (gateErr) {
+                try {
+                  const msg =
+                    gateErr && gateErr.message
+                      ? gateErr.message
+                      : String(gateErr);
+                  process.stderr.write(
+                    `ijfw: cross_audit_converge gate-result emit failed: ${msg}\n`,
+                  );
+                } catch {
+                  /* never crash the tool on a logging-channel failure */
+                }
+              }
+              result = { text: convergeText, isError: isErr };
             } catch (err) {
               result = { text: JSON.stringify({ error: err && err.message ? err.message : String(err) }), isError: true };
             }
@@ -2122,6 +2182,27 @@ function handleMessage(msg) {
       if (id) return createError(id, -32601, `Method not found: ${method}`);
       return null;
   }
+}
+
+// --- B17 WebSocket revocation client (dynamic-import gate) ---
+// extension-registry-ws.js is dormant by default. Its docstring contract:
+// "Imported via `await import(...)` ONLY when `process.env.IJFW_REGISTRY_WS_URL`
+// is set at startup." Firing the gate here at MCP startup keeps the module out
+// of the import graph entirely unless the operator opts in via the env var, so
+// MCP startup never opens a socket for the common (unset) case. Best-effort:
+// a failed WS bind must never block the stdio transport.
+if (process.env.IJFW_REGISTRY_WS_URL || process.env.IJFW_REGISTRY_WS_SOURCE) {
+  (async () => {
+    try {
+      const { initWsClient } = await import('./extension-registry-ws.js');
+      const res = await initWsClient();
+      if (!res.ok) {
+        process.stderr.write(`IJFW: WS revocation client not started: ${res.error}\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`IJFW: WS revocation client init failed: ${err && err.message ? err.message : err}\n`);
+    }
+  })();
 }
 
 // --- stdio Transport ---
