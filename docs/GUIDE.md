@@ -4,6 +4,8 @@
 
 # The IJFW Guide
 
+> **Note**: This guide is being rewritten for v1.5.x in milestone v1.5.1 W5. Some sections are out of date.
+
 **90 seconds to your first win. 10 minutes to the full tour. 45 minutes to master it.**
 
 This guide is bundled with every install. Run `ijfw help` in your terminal for the terminal-native version, or `ijfw help --browser` to read it in a rendered browser tab with images and syntax highlighting.
@@ -40,7 +42,7 @@ One command. Three seconds.
 npm install -g @ijfw/install && ijfw-install
 ```
 
-That installs the npm package, runs the installer, and wires up every AI coding agent it finds on your machine. Claude Code, Codex, Gemini, Cursor, Windsurf, and Copilot all pick up the shared memory and the same workflow discipline.
+That installs the npm package, runs the installer, and wires up every AI coding agent it finds on your machine. All 14 supported platforms — Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, and the rest — pick up the shared memory and the same workflow discipline.
 
 If you do not type commands, paste this block into Claude Code, Cursor, or any other AI coding agent. It will install IJFW for you, verify the MCP server handshake, and tell you when to restart.
 
@@ -82,16 +84,16 @@ In Claude Code, the same runs as `/cross-audit <file>` or simply "cross-audit th
 
 Tell IJFW a decision in one session. Ask for it in another. No configuration required.
 
-**Session A, any project:**
+**Session A, any project:** ask your AI in plain language to remember a decision. In Claude Code, the `ijfw-auto-memorize` skill captures it. To force a snapshot from the shell:
 
 ```bash
-ijfw memory store "We pin all npm packages to exact versions, no carets, decided 2026-04-19 because dependabot churn was destabilizing CI."
+ijfw memory checkpoint "We pin all npm packages to exact versions, no carets, decided 2026-04-19 because dependabot churn was destabilizing CI."
 ```
 
-**Session B, a completely different project, hours or days later:**
+**Session B, a completely different project, hours or days later:** ask "what did we decide about version pinning?" The `ijfw-recall` skill (Claude Code) or the MCP `ijfw_memory_search` tool (any platform) surfaces it. To query from the shell:
 
 ```bash
-ijfw memory recall "version pinning"
+ijfw memory search "version pinning"
 ```
 
 It comes back. Full quote, original date, original project. Your AI is no longer amnesiac.
@@ -142,7 +144,7 @@ Every IJFW command sits on top of one opinionated workflow: **Think, Build, Ship
 
 Every phase is conversational. One question at a time. No monologues. Every artifact summarizes in chat before it writes to disk. Every gate is a user-facing checklist, never a silent pass.
 
-To start: say "let's plan a new feature", "help me ship this", or "let's build X". In Claude Code the same triggers as `/workflow` or `/ijfw-plan`.
+To start: say "let's plan a new feature", "help me ship this", or "let's build X". The `ijfw-workflow` skill auto-loads from the trigger phrase.
 
 ### The observability dashboard
 
@@ -174,7 +176,7 @@ Run `/team setup` in Claude Code, or `ijfw team` from the shell, to see your cur
 | Warm | BM25 ranked search | Always on. Scales to around 10,000 entries per project. |
 | Cold | Optional semantic vectors (hybrid BM25 + cosine rerank) | Off by default. Enable with `IJFW_VECTORS=on` and `npm i @xenova/transformers` (one-time ~23MB MiniLM model cached locally). Top-K BM25 candidates are reranked via cosine similarity with weights 0.6 BM25 / 0.4 vector. Pure no-op fallback to BM25 if disabled, the package isn't installed, or the model fails to load. |
 
-Every session also ends with an optional "dream cycle". Run `/consolidate` or "run a dream cycle" to have IJFW sweep the day's memory: promote observed patterns into your knowledge base, prune stale entries, reconcile contradictions, optionally lift winners into global memory so every future project benefits. Memory that grows sharper over time instead of heavier.
+Every session also ends with an optional "dream cycle". Say "run a dream cycle" or "consolidate memory" and the `ijfw-auto-memorize` skill sweeps the day's memory: promote observed patterns into your knowledge base, prune stale entries, reconcile contradictions, optionally lift winners into global memory so every future project benefits. Memory that grows sharper over time instead of heavier.
 
 ### Smart routing and the token economy
 
@@ -182,11 +184,7 @@ Inside Claude Code, tasks dispatch to the right model automatically. Reads go to
 
 Typical observed saving: 25 percent or more output reduction versus an unmanaged baseline (same task, same prompt, no IJFW rules or routing applied). Your mileage varies by task, model, and cache state. The savings print in every session receipt so you can audit every claim against your own logs.
 
-To see the running total with a breakdown by platform and session:
-
-```bash
-ijfw metrics
-```
+To see the running total with a breakdown by platform and session, ask your AI for "session metrics" — the `ijfw_metrics` MCP tool surfaces tokens, cost, and routing mix from `.ijfw/metrics/sessions.jsonl`.
 
 ---
 
@@ -194,11 +192,11 @@ ijfw metrics
 
 By tomorrow your AI already feels different. Three small habits compound the effect.
 
-1. **End every significant session with `ijfw handoff`.** It writes a short file other sessions can pick up from. New session, say "recall" or `/handoff`, and you are back in context instantly.
+1. **End every significant session by asking your AI to "write a handoff".** The `ijfw-handoff` skill writes a short file other sessions can pick up from. New session, say "recall last handoff" and you are back in context instantly.
 
 2. **Run `ijfw cross audit` before you merge anything meaningful.** Even if you are the only reviewer, the Trident is a second opinion that costs pennies and catches what single-model eyes miss. Most IJFW users wire it into their git post-commit hook after a week.
 
-3. **Say "consolidate" once a week.** The dream cycle keeps memory sharp. Without it, memory grows heavier instead of smarter.
+3. **Ask your AI to "consolidate memory" once a week.** The dream cycle keeps memory sharp. Without it, memory grows heavier instead of smarter.
 
 Everything else in IJFW builds on those three habits. Part 2 below is the full reference if you want to see every command and every skill.
 
@@ -227,17 +225,14 @@ Every command ships in three forms: a shell command, a Claude Code slash command
 | `ijfw status` | Hero line plus recent activity plus cache savings. |
 | `ijfw doctor` | Probe every AI CLI and API key. Tells you what is live and what is standing by. |
 | `ijfw help` | Show this guide, paged. Add `--browser` to render in a browser tab. |
-| `ijfw handoff` | Save a context handoff for the next session. |
 | `ijfw receipt last` | Print the last Trident receipt, redacted and shareable. |
 
 ### Memory
 
 | Command | Purpose |
 |---------|---------|
-| `ijfw memory store "<text>"` | Persist a decision, pattern, or note. |
-| `ijfw memory recall "<query>"` | BM25 ranked search over local memory. |
-| `ijfw memory status` | Roughly 200-token project brief. Mode, pending, last handoff. |
-| `ijfw memory search --scope all "<query>"` | Search across every registered IJFW project on this machine. |
+| `ijfw memory checkpoint "<text>"` | Snapshot a decision, pattern, or note to local memory. |
+| `ijfw memory search "<query>"` | BM25 ranked search over local memory. Add `--scope all` to search every registered IJFW project. |
 | `ijfw import claude-mem` | Absorb existing claude-mem SQLite memory into IJFW markdown. |
 | `ijfw import claude-mem --all` | Discover projects automatically, import in bulk. |
 | `ijfw import claude-mem --dry-run` | Show what would happen first. |
@@ -258,7 +253,6 @@ Every command ships in three forms: a shell command, a Claude Code slash command
 | `ijfw dashboard start` | Bind `127.0.0.1:37891`, open the dashboard tab. |
 | `ijfw dashboard stop` | Graceful shutdown. |
 | `ijfw dashboard status` | Port plus observation count. |
-| `ijfw metrics` | Tokens, cost, routing mix, session totals. |
 
 ### Quality gates
 
@@ -320,7 +314,7 @@ Full list in Claude Code: run `/ijfw` or just type `ijfw` in conversation to see
 
 ## Workflow modes
 
-IJFW auto-picks from your prompt. You can also pick explicitly with `ijfw-plan quick` or `ijfw-plan deep`.
+IJFW auto-picks from your prompt. You can also state your preference explicitly ("plan this in quick mode" or "use deep mode") and the `ijfw-workflow` skill will route accordingly.
 
 ### Quick mode (3 to 5 minutes)
 
@@ -355,17 +349,20 @@ Every module is a single question, answered in chat. Artifacts summarize in chat
 
 ## Platform parity
 
-IJFW configures six AI coding agents with native affordances on each, plus a universal rules file you can paste into anything else.
+IJFW configures 14 AI coding agents with native affordances on each, plus a universal rules file you can paste into anything else. Every platform speaks the same MCP server (13 tools), the same memory tiers, and the same observation ledger.
 
 | Platform | What ships |
 |----------|------------|
-| Claude Code | Native plugin via marketplace, MCP auto-registered, 6 hook events / 12 scripts, 22 on-demand skills, 22 slash commands |
-| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), 19 skills, 5 hook events, MCP registered, marketplace-ready |
-| Gemini CLI | Native extension (`gemini-extension.json`), 19 skills, 11 hook events, 19 TOML slash commands, policy engine, BeforeModel injection, checkpointing |
+| Claude Code | Native plugin via marketplace, MCP auto-registered, full hook lifecycle, on-demand skills, slash commands |
+| Codex CLI | Native plugin (`.codex-plugin/plugin.json`), skills, hook events, MCP registered, marketplace-ready |
+| Gemini CLI | Native extension (`gemini-extension.json`), skills, hook events, TOML slash commands, policy engine, BeforeModel injection, checkpointing |
 | Cursor | `.cursor/mcp.json` plus `.cursor/rules/ijfw.mdc`. Dashboard view-only. |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` plus `.windsurfrules`. Dashboard view-only. |
 | Copilot (VS Code) | `.vscode/mcp.json` plus `.github/copilot-instructions.md`. Dashboard view-only. |
-| Universal | `universal/ijfw-rules.md`. Paste into anything else. |
+| Hermes CLI | `HERMES.md` plus MCP registration in `~/.hermes/config.yaml`. |
+| Wayland CLI | `WAYLAND.md` plus MCP registration in `~/.wayland/config.yaml`. |
+| Additional MCP-aware agents | IJFW detects and configures the remaining supported agents via their native MCP and rules-file integrations to reach 14 total. |
+| Universal | `universal/ijfw-rules.md`. 15-line paste-anywhere rules file for anything else. |
 
 ### Observation ledger parity
 
@@ -377,8 +374,9 @@ IJFW configures six AI coding agents with native affordances on each, plus a uni
 | Cursor      | view-only              | yes | none |
 | Windsurf    | view-only              | yes | none |
 | Copilot     | view-only              | yes | none |
+| Hermes / Wayland / other MCP-aware agents | view-only | yes | none |
 
-Claude, Codex, and Gemini write one JSONL line per tool call. Cursor, Windsurf, and Copilot have no hook lifecycle IJFW can write from, so they read the shared ledger via the dashboard instead. Same engine behind all of them.
+Claude, Codex, and Gemini write one JSONL line per tool call. The remaining platforms have no hook lifecycle IJFW can write from, so they read the shared ledger via the dashboard instead. Same engine behind all of them.
 
 ---
 
@@ -510,7 +508,7 @@ Every install writes a log to `~/.ijfw/install.log`. Every session writes observ
 ## FAQ
 
 **Is this just a Claude Code plugin?**
-No. Claude Code is one of six platforms. The plugin is richest there because Claude Code exposes the most integration points. Every capability is available on the other five through their native MCP and rules-file integrations.
+No. Claude Code is one of 14 platforms. The plugin is richest there because Claude Code exposes the most integration points. Every capability is available on the other agents through their native MCP and rules-file integrations.
 
 **Do I need a specific AI provider?**
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.
