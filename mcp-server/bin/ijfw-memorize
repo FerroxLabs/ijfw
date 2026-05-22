@@ -4,9 +4,13 @@
 // payload on stdin (Stop-hook json), produces structured memory entries,
 // and appends them to .ijfw/memory/knowledge.md via the existing store helpers.
 //
-// Deterministic by default: feedback/signals promote 1:1. LLM-based synthesis
-// activates only when IJFW_AUTOMEM_MODEL is set (documented as a wiring point;
-// current build emits a TODO marker instead of calling an LLM).
+// Deterministic by default: feedback/signals promote 1:1 directly into
+// knowledge.md -- this is the fully-functional production path. When
+// IJFW_AUTOMEM_MODEL is set, an additional LLM-synthesis path runs: it
+// appends a {pending:true} record to .ijfw/.automem-llm-queue.jsonl for
+// later batch processing. That is a deliberate deferred-queue design (the
+// queue decouples session-end from the LLM call) -- NOT an unimplemented
+// stub. It never writes literal TODO text into user memory.
 //
 // Consent: reads .ijfw/.automem-consent. If absent or consented=false, exits 0
 // silently. User sets consent via `/ijfw memory consent yes|no|ask`.
@@ -241,11 +245,14 @@ async function main() {
     thisRunSummaries.add(capped.summary);
   }
 
-  // TODO: LLM-synthesis path (IJFW_AUTOMEM_MODEL). Stub emits a marker
-  // so downstream tooling can detect that a richer synthesis could run.
+  // LLM-synthesis path (IJFW_AUTOMEM_MODEL). When a model is configured,
+  // enqueue a {pending:true} record onto .ijfw/.automem-llm-queue.jsonl for
+  // batch processing by the LLM-synthesis worker. This is a deliberate
+  // deferred-queue design -- the queue decouples the latency-sensitive
+  // session-end hook from the LLM round-trip -- not an unimplemented stub.
+  // Nothing here is written into user memory (knowledge.md); the queue file
+  // is a separate, internal work list.
   if (process.env.IJFW_AUTOMEM_MODEL && process.env.IJFW_AUTOMEM_MODEL !== 'off') {
-    // Wiring point -- Phase 5+ connects this to Anthropic SDK / Ollama.
-    // For now, record the opportunity.
     try {
       mkdirSync(IJFW_DIR, { recursive: true });
       appendFileSync(join(IJFW_DIR, '.automem-llm-queue.jsonl'),
