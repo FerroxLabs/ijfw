@@ -426,6 +426,16 @@ function parseArgsInner(args) {
     if (args[1] === 'checkpoint') {
       return { cmd: 'memory-checkpoint', label: args[2] || 'manual' };
     }
+    if (args[1] === 'reindex') {
+      // `ijfw memory reindex`        -> M1 backfill (free, obsidian indexing)
+      // `ijfw memory reindex --m2`   -> also run M2 A-Mem auto-link backfill
+      //                                 (budget-gated; needs IJFW_AUTOLINK_*)
+      let m2 = false;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === '--m2' || args[i] === '--autolink') m2 = true;
+      }
+      return { cmd: 'memory-reindex', m2 };
+    }
     return { cmd: 'memory-unknown', sub: args[1] };
   }
 
@@ -497,6 +507,12 @@ ijfw memory -- project memory namespace
 Usage:
   ijfw memory checkpoint <label>   Snapshot current swarm/memory state under <label>.
                                    <label> defaults to "manual" if omitted.
+  ijfw memory reindex [--m2]       Backfill M1 obsidian indexing (wikilinks,
+                                   #tags, [k:: v] metadata) over the whole
+                                   memory db. Free + idempotent. Add --m2 to
+                                   also run the A-Mem auto-link backfill --
+                                   budget-gated (set IJFW_AUTOLINK_BUDGET_USD
+                                   and IJFW_AUTOLINK_BACKFILL=1).
 
 Related:
   ijfw recover [status|latest]     Inspect checkpoints and recovery state.
@@ -2377,6 +2393,8 @@ if (isMainModule) {
     cmdCodex(parsed.sub);
   } else if (parsed.cmd === 'memory-checkpoint') {
     cmdMemoryCheckpoint(parsed.label);
+  } else if (parsed.cmd === 'memory-reindex') {
+    cmdMemoryReindex(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'recover') {
     cmdRecover(parsed.sub);
   } else {
@@ -3330,6 +3348,69 @@ function cmdMemoryCheckpoint(label) {
   console.log(`Checkpoint created: ${result.id}`);
   console.log(`Markdown: ${result.mdPath}`);
   console.log(`JSON: ${result.jsonPath}`);
+  process.exit(0);
+}
+
+// v1.5.1 R5-1.2 -- `ijfw memory reindex [--m2]`. Closes Trident r5 finding
+// 1.2: memory written during v1.5.0 (before Round-4 Fix-1 wired M1/M2 into
+// the production write path) has empty memory_links / memory_tags /
+// memory_meta. Migration 009 already backfills M1 once on upgrade; this verb
+// is the manual re-run path AND the only way to opt into the M2 (A-Mem
+// auto-link) backfill, which is budget-gated because it makes one LLM call
+// per row.
+async function cmdMemoryReindex(parsed) {
+  const projectRoot = process.cwd();
+  // Lazy import: better-sqlite3 is heavy; only pay for it on this verb.
+  const { openDb, closeDb, dbPathFor } = await import('./memory/fts5.js');
+  const { backfillObsidianIndex } = await import('./memory/obsidian-parser.js');
+  const { backfillAutoLink } = await import('./memory/auto-linker.js');
+
+  let db;
+  try {
+    db = await openDb(projectRoot);
+  } catch (e) {
+    console.error(`Memory db unavailable: ${e.message}`);
+    process.exit(1);
+  }
+
+  try {
+    console.log(`Reindexing memory at ${dbPathFor(projectRoot)}`);
+    // M1 -- always. Free + idempotent obsidian indexing.
+    const m1 = backfillObsidianIndex(db);
+    console.log(
+      `M1 obsidian-index backfill: ${m1.rows} entries re-indexed ` +
+      `(${m1.links} links, ${m1.tags} tags, ${m1.meta} meta` +
+      `${m1.errors ? `, ${m1.errors} errors` : ''}).`,
+    );
+
+    // M2 -- opt-in via --m2. Budget-gated; backfillAutoLink internally
+    // forces past the IJFW_AUTOLINK_BACKFILL opt-in (the --m2 flag IS the
+    // explicit opt-in) but still honours IJFW_AUTOLINK_OFF, the budget cap,
+    // and the API-key requirement.
+    if (parsed.m2) {
+      const m2 = await backfillAutoLink(db, { force: true });
+      if (m2.skipped) {
+        console.log(
+          `M2 auto-link backfill skipped (${m2.reason}). ` +
+          `M2 backfill needs a positive IJFW_AUTOLINK_BUDGET_USD cap and an ` +
+          `API key (IJFW_AUTOLINK_API_KEY or ANTHROPIC_API_KEY).`,
+        );
+      } else {
+        console.log(
+          `M2 auto-link backfill: ${m2.linked}/${m2.rows} entries linked ` +
+          `(${m2.links_added} links, ${m2.neighbor_tags_added} neighbor tags)` +
+          `${m2.stopped_early ? ' -- stopped early (budget / kill switch)' : ''}.`,
+        );
+      }
+    } else {
+      console.log(
+        'M2 auto-link backfill not run. Re-run with --m2 (budget-gated) to ' +
+        'auto-link old entries via the A-Mem LLM pass.',
+      );
+    }
+  } finally {
+    closeDb(db);
+  }
   process.exit(0);
 }
 

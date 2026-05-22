@@ -147,6 +147,7 @@ test('dispatch: every parsed.cmd literal in orchestrator maps to a registry entr
     'command-alias',       // shared dispatch for all pointer-stub aliases
     'cross-project-audit', // sub-mode of `cross`, not a top-level command
     'memory-checkpoint',   // sub-command of `memory`
+    'memory-reindex',      // sub-command of `memory` (R5-1.2 M1/M2 backfill)
     'memory-help',         // optional namespace-level help for `ijfw memory`
     'memory-unknown',      // optional unknown-subcmd handler for `ijfw memory <x>`
     'purge-receipts',      // synthetic literal for the `--purge-receipts` flag-command

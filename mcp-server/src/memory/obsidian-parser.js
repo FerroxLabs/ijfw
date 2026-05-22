@@ -88,4 +88,65 @@ export function indexObsidianRelations(db, memoryId, text) {
   return parsed;
 }
 
-export default { parseObsidian, indexObsidianRelations };
+// v1.5.1 R5-1.2 -- one-time M1 backfill for memory written during v1.5.0,
+// when indexObsidianRelations was NOT wired into the production write path.
+// Round-4 Fix-1 (commit 3218812) wired M1+M2 into handleStore/autoIndex but
+// forward-only: rows already in memory_entries have empty memory_links /
+// memory_tags / memory_meta. This walks EVERY row and re-runs M1 over it.
+//
+// Safe to run over everything:
+//   - free      -- pure markdown parse, zero LLM / network
+//   - idempotent-- indexObsidianRelations clears prior aux rows per id before
+//                  re-inserting, so a re-run produces identical state
+//
+// The walk reads ids in batches so a very large memory_entries doesn't pin
+// the whole table in memory; each row's indexObsidianRelations call carries
+// its own transaction (DELETE-then-INSERT) so a single bad row never aborts
+// the rest of the backfill.
+//
+// Returns { rows, links, tags, meta } -- counts re-indexed across the run.
+export function backfillObsidianIndex(db, opts = {}) {
+  if (!db || typeof db.prepare !== 'function') {
+    throw new Error('backfillObsidianIndex: db handle is invalid.');
+  }
+  const batchSize = Math.max(1, opts.batchSize || 500);
+  const result = { rows: 0, links: 0, tags: 0, meta: 0, errors: 0 };
+  let lastId = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let batch;
+    try {
+      batch = db
+        .prepare(
+          'SELECT id, body FROM memory_entries WHERE id > ? ORDER BY id ASC LIMIT ?',
+        )
+        .all(lastId, batchSize);
+    } catch {
+      // memory_entries missing (fresh db before migration 001) -- nothing to do.
+      break;
+    }
+    if (!batch || batch.length === 0) break;
+    for (const row of batch) {
+      lastId = row.id;
+      if (typeof row.body !== 'string' || row.body.length === 0) continue;
+      try {
+        const parsed = indexObsidianRelations(db, String(row.id), row.body);
+        result.rows += 1;
+        result.links += parsed.links.length;
+        result.tags += parsed.tags.length;
+        result.meta += parsed.meta.length;
+      } catch (e) {
+        result.errors += 1;
+        try {
+          console.error(
+            '[obsidian] backfill failed for id', row.id, ':', e?.message || e,
+          );
+        } catch { /* never throw out of the backfill */ }
+      }
+    }
+    if (batch.length < batchSize) break;
+  }
+  return result;
+}
+
+export default { parseObsidian, indexObsidianRelations, backfillObsidianIndex };

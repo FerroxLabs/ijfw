@@ -149,4 +149,119 @@ export async function autoLink(db, entry, opts = {}) {
   return { skipped: false, neighbors, proposal, applied };
 }
 
-export default { autoLink };
+// v1.5.1 R5-1.2 -- one-time M2 (A-Mem auto-link) backfill for memory written
+// during v1.5.0, when autoLink was NOT wired into the production write path.
+//
+// UNLIKE the M1 backfill (free, always-on), M2 backfill makes one LLM call
+// per row -- backfilling over a large memory can cost real money. So M2
+// backfill is OPT-IN and budget-gated:
+//
+//   - IJFW_AUTOLINK_OFF=1            -> backfill is a no-op (kill switch)
+//   - IJFW_AUTOLINK_BACKFILL!=1      -> backfill is a no-op by default
+//                                       (M1-always, M2-opt-in is the safe
+//                                        default per R5-1.2)
+//   - IJFW_AUTOLINK_BUDGET_USD unset -> backfill is a no-op. A budget MUST be
+//     OR <= 0                           explicitly configured. The per-call
+//                                       llm-call.js path treats an unset
+//                                       budget as "uncapped"; for a bulk
+//                                       backfill that is unsafe -- a large
+//                                       memory could spend without bound. So
+//                                       the backfill REQUIRES a positive cap.
+//   - no API key                    -> backfill is a no-op (autoLink skips)
+//
+// The per-row autoLink call independently re-checks the SAME env gates (off /
+// budget / key), so even mid-run the backfill respects a budget that drops to
+// zero or a kill switch that flips. Returns aggregate counts.
+export async function backfillAutoLink(db, opts = {}) {
+  if (!db || typeof db.prepare !== 'function') {
+    throw new Error('backfillAutoLink: db handle is invalid.');
+  }
+  const force = opts.force === true;
+  // Opt-in gate: M2 backfill only runs when explicitly enabled. M1 backfill
+  // (obsidian-parser.js) is the always-on default; M2 costs money so it is
+  // off unless the operator opts in via IJFW_AUTOLINK_BACKFILL=1.
+  if (!force && process.env.IJFW_AUTOLINK_BACKFILL !== '1') {
+    return { skipped: true, reason: 'backfill_not_enabled', rows: 0 };
+  }
+  if (process.env.IJFW_AUTOLINK_OFF === '1') {
+    return { skipped: true, reason: 'autolink_off', rows: 0 };
+  }
+  // Budget cap is MANDATORY for the backfill. An unset budget means
+  // llm-call.js runs uncapped -- fine for one-off write-time autoLink, but a
+  // bulk backfill over thousands of rows would spend without bound. Refuse
+  // unless the operator has set a positive IJFW_AUTOLINK_BUDGET_USD.
+  const budget = process.env.IJFW_AUTOLINK_BUDGET_USD;
+  if (budget === undefined || !(Number(budget) > 0)) {
+    return {
+      skipped: true,
+      reason: budget === undefined ? 'budget_not_set' : 'budget_exhausted',
+      rows: 0,
+    };
+  }
+  const hasKey = !!(process.env.IJFW_AUTOLINK_API_KEY || process.env.ANTHROPIC_API_KEY);
+  if (!hasKey) {
+    return { skipped: true, reason: 'no_key', rows: 0 };
+  }
+
+  const batchSize = Math.max(1, opts.batchSize || 200);
+  const result = {
+    skipped: false, rows: 0, linked: 0, links_added: 0,
+    neighbor_tags_added: 0, stopped_early: false,
+  };
+  let lastId = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let batch;
+    try {
+      batch = db
+        .prepare(
+          'SELECT id, body FROM memory_entries WHERE id > ? ORDER BY id ASC LIMIT ?',
+        )
+        .all(lastId, batchSize);
+    } catch {
+      break;
+    }
+    if (!batch || batch.length === 0) break;
+    for (const row of batch) {
+      lastId = row.id;
+      if (typeof row.body !== 'string' || row.body.length === 0) continue;
+      // Per-row re-check: a budget that drops to zero or a kill switch that
+      // flips mid-run stops the backfill before the next paid call. autoLink
+      // itself ALSO re-checks, but stopping here avoids the wasted SELECT.
+      if (process.env.IJFW_AUTOLINK_OFF === '1') {
+        result.stopped_early = true;
+        return result;
+      }
+      const b = process.env.IJFW_AUTOLINK_BUDGET_USD;
+      if (b === undefined || !(Number(b) > 0)) {
+        result.stopped_early = true;
+        return result;
+      }
+      result.rows += 1;
+      let res;
+      try {
+        res = await autoLink(db, { id: row.id, body: row.body });
+      } catch {
+        continue;
+      }
+      if (res && res.skipped) {
+        // autoLink skipped (budget exhausted / off / no key / parse fail).
+        // budget_exhausted + autolink_off mean stop the whole run.
+        if (res.reason === 'budget_exhausted' || res.reason === 'autolink_off') {
+          result.stopped_early = true;
+          return result;
+        }
+        continue;
+      }
+      result.linked += 1;
+      if (res && res.applied) {
+        result.links_added += res.applied.links_added || 0;
+        result.neighbor_tags_added += res.applied.neighbor_tags_added || 0;
+      }
+    }
+    if (batch.length < batchSize) break;
+  }
+  return result;
+}
+
+export default { autoLink, backfillAutoLink };
