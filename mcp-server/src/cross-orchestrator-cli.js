@@ -226,68 +226,19 @@ function parseArgs(argv) {
   return out;
 }
 
-const COMMAND_ALIAS_HELP = {
-  workflow: {
-    title: 'IJFW workflow',
-    usage: 'Use the ijfw-workflow skill in agents. Terminal helpers: ijfw team init, ijfw swarm plan, ijfw swarm prepare.',
-  },
-  handoff: {
-    title: 'IJFW handoff',
-    usage: 'Use the ijfw-handoff skill in agents, or record swarm handoff text with: ijfw blackboard handoff --message "<summary>".',
-  },
-  compress: {
-    title: 'IJFW compress',
-    usage: 'Use the ijfw-compress skill in agents. Terminal context compression is host-specific and should preserve exact paths, commands, versions, and decisions.',
-  },
-  consolidate: {
-    title: 'IJFW consolidate',
-    usage: 'Use the ijfw-handoff or ijfw-memory-audit skill to consolidate decisions into memory. For swarm state, run: ijfw memory checkpoint <label>.',
-  },
-  'ijfw-audit': {
-    title: 'IJFW audit',
-    usage: 'Run verification with: ijfw preflight. For multi-model review, run: ijfw cross audit <target>.',
-  },
-  'ijfw-execute': {
-    title: 'IJFW execute',
-    usage: 'Use ijfw-workflow in agents, then terminal helpers: ijfw team init, ijfw swarm plan, ijfw swarm prepare, ijfw swarm start <task-id>.',
-  },
-  'ijfw-help': {
-    title: 'IJFW help',
-    usage: 'Run: ijfw help. Add --browser for the rendered local guide.',
-  },
-  'ijfw-plan': {
-    title: 'IJFW plan',
-    usage: 'Use ijfw-workflow for planning. Terminal helpers: ijfw team init, ijfw swarm plan, ijfw swarm prepare --reviews.',
-  },
-  'ijfw-ship': {
-    title: 'IJFW ship',
-    usage: 'Run: ijfw preflight. Do not publish or tag until your release gate is explicitly cleared.',
-  },
-  'ijfw-verify': {
-    title: 'IJFW verify',
-    usage: 'Run: ijfw preflight. For focused review, run: ijfw cross audit <target>.',
-  },
-  'memory-audit': {
-    title: 'IJFW memory audit',
-    usage: 'Use the ijfw-memory-audit skill in agents. Terminal safety net: ijfw recover status and ijfw memory checkpoint <label>.',
-  },
-  'memory-consent': {
-    title: 'IJFW memory consent',
-    usage: 'Use IJFW memory tools only for explicit project memory. Terminal checkpoint: ijfw memory checkpoint <label>.',
-  },
-  'memory-why': {
-    title: 'IJFW memory why',
-    usage: 'Use ijfw-recall or ijfw-memory-audit in agents to inspect why memory exists. Terminal recovery state: ijfw recover latest.',
-  },
-  metrics: {
-    title: 'IJFW metrics',
-    usage: 'Open the dashboard with: ijfw dashboard start. Agent-side metrics are available through ijfw_metrics.',
-  },
-  mode: {
-    title: 'IJFW mode',
-    usage: 'Inspect configuration with: ijfw config --audit. Statusline mode helpers: ijfw statusline --status, --compose, or --disable.',
-  },
-};
+// v1.5.1 W3.A.4 — COMMAND_ALIAS_HELP is now derived from the command-registry
+// (entries where tier === 'pointer-stub'). Each entry's deprecatedReason
+// becomes the usage line; title is auto-derived from the canonical name.
+// To change the help text or add a new pointer-stub: edit
+// installer/src/command-registry.js.
+const COMMAND_ALIAS_HELP = Object.freeze(Object.fromEntries(
+  COMMAND_REGISTRY
+    .filter(e => e.tier === 'pointer-stub')
+    .map(e => [e.name, {
+      title: `IJFW ${e.name}`,
+      usage: e.deprecatedReason,
+    }])
+));
 
 function parseCrossAlias(mode, args) {
   let only = null;
@@ -529,13 +480,61 @@ function parseArgsInner(args) {
 // ---------------------------------------------------------------------------
 
 function printUsage() {
-  // v1.5.1 W1.D+E: orchestrator no longer ships its own usage block.
-  // Single source of truth is the installer side (`ijfw --help` for the
-  // primary user-facing surface, `ijfw commands` for the full verb list).
-  // The previous block listed stale entries (e.g. `ijfw memory store/recall`)
-  // that never existed. Keep this as a no-op for any historical callers that
-  // still reach `printUsage()` directly; unknown-command path now prints a
-  // clean pointer instead of dumping a wall of (possibly wrong) help.
+  // v1.5.1 W3.A.4 — registry-driven usage block. The orchestrator now
+  // generates its own Usage + Commands sections from command-registry.js
+  // (single source of truth) so it can never drift from `ijfw --help` /
+  // `ijfw commands` again. The prose footer (Modes, Options, Environment,
+  // Examples) stays static — that content is cross-specific, not command-level.
+  //
+  // Previously (W1.D+E) this was a no-op pointing users at `ijfw --help`,
+  // but the orchestrator is still reachable as a standalone CLI (post-install
+  // bin), so a generated usage view is the right answer.
+  const t = commandsByTier();
+  const visible = [...t.primary, ...t.coordination, ...t.plumbing];
+
+  console.log(`
+ijfw -- It Just Fucking Works CLI
+Fire 2-4 AIs at any target. Receipts logged. Cache hits tracked. Memory follows you.
+`.trim());
+  console.log('');
+  console.log('Usage:');
+  for (const e of visible) console.log(`  ijfw ${e.name}`);
+  console.log('');
+  console.log('Commands:');
+  const pad = Math.max(...visible.map(e => e.name.length)) + 2;
+  for (const e of visible) {
+    console.log(`  ${e.name.padEnd(pad)}${e.description}`);
+  }
+  console.log(`
+Modes (for ijfw cross):
+  audit           Adversarial review of a file, module, or path
+  research        Multi-source research on a topic
+  critique        Structured counter-argument generation
+  project-audit   Run the same audit across every registered IJFW project
+                  Usage: ijfw cross project-audit <rule-file> [--dry-run]
+
+Options for ijfw cross:
+  --with <id>   Force a specific auditor (comma-separated for multiple)
+  --confirm     Prompt for confirmation before firing
+  --expand      Include extended swarm when available
+  --chunk       Boundary-aware chunked dispatch (v1.5.1 H1.6)
+
+Global flags:
+  --json    Emit JSON instead of human output.
+
+Environment:
+  IJFW_AUDIT_BUDGET_USD   Session spend cap (default $2.00). First call always
+                          allowed; cap enforced from the 2nd call on.
+
+Examples:
+  ijfw demo
+  ijfw cross audit README.md
+  ijfw cross research "vector search approaches"
+  ijfw cross critique HEAD~3..HEAD
+  ijfw cross audit CLAUDE.md --with codex,gemini
+  ijfw status
+  ijfw doctor
+`.trimEnd());
 }
 
 function printMemoryHelp() {
