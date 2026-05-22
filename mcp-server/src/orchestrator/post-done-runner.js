@@ -46,6 +46,12 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { reviewTask } from './review.js';
 import { checkVerificationGate, recordViolation } from './verification-gate.js';
+// v1.5.1 W2.C: debug-trident (T29) — wired here as informational 2nd opinion
+// on gate failures. The CHANGELOG promised "every gate's failure mode covered
+// by a Trident dissent test" but T29 shipped orphan. Now invoked from the
+// gate-failure branch as an *annotation* on the receipt; never alters
+// gateAction (fail-safe wiring per W2.C contract).
+import { runDebugCampaign, DEBUG_OUTCOMES } from './debug-trident.js';
 
 /**
  * Extract paths claimed in the report. Naive but effective: looks for
@@ -138,6 +144,14 @@ export function runSelfCheck(reportText, projectRoot) {
  *   W12-F/F4 — RT2-H1. When true (default) and the verification gate fails,
  *   the result includes `gateAction: 'block'` and the MCP handler MUST refuse
  *   to claim success. Pass `false` for legacy advisory-only behavior.
+ * @param {Function} [params.debugTridentDispatch]
+ *   v1.5.1 W2.C. Optional Trident lens dispatcher. When the verification gate
+ *   FAILS and this dispatcher is provided, runDebugCampaign (T29) is invoked
+ *   as an informational 2nd opinion — the resulting competing-hypothesis
+ *   summary is attached as `debugTridentAnnotation` on the receipt. NEVER
+ *   alters `gateAction` (fail-safe wiring: block-verdict is authoritative).
+ *   Shape: async ({ lens, evidencePack, currentHypotheses }) =>
+ *     { lens, hypotheses: [ { hypothesis, rationale? } ] }.
  * @returns {Promise<{
  *   verdict: 'approved'|'spec_failed'|'quality_failed'|'no_review',
  *   reviewStage: 'spec'|'quality'|null,
@@ -168,6 +182,7 @@ export async function runPostDone({
   projectRoot,
   projectConventions = '',
   strictGate = true,
+  debugTridentDispatch,
 }) {
   if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
     throw new TypeError('runPostDone: projectRoot is required');
@@ -211,6 +226,7 @@ export async function runPostDone({
     reportText,
     Array.isArray(toolCallsInMessage) ? toolCallsInMessage : [],
   );
+  let debugTridentAnnotation = null;
   if (!gateOutcome.ok) {
     try {
       // recordViolation signature is (violation, projectRoot) -- see verification-gate.js
@@ -220,6 +236,81 @@ export async function runPostDone({
       );
     } catch {
       // Advisory -- never block on violation log failure (matches v1.4.4 N5 contract)
+    }
+
+    // v1.5.1 W2.C: invoke debug-trident (T29) for an informational 2nd
+    // opinion on WHY the gate failed. Wired conservatively:
+    //   - Only fires when a dispatcher was injected by the caller (default off).
+    //   - Result is annotation-only — never alters gateAction.
+    //   - A throw inside runDebugCampaign is swallowed; the gate verdict
+    //     remains authoritative (fail-safe per W2.C contract).
+    //   - Single forced cycle (maxCycles:1 + forceTrident via dispatch
+    //     returning INVESTIGATION_INCONCLUSIVE) keeps cost bounded; we are
+    //     after competing hypotheses, not a multi-round debug campaign.
+    if (typeof debugTridentDispatch === 'function') {
+      try {
+        const claimText = gateOutcome.claim ? String(gateOutcome.claim) : '<unknown>';
+        const evidencePack = [
+          `gate-violation: ${gateOutcome.violation}`,
+          `claim: ${claimText}`,
+          `taskId: ${taskId}`,
+          `branch: ${branch || '(unspecified)'}`,
+          `commitSha: ${commitSha || '(none)'}`,
+          // Truncate the report so we don't spend lens tokens on a wall of text.
+          `report-head: ${String(reportText).slice(0, 2048)}`,
+        ].join('\n');
+        const campaign = await runDebugCampaign({
+          sessionId: `gate-failure:${taskId || 'unknown'}`,
+          symptoms: `verification-gate FAILED: claim="${claimText}" but no fresh verify in same message`,
+          // Seed the tree with the gate's own hypothesis ("the agent claimed
+          // completion without evidence"). The lenses will compete on WHY.
+          hypotheses: [{
+            id: 'H1',
+            hypothesis: 'Agent emitted completion claim without running tests/build in same message.',
+            status: 'open',
+            evidence: gateOutcome.violation,
+            refuted_by: '',
+          }],
+          // One forced cycle: returning INVESTIGATION_INCONCLUSIVE triggers
+          // immediate stall-detection → Trident escalation → exit.
+          dispatch: async () => ({ terminator: 'INVESTIGATION_INCONCLUSIVE' }),
+          tridentDispatch: debugTridentDispatch,
+          maxCycles: 1,
+          evidencePack,
+          projectRoot,
+          // Telemetry is fine to record — it never alters the campaign verdict
+          // and gives the dashboard a debug-campaign event per gate failure.
+          recordTelemetry: true,
+        });
+        debugTridentAnnotation = {
+          outcome: campaign.outcome,
+          stalls: campaign.stalls,
+          tridentInvocations: campaign.tridentInvocations,
+          hypothesesAdded: campaign.hypothesesAdded,
+          competingHypotheses: (Array.isArray(campaign.hypothesesFinal) ? campaign.hypothesesFinal : [])
+            .filter((h) => typeof h?.from === 'string' && h.from.startsWith('trident:'))
+            .slice(0, 6)
+            .map((h) => ({
+              id: h.id,
+              from: h.from,
+              hypothesis: h.hypothesis,
+              rationale: h.rationale || '',
+            })),
+          durationMs: campaign.duration_ms,
+          // Mirror the DEBUG_OUTCOMES vocabulary so dashboards can group by it
+          // without hard-coding string literals.
+          knownOutcome: Object.values(DEBUG_OUTCOMES).includes(campaign.outcome),
+        };
+      } catch (err) {
+        // Fail-safe: a throw from debug-trident must NOT change the gate
+        // verdict. Record the error on the annotation so the receipt shows
+        // the 2nd-opinion attempt was made but didn't yield hypotheses.
+        debugTridentAnnotation = {
+          outcome: 'campaign_failed',
+          error: err && err.message ? String(err.message) : String(err),
+          competingHypotheses: [],
+        };
+      }
     }
   }
 
