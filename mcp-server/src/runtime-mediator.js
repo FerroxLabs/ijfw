@@ -224,7 +224,6 @@ export function toolNameToActionTarget(toolName, args) {
       return { action: 'write', target: 'memory:write' };
     case 'ijfw_memory_recall':
     case 'ijfw_memory_search':
-    case 'ijfw_memory_status':
     case 'ijfw_memory_prelude':
     case 'ijfw_cross_project_search':
       return { action: 'read', target: 'memory:read' };

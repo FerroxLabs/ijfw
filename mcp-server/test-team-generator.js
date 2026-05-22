@@ -56,15 +56,15 @@ test('createTeamAssembly writes charter workflow and agent files', () => {
     assert.equal(result.archetype, 'content');
     assert.ok(existsSync(join(dir, '.ijfw', 'team', 'charter.json')));
     assert.ok(existsSync(join(dir, '.ijfw', 'team', 'workflow.json')));
-    assert.ok(existsSync(join(dir, '.ijfw', 'agents', 'content-strategist.md')));
-    assert.ok(existsSync(join(dir, '.ijfw', 'agents', 'editor.md')));
+    assert.ok(existsSync(join(dir, '.ijfw', 'agents', 'ijfw-campaign-strategist.md')));
+    assert.ok(existsSync(join(dir, '.ijfw', 'agents', 'ijfw-copy-reviewer.md')));
 
     const charter = JSON.parse(readFileSync(join(dir, '.ijfw', 'team', 'charter.json'), 'utf8'));
     assert.equal(charter.team_name, 'launch-content-team');
     assert.equal(charter.source_archetype, 'content');
 
-    const agent = readFileSync(join(dir, '.ijfw', 'agents', 'content-strategist.md'), 'utf8');
-    assert.match(agent, /name: content-strategist/);
+    const agent = readFileSync(join(dir, '.ijfw', 'agents', 'ijfw-campaign-strategist.md'), 'utf8');
+    assert.match(agent, /name: ijfw-campaign-strategist/);
     assert.match(agent, /Record claims, findings, blockers, and decisions/);
   } finally {
     cleanup(dir);

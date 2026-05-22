@@ -19,8 +19,8 @@ test('renderCodexAgentToml emits required Codex custom agent fields', () => {
   const role = bundle.charter.roles[0];
   const toml = renderCodexAgentToml(role, bundle);
 
-  assert.match(toml, /^name = "implementation_engineer"$/m);
-  assert.match(toml, /^description = "implementation-engineer for software projects; owns module\."$/m);
+  assert.match(toml, /^name = "ijfw_code_fixer"$/m);
+  assert.match(toml, /^description = "ijfw-code-fixer for software projects; owns module\."$/m);
   assert.match(toml, /^developer_instructions = """$/m);
   assert.match(toml, /Role type: software/);
   assert.match(toml, /Project archetypes: software/);
@@ -56,11 +56,11 @@ test('syncCodexAgents writes project-scoped agents from existing Team Assembly f
     const result = syncCodexAgents(dir);
     assert.equal(result.ok, true);
     assert.equal(result.count, bundle.charter.roles.length);
-    assert.ok(existsSync(join(dir, '.codex', 'agents', 'content-strategist.toml')));
-    assert.ok(existsSync(join(dir, '.codex', 'agents', 'editor.toml')));
+    assert.ok(existsSync(join(dir, '.codex', 'agents', 'ijfw-campaign-strategist.toml')));
+    assert.ok(existsSync(join(dir, '.codex', 'agents', 'ijfw-copy-reviewer.toml')));
 
-    const agent = readFileSync(join(dir, '.codex', 'agents', 'content-strategist.toml'), 'utf8');
-    assert.match(agent, /^name = "content_strategist"$/m);
+    const agent = readFileSync(join(dir, '.codex', 'agents', 'ijfw-campaign-strategist.toml'), 'utf8');
+    assert.match(agent, /^name = "ijfw_campaign_strategist"$/m);
     assert.match(agent, /Role type: content/);
     assert.match(agent, /Blackboard coordination:/);
   } finally {
@@ -87,11 +87,11 @@ test('createTeamAssembly syncs Codex custom agents alongside IJFW agents', () =>
     const result = createTeamAssembly(dir, { archetype: 'software', teamName: 'codex-native-team' });
     assert.equal(result.ok, true);
     assert.equal(result.codexAgents.ok, true);
-    assert.ok(existsSync(join(dir, '.codex', 'agents', 'implementation-engineer.toml')));
+    assert.ok(existsSync(join(dir, '.codex', 'agents', 'ijfw-code-fixer.toml')));
 
-    const agent = readFileSync(join(dir, '.codex', 'agents', 'implementation-engineer.toml'), 'utf8');
-    assert.match(agent, /^name = "implementation_engineer"$/m);
-    assert.match(agent, /codex-native-team|implementation-engineer/);
+    const agent = readFileSync(join(dir, '.codex', 'agents', 'ijfw-code-fixer.toml'), 'utf8');
+    assert.match(agent, /^name = "ijfw_code_fixer"$/m);
+    assert.match(agent, /codex-native-team|ijfw-code-fixer/);
   } finally {
     cleanup(dir);
   }
@@ -144,7 +144,7 @@ test('syncCodexAgents skips identical files (no mtime thrash)', () => {
   try {
     const r1 = createTeamAssembly(dir, { archetype: 'software', teamName: 'skip-test' });
     assert.equal(r1.ok, true);
-    const agentPath = join(dir, '.codex', 'agents', 'implementation-engineer.toml');
+    const agentPath = join(dir, '.codex', 'agents', 'ijfw-code-fixer.toml');
     const mtime1 = statSync(agentPath).mtimeMs;
 
     // Wait > filesystem mtime resolution then resync.

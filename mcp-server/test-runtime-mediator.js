@@ -198,9 +198,6 @@ test('toolNameToActionTarget: maps known tool names correctly', () => {
   assert.deepEqual(toolNameToActionTarget('ijfw_memory_search', {}), {
     action: 'read', target: 'memory:read',
   });
-  assert.deepEqual(toolNameToActionTarget('ijfw_memory_status', {}), {
-    action: 'read', target: 'memory:read',
-  });
   assert.deepEqual(toolNameToActionTarget('ijfw_memory_prelude', {}), {
     action: 'read', target: 'memory:read',
   });
