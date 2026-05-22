@@ -65,26 +65,13 @@ const ORCHESTRATOR_COMMANDS = new Set([
   'import',
   'receipt',
   '--purge-receipts',
-  'workflow',
-  'handoff',
-  'compress',
-  'consolidate',
   'cross-audit',
   'cross-critique',
   'cross-research',
-  'ijfw-audit',
-  'ijfw-execute',
-  'ijfw-help',
-  'ijfw-plan',
-  'ijfw-ship',
-  'ijfw-verify',
-  'memory-audit',
-  'memory-consent',
-  'memory-why',
-  'metrics',
-  'mode',
   'override',
   'extension',
+  'off',
+  'ui-review',
 ]);
 
 function printHelp() {
@@ -94,23 +81,37 @@ ijfw -- the AI efficiency layer
 USAGE
   ijfw <command> [options]
 
-COMMANDS
+GET STARTED
   install     Install IJFW into your AI coding agents
-  uninstall   Remove IJFW from your AI coding agents
-  help        Open the full IJFW guide (terminal, or --browser for rendered)
-  preflight   Run 11-gate quality pipeline before publishing
-  dashboard   Start / stop / check the local observability dashboard
-  design      Manage live previews and durable design intelligence
-  blackboard  Coordinate project-local swarm state and artifact claims
-  codex       Check and sync Codex-native IJFW surfaces
-  team        Assemble project agents, charter, and workflow manifest
-  swarm       Plan, prepare, and track artifact-aware parallel work
-  recover     Show latest checkpoint and next recovery step
-  cross       Run Trident audit/research/critique, e.g. ijfw cross audit README.md
-  doctor      Diagnose IJFW installation health
+  uninstall   Remove IJFW (alias: off)
+  doctor      Diagnose installation health
+  update      Upgrade to the latest IJFW
 
-  --help, -h  Show this help
+USE IT
+  demo        30-second Trident tour against a sample file
+  cross       Run Trident audit/research/critique on any file
+  dashboard   Start the local observability dashboard
+  preflight   Run 11-gate quality pipeline before publishing
+
+EXPLORE
+  help        Open the full IJFW guide
+  commands    Show every command (advanced + coordination)
   --version   Show version
+`);
+}
+
+function printCommands() {
+  console.log(`
+ijfw -- full command surface
+
+PRIMARY (shown in --help)
+  install · uninstall · doctor · update · demo · cross · dashboard · preflight · help
+
+COORDINATION (agents drive these; humans inspect)
+  status · receipt · recover · team · swarm · blackboard · memory · import · design
+
+PLUMBING (most users never need these)
+  statusline · config · codex · extension · override · insight · ui-review
 `);
 }
 
@@ -150,6 +151,11 @@ async function main() {
 
   if (!sub || sub === '--help' || sub === '-h') {
     printHelp();
+    process.exit(0);
+  }
+
+  if (sub === 'commands') {
+    printCommands();
     process.exit(0);
   }
 
