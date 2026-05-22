@@ -42,7 +42,7 @@ One command. Three seconds.
 npm install -g @ijfw/install && ijfw-install
 ```
 
-That installs the npm package, runs the installer, and wires up every AI coding agent it finds on your machine. All 14 supported platforms — Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, and the rest — pick up the shared memory and the same workflow discipline.
+That installs the npm package, runs the installer, and wires up every AI coding agent it finds on your machine. All 15 supported platforms — Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, Antigravity, and the rest — pick up the shared memory and the same workflow discipline.
 
 If you do not type commands, paste this block into Claude Code, Cursor, or any other AI coding agent. It will install IJFW for you, verify the MCP server handshake, and tell you when to restart.
 

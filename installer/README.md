@@ -1,7 +1,7 @@
 # @ijfw/install
 
 One-command installer for [IJFW](https://gitlab.com/therealseandonahoe/ijfw) -- the AI
-efficiency layer for 14 AI coding agents: Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Cline, Kimi Code, OpenClaw, and Aider.
+efficiency layer for 15 AI coding agents: Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Cline, Kimi Code, OpenClaw, Antigravity, and Aider.
 
 ## Install
 

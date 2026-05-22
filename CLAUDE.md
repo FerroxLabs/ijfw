@@ -1,7 +1,7 @@
 # IJFW -- Project Context
 
 Stack: Node.js / Bash / Markdown
-Architecture: Plugin system -- ships platform-native packages for 8 AI coding agents
+Architecture: Plugin system -- ships platform-native packages for 15 AI coding agents
 Author: Sean Donahoe
 
 ## Structure

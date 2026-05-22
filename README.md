@@ -220,7 +220,7 @@ The observation ledger feeds into a session summary written at SessionEnd: files
 
 Three invariants run through every surface.
 
-**On-demand skill loading.** IJFW ships platform-native skill bundles (19 on Codex/Gemini, 22 on Claude Code) covering workflow, commit, handoff, review, critique, compress, team setup, debug, memory audit, cross-audit, summarize, and more. Codex also gets Claude-parity command aliases and generated project agents from Team Assembly. Only the core skill is always loaded. Everything else hot-loads on trigger and unloads when done. Your context window stays lean; your token bill stays low.
+**On-demand skill loading.** IJFW ships platform-native skill bundles (19 on Codex/Gemini, 34 on Claude Code) covering workflow, commit, handoff, review, critique, compress, team setup, debug, memory audit, cross-audit, summarize, and more. Codex also gets Claude-parity command aliases and generated project agents from Team Assembly. Only the core skill is always loaded. Everything else hot-loads on trigger and unloads when done. Your context window stays lean; your token bill stays low.
 
 **Natural-language invocation, context-aware.** Say "cross-audit this" and IJFW picks up the file you are looking at, the diff you just staged, or the range you just referenced. Say "plan this feature" and the workflow skill opens the Quick or Deep flow with the brief already seeded from your current conversation. You describe what you want; IJFW figures out the where.
 
