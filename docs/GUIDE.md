@@ -349,7 +349,7 @@ Every module is a single question, answered in chat. Artifacts summarize in chat
 
 ## Platform parity
 
-IJFW configures 14 AI coding agents with native affordances on each, plus a universal rules file you can paste into anything else. Every platform speaks the same MCP server (13 tools), the same memory tiers, and the same observation ledger.
+IJFW configures 15 AI coding agents with native affordances on each, plus a universal rules file you can paste into anything else. Every platform speaks the same MCP server (13 tools), the same memory tiers, and the same observation ledger.
 
 | Platform | What ships |
 |----------|------------|
@@ -361,7 +361,8 @@ IJFW configures 14 AI coding agents with native affordances on each, plus a univ
 | Copilot (VS Code) | `.vscode/mcp.json` plus `.github/copilot-instructions.md`. Dashboard view-only. |
 | Hermes CLI | `HERMES.md` plus MCP registration in `~/.hermes/config.yaml`. |
 | Wayland CLI | `WAYLAND.md` plus MCP registration in `~/.wayland/config.yaml`. |
-| Additional MCP-aware agents | IJFW detects and configures the remaining supported agents via their native MCP and rules-file integrations to reach 14 total. |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` (Google's VS Code-fork agentic IDE; Windsurf-identical MCP schema). Agent context via shared `AGENTS.md`. Dashboard view-only. |
+| Additional MCP-aware agents | IJFW detects and configures the remaining supported agents via their native MCP and rules-file integrations to reach 15 total. |
 | Universal | `universal/ijfw-rules.md`. 15-line paste-anywhere rules file for anything else. |
 
 ### Observation ledger parity
@@ -508,7 +509,7 @@ Every install writes a log to `~/.ijfw/install.log`. Every session writes observ
 ## FAQ
 
 **Is this just a Claude Code plugin?**
-No. Claude Code is one of 14 platforms. The plugin is richest there because Claude Code exposes the most integration points. Every capability is available on the other agents through their native MCP and rules-file integrations.
+No. Claude Code is one of 15 platforms. The plugin is richest there because Claude Code exposes the most integration points. Every capability is available on the other agents through their native MCP and rules-file integrations.
 
 **Do I need a specific AI provider?**
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.

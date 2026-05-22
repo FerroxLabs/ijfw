@@ -276,7 +276,7 @@ async function main() {
   } catch { /* best-effort; never block install */ }
 
   console.log('');
-  console.log('IJFW now active across 14 platforms -- one memory layer, all your models, zero config.');
+  console.log('IJFW now active across 15 platforms -- one memory layer, all your models, zero config.');
   console.log('  Run `ijfw demo` to see the Trident in action.');
   console.log('  Run `ijfw doctor` to confirm which auditors are reachable.');
   console.log('  Privacy: everything stays local. See NO_TELEMETRY.md.');

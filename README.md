@@ -22,7 +22,7 @@
 
 Your AI is brilliant. It's also forgetful, undisciplined, alone, and quietly burning tokens you never needed to spend. One install fixes all four.
 
-14 AI coding agents share one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.
+15 AI coding agents share one local memory that survives every session, every project, every restart. One disciplined workflow drives anything you'd open an AI for: code, books, launches, research, businesses. From idea to ship.
 
 An on-demand three-AI critique puts a second lineage in the room so one model's blind spot never reaches production. Tasks dispatched to the right model for the job, output rules that strip the padding, prompt-cache discipline that compounds every session. Your bill goes down while your quality goes up.
 
@@ -40,7 +40,7 @@ A portable design contract keeps every AI on-brand: drop a `DESIGN.md` in your p
 npm install -g @ijfw/install && ijfw-install
 ```
 
-One command. 14 AI coding agents configured. Nothing to log into.
+One command. 15 AI coding agents configured. Nothing to log into.
 
 **Windows** (PowerShell 5.1 or 7+):
 
@@ -358,7 +358,7 @@ A detached background check fires on every session start (Claude + Codex), polls
 | Claude Code statusLine | Always visible | `^ 1.5.1 available  \|  #####..... 49% left` (autocompact-aware bar) |
 | Codex `Stop` hook | After every turn | `[ijfw] context: 47% left \| update: 1.5.1 available` (tokens via existing PreCompact estimate) |
 | Gemini `AfterAgent` | After every agent turn | `[ijfw] update: 1.5.1 available` injected via `additionalContext` |
-| Memory prelude | First turn, all 14 MCP platforms | `IJFW update available v1.5.0 -> v1.5.1 -- run 'ijfw update' in your TERMINAL` |
+| Memory prelude | First turn, all 15 MCP platforms | `IJFW update available v1.5.0 -> v1.5.1 -- run 'ijfw update' in your TERMINAL` |
 
 When you do update, the model **never runs the install for you**. The `ijfw_update_check` MCP tool issues a 5-minute crypto-random confirmation token; `ijfw_update_apply` writes a pending sentinel and returns the literal terminal command for you to type:
 
@@ -476,7 +476,7 @@ ijfw insight                       Alias for ijfw dashboard start.
 ijfw receipt last                  Redacted, shareable block from the last Trident run.
 ```
 
-### 14 platforms, one install, one workflow
+### 15 platforms, one install, one workflow
 
 | Platform | What ships |
 |----------|------------|
@@ -493,6 +493,7 @@ ijfw receipt last                  Redacted, shareable block from the last Tride
 | **Kimi Code** (1.1.7, live-verified in 1.1.8) | `~/.kimi/mcp.json` (matches `kimi mcp add` format) -- `kimi mcp list` reports connected |
 | **OpenClaw** (1.1.8, live-verified) | `~/.openclaw/openclaw.json` `mcp.servers.<name>` + `openclaw mcp set` when CLI on PATH -- `openclaw mcp list` reports connected |
 | Cline (1.1.9, opt-in today) | VS Code per-extension globalStorage (`saoudrizwan.claude-dev`); helper + path wired, VS Code runtime verification pending. Install today with `bash scripts/install.sh cline` |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` (Google's VS Code-fork agentic IDE, ex-Windsurf team; Windsurf-identical MCP schema). Agent context via shared `AGENTS.md` |
 | Aider (1.1.7, rules-only) | `~/.aider.conf.yml` + `~/CONVENTIONS.md` -- no native MCP, IJFW conventions injected via Aider's read: convention |
 | Universal | `universal/ijfw-rules.md`, paste into anything else |
 
@@ -601,7 +602,7 @@ Full accounting in [NO\_TELEMETRY.md](NO_TELEMETRY.md). Every data path, every f
 ## FAQ
 
 **Is this just a Claude Code plugin?**  
-No. Claude Code is one of 14 platforms in v1.5.0. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other 13 (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, and Aider) through their native MCP and rules-file integrations. Cline ships as opt-in today pending live VS Code runtime verification.
+No. Claude Code is one of 15 platforms in v1.5.1. The plugin is richest there because Claude Code exposes the most integration points. Every core capability is available on the other 14 (Codex, Gemini, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, Qwen Code, Kimi Code, OpenClaw, Cline, Antigravity, and Aider) through their native MCP and rules-file integrations. Cline ships as opt-in today pending live VS Code runtime verification.
 
 **Do I need a specific AI provider?**  
 No. IJFW configures the agents you already have. Bring your own keys, your own CLIs. The Trident uses whatever auditors are reachable on your machine. One is enough to start.
@@ -657,6 +658,6 @@ If you ship code with AI, you need this. If you write with AI, run a business wi
 
 * * *
 
-[gitlab.com/therealseandonahoe/ijfw](https://gitlab.com/therealseandonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, 14 platforms, seven engines, three AI families, zero apologies.
+[gitlab.com/therealseandonahoe/ijfw](https://gitlab.com/therealseandonahoe/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, 15 platforms, seven engines, three AI families, zero apologies.
 
 **Install it. Inspect it. Fork it. Ship it. It just fucking works.**

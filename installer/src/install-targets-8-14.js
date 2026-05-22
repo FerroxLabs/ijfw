@@ -259,3 +259,34 @@ export function installAider(ctx) {
   printOk('Aider: rules-only install (~/.aider.conf.yml + ~/CONVENTIONS.md). No MCP -- Aider lacks a native MCP client.');
   return { status: 'ok' };
 }
+
+// ---------------------------------------------------------------------------
+// 15. Antigravity -- Google's VS Code-fork agentic IDE (ex-Windsurf team).
+// ---------------------------------------------------------------------------
+//
+// Tier `mcp-plus-rules`. Mirrors installWindsurf: home-scoped MCP merge, no
+// skills/hooks/commands/agents surface. Antigravity's MCP schema is identical
+// to Windsurf's (same team, same flat `mcpServers` block in mcp_config.json).
+//
+// Writes:
+//   - ~/.gemini/antigravity/mcp_config.json (mergeJson)
+//
+// Agent context: Antigravity uses the AGENTS.md convention, which IJFW
+// already deploys/manages -- so Antigravity inherits IJFW context through the
+// shared AGENTS.md mechanism, no Antigravity-specific rules file needed.
+//
+// Skipped on custom-dir or in-source installs (parity with Windsurf).
+
+export function installAntigravity(ctx) {
+  if (ctx.ijfwCustomDir || ctx.isIjfwSource) {
+    printInfo('Skipping Antigravity platform writes (custom-dir or IJFW source tree).');
+    printOk('Antigravity: real platform config left untouched.');
+    return { status: 'noop' };
+  }
+
+  const dst = path.join(ctx.home, '.gemini', 'antigravity', 'mcp_config.json');
+  ensureDir(path.dirname(dst));
+  mergeJson(dst, ctx.serverJsNative || ctx.serverJs);
+  printOk(`Merged MCP into ${dst} (Antigravity)`);
+  return { status: 'ok' };
+}

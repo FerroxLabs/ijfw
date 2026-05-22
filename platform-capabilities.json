@@ -1,10 +1,10 @@
 {
   "schema": 2,
-  "schemaNotes": "schema=2 adds `tier`, `agents`, `commands`, `hooks` (script count), `mcp`, `memory`, `rules` fields to every platform entry, and expands coverage from 4 entries (claude/codex/gemini/shared) to all 14 deployed platforms. Pre-existing fields (skills, hookEvents, skillsPath, hooksPath) are retained on tier-1 entries that the drift checker (scripts/check-platform-drift.js) validates against disk. Tier-2/3 entries omit skillsPath/hooksPath because the drift checker only enforces parity for tier-1 surfaces with a deploy-counted directory on disk.",
+  "schemaNotes": "schema=2 adds `tier`, `agents`, `commands`, `hooks` (script count), `mcp`, `memory`, `rules` fields to every platform entry, and expands coverage from 4 entries (claude/codex/gemini/shared) to all 15 deployed platforms. Pre-existing fields (skills, hookEvents, skillsPath, hooksPath) are retained on tier-1 entries that the drift checker (scripts/check-platform-drift.js) validates against disk. Tier-2/3 entries omit skillsPath/hooksPath because the drift checker only enforces parity for tier-1 surfaces with a deploy-counted directory on disk.",
   "tiers": {
     "first-class": "Native plugin surface: skills + agents + commands + hooks scripts + MCP. Local picker + templates as files. (claude, codex, gemini)",
     "mcp-plus-hooks": "MCP + Python plugin tree + shared skills (copy-from shared/) + at least one wired hook. (hermes, wayland)",
-    "mcp-plus-rules": "MCP config + rules/instructions file only. No skills, no hooks, no commands, no agents on disk. (cursor, windsurf, copilot)",
+    "mcp-plus-rules": "MCP config + rules/instructions file only. No skills, no hooks, no commands, no agents on disk. (cursor, windsurf, copilot, antigravity)",
     "mcp-only": "MCP config merge only. No rules file deployed by installer. (opencode, qwen, cline, kimi, openclaw)",
     "rules-only": "Rules/conventions file only. No MCP (Aider has no native MCP client). (aider)"
   },
@@ -209,6 +209,19 @@
       "hookEvents": 0,
       "displayName": "Aider",
       "notes": "No native MCP client; rules-only install (~/.aider.conf.yml + ~/CONVENTIONS.md). Aider users do NOT have access to the IJFW memory layer at runtime."
+    },
+    "antigravity": {
+      "tier": "mcp-plus-rules",
+      "mcp": true,
+      "memory": true,
+      "rules": true,
+      "skills": 0,
+      "agents": 0,
+      "commands": 0,
+      "hooks": 0,
+      "hookEvents": 0,
+      "displayName": "Antigravity",
+      "notes": "Google's VS Code-fork agentic IDE, built by the ex-Windsurf team. Home-scoped MCP merge into ~/.gemini/antigravity/mcp_config.json (schema identical to Windsurf). Agent context inherited via the shared AGENTS.md convention -- no Antigravity-specific rules file. No skills, hooks, commands, or agents on disk."
     }
   }
 }

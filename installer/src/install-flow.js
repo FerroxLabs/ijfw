@@ -65,6 +65,7 @@ export const CANONICAL_ORDER = [
   'kimi',
   'openclaw',
   'aider',
+  'antigravity',
 ];
 
 // Per-target dispatcher. Agents B + C own these implementations.
@@ -83,6 +84,7 @@ const TARGET_FNS = {
   kimi: targets8to14.installKimi,
   openclaw: targets8to14.installOpenclaw,
   aider: targets8to14.installAider,
+  antigravity: targets8to14.installAntigravity,
 };
 
 // ============================================================

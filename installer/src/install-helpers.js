@@ -273,6 +273,12 @@ export function isLive(targetId, home) {
       return hasBin('openclaw') || existsSync(join(H, '.openclaw'));
     case 'aider':
       return hasBin('aider') || existsSync(join(H, '.aider.conf.yml'));
+    case 'antigravity':
+      return (
+        hasBin('antigravity') ||
+        existsSync(join(H, '.gemini', 'antigravity')) ||
+        existsSync('/Applications/Antigravity.app')
+      );
     default:
       return false;
   }
@@ -297,6 +303,7 @@ export function prettyName(targetId) {
     kimi:     'Kimi Code',
     openclaw: 'OpenClaw',
     aider:    'Aider',
+    antigravity: 'Antigravity',
   };
   // eslint-disable-next-line security/detect-object-injection -- targetId is a platform id; unknown ids fall back to String(targetId).
   return map[targetId] || String(targetId);
