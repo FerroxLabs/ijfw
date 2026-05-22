@@ -1,6 +1,6 @@
 {
   "name": "ijfw",
-  "version": "1.3.2",
+  "version": "1.5.1",
   "description": "IJFW -- It Just Fucking Works. 19 workflow skills + 22 command aliases + 6 hook events + persistent project memory, project teams, swarm orchestration, and design intelligence. Native Codex plugin with full parity to the Claude Code and Gemini bundles.",
   "author": "Sean Donahoe",
   "homepage": "https://gitlab.com/therealseandonahoe/ijfw",

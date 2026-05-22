@@ -1,5 +1,5 @@
 ---
-ijfw_version: 1.3.1
+ijfw_version: 1.5.1
 ijfw_schema: 1
 type: software
 primary_type: software

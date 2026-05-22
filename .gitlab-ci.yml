@@ -375,7 +375,13 @@ publish:mcp-server:
   stage: publish
   image: node:22-bookworm
   rules:
+    # Manual-trigger only. The npmjs OIDC trusted-publisher exchange never
+    # activated (v1.5.0 + v1.5.1 both shipped via local 2FA `npm publish`).
+    # Keeping the jobs defined — but `when: manual` so a version-tag push
+    # does not auto-fire them into a red pipeline. Revive if OIDC is fixed.
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
+      allow_failure: true
   id_tokens:
     # Env var name MATTERS: npmjs's official GitLab+OIDC pattern requires
     # the JWT in $NPM_TOKEN (not NPM_ID_TOKEN), written to .npmrc as the
@@ -416,7 +422,13 @@ publish:installer:
   stage: publish
   image: node:22-bookworm
   rules:
+    # Manual-trigger only. The npmjs OIDC trusted-publisher exchange never
+    # activated (v1.5.0 + v1.5.1 both shipped via local 2FA `npm publish`).
+    # Keeping the jobs defined — but `when: manual` so a version-tag push
+    # does not auto-fire them into a red pipeline. Revive if OIDC is fixed.
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
+      allow_failure: true
   id_tokens:
     # See publish:mcp-server above for env-var-name rationale + the
     # SIGSTORE_ID_TOKEN required by --provenance.

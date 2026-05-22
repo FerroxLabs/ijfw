@@ -1,6 +1,69 @@
 # Changelog
 
-## [Unreleased]
+## [1.5.1] -- 2026-05-22 ("Honest Surfaces") — correctness + honesty release
+
+v1.5.0 shipped with surface drift: a CLI that advertised commands that did
+nothing, libraries that shipped with tests but no runtime caller, count claims
+that disagreed file-to-file, and — worst — the memory-moat flagship (Obsidian
+indexing + A-Mem auto-linking) wired into a function the production write path
+never called. v1.5.1 is the correction. Four audit rounds + three Trident
+cross-audits drove ~50 commits that make every shipped surface true.
+
+**Surface honesty.** `ijfw off` works (was "Unknown subcommand"). 15 no-op
+"pointer-stub" commands that printed "use the X skill" and did nothing are
+removed from the CLI. `ijfw --help` is restructured to lead with `demo` and
+`cross` (the commands that show value) instead of plumbing; new `ijfw commands`
+prints the full surface. The dead `ijfw_memory_status` tool — referenced in
+SKILL.md files, docs, and live Wayland/Hermes `_mcp.py` (where it silently
+broke every session-end receipt) — is purged everywhere. Platform count (15)
+and MCP tool count (13) are reconciled across every file.
+
+**Multi-domain, end to end.** v1.5.0's `ijfw team init` generated team agents
+the swarm dispatcher could not find — three disagreeing rosters per domain.
+v1.5.1 wires the generator to the T26 domain-templates, populates the empty
+research/business templates, fixes the swarm-config bench mis-mappings, and
+aligns naming. `team init → swarm plan → dispatch` now works for all seven
+archetypes (book, content, research, design, business, software, mixed).
+
+**Orphan code wired.** Eight v1.5.0 libraries shipped with no production
+caller; v1.5.1 wires each into a live path (uispec-intake, truncation
+recovery, worktree guards, debug-trident, gate-result-formatter,
+evaluator-checkpoint-contract, extension-registry-ws, memory benchmark) or
+honestly removes it (`runtime-loop.js`, `dashboard-charts.js`). The
+`recovery/code-fixer.js` consensus fixer (T27) is wired with path-containment
+and a per-run change cap.
+
+**Memory-moat wired to production.** M1 Obsidian wikilink/tag indexing and M2
+A-Mem auto-linking only fired inside `fts5.indexEntry` — which the production
+memory writers (`handleStore`, `search.autoIndex`) never called. They ran only
+in the benchmark harness. v1.5.1 routes the real write path through them, and
+migration 009 + `ijfw memory reindex` backfill memory written before the fix.
+
+**Single source of truth.** A new `command-registry.js` (with a parity test
+that fails CI on drift) replaces the three hand-maintained command lists.
+`search.js`'s duplicate migration registry — the root cause of a v1.5.0
+silent-search-downgrade bug — is killed. `platform-capabilities.json` covers
+all platforms; the drift checker now validates every count field.
+
+**Antigravity — platform #15.** Google's Antigravity (VS Code-fork agentic
+IDE) is supported: both the IDE (`~/.gemini/antigravity/mcp_config.json`) and
+the `agy` CLI (`~/.gemini/config/mcp_config.json`) get IJFW from one
+`ijfw install`.
+
+**Hardening.** `ijfw_store` redacts secrets before writing to memory (was
+cleartext). The `ijfw preflight` ship gate is restored to green. Stale doc
+comments, dashboard memory-file redaction, and a destructive `ijfw off` with
+no confirmation are all fixed.
+
+**Verification.** Four audit rounds (surface drift, cross-check of the swing,
+six-lens deep pass) + three Trident cross-audits. Full test surface:
+2477 pass / 0 fail / 1 skip. `ijfw preflight` 11/11.
+
+**Deferred (honestly).** This is a correctness release. The cross-platform
+**skill parity build** — full skill/agent/hook surfaces for Gemini, Cursor,
+Windsurf, and Copilot — is a future milestone; today those platforms ship
+MCP + rules. `platform-capabilities.json` tier-classifies every platform so
+the gap is documented, not hidden.
 
 ### v1.5.0 wire-up + r19 MED close-out (Wave-W1 + W2, 2026-05-19)
 
