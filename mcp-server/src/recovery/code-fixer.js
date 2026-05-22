@@ -21,6 +21,14 @@
  * pattern — if the process crashes mid-fix the next run prunes the dangling
  * worktree and reports the survivor.
  *
+ * WIRE-UP (v1.5.1 C2): the consensus entry point `runConsensusFix` is invoked
+ * by `cross-orchestrator.js#runPhaseEConverge` when its caller passes
+ * `autoFix: true`. After a non-PASS convergence the orchestrator extracts the
+ * HIGH findings that 2+ lenses agreed on (`consensusHighFindings`) and runs
+ * the atomic per-finding fix loop over them — the "2+ lenses agree → fixer
+ * fires automatically" contract from the T27 brief. This module is therefore
+ * a live, reachable production path, not an orphan.
+ *
  * Zero new prod deps. ESM. Node ≥18.
  */
 
@@ -602,6 +610,124 @@ export async function fixFindings(findings, opts = {}) {
     if (k in summary) summary[k] += 1;
   }
   return { results, summary };
+}
+
+/* ────────────────────── consensus-HIGH extraction (T27 wire-up) ──────────── */
+
+/**
+ * Normalise a finding's severity to a lowercase canonical token.
+ * Auditors emit `high` / `HIGH` / `High` / sometimes `severity: { level }`.
+ */
+function _severityOf(finding) {
+  if (!finding || typeof finding !== 'object') return '';
+  const raw = finding.severity ?? finding.level ?? '';
+  if (raw && typeof raw === 'object') {
+    return String(raw.level || raw.severity || '').toLowerCase().trim();
+  }
+  return String(raw).toLowerCase().trim();
+}
+
+/**
+ * A stable identity key for cross-lens finding agreement. Two lenses "agree"
+ * on the same HIGH when their findings collapse to the same key. We use the
+ * file path + a normalised description prefix (whitespace-folded, lowercased,
+ * first 80 chars) — precise enough to cluster genuine duplicates, loose enough
+ * to survive trivial wording drift between lenses.
+ */
+function _consensusKey(finding) {
+  const file = String(finding.file || finding.location || finding.path || '').trim();
+  const descSource =
+    finding.description || finding.issue || finding.text ||
+    finding.message || finding.finding || finding.detail || '';
+  const desc = String(descSource).toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80);
+  return `${file}::${desc}`;
+}
+
+/**
+ * consensusHighFindings(perIteration, opts) — given the `perIteration` array
+ * that `runPhaseEConverge` returns, extract the HIGH-severity findings on
+ * which `minLenses` (default 2) or more lenses agree.
+ *
+ * This is the bridge T27 was designed for: "when 2+ lenses agree on the same
+ * HIGH, the fixer fires automatically." The convergence loop produces
+ * `perIteration[*].lensResults[*].findings`; this collapses the final
+ * iteration's findings into per-lens-deduped consensus clusters.
+ *
+ * Returns Array<finding> — each carries `_consensusLenses` (the set of lens
+ * ids that flagged it) and `_consensusCount`. Only the LAST iteration is
+ * considered: convergence already re-evaluated earlier rounds, so the final
+ * round is the swarm's settled position.
+ */
+export function consensusHighFindings(perIteration, opts = {}) {
+  const minLenses = Number.isInteger(opts.minLenses) && opts.minLenses > 0
+    ? opts.minLenses
+    : 2;
+  if (!Array.isArray(perIteration) || perIteration.length === 0) return [];
+  const last = perIteration[perIteration.length - 1];
+  if (!last || !Array.isArray(last.lensResults)) return [];
+
+  // key → { finding, lenses:Set }
+  const clusters = new Map();
+  for (const lr of last.lensResults) {
+    const lens = lr && lr.lens ? lr.lens : 'unknown';
+    const findings = Array.isArray(lr && lr.findings) ? lr.findings : [];
+    // De-dup within a single lens first so one lens flagging the same issue
+    // twice can't manufacture false consensus.
+    const seenThisLens = new Set();
+    for (const f of findings) {
+      if (_severityOf(f) !== 'high' && _severityOf(f) !== 'critical') continue;
+      const key = _consensusKey(f);
+      if (seenThisLens.has(key)) continue;
+      seenThisLens.add(key);
+      if (!clusters.has(key)) clusters.set(key, { finding: f, lenses: new Set() });
+      clusters.get(key).lenses.add(lens);
+    }
+  }
+
+  const out = [];
+  for (const { finding, lenses } of clusters.values()) {
+    if (lenses.size >= minLenses) {
+      out.push({ ...finding, _consensusLenses: [...lenses], _consensusCount: lenses.size });
+    }
+  }
+  return out;
+}
+
+/**
+ * runConsensusFix({ perIteration, projectRoot, dispatch, ...fixOpts }) —
+ * the T27 auto-fix entry point. Extracts consensus HIGHs from a completed
+ * `runPhaseEConverge` run and runs the per-finding atomic fixer loop over
+ * them.
+ *
+ * Returns:
+ *   { triggered: false, reason }                     — nothing to fix
+ *   { triggered: true, consensusCount, results, summary }  — fixer ran
+ *
+ * `dispatch` is required so each fix's Trident re-verify can run. Callers
+ * that want to detect-only (no edits) can pass `dryRun: true`.
+ */
+export async function runConsensusFix({
+  perIteration,
+  projectRoot,
+  dispatch,
+  minLenses = 2,
+  ...fixOpts
+} = {}) {
+  const consensus = consensusHighFindings(perIteration, { minLenses });
+  if (consensus.length === 0) {
+    return { triggered: false, reason: 'no consensus HIGH findings' };
+  }
+  const { results, summary } = await fixFindings(consensus, {
+    ...fixOpts,
+    projectRoot,
+    dispatch,
+  });
+  return {
+    triggered: true,
+    consensusCount: consensus.length,
+    results,
+    summary,
+  };
 }
 
 /* ────────────────────────────── test helpers ────────────────────────────── */

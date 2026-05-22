@@ -1184,9 +1184,15 @@ function buildCycleSummary(iteration, prior) {
 //                     this convergence cycle. Aborts a lens once its
 //                     cumulative cost in this run exceeds the cap. Defaults
 //                     to env IJFW_AUDIT_BUDGET_USD_PER_LENS.
+//   autoFix        v1.5.1 C2 (T27) — opt-in. When truthy, after a non-PASS
+//                  convergence the consensus code-fixer (recovery/code-fixer.js)
+//                  fires on HIGH findings that 2+ lenses agreed on. `true`
+//                  uses defaults; an object is forwarded to runConsensusFix
+//                  (minLenses, dryRun, verifyCmd, ...). Mutates the working
+//                  tree + writes per-finding atomic commits — off by default.
 // Returns:
 //   { verdict, iterations, findings, divergence?, stalled?, perIteration,
-//     timedOutTotal?, lensesOverBudget?, lensCosts }
+//     timedOutTotal?, lensesOverBudget?, lensCosts, autoFix? }
 export async function runPhaseEConverge({
   commitRange,
   lenses = DEFAULT_LENSES,
@@ -1198,6 +1204,11 @@ export async function runPhaseEConverge({
   totalTimeoutMs,     // v1.5.0 audit-MED-trident-M6 — cumulative timeout
   perLensBudgetUsd,   // v1.5.0 audit-MED-trident-M5 — per-lens USD cap
   keepaliveOnTick,    // v1.5.0 wire-W1.B — caller-supplied keepalive heartbeat
+  autoFix = false,    // v1.5.1 C2 (T27) — when truthy, fire the consensus
+                      // code-fixer on 2+-lens-agreed HIGH findings after a
+                      // non-PASS convergence. Accepts `true` (defaults) or an
+                      // options object { minLenses, dryRun, verifyCmd, ... }
+                      // forwarded to recovery/code-fixer.js#runConsensusFix.
   env = process.env,
 } = {}) {
   if (typeof dispatch !== 'function') {
@@ -1486,6 +1497,37 @@ export async function runPhaseEConverge({
       // Defensive — should never throw before the `.catch` chain, but the
       // metric computation itself (e.g. exotic NaN in _lensCosts) must not
       // break the orchestrator return value.
+    }
+
+    // v1.5.1 C2 (T27) — consensus code-fixer wire-up. This is the call site
+    // T27 was designed for: "when 2+ lenses agree on the same HIGH, the fixer
+    // fires automatically." The convergence loop is the canonical Trident
+    // path; once it settles on a non-PASS verdict, extract the consensus HIGH
+    // findings from `perIteration` and run recovery/code-fixer.js's atomic
+    // per-finding fix loop over them. Opt-in (`autoFix`) because it mutates
+    // the working tree + writes commits — never the default for a read-only
+    // audit. PASS verdicts are skipped (nothing to fix). Failure here is
+    // surfaced on `enriched.autoFix` but NEVER changes the convergence
+    // verdict — the fixer is a downstream remediation, not a gate.
+    if (autoFix && enriched.verdict !== VERDICT_PASS) {
+      try {
+        const { runConsensusFix } = await import('./recovery/code-fixer.js');
+        const fixOpts = (autoFix && typeof autoFix === 'object') ? autoFix : {};
+        const fixResult = await runConsensusFix({
+          perIteration,
+          projectRoot: _resolvedProjectDir,
+          dispatch,
+          commitRange,
+          lenses,
+          ...fixOpts,
+        });
+        enriched.autoFix = fixResult;
+      } catch (err) {
+        enriched.autoFix = {
+          triggered: false,
+          reason: `code-fixer error: ${err && err.message ? err.message : String(err)}`,
+        };
+      }
     }
 
     return enriched;

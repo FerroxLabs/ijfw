@@ -3008,11 +3008,23 @@ function codexDoctor(projectRoot) {
     fix: 'restore codex/.codex/hooks.json and hook scripts',
   });
 
+  // C11 — the message MUST track the same condition `ok` does. Previously the
+  // message said "ijfw-memory configured" whenever config.toml merely existed,
+  // so a config.toml present-but-missing-the-ijfw-memory-block printed the
+  // [ !! ] failure glyph (ok=false) next to success text. Branch all three
+  // states: file absent, file present-but-unconfigured, file configured.
+  const _codexConfigExists = existsSync(configPath);
+  const _codexMemoryConfigured =
+    _codexConfigExists && readFileSync(configPath, 'utf8').includes('ijfw-memory');
   checks.push({
     name: 'MCP config',
-    ok: existsSync(configPath) && readFileSync(configPath, 'utf8').includes('ijfw-memory'),
+    ok: _codexMemoryConfigured,
     required: true,
-    message: existsSync(configPath) ? 'ijfw-memory configured' : 'missing config.toml',
+    message: _codexMemoryConfigured
+      ? 'ijfw-memory configured'
+      : _codexConfigExists
+        ? 'config.toml present but ijfw-memory not configured'
+        : 'missing config.toml',
     fix: 'run ijfw install or restore codex/.codex/config.toml',
   });
 
