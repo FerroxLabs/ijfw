@@ -1,0 +1,20 @@
+
+ijfw cross audit -- target: .planning/1.5.1/audit/TRIDENT-TARGET-team-subsystem.md
+Probing roster...
+Fired: codex, gemini
+
+Heads up -- one or more auditors did not contribute this run:
+  - gemini: API timed out. Check network, retry, or pass --with to drop this auditor on the next run.
+Trident lineage diversity is reduced for this result. Re-run after fixing the auditor, or pass --with <id> to force a different combination.
+
+Findings:
+
+  Step 1.1 -- [high] | mcp-server/src/team/generator.js:273 -- The team generator loads only mcp-server/fixtures/team/<archetype>.json and never loads src/team/domain-templates/<archetype>.json, so the T26 domain-template roster is dead at runtime.
+  Step 1.2 -- [high] | mcp-server/src/team/generator.js:309 -- Book team init writes chapter-writer.md and continuity-editor.md from fixture role.name values, while the swarm book bench dispatches ijfw-story-architect, ijfw-continuity-editor, ijfw-prose-stylist, ijfw-doc-verifier, and ijfw-nyquist-auditor.
+  Step 1.3 -- [high] | mcp-server/fixtures/team/book.json:1 -- The book domain has three independent rosters: fixture output, src/team/domain-templates/book.json, and BOOK_BENCH in swarm-config.js.
+  Step 1.4 -- [medium] | mcp-server/src/team/generator.js:14 -- DOMAIN_SPECIALIST_AGENT_IDS is imported and surfaced as domainSpecialistAgentIds but is never used to create project agent files.
+  Step 1.5 -- [medium] | mcp-server/src/swarm-config.js:BOOK_BENCH -- The dispatcher convention is agent_type with ijfw-prefixed IDs, while generator output uses unprefixed fixture role names.
+  Step 1.6 -- [medium] | CHANGELOG.md:v1.5.0 -- The v1.5.0 T25/T26 and MULTI-DOMAIN-PROVEN claims are not supported by the observed book end-to-end path because init succeeds while generated agents do not match swarm dispatch requirements.
+  Step 1.7 -- [medium] | mcp-server/src/team/domain-templates/*.json -- The target provides evidence for book drift and says the same pattern likely holds for content, research, design, and business, but those archetypes are not verified in the supplied source.
+
+Receipt logged -- run `ijfw status` to see it.

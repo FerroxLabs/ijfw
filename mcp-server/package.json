@@ -14,7 +14,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node test.js"
+    "test": "node test.js && node --experimental-sqlite --test --test-force-exit test-*.js",
+    "test:smoke": "node test.js",
+    "test:full": "node --experimental-sqlite --test --test-force-exit test-*.js",
+    "test:graders": "node test/grade-symbol-graph-spec.js && node test/grade-symbol-graph-consistency.js && node test/grade-cascading-staleness.js && node test/grade-project-types.js"
   },
   "engines": {
     "node": ">=18.0.0"
