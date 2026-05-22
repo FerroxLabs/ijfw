@@ -171,7 +171,6 @@ Cap set in CLAUDE.md. Additions beyond this must displace an existing tool.
 | `ijfw_memory_recall` | Retrieve context. Progressive disclosure. Cross-project via `from_project`. |
 | `ijfw_memory_store` | Store decisions / patterns / handoffs / preferences / observations. |
 | `ijfw_memory_search` | Keyword + BM25 search, local or all-projects. |
-| `ijfw_memory_status` | ~200-token wake-up injection. |
 | `ijfw_memory_prelude` | Full first-turn memory bundle for Codex/Cursor/Windsurf/Copilot. |
 | `ijfw_prompt_check` | Deterministic vague-prompt detector for platforms without pre-prompt hooks. |
 | `ijfw_metrics` | Tokens / cost / routing / session totals. |

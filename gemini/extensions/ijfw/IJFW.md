@@ -68,7 +68,7 @@ question before answering. Override: start prompt with `*`.
 | `ijfw_memory_recall` | Recall memories matching a query |
 | `ijfw_memory_search` | Search project memory by keyword |
 | `ijfw_memory_store` | Store a new memory entry |
-| `ijfw_memory_status` | Show memory tier health |
+| `ijfw_metrics` | Show tokens / cost / routing / session totals |
 
 ## Gemini-Native Capabilities (IJFW bonuses)
 

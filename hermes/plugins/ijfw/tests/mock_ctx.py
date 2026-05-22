@@ -36,11 +36,9 @@ class MockPluginContext:
             return env({"text": "ok"})
         if "ijfw_memory_store" in name:
             return env({"text": "stored"})
-        if "ijfw_memory_status" in name:
+        if "ijfw_metrics" in name:
             return env({
-                "tokens_saved": 1200,
-                "cost_saved_usd": "0.04",
-                "decisions_stored": 3,
+                "text": "1200 tokens (~$0.04), 3 sessions logged.",
             })
         return env({"text": "ok"})
 

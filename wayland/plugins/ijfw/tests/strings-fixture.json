@@ -24,7 +24,7 @@
   "patterns_parse_failed": "IJFW pattern defaults active; checking the next patterns source ({path}).",
   "patterns_sentinel_missing": "patterns.json not found or unparseable in any candidate path.\n",
   "patterns_sentinel_parse_error": "parse-error at {path}: {err}\n",
-  "session_end_receipt": "Session complete. {tokens_saved} tokens saved (~${cost_saved}). {decisions} decisions stored.",
+  "session_end_receipt": "Session complete. {metrics}",
   "session_end_receipt_no_data": "Session complete. Memory updated.",
   "session_start_banner": "IJFW ready ({host} session). {n} memories loaded, {pct}% token savings this project.",
   "session_start_banner_no_memories": "IJFW ready ({host} session). Building memory as you work.",

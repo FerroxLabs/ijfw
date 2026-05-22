@@ -84,4 +84,4 @@ Available via the ijfw-memory MCP server (registered in config.toml):
 - `ijfw_memory_recall` -- surface relevant memories for a query
 - `ijfw_memory_search` -- search memory by keyword
 - `ijfw_memory_store` -- persist a decision or pattern
-- `ijfw_memory_status` -- memory health check
+- `ijfw_metrics` -- tokens / cost / routing / session totals

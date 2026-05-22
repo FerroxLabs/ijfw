@@ -580,15 +580,13 @@ def build_register_fn(host="wayland"):
         # ----------------------------------------------------------------
         def on_session_end(**kwargs):
             session_id = kwargs.get("session_id")
-            status = mcp.memory_status(ctx, session_id=session_id)
-            if status:
-                tokens_saved = status.get("tokens_saved", 0)
-                cost_saved = status.get("cost_saved_usd", "0.00")
-                decisions = status.get("decisions_stored", 0)
+            # ijfw_metrics renders a {"text": ...} receipt (tokens/spend/
+            # session totals) from .ijfw/metrics/sessions.jsonl.
+            status = mcp.metrics(ctx, session_id=session_id)
+            receipt_text = (status or {}).get("text", "").strip()
+            if receipt_text:
                 receipt = STRINGS["session_end_receipt"].format(
-                    tokens_saved=tokens_saved,
-                    cost_saved=cost_saved,
-                    decisions=decisions,
+                    metrics=receipt_text,
                 )
             else:
                 receipt = STRINGS["session_end_receipt_no_data"]

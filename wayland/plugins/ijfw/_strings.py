@@ -24,7 +24,7 @@ STRINGS = {
         "Sharper prompt, better result. Consider adding a specific target or outcome: {suggestion}"
     ),
     "session_end_receipt": (
-        "Session complete. {tokens_saved} tokens saved (~${cost_saved}). {decisions} decisions stored."
+        "Session complete. {metrics}"
     ),
     "session_end_receipt_no_data": (
         "Session complete. Memory updated."

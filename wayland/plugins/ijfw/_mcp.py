@@ -5,7 +5,7 @@
 #   mcp_ijfw_memory_ijfw_prompt_check
 #   mcp_ijfw_memory_ijfw_run
 #   mcp_ijfw_memory_ijfw_memory_store
-#   mcp_ijfw_memory_ijfw_memory_status
+#   mcp_ijfw_memory_ijfw_metrics
 
 import json
 
@@ -90,8 +90,18 @@ def memory_store(ctx, content, type=None, session_id=None):
     return call(ctx, "ijfw_memory_store", payload)
 
 
-def memory_status(ctx, session_id=None):
+def metrics(ctx, period=None, metric=None, session_id=None):
+    """Fetch the IJFW session metrics receipt.
+
+    Dispatches the real `ijfw_metrics` MCP tool (server.js:1048). Returns a
+    rendered `{"text": ...}` payload -- tokens/spend/session totals from
+    .ijfw/metrics/sessions.jsonl.
+    """
     args = {}
+    if period:
+        args["period"] = period
+    if metric:
+        args["metric"] = metric
     if session_id:
         args["session_id"] = session_id
-    return call(ctx, "ijfw_memory_status", args)
+    return call(ctx, "ijfw_metrics", args)
