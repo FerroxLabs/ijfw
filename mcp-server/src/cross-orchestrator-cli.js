@@ -62,6 +62,8 @@ import {
 } from './swarm/worktree.js';
 import { renderSwarmDispatchPrompt } from './swarm/dispatch-prompt.js';
 import { syncCodexAgents } from './codex-agents.js';
+// v1.5.1 W2.H — memory benchmark harness (T22). Surfaced via `ijfw metrics --benchmark`.
+import { runBenchmark } from './memory/benchmark.js';
 import {
   DESIGN_ACTIONS,
   auditDesignText,
@@ -271,6 +273,16 @@ function parseCommandAlias(args) {
     return parseCrossAlias('research', args);
   }
   if (Object.prototype.hasOwnProperty.call(COMMAND_ALIAS_HELP, name)) {
+    // v1.5.1 W2.H — `ijfw metrics` is a deprecated pointer-stub, but
+    // `ijfw metrics --benchmark` surfaces the memory benchmark harness (T22).
+    // Bare `ijfw metrics` still falls through to the deprecation redirect.
+    if (name === 'metrics' && args.includes('--benchmark')) {
+      const opts = { cmd: 'metrics-benchmark', json: args.includes('--json'), write: true };
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--no-write') opts.write = false;
+      }
+      return opts;
+    }
     return { cmd: 'command-alias', alias: name };
   }
   return null;
@@ -567,6 +579,41 @@ function cmdCommandAlias(alias) {
   console.log('');
   console.log(info.usage);
   process.exit(0);
+}
+
+// v1.5.1 W2.H — `ijfw metrics --benchmark`: run the memory benchmark harness
+// (T22) against IJFW's own 3-tier store and report recall@k, MRR/NDCG-style
+// retrieval quality, throughput, and p50/p95/p99 latency. See
+// docs/MEMORY-BENCHMARK.md for the axes and how to interpret the numbers.
+async function cmdMetricsBenchmark(opts = {}) {
+  const results = await runBenchmark({
+    root: process.cwd(),
+    write: opts.write !== false,
+  });
+
+  if (wantsJson(opts)) {
+    emitJson(results);
+    return;
+  }
+
+  const q = results.axes.query_warm_fts5;
+  const ing = results.axes.ingest;
+  const recallPairs = Object.entries(q.recall || {});
+  console.log('IJFW memory benchmark (T22)');
+  console.log('');
+  console.log(`  corpus            ${results.corpus.docs} docs / ${results.corpus.queries} queries / ${results.corpus.total_query_samples} timed samples`);
+  console.log(`  ingest throughput ${ing.throughput_rps} rows/s`);
+  console.log(`  ingest latency    p50 ${ing.latency_ms.p50}ms  p95 ${ing.latency_ms.p95}ms  p99 ${ing.latency_ms.p99}ms`);
+  console.log(`  query latency     p50 ${q.latency_ms.p50}ms  p95 ${q.latency_ms.p95}ms  p99 ${q.latency_ms.p99}ms`);
+  console.log(`  recall            ${recallPairs.map(([k, v]) => `${k}=${v.toFixed(3)}`).join('  ')}`);
+  console.log(`  storage           ${results.axes.storage.bytes_per_memory} bytes/memory (${results.axes.storage.rows_indexed} rows)`);
+  console.log(`  cold tier         ${results.axes.query_cold_vector.available ? 'available' : 'reserved (no embedding model)'}`);
+  if (results.artifact_path) {
+    console.log('');
+    console.log(`  artifact          ${results.artifact_path}`);
+  }
+  console.log('');
+  console.log('Axes explained: docs/MEMORY-BENCHMARK.md');
 }
 
 async function cmdStatus(projectDir, opts = {}) {
@@ -2345,6 +2392,8 @@ if (isMainModule) {
     cmdCrossProjectAudit(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'command-alias') {
     cmdCommandAlias(parsed.alias);
+  } else if (parsed.cmd === 'metrics-benchmark') {
+    cmdMetricsBenchmark(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'import') {
     cmdImport(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'doctor') {

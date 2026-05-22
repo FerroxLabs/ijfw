@@ -150,6 +150,7 @@ test('dispatch: every parsed.cmd literal in orchestrator maps to a registry entr
     'memory-help',         // optional namespace-level help for `ijfw memory`
     'memory-unknown',      // optional unknown-subcmd handler for `ijfw memory <x>`
     'purge-receipts',      // synthetic literal for the `--purge-receipts` flag-command
+    'metrics-benchmark',   // synthetic literal for the `metrics --benchmark` flag-command (W2.H)
     'unknown',             // unknown-command sink
   ]);
   for (const lit of dispatchLiterals) {
