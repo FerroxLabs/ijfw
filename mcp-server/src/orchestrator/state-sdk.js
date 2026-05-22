@@ -1262,6 +1262,36 @@ const handlers = {
     if (selfCheck.verdict !== 'PASSED') {
       const reason = `self-check FAILED — ${selfCheck.files_missing.length} missing file(s), `
         + `${selfCheck.commits_missing.length} missing commit(s)`;
+      // v1.5.1: LIVE wiring of debug-trident (T29) onto the production
+      // gate-failure path. When the post-done self-check FAILS this is
+      // exactly the stalled-investigation moment the Trident debug loop
+      // exists for — dispatch codex+gemini to generate competing root-cause
+      // hypotheses against the gate-failure evidence. FIRE-AND-FORGET:
+      // `maybeFireDebugTrident` returns immediately, the campaign runs in a
+      // detached promise — the verb's return value + timing are UNCHANGED so
+      // STATE-SDK-CONTRACT §8 (subagent.post-done is a fast read verb) holds.
+      // Env-gated (IJFW_DEBUG_TRIDENT) + silent no-op on missing deps; never
+      // throws. Dynamic import avoids a static require cycle. Mirrors the
+      // A-Mem auto-linker fire-and-forget pattern in memory/fts5.js.
+      try {
+        import('./debug-trident-trigger.js')
+          .then(({ maybeFireDebugTrident }) => {
+            maybeFireDebugTrident({
+              projectRoot,
+              subagentId: _subagentId,
+              reason,
+              reportText,
+              selfCheck,
+            });
+          })
+          .catch((e) => {
+            try {
+              process.stderr.write(
+                `[state-sdk] WARN subagent.post-done debug-trident dispatch failed: ${e.message}\n`,
+              );
+            } catch { /* never throw */ }
+          });
+      } catch { /* fire-and-forget — never alters the verb verdict */ }
       if (!GATE_BYPASS) {
         return {
           ok: false, refused: true, gate: 'post-done-self-check', reason,

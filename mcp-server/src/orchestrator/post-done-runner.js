@@ -48,16 +48,19 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { reviewTask } from './review.js';
 import { checkVerificationGate, recordViolation } from './verification-gate.js';
-// v1.5.1 W2.C: debug-trident (T29) — wired into runPostDone's gate-failure
-// branch as an informational 2nd opinion. INTEGRATION STATUS (v1.5.1 medlow
-// audit): runPostDone itself is the test-path export (see header — the live
-// subagent-completion path is the `subagent.post-done` state-SDK verb, which
-// uses runSelfCheck, not runPostDone). debug-trident therefore fires only
-// when a caller of runPostDone injects `debugTridentDispatch`; no production
-// caller does so today. The campaign is annotation-only (never alters
-// gateAction, fail-safe per W2.C). Promoting this to the live verb requires
-// a lens dispatcher the state-SDK verb does not currently carry — deferred
-// rather than overclaimed.
+// debug-trident (T29) — two production entry points:
+//   1. The LIVE path (v1.5.1): `subagent.post-done` in state-sdk.js fires
+//      debug-trident fire-and-forget when its self-check gate fails, via
+//      `maybeFireDebugTrident` in debug-trident-trigger.js. That is the
+//      genuine production caller — codex+gemini are dispatched against the
+//      real gate-failure evidence whenever IJFW_DEBUG_TRIDENT is enabled.
+//   2. This `runPostDone` path (v1.5.1 W2.C): an OPTIONAL informational
+//      2nd opinion that fires only when a caller injects `debugTridentDispatch`
+//      explicitly. runPostDone is the verification-gate convenience wrapper
+//      (the live subagent-completion gate uses runSelfCheck — see header);
+//      this hook stays for callers that already hold a lens dispatcher and
+//      want the annotation inline. Annotation-only — never alters gateAction
+//      (fail-safe per W2.C contract).
 import { runDebugCampaign, DEBUG_OUTCOMES } from './debug-trident.js';
 
 /**
