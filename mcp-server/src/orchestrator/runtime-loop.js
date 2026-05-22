@@ -34,6 +34,29 @@ import { defaultTermination } from './termination.js';
 // Folds the importance-ranked file summary in front of the brief when
 // IJFW_REPO_MAP=1 is set. Default off so existing flows are byte-identical.
 import { buildRepoMap, compactBriefForSubagent } from '../lib/repo-map.js';
+// v1.5.1 W2.B: T20 truncation detection + state-replay recovery. Was an orphan
+// module (CHANGELOG cited a "measured rate" with no production caller). Wiring
+// it here makes runtime-loop the production caller — handleTruncation now
+// classifies/recovers truncated subagents instead of routing blind.
+import {
+  detectTruncation,
+  recoverSubagent,
+  measureTruncationRate,
+  writeRateArtifact,
+} from '../recovery/truncation.js';
+// v1.5.1 W2.E: S08 incident-driven worktree safety guards. Was an orphan
+// module. Wired here as preconditions of the worktree-isolated dispatch path:
+// guards run BEFORE the subagent is spawned so cwd-drift / path-escape /
+// protected-ref hazards are caught at the orchestrator boundary.
+import {
+  assertNoCwdDrift,
+  captureSpawnToplevel,
+  assertPathWithinToplevel,
+  assertNotProtectedRef,
+} from '../lib/worktree-guards.js';
+// v1.5.1 W2.E: the actual worktree-isolated subagent spawn lives in
+// subagent-telemetry.js; runtime-loop wraps it with the guard preconditions.
+import { dispatchSubagent } from './subagent-telemetry.js';
 
 /**
  * Review a subagent's report through the v1.4.4 4-value protocol.
@@ -261,17 +284,51 @@ export function buildResumeBrief({ originalSpec, checkpoint = {}, fromAI, toAI }
 /**
  * Decide what to do when a subagent report indicates truncation.
  *
+ * v1.5.1 W2.B: when the caller supplies the subagent's `events` stream and/or
+ * intent `journal` on `ctx`, this routes through the T20 `detectTruncation`
+ * classifier first. The classifier's `reason` (e.g. `'missing-terminal'`,
+ * `'open-partial'`) is surfaced on the result as `truncationClass` so the
+ * orchestrator can log a precise tell rather than a guessed one. When no
+ * event-stream context is given the behaviour is byte-identical to the
+ * pre-wire path (the classifier is skipped and routing proceeds on `parsed`).
+ *
  * @param {object} args
  * @param {object} args.parsed                 - parsed report (must carry ai + reason if known)
- * @param {object} args.ctx                    - orchestrator context; ctx.checkpoint may be present
+ * @param {object} args.ctx                    - orchestrator context; ctx.checkpoint may be present.
+ *                                               Optional: ctx.events[], ctx.journal[],
+ *                                               ctx.expectedTerminalVerb for T20 classification.
  * @param {string[]} [args.available]          - AIs available to dispatch
- * @returns {{action:'resume_with_alt_ai', toAI:string, brief:string}
- *           | {action:'escalate_to_user', reason:string}}
+ * @returns {{action:'resume_with_alt_ai', toAI:string, brief:string, truncationClass?:string}
+ *           | {action:'escalate_to_user', reason:string, truncationClass?:string}}
  */
 export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude', 'gemini', 'codex'] } = {}) {
   const truncatedAI = typeof parsed.ai === 'string' && parsed.ai.length > 0 ? parsed.ai : 'claude';
-  const lastFailureReason = parsed.reason;
+  let lastFailureReason = parsed.reason;
   const projectRoot = typeof ctx.projectRoot === 'string' ? ctx.projectRoot : undefined;
+
+  // v1.5.1 W2.B — T20 classifier wire. If the orchestrator handed us the
+  // subagent's event stream / journal, classify the truncation precisely.
+  // The classifier never throws; a 'false' verdict (clean exit) leaves the
+  // existing routing untouched so this stays additive.
+  let truncationClass;
+  if (Array.isArray(ctx.events) || Array.isArray(ctx.journal)) {
+    const detection = detectTruncation({
+      events: ctx.events,
+      journal: ctx.journal,
+      expectedTerminalVerb: ctx.expectedTerminalVerb,
+    });
+    if (detection.truncated) {
+      truncationClass = detection.truncated;
+      // Promote the classifier's tell to the failure reason when the parsed
+      // report didn't carry one — gives selectResumeAI a real signal.
+      if (typeof lastFailureReason !== 'string' || lastFailureReason.length === 0) {
+        lastFailureReason = detection.truncated;
+      }
+    } else {
+      truncationClass = 'clean';
+    }
+  }
+
   const toAI = selectResumeAI({ truncatedAI, available, lastFailureReason, projectRoot });
 
   if (!toAI) {
@@ -280,6 +337,7 @@ export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude',
       reason: lastFailureReason === 'context_window' && truncatedAI === 'gemini'
         ? 'context_window_exceeded_on_largest_ai'
         : 'no_alternate_ai_available',
+      ...(truncationClass ? { truncationClass } : {}),
     };
   }
 
@@ -287,7 +345,79 @@ export function handleTruncation({ parsed = {}, ctx = {}, available = ['claude',
   const originalSpec = typeof ctx.originalSpec === 'string' ? ctx.originalSpec : '';
   const brief = buildResumeBrief({ originalSpec, checkpoint, fromAI: truncatedAI, toAI });
 
-  return { action: 'resume_with_alt_ai', toAI, brief };
+  return {
+    action: 'resume_with_alt_ai',
+    toAI,
+    brief,
+    ...(truncationClass ? { truncationClass } : {}),
+  };
+}
+
+/**
+ * v1.5.1 W2.B — async truncation handler that performs T20 STATE RECOVERY
+ * before deciding resume routing. This is the production caller the orphan
+ * `recovery/truncation.js` module was missing.
+ *
+ * Pipeline:
+ *   1. `recoverSubagent` — runs `state.replay` to snapshot-rollback / seal the
+ *      truncated subagent's partial verbs (so the resume agent inherits a
+ *      consistent journal, not a half-applied one).
+ *   2. `handleTruncation` — the existing sync routing decision.
+ *
+ * The recovery outcome is attached to the decision as `recovery`. Recovery
+ * never throws back to the caller; a failed replay still yields a routing
+ * decision (the orchestrator can escalate on `recovery.recovered === false`).
+ *
+ * @param {object} args                         - same shape as handleTruncation
+ * @param {object} [args.checkpoint]            - if it carries `lastVerbId`, replay is scoped
+ * @returns {Promise<object>}                   - handleTruncation decision + `recovery`
+ */
+export async function recoverAndRouteTruncation({
+  parsed = {}, ctx = {}, available = ['claude', 'gemini', 'codex'],
+} = {}) {
+  const projectRoot = typeof ctx.projectRoot === 'string' ? ctx.projectRoot : undefined;
+  let recovery = null;
+  if (projectRoot) {
+    const checkpoint = ctx.checkpoint && typeof ctx.checkpoint === 'object' ? ctx.checkpoint : {};
+    try {
+      recovery = await recoverSubagent({
+        projectRoot,
+        waveId: ctx.waveId,
+        subId: ctx.subId,
+        sinceVerbId: typeof checkpoint.lastVerbId === 'string' ? checkpoint.lastVerbId : undefined,
+      });
+    } catch (err) {
+      // recoverSubagent already swallows replay errors, but guard the call
+      // site too — routing must proceed even if recovery wholly fails.
+      recovery = { recovered: false, reason: `recovery threw: ${err?.message || err}` };
+    }
+  }
+  const decision = handleTruncation({ parsed, ctx, available });
+  return { ...decision, recovery };
+}
+
+/**
+ * v1.5.1 W2.B — measure the truncation rate that survives T20 recovery and
+ * persist it to `.ijfw/telemetry/truncation-rate.json`. This is the runtime
+ * surface behind the CHANGELOG "measured rate" claim — it now has a caller.
+ *
+ * Thin pass-through to `measureTruncationRate` + `writeRateArtifact`; kept on
+ * runtime-loop so the orchestrator can fire it post-wave without importing the
+ * recovery module directly.
+ *
+ * @param {object} args
+ * @param {string} args.projectRoot             - where the artifact is written
+ * @param {{id:string, meta:object}[]} args.fixtures
+ * @param {Function} args.runOne                - per-fixture recovery runner
+ * @returns {Promise<{result:object, artifactPath:string}>}
+ */
+export async function measureAndPersistTruncationRate({ projectRoot, fixtures, runOne } = {}) {
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    throw new TypeError('measureAndPersistTruncationRate: projectRoot is required');
+  }
+  const result = await measureTruncationRate({ fixtures, runOne });
+  const artifactPath = writeRateArtifact(projectRoot, result);
+  return { result, artifactPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -427,4 +557,74 @@ export async function runLoop({ step, initialState = {}, termination } = {}) {
     iter += 1;
   }
   return { terminated: true, reason: 'hard-cap', iter, state };
+}
+
+// ---------------------------------------------------------------------------
+// v1.5.1 W2.E — S08 worktree-guard preconditions on the dispatch path
+// ---------------------------------------------------------------------------
+//
+// Production wire-up for `mcp-server/src/lib/worktree-guards.js`. The guards
+// were lifted from the GSD executor after THREE real incidents (#3097 cwd
+// drift, #3099 abs-path escape, #2924 commit-to-protected-ref) and then sat
+// orphaned — no caller ran them. `dispatchSubagent` (subagent-telemetry.js)
+// spawns a worktree-isolated subagent but performed NO containment check on
+// the project root it was handed.
+//
+// `dispatchSubagentGuarded` runs the guards as PRECONDITIONS — they execute
+// and must pass BEFORE the subagent is spawned. A guard failure aborts the
+// dispatch (the spawn never happens) so a drifted cwd or an escaping project
+// root can never reach the subagent primitive.
+
+/**
+ * Run the S08 worktree guards, then dispatch a worktree-isolated subagent.
+ *
+ * Preconditions (executed in order, BEFORE any spawn):
+ *   1. `assertPathWithinToplevel(projectRoot, toplevel)` — the project root we
+ *      were handed must be contained within the git toplevel (catches #3099
+ *      abs-path escape, incl. symlink escapes via the realpath resolve).
+ *   2. `assertNoCwdDrift(toplevel)` — the orchestrator's cwd must still match
+ *      the toplevel captured at this call (catches #3097 cwd drift).
+ *   3. `assertNotProtectedRef()` — HEAD must NOT be on a protected ref
+ *      (main / master / develop / trunk / release-prefixed / prod) — catches
+ *      #2924 commit-to-protected-ref before a subagent ever gets a chance to
+ *      commit on the wrong branch.
+ *
+ * Only the `'worktree'` isolation mode is guarded — `'shared'` dispatch does
+ * not spawn a separate worktree, so the containment/drift guards don't apply
+ * (the protected-ref guard is also skipped there to keep `'shared'` byte-
+ * identical to the pre-wire path).
+ *
+ * On any guard failure the error propagates and `dispatchSubagent` is NEVER
+ * called — the spawn is aborted, not best-effort'd.
+ *
+ * @param {string} waveId
+ * @param {string} subId
+ * @param {string} role
+ * @param {string} brief
+ * @param {string} projectRoot                  - absolute path to the project root
+ * @param {{isolation?: 'shared'|'worktree', env?: object, platform?: string,
+ *          subagentId?: string}} [opts]
+ * @returns {Promise<object>}                    - the `subagent.dispatch` verb result
+ * @throws {Error} if any S08 guard fails (dispatch aborted)
+ */
+export async function dispatchSubagentGuarded(waveId, subId, role, brief, projectRoot, opts = {}) {
+  const isolation = opts.isolation === 'shared' ? 'shared' : 'worktree';
+
+  if (isolation === 'worktree') {
+    if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+      throw new Error('dispatchSubagentGuarded: projectRoot is required for worktree isolation');
+    }
+    // Capture the toplevel ONCE so the drift + containment guards compare
+    // against the same reference frame.
+    const toplevel = captureSpawnToplevel(projectRoot);
+    // #3099 — the project root we dispatch into must be contained.
+    assertPathWithinToplevel(projectRoot, toplevel);
+    // #3097 — the orchestrator's cwd must not have drifted off the toplevel.
+    assertNoCwdDrift(toplevel, projectRoot);
+    // #2924 — refuse to spawn a worktree subagent off a protected ref.
+    assertNotProtectedRef(projectRoot);
+  }
+
+  // Guards passed (or 'shared' mode) — proceed to the real spawn.
+  return dispatchSubagent(waveId, subId, role, brief, projectRoot, opts);
 }
