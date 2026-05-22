@@ -11,7 +11,10 @@ import {
   not,
   defaultTermination,
 } from './src/orchestrator/termination.js';
-import { runLoop } from './src/orchestrator/runtime-loop.js';
+// NOTE: the `runLoop` integration tests that previously lived here were
+// removed alongside `runtime-loop.js` (v1.5.1 R4-H5 — runtime-loop was a pure
+// orphan with zero production callers). This suite now covers `termination.js`
+// only — its composable predicates + combinators, which is what it tests.
 
 // ---------------------------------------------------------------------------
 // Atomic conditions
@@ -97,7 +100,7 @@ test('not: negates the inner condition', () => {
 });
 
 // ---------------------------------------------------------------------------
-// defaultTermination + runLoop integration
+// defaultTermination
 // ---------------------------------------------------------------------------
 
 test('defaultTermination is MaxAttempts(3) by default', () => {
@@ -105,49 +108,4 @@ test('defaultTermination is MaxAttempts(3) by default', () => {
   assert.equal(t(0, {}), false);
   assert.equal(t(1, {}), false);
   assert.equal(t(2, {}), true);
-});
-
-test('runLoop: completes via done:true', async () => {
-  const res = await runLoop({
-    step: async (iter) => {
-      if (iter === 2) return { done: true, result: 'finished' };
-      return { done: false };
-    },
-  });
-  assert.equal(res.result, 'finished');
-  assert.equal(res.iter, 2);
-});
-
-test('runLoop: terminates via termination predicate', async () => {
-  const res = await runLoop({
-    step: async () => ({ done: false }),
-    termination: MaxAttempts(3),
-  });
-  assert.equal(res.terminated, true);
-  assert.equal(res.reason, 'termination');
-});
-
-test('runLoop: defaults to MaxAttempts(3) when termination omitted', async () => {
-  const res = await runLoop({
-    step: async () => ({ done: false }),
-  });
-  assert.equal(res.terminated, true);
-});
-
-test('runLoop: composed predicate (or) stops loop on token budget', async () => {
-  const term = or(MaxAttempts(100), TokenBudget(50));
-  const res = await runLoop({
-    initialState: { tokensUsed: 0 },
-    step: async (_iter, state) => ({
-      done: false,
-      state: { tokensUsed: (state.tokensUsed || 0) + 30 },
-    }),
-    termination: term,
-  });
-  assert.equal(res.terminated, true);
-  assert.ok(res.state.tokensUsed >= 50);
-});
-
-test('runLoop: rejects when step missing', async () => {
-  await assert.rejects(() => runLoop({}));
 });

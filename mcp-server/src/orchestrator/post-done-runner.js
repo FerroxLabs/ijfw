@@ -1,18 +1,27 @@
 /**
- * post-done-runner.js — v1.5.0-major S02: enforced post-DONE pipeline.
+ * post-done-runner.js — v1.5.0-major S02: post-DONE pipeline primitives.
  *
- * Runs after a subagent reports DONE. Wraps reviewTask (v1.4.4 N3 two-stage
- * review) and checkVerificationGate (v1.4.4 N5) into a single callable the
- * orchestrator-LLM invokes via MCP, so the post-DONE contract isn't satisfied
- * by markdown prose. (The live production path is the `subagent.post-done`
- * state-SDK verb, which calls `runSelfCheck` directly; `runtime-loop.js` —
- * the original S02 caller — was never wired and carries no production traffic.)
+ * WHAT IS LIVE: `runSelfCheck` is the only export on the production path. The
+ * live DONE-handler is the `subagent.post-done` state-SDK verb, which calls
+ * `runSelfCheck` directly (and fires debug-trident via debug-trident-trigger.js
+ * on a self-check failure). The verification gate itself is also enforced live
+ * — `state-sdk.js` calls `enforceVerificationGate` directly.
+ *
+ * WHAT IS NOT LIVE: `runPostDone` is a library/test surface — NOT the live
+ * DONE-handler. It is a convenience wrapper that bundles reviewTask (v1.4.4 N3
+ * two-stage review) + checkVerificationGate (v1.4.4 N5) for direct-import
+ * callers and the test path (`test-orchestrator-post-done-runner.js`). The
+ * production two-stage spec+quality review happens via agent dispatch
+ * (spec-reviewer + quality-reviewer agents), not through this wrapper. Its
+ * original S02 caller (`runtime-loop.js`) was never wired; that file is now
+ * removed. `runPostDone` is kept for its test surface and for any future
+ * caller that wants the two checks bundled — it does not carry production
+ * traffic today.
  *
  * v1.5.0 T13: the standalone `ijfw_subagent_post_done` MCP tool was retired and
  * absorbed into the single `ijfw_state` MCP tool as the `subagent.post-done`
  * verb (see STATE-SDK-CONTRACT §7). `runSelfCheck` is re-exported through
- * `state-sdk.js` for that verb; `runPostDone` is still exported here for the
- * direct-import test path (`test-orchestrator-post-done-runner.js`).
+ * `state-sdk.js` for that verb.
  *
  * Outcome shape (uniform regardless of branch taken):
  *   {
@@ -48,20 +57,13 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { reviewTask } from './review.js';
 import { checkVerificationGate, recordViolation } from './verification-gate.js';
-// debug-trident (T29) — two production entry points:
-//   1. The LIVE path (v1.5.1): `subagent.post-done` in state-sdk.js fires
-//      debug-trident fire-and-forget when its self-check gate fails, via
-//      `maybeFireDebugTrident` in debug-trident-trigger.js. That is the
-//      genuine production caller — codex+gemini are dispatched against the
-//      real gate-failure evidence whenever IJFW_DEBUG_TRIDENT is enabled.
-//   2. This `runPostDone` path (v1.5.1 W2.C): an OPTIONAL informational
-//      2nd opinion that fires only when a caller injects `debugTridentDispatch`
-//      explicitly. runPostDone is the verification-gate convenience wrapper
-//      (the live subagent-completion gate uses runSelfCheck — see header);
-//      this hook stays for callers that already hold a lens dispatcher and
-//      want the annotation inline. Annotation-only — never alters gateAction
-//      (fail-safe per W2.C contract).
-import { runDebugCampaign, DEBUG_OUTCOMES } from './debug-trident.js';
+// debug-trident (T29) is wired on the LIVE path only: `subagent.post-done` in
+// state-sdk.js fires debug-trident fire-and-forget when its self-check gate
+// fails, via `maybeFireDebugTrident` in debug-trident-trigger.js. That is the
+// genuine production caller — codex+gemini are dispatched against the real
+// gate-failure evidence whenever IJFW_DEBUG_TRIDENT is enabled. runPostDone
+// deliberately does NOT invoke debug-trident (the earlier W2.C inline-
+// annotation hook was dead — computed but never returned — and was removed).
 
 /**
  * Extract paths claimed in the report. Naive but effective: looks for
@@ -139,7 +141,17 @@ export function runSelfCheck(reportText, projectRoot) {
 }
 
 /**
-/**
+ * runPostDone — library/test surface. NOT the live DONE-handler.
+ *
+ * The live subagent-completion path is the `subagent.post-done` state-SDK verb
+ * (which runs `runSelfCheck` + fires debug-trident on failure), plus the
+ * verification gate enforced directly in `state-sdk.js`; the production
+ * two-stage spec+quality review runs via agent dispatch (spec-reviewer +
+ * quality-reviewer agents). This wrapper bundles reviewTask (N3) +
+ * checkVerificationGate (N5) + runSelfCheck (S09) for direct-import callers
+ * and `test-orchestrator-post-done-runner.js`. It carries no production
+ * traffic — keep it honest: do not describe it as the live handler.
+ *
  * @param {object} params
  * @param {string} params.taskId
  * @param {string} [params.taskSpec]
@@ -154,14 +166,6 @@ export function runSelfCheck(reportText, projectRoot) {
  *   W12-F/F4 — RT2-H1. When true (default) and the verification gate fails,
  *   the result includes `gateAction: 'block'` and the MCP handler MUST refuse
  *   to claim success. Pass `false` for legacy advisory-only behavior.
- * @param {Function} [params.debugTridentDispatch]
- *   v1.5.1 W2.C. Optional Trident lens dispatcher. When the verification gate
- *   FAILS and this dispatcher is provided, runDebugCampaign (T29) is invoked
- *   as an informational 2nd opinion — the resulting competing-hypothesis
- *   summary is attached as `debugTridentAnnotation` on the receipt. NEVER
- *   alters `gateAction` (fail-safe wiring: block-verdict is authoritative).
- *   Shape: async ({ lens, evidencePack, currentHypotheses }) =>
- *     { lens, hypotheses: [ { hypothesis, rationale? } ] }.
  * @returns {Promise<{
  *   verdict: 'approved'|'spec_failed'|'quality_failed'|'no_review',
  *   reviewStage: 'spec'|'quality'|null,
@@ -192,7 +196,6 @@ export async function runPostDone({
   projectRoot,
   projectConventions = '',
   strictGate = true,
-  debugTridentDispatch,
 }) {
   if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
     throw new TypeError('runPostDone: projectRoot is required');
@@ -236,7 +239,6 @@ export async function runPostDone({
     reportText,
     Array.isArray(toolCallsInMessage) ? toolCallsInMessage : [],
   );
-  let debugTridentAnnotation = null;
   if (!gateOutcome.ok) {
     try {
       // recordViolation signature is (violation, projectRoot) -- see verification-gate.js
@@ -246,81 +248,6 @@ export async function runPostDone({
       );
     } catch {
       // Advisory -- never block on violation log failure (matches v1.4.4 N5 contract)
-    }
-
-    // v1.5.1 W2.C: invoke debug-trident (T29) for an informational 2nd
-    // opinion on WHY the gate failed. Wired conservatively:
-    //   - Only fires when a dispatcher was injected by the caller (default off).
-    //   - Result is annotation-only — never alters gateAction.
-    //   - A throw inside runDebugCampaign is swallowed; the gate verdict
-    //     remains authoritative (fail-safe per W2.C contract).
-    //   - Single forced cycle (maxCycles:1 + forceTrident via dispatch
-    //     returning INVESTIGATION_INCONCLUSIVE) keeps cost bounded; we are
-    //     after competing hypotheses, not a multi-round debug campaign.
-    if (typeof debugTridentDispatch === 'function') {
-      try {
-        const claimText = gateOutcome.claim ? String(gateOutcome.claim) : '<unknown>';
-        const evidencePack = [
-          `gate-violation: ${gateOutcome.violation}`,
-          `claim: ${claimText}`,
-          `taskId: ${taskId}`,
-          `branch: ${branch || '(unspecified)'}`,
-          `commitSha: ${commitSha || '(none)'}`,
-          // Truncate the report so we don't spend lens tokens on a wall of text.
-          `report-head: ${String(reportText).slice(0, 2048)}`,
-        ].join('\n');
-        const campaign = await runDebugCampaign({
-          sessionId: `gate-failure:${taskId || 'unknown'}`,
-          symptoms: `verification-gate FAILED: claim="${claimText}" but no fresh verify in same message`,
-          // Seed the tree with the gate's own hypothesis ("the agent claimed
-          // completion without evidence"). The lenses will compete on WHY.
-          hypotheses: [{
-            id: 'H1',
-            hypothesis: 'Agent emitted completion claim without running tests/build in same message.',
-            status: 'open',
-            evidence: gateOutcome.violation,
-            refuted_by: '',
-          }],
-          // One forced cycle: returning INVESTIGATION_INCONCLUSIVE triggers
-          // immediate stall-detection → Trident escalation → exit.
-          dispatch: async () => ({ terminator: 'INVESTIGATION_INCONCLUSIVE' }),
-          tridentDispatch: debugTridentDispatch,
-          maxCycles: 1,
-          evidencePack,
-          projectRoot,
-          // Telemetry is fine to record — it never alters the campaign verdict
-          // and gives the dashboard a debug-campaign event per gate failure.
-          recordTelemetry: true,
-        });
-        debugTridentAnnotation = {
-          outcome: campaign.outcome,
-          stalls: campaign.stalls,
-          tridentInvocations: campaign.tridentInvocations,
-          hypothesesAdded: campaign.hypothesesAdded,
-          competingHypotheses: (Array.isArray(campaign.hypothesesFinal) ? campaign.hypothesesFinal : [])
-            .filter((h) => typeof h?.from === 'string' && h.from.startsWith('trident:'))
-            .slice(0, 6)
-            .map((h) => ({
-              id: h.id,
-              from: h.from,
-              hypothesis: h.hypothesis,
-              rationale: h.rationale || '',
-            })),
-          durationMs: campaign.duration_ms,
-          // Mirror the DEBUG_OUTCOMES vocabulary so dashboards can group by it
-          // without hard-coding string literals.
-          knownOutcome: Object.values(DEBUG_OUTCOMES).includes(campaign.outcome),
-        };
-      } catch (err) {
-        // Fail-safe: a throw from debug-trident must NOT change the gate
-        // verdict. Record the error on the annotation so the receipt shows
-        // the 2nd-opinion attempt was made but didn't yield hypotheses.
-        debugTridentAnnotation = {
-          outcome: 'campaign_failed',
-          error: err && err.message ? String(err.message) : String(err),
-          competingHypotheses: [],
-        };
-      }
     }
   }
 
