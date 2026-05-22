@@ -18,7 +18,7 @@
  *                             session-start hook so org/user-scoped extensions
  *                             become available in every project session.
  *
- * TODO(v1.5.0-major S01 — IJFW_PARENT_PROJECT_ROOT env passthrough):
+ * DEFERRED (harness-dependency — IJFW_PARENT_PROJECT_ROOT env passthrough):
  *   The Agent({ isolation: 'worktree' }) spawn path lives in the Claude Code
  *   harness (Task tool / SDK), NOT in this MCP server's dispatch flow. When the
  *   harness eventually exposes a hook for env passthrough on worktree dispatch,

@@ -706,8 +706,6 @@ async function cmdDemo() {
 
   let result;
   try {
-    // TODO post-merge: perAuditorTimeoutSec, minResponses, quiet are added by Item 2 agent.
-    // Passed through here; current orchestrator silently ignores unknown params.
     result = await runCrossOp({
       mode: 'audit',
       target,

@@ -65,9 +65,11 @@ import {
  * projectRoot. Used by deployResolvedSkill to know which platforms to write
  * the merged body into.
  *
- * TODO(W2b/t11): replace this with an exported helper from
- * installer/src/install-helpers.js once that module exposes a canonical
- * platform-list getter. Until then this on-disk probe is the contract.
+ * DEFERRED (platform-list consolidation): could be replaced with an exported
+ * helper from installer/src/install-helpers.js once that module exposes a
+ * canonical platform-list getter. Until then this on-disk probe is the
+ * contract — and as an on-disk probe it correctly reflects what is actually
+ * deployed, so the consolidation is a nice-to-have, not a defect.
  *
  * @param {string} projectRoot
  * @returns {string[]} absolute paths to existing platform skill dirs

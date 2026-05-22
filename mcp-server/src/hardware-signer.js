@@ -14,8 +14,10 @@
  *
  * Backend resolution is FAIL-CLOSED (SEC-L-02): unknown backend names throw
  * rather than silently fall through to software. This means a manifest with
- * `publisher_key_backend: 'libfido2'` (not yet implemented in v1.4.3) is a
- * hard error at sign-time, not a quiet downgrade to a weaker backend.
+ * `publisher_key_backend: 'libfido2'` (a direct-FIDO2 backend deferred to a
+ * future release — the ssh-agent backend already covers FIDO2 tokens via the
+ * agent socket) is a hard error at sign-time, not a quiet downgrade to a
+ * weaker backend.
  *
  * Identity selection (SEC-H-03): when the ssh-agent backend signs, the
  * agent is asked to enumerate identities. The expected public-key blob is

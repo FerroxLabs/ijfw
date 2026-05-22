@@ -1,10 +1,12 @@
 /**
  * post-done-runner.js — v1.5.0-major S02: enforced post-DONE pipeline.
  *
- * Runs after a subagent's DONE has been verified by runtime-loop.js. Wraps
- * reviewTask (v1.4.4 N3 two-stage review) and checkVerificationGate
- * (v1.4.4 N5) into a single callable the orchestrator-LLM invokes via MCP,
- * so the post-DONE contract isn't satisfied by markdown prose.
+ * Runs after a subagent reports DONE. Wraps reviewTask (v1.4.4 N3 two-stage
+ * review) and checkVerificationGate (v1.4.4 N5) into a single callable the
+ * orchestrator-LLM invokes via MCP, so the post-DONE contract isn't satisfied
+ * by markdown prose. (The live production path is the `subagent.post-done`
+ * state-SDK verb, which calls `runSelfCheck` directly; `runtime-loop.js` —
+ * the original S02 caller — was never wired and carries no production traffic.)
  *
  * v1.5.0 T13: the standalone `ijfw_subagent_post_done` MCP tool was retired and
  * absorbed into the single `ijfw_state` MCP tool as the `subagent.post-done`
@@ -46,11 +48,16 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { reviewTask } from './review.js';
 import { checkVerificationGate, recordViolation } from './verification-gate.js';
-// v1.5.1 W2.C: debug-trident (T29) — wired here as informational 2nd opinion
-// on gate failures. The CHANGELOG promised "every gate's failure mode covered
-// by a Trident dissent test" but T29 shipped orphan. Now invoked from the
-// gate-failure branch as an *annotation* on the receipt; never alters
-// gateAction (fail-safe wiring per W2.C contract).
+// v1.5.1 W2.C: debug-trident (T29) — wired into runPostDone's gate-failure
+// branch as an informational 2nd opinion. INTEGRATION STATUS (v1.5.1 medlow
+// audit): runPostDone itself is the test-path export (see header — the live
+// subagent-completion path is the `subagent.post-done` state-SDK verb, which
+// uses runSelfCheck, not runPostDone). debug-trident therefore fires only
+// when a caller of runPostDone injects `debugTridentDispatch`; no production
+// caller does so today. The campaign is annotation-only (never alters
+// gateAction, fail-safe per W2.C). Promoting this to the live verb requires
+// a lens dispatcher the state-SDK verb does not currently carry — deferred
+// rather than overclaimed.
 import { runDebugCampaign, DEBUG_OUTCOMES } from './debug-trident.js';
 
 /**
