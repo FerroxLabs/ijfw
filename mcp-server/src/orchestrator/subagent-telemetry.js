@@ -27,6 +27,10 @@ import { query } from './state-sdk.js';
 import { pollEvents } from './state-events.js';
 // v1.5.0 N4.obs M1+M2: trace-id + hierarchical observation path.
 import { getTraceId, composePath } from '../observability/trace-id.js';
+// v1.5.1 W2.F: checkpoint-contract evaluator (N4.obs M3). Validates a final
+// status report carried by a checkpoint envelope against the v1.4.4 N2
+// four-section contract before the envelope is written.
+import { evaluateCheckpointContract } from '../observability/evaluator-checkpoint-contract.js';
 
 // ---------------------------------------------------------------------------
 // Frozen constants — Wave 11-A imports these directly
@@ -122,6 +126,21 @@ export async function recordCheckpoint(waveId, subId, checkpoint, projectRoot) {
     path: observPath,
     ...checkpoint,
   };
+
+  // v1.5.1 W2.F: contract-validate at emission time. When a checkpoint
+  // envelope carries the subagent's final status report (`checkpoint.report`),
+  // it MUST satisfy the v1.4.4 N2 four-section contract (Status/SHAs/Files/
+  // Tests). Schema drift now fails LOUD here at write — not silently at read.
+  // Progress-only checkpoints (no `report` field) skip this check unchanged.
+  if (typeof checkpoint.report === 'string') {
+    const evalResult = evaluateCheckpointContract(checkpoint.report);
+    if (!evalResult.valid) {
+      throw new Error(
+        `subagent-telemetry: checkpoint report for ${waveId}/${subId} `
+        + `violates checkpoint-contract — ${evalResult.reason}`,
+      );
+    }
+  }
 
   const serialised = JSON.stringify(envelope);
   if (serialised.length > MAX_CHECKPOINT_SIZE) {
