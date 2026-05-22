@@ -1,5 +1,12 @@
 // Gate: design-pass -- warn if UI files changed without a recent design pass.
-// Off by default. Enable in preflight-versions.json: "design-pass": { "enabled": true }
+//
+// STATUS (v1.5.1 R4-LOW): DRAFT / NOT WIRED. This gate file is complete and
+// passes its own unit test, but it is NOT registered in the preflight runner.
+// `preflight.js` imports a fixed 11-gate list (shellcheck..upgrade-smoke) and
+// there is no config-driven gate loading -- so "enable in preflight-versions.json"
+// is NOT yet a real path. To activate this as a 12th gate, import it in
+// preflight.js, push it onto the `gates` array, and update the gate-count refs
+// in the help text + docs. Until then it is a future gate, kept here as a draft.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';

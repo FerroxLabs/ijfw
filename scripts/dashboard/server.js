@@ -239,6 +239,10 @@ function buildAllMemory() {
         }
       }
       const rawLines = content.split('\n').filter(Boolean).length;
+      // SECURITY (audit R4-MED): redact secrets before the memory-file snippet
+      // is serialized into the /api/data response. Defense-in-depth — the
+      // dashboard is loopback-only bound + requireLocalhost-gated, but the
+      // served snippet should never echo API keys/tokens/JWTs verbatim.
       results.push({
         name,
         project,
@@ -247,7 +251,7 @@ function buildAllMemory() {
         type,
         entries,
         rawLines,
-        snippet: content.slice(0, 2000),
+        snippet: redactSecrets(content.slice(0, 2000)),
       });
     } catch (err) {
       process.stderr.write(`[ijfw-dashboard] readMemoryFile(${fp}): ${err.message}\n`);

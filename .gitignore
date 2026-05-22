@@ -68,6 +68,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
 
 # npm pack artifacts
 installer/*.tgz

@@ -20,12 +20,13 @@ function writeAtomic(target, content) {
 }
 
 function parseArgs(argv) {
-  const out = { dir: null, purge: false, noMarketplace: false };
+  const out = { dir: null, purge: false, noMarketplace: false, yes: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dir') out.dir = argv[++i];
     else if (a === '--purge') out.purge = true;
     else if (a === '--no-marketplace') out.noMarketplace = true;
+    else if (a === '--yes' || a === '-y') out.yes = true;
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
   }
   return out;
@@ -33,10 +34,27 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`ijfw-uninstall -- reverse IJFW install
-Usage: ijfw-uninstall [--dir <path>] [--purge] [--no-marketplace]
+Usage: ijfw-uninstall [--dir <path>] [--purge] [--no-marketplace] [--yes]
   --purge           also remove memory/ (destructive)
   --no-marketplace  skip ~/.claude/settings.json edits
+  --yes, -y         skip the confirmation prompt (for scripted use)
 `);
+}
+
+// Interactive yes/no confirmation. Resolves true only on an explicit "y"/"yes".
+// Used to guard the destructive uninstall (`ijfw off` / `ijfw uninstall`).
+function confirm(question) {
+  return new Promise((res) => {
+    process.stdout.write(question);
+    const onData = (chunk) => {
+      process.stdin.removeListener('data', onData);
+      try { process.stdin.pause(); } catch {}
+      const answer = String(chunk).trim().toLowerCase();
+      res(answer === 'y' || answer === 'yes');
+    };
+    try { process.stdin.resume(); } catch {}
+    process.stdin.once('data', onData);
+  });
 }
 
 const HOME = homedir();
@@ -310,7 +328,23 @@ async function main() {
   const target = resolveTarget(opts);
 
   console.log('This will remove IJFW configuration. Your memory at ~/.ijfw/memory/ will be preserved. Delete manually if desired.');
+  if (opts.purge) {
+    console.log('WARNING: --purge will also DELETE ~/.ijfw/memory/ (project memory cannot be recovered).');
+  }
   console.log('');
+
+  // Confirmation gate (R4-MED): `ijfw off` / `ijfw uninstall` are destructive.
+  // Prompt for explicit confirmation unless --yes/-y is passed. When stdin is
+  // not a TTY (scripted / piped use) the prompt would hang, so we skip it but
+  // the warning above is always printed -- the user is never surprised.
+  if (!opts.yes && process.stdin.isTTY) {
+    const ok = await confirm('Proceed with IJFW uninstall? [y/N] ');
+    if (!ok) {
+      console.log('Uninstall cancelled. Nothing was changed.');
+      process.exit(0);
+    }
+    console.log('');
+  }
 
   if (!existsSync(target)) {
     console.log(`IJFW directory absent (${target}); platform cleanup only.`);

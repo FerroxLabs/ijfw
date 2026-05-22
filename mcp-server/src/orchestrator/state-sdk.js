@@ -11,13 +11,16 @@
  * straight off that contract.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * SCOPE BOUNDARY — T2 builds the verb core; three later tasks wrap it:
+ * SCOPE BOUNDARY — T2 built the verb core; three later tasks wrapped it.
+ * All three (T3/T4/T5) are now REALIZED — this section is kept as the design
+ * record, but the seams below are live, not stubs:
  *
- *   T3 (lock hierarchy)   — wraps `_withLocks()`. Today it is a pass-through;
- *                           T3 swaps in `withFsLock` acquisition in the §3
- *                           canonical acquire-order. Handlers already declare
- *                           the ordered lock-target list they touch, so T3
- *                           only has to make `_withLocks` honor it.
+ *   T3 (lock hierarchy)   — `_withLocks()` is NOT a pass-through. It acquires
+ *                           real filesystem locks via `withFsLock`, ordering
+ *                           each verb's declared lock-target list through
+ *                           `canonicalLockOrder` (the §3 canonical acquire
+ *                           order) to prevent deadlock, then runs `fn` while
+ *                           the locks are held and releases on completion.
  *   T4 (intent/commit)    — wraps `_journalBegin()` / `_journalCommit()`.
  *                           Today they are no-ops; T4 makes them write the
  *                           write-ahead `intent-journal.jsonl` records and
