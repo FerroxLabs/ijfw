@@ -181,26 +181,71 @@ test('DEFAULT_SPECIALISTS exposes archetype-keyed benches (book, content, resear
   }
 });
 
-test('book archetype bench contains story/continuity/prose specialists, no accessibility-eng', () => {
+// v1.5.1 W1.5.D: bench ids now align with T26 domain-templates (the canonical
+// agent-id source per ADR .planning/1.5.1/decisions/W1.5-canonical-source.md).
+// Phantom ids (story-architect/continuity-editor/prose-stylist/copy-editor/
+// data-analyst) were deleted because no claude/agents/<id>.md shipped for them.
+test('book archetype bench contains T26 narrative specialists, no accessibility-eng', () => {
   const ids = DEFAULT_SPECIALISTS.book.map((s) => s.id);
-  assert.ok(ids.includes('story-architect'), 'book bench should include story-architect');
-  assert.ok(ids.includes('continuity-editor'), 'book bench should include continuity-editor');
-  assert.ok(ids.includes('prose-stylist'), 'book bench should include prose-stylist');
+  assert.ok(ids.includes('narrative-continuity-checker'), 'book bench should include narrative-continuity-checker');
+  assert.ok(ids.includes('line-editor'), 'book bench should include line-editor');
+  assert.ok(ids.includes('lore-keeper'), 'book bench should include lore-keeper');
   assert.ok(!ids.includes('accessibility-eng'), 'book bench should NOT include accessibility-eng');
   assert.ok(!ids.includes('release-eng'), 'book bench should NOT include release-eng');
 });
 
-test('research archetype bench includes research-lead + data-analyst', () => {
+test('research archetype bench includes research-lead + method-reviewer', () => {
   const ids = DEFAULT_SPECIALISTS.research.map((s) => s.id);
   assert.ok(ids.includes('research-lead'));
-  assert.ok(ids.includes('data-analyst'));
+  assert.ok(ids.includes('method-reviewer'));
+});
+
+test('design archetype bench maps to DESIGN_BENCH (not CONTENT_BENCH)', () => {
+  const ids = DEFAULT_SPECIALISTS.design.map((s) => s.id);
+  assert.ok(ids.includes('design-critic'), 'design bench should include design-critic');
+  assert.ok(ids.includes('accessibility-reviewer'), 'design bench should include accessibility-reviewer');
+  assert.ok(!ids.includes('campaign-strategist'), 'design bench should NOT be CONTENT_BENCH');
+});
+
+test('business archetype bench maps to BUSINESS_BENCH (not SOFTWARE_BENCH)', () => {
+  const ids = DEFAULT_SPECIALISTS.business.map((s) => s.id);
+  assert.ok(ids.includes('strategy-lead'), 'business bench should include strategy-lead');
+  assert.ok(ids.includes('risk-reviewer'), 'business bench should include risk-reviewer');
+  assert.ok(!ids.includes('reviewer'), 'business bench should NOT be SOFTWARE_BENCH');
+});
+
+test('mixed archetype bench maps to MIXED_BENCH (cross-domain sampler)', () => {
+  const ids = DEFAULT_SPECIALISTS.mixed.map((s) => s.id);
+  assert.ok(ids.includes('reviewer'), 'mixed bench should include base reviewer');
+  assert.ok(ids.includes('design-critic'), 'mixed bench should include design-critic');
+  assert.ok(ids.includes('campaign-strategist'), 'mixed bench should include campaign-strategist');
 });
 
 test('specialistsFor archetype wins over language', () => {
   const bench = specialistsFor({ archetype: 'book', language: 'node' });
   const ids = bench.map((s) => s.id);
-  assert.ok(ids.includes('story-architect'));
+  assert.ok(ids.includes('narrative-continuity-checker'));
   assert.ok(!ids.includes('reviewer'), 'book bench should not inherit software reviewer');
+});
+
+// v1.5.1 W1.5.D: every bench specialist's agent_type must resolve to a real
+// claude/agents/<id>.md file (or be a Claude builtin like code-reviewer).
+// This is the regression test that prevents phantom ids from shipping again.
+test('every bench agent_type resolves to an on-disk agent file (or Claude builtin)', async () => {
+  const { existsSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, resolve } = await import('node:path');
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const AGENTS_DIR = resolve(HERE, '..', 'claude', 'agents');
+  // Claude/Anthropic builtins shipped with the host CLI — no markdown in this repo.
+  const BUILTINS = new Set(['code-reviewer', 'silent-failure-hunter', 'pr-test-analyzer', 'type-design-analyzer']);
+  for (const [archetype, bench] of Object.entries(DEFAULT_SPECIALISTS)) {
+    for (const s of bench) {
+      if (BUILTINS.has(s.agent_type)) continue;
+      const p = resolve(AGENTS_DIR, `${s.agent_type}.md`);
+      assert.ok(existsSync(p), `phantom agent in ${archetype} bench: ${s.agent_type} (expected ${p})`);
+    }
+  }
 });
 
 test('specialistsFor falls back to language then other', () => {

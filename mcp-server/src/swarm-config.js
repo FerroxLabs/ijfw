@@ -53,20 +53,24 @@ const V150_SPECIALISTS = [
   RELEASE_ENG, DOC_WRITER, ACCESSIBILITY_ENG,
 ];
 
-// F-FUN-3 (audit-MED-teams-#6): non-software domain specialists. Mirrors
-// the fixture role definitions so we don't duplicate prompts; the IDs here
-// are the *bench* names the swarm config tracks. Selecting a non-software
-// archetype yields a bench tailored to the domain (book gets story-architect,
-// not accessibility-eng). Software remains the default to preserve back-compat.
-const STORY_ARCHITECT     = { id: 'story-architect',    role: 'Plot + structure architecture', agent_type: 'ijfw-story-architect',    since: '1.5.0' };
-const CONTINUITY_EDITOR   = { id: 'continuity-editor',  role: 'Timeline + voice continuity',   agent_type: 'ijfw-continuity-editor',  since: '1.5.0' };
-const PROSE_STYLIST       = { id: 'prose-stylist',      role: 'Sentence-level voice + pacing', agent_type: 'ijfw-prose-stylist',      since: '1.5.0' };
-
-const CAMPAIGN_STRATEGIST = { id: 'campaign-strategist', role: 'Audience + funnel strategy',   agent_type: 'ijfw-campaign-strategist', since: '1.5.0' };
-const COPY_EDITOR         = { id: 'copy-editor',         role: 'Channel-aware copy editing',   agent_type: 'ijfw-copy-editor',         since: '1.5.0' };
-
-const RESEARCH_LEAD       = { id: 'research-lead',       role: 'Methodology + literature review', agent_type: 'ijfw-research-lead',    since: '1.5.0' };
-const DATA_ANALYST        = { id: 'data-analyst',        role: 'Quantitative analysis',         agent_type: 'ijfw-data-analyst',        since: '1.5.0' };
+// v1.5.1 W1.5.D — non-software domain specialists, aligned with T26
+// domain-templates (the canonical agent-id spec per ADR
+// .planning/1.5.1/decisions/W1.5-canonical-source.md). Every `agent_type`
+// here MUST resolve to a real `claude/agents/<id>.md` file on disk; the 5
+// phantom constants that previously lived here (STORY_ARCHITECT,
+// CONTINUITY_EDITOR, PROSE_STYLIST, COPY_EDITOR, DATA_ANALYST) were deleted
+// because no markdown shipped for them.
+const NARRATIVE_CONTINUITY_CHECKER = { id: 'narrative-continuity-checker', role: 'Timeline + voice continuity',     agent_type: 'ijfw-narrative-continuity-checker', since: '1.5.0' };
+const LINE_EDITOR                  = { id: 'line-editor',                  role: 'Sentence-level voice + pacing',   agent_type: 'ijfw-line-editor',                  since: '1.5.0' };
+const LORE_KEEPER                  = { id: 'lore-keeper',                  role: 'World/canon consistency',         agent_type: 'ijfw-lore-keeper',                  since: '1.5.0' };
+const CAMPAIGN_STRATEGIST          = { id: 'campaign-strategist',          role: 'Audience + funnel strategy',      agent_type: 'ijfw-campaign-strategist',          since: '1.5.0' };
+const COPY_REVIEWER                = { id: 'copy-reviewer',                role: 'Channel-aware copy editing',      agent_type: 'ijfw-copy-reviewer',                since: '1.5.0' };
+const DESIGN_CRITIC                = { id: 'design-critic',                role: 'Usability + design heuristics',   agent_type: 'ijfw-design-critic',                since: '1.5.0' };
+const ACCESSIBILITY_REVIEWER       = { id: 'accessibility-reviewer',       role: 'WCAG + a11y audit',               agent_type: 'ijfw-accessibility-reviewer',       since: '1.5.0' };
+const RESEARCH_LEAD                = { id: 'research-lead',                role: 'Methodology + literature review', agent_type: 'ijfw-research-lead',                since: '1.5.1' };
+const METHOD_REVIEWER              = { id: 'method-reviewer',              role: 'Method + bias audit',             agent_type: 'ijfw-method-reviewer',              since: '1.5.1' };
+const STRATEGY_LEAD                = { id: 'strategy-lead',                role: 'Strategy + decision quality',     agent_type: 'ijfw-strategy-lead',                since: '1.5.1' };
+const RISK_REVIEWER                = { id: 'risk-reviewer',                role: 'Feasibility + downside audit',    agent_type: 'ijfw-risk-reviewer',                since: '1.5.1' };
 
 // Per-archetype bench definitions. Keys here track the project_archetypes
 // vocabulary used by team/generator.js so a brief-detected archetype maps
@@ -76,9 +80,12 @@ const TYPED_BENCH    = [...BASE, TESTS_SPECIALIST, TYPES_SPECIALIST, DOC_VERIFIE
 const GO_RUST_BENCH  = [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS];
 const OTHER_BENCH    = [...BASE, DOC_VERIFIER, PATTERN_MAPPER, SECURITY_AUDITOR, INTEGRATION_CHECKER, NYQUIST_AUDITOR, ...V150_SPECIALISTS];
 
-const BOOK_BENCH      = [STORY_ARCHITECT, CONTINUITY_EDITOR, PROSE_STYLIST, DOC_VERIFIER, NYQUIST_AUDITOR];
-const CONTENT_BENCH   = [CAMPAIGN_STRATEGIST, COPY_EDITOR, DOC_VERIFIER, NYQUIST_AUDITOR];
-const RESEARCH_BENCH  = [RESEARCH_LEAD, DATA_ANALYST, DOC_VERIFIER, NYQUIST_AUDITOR];
+const BOOK_BENCH     = [NARRATIVE_CONTINUITY_CHECKER, LINE_EDITOR, LORE_KEEPER, DOC_VERIFIER, NYQUIST_AUDITOR];
+const CONTENT_BENCH  = [CAMPAIGN_STRATEGIST, COPY_REVIEWER, DOC_VERIFIER, NYQUIST_AUDITOR];
+const DESIGN_BENCH   = [DESIGN_CRITIC, ACCESSIBILITY_REVIEWER, DOC_VERIFIER, NYQUIST_AUDITOR];
+const RESEARCH_BENCH = [RESEARCH_LEAD, METHOD_REVIEWER, DOC_VERIFIER, NYQUIST_AUDITOR];
+const BUSINESS_BENCH = [STRATEGY_LEAD, RISK_REVIEWER, DOC_VERIFIER, NYQUIST_AUDITOR];
+const MIXED_BENCH    = [...BASE, DOC_VERIFIER, DESIGN_CRITIC, CAMPAIGN_STRATEGIST, NYQUIST_AUDITOR];
 
 export const DEFAULT_SPECIALISTS = {
   // Language-keyed defaults (preserved for back-compat with v1.4.x callers
@@ -89,16 +96,17 @@ export const DEFAULT_SPECIALISTS = {
   go:     GO_RUST_BENCH,
   rust:   GO_RUST_BENCH,
   other:  OTHER_BENCH,
-  // Archetype-keyed defaults (new in v1.5.0 audit-MED-teams-#6) -- selected
-  // when the caller hands in a project archetype from the team detector.
+  // Archetype-keyed defaults (new in v1.5.0 audit-MED-teams-#6; bench
+  // mis-mappings fixed in v1.5.1 W1.5.D so every agent_type resolves to a
+  // real claude/agents/<id>.md file on disk).
   software:  SOFTWARE_BENCH,
   book:      BOOK_BENCH,
   content:   CONTENT_BENCH,
   marketing: CONTENT_BENCH,
   research:  RESEARCH_BENCH,
-  design:    CONTENT_BENCH,
-  business:  SOFTWARE_BENCH,
-  mixed:     SOFTWARE_BENCH,
+  design:    DESIGN_BENCH,       // v1.5.1 W1.5.D: was CONTENT_BENCH (mis-mapped)
+  business:  BUSINESS_BENCH,     // v1.5.1 W1.5.D: was SOFTWARE_BENCH (mis-mapped)
+  mixed:     MIXED_BENCH,        // v1.5.1 W1.5.D: was SOFTWARE_BENCH (mis-mapped)
 };
 
 // F-FUN-3: helper -- pick the right bench for a (language, archetype) pair.
