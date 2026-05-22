@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, copyFileSync, readdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import {
+  ORCHESTRATOR_COMMAND_NAMES,
+  primaryCommands,
+  commandsByTier,
+} from './command-registry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -48,71 +53,52 @@ function openBrowser(url) {
   return r.status ?? 0;
 }
 
-const ORCHESTRATOR_COMMANDS = new Set([
-  'update',
-  'statusline',
-  'config',
-  'insight',
-  'blackboard',
-  'team',
-  'swarm',
-  'codex',
-  'recover',
-  'memory',
-  'cross',
-  'status',
-  'demo',
-  'import',
-  'receipt',
-  '--purge-receipts',
-  'cross-audit',
-  'cross-critique',
-  'cross-research',
-  'override',
-  'extension',
-  'off',
-  'ui-review',
-]);
+// v1.5.1 W3.A — ORCHESTRATOR_COMMAND_NAMES is the registry-derived Set
+// imported from ./command-registry.js (the SINGLE SOURCE OF TRUTH for
+// every name the orchestrator dispatches). The literal Set that used
+// to live here drifted from the dispatch chain (v1.5.0 `off` bug).
 
 function printHelp() {
-  console.log(`
-ijfw -- the AI efficiency layer
-
-USAGE
-  ijfw <command> [options]
-
-GET STARTED
-  install     Install IJFW into your AI coding agents
-  uninstall   Remove IJFW (alias: off)
-  doctor      Diagnose installation health
-  update      Upgrade to the latest IJFW
-
-USE IT
-  demo        30-second Trident tour against a sample file
-  cross       Run Trident audit/research/critique on any file
-  dashboard   Start the local observability dashboard
-  preflight   Run 11-gate quality pipeline before publishing
-
-EXPLORE
-  help        Open the full IJFW guide
-  commands    Show every command (advanced + coordination)
-  --version   Show version
-`);
+  // Registry-driven: groups + ordering come from command-registry.js
+  // (the SINGLE SOURCE OF TRUTH per W3.A). To add a primary command,
+  // append an entry there -- do NOT inline names here.
+  const grouped = { 'GET STARTED': [], 'USE IT': [], 'EXPLORE': [] };
+  for (const e of primaryCommands()) {
+    if (grouped[e.helpGroup]) grouped[e.helpGroup].push(e);
+  }
+  let out = '\nijfw -- the AI efficiency layer\n\nUSAGE\n  ijfw <command> [options]\n';
+  for (const [group, entries] of Object.entries(grouped)) {
+    if (entries.length === 0) continue;
+    out += `\n${group}\n`;
+    for (const e of entries) {
+      // Display the most-recognizable form for the "version" entry, which
+      // is invoked as `--version` more often than `version`.
+      const displayName = e.name === 'version' ? '--version' : e.name;
+      const padded = displayName.padEnd(11);
+      // Suppress alias note if the description already mentions one (e.g.
+      // "Remove IJFW (alias: off)") to preserve v1.5.0 --help visual parity.
+      const descMentionsAlias = /\(alias:/i.test(e.description);
+      const aliasNote = e.aliases.length && e.name !== 'version' && !descMentionsAlias
+        ? ` (alias: ${e.aliases.join(', ')})`
+        : '';
+      out += `  ${padded} ${e.description}${aliasNote}\n`;
+    }
+  }
+  console.log(out);
 }
 
 function printCommands() {
-  console.log(`
-ijfw -- full command surface
-
-PRIMARY (shown in --help)
-  install · uninstall · doctor · update · demo · cross · dashboard · preflight · help
-
-COORDINATION (agents drive these; humans inspect)
-  status · receipt · recover · team · swarm · blackboard · memory · import · design
-
-PLUMBING (most users never need these)
-  statusline · config · codex · extension · override · insight · ui-review
-`);
+  // Registry-driven full command surface. Derived from command-registry.js
+  // commandsByTier() so order + membership stay in sync automatically.
+  const t = commandsByTier();
+  let out = '\nijfw -- full command surface\n';
+  out += '\nPRIMARY (shown in --help)\n';
+  out += '  ' + t.primary.map(e => e.name).join(' · ') + '\n';
+  out += '\nCOORDINATION (agents drive these; humans inspect)\n';
+  out += '  ' + t.coordination.map(e => e.name).join(' · ') + '\n';
+  out += '\nPLUMBING (most users never need these)\n';
+  out += '  ' + t.plumbing.map(e => e.name).join(' · ') + '\n';
+  console.log(out);
 }
 
 function doctorCheck(cmd, args) {
@@ -177,10 +163,22 @@ async function main() {
     process.exit(0);
   }
 
+  // v1.5.1 W3.A.3 — `off` is an alias of `uninstall`, which is owner: installer-direct.
+  // Special-case it BEFORE the delegation gate so it dispatches inline to the
+  // installer-direct uninstall path. Closes the v1.5.0 off-bug.
+  if (sub === 'off') {
+    const uninstallBin = resolve(__dirname, '..', 'dist', 'uninstall.js');
+    const r = spawnSync('node', [uninstallBin, ...argv.slice(3)], { stdio: 'inherit' });
+    process.exit(r.status ?? 1);
+  }
+
   // 1.1.6: terminal-side commands -- delegate to cross-orchestrator-cli.js
   // when the repo is present (post-install). For naked npx invocations
   // (no repo), print a helpful pointer instead of exploding.
-  if (ORCHESTRATOR_COMMANDS.has(sub)) {
+  // v1.5.1 W3.A — membership set is derived from command-registry.js
+  // (ORCHESTRATOR_COMMAND_NAMES). Adding a new orchestrator command anywhere
+  // requires only adding it to the registry.
+  if (ORCHESTRATOR_COMMAND_NAMES.has(sub)) {
     if (delegateToCli(argv.slice(2))) return;
     console.error(`'ijfw ${sub}' requires a completed IJFW install. Run: ijfw install`);
     process.exit(1);
