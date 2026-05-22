@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -531,5 +532,133 @@ test('subagent.post-done: passing self-check returns verified shape', async () =
     } else {
       assert.equal(r.refused, true);
     }
+  } finally { cleanup(); }
+});
+
+// v1.5.1 cleanup C1 — the `subagent.post-done` verb is the LIVE production
+// caller of recovery/truncation.js's detectTruncation classifier. When the
+// caller supplies an `events`/`journal` stream the verb surfaces `truncation`.
+test('subagent.post-done: classifies truncation when events stream is supplied (C1)', async () => {
+  const { ctx, cleanup } = mkProject();
+  try {
+    // An event stream whose last event is NOT the terminal verb → truncated.
+    const r = await query('subagent.post-done', {
+      subagentId: 'W12-A1',
+      reportText: 'Completed the task.',
+      events: [
+        { verb: 'subagent.checkpoint', outcome: 'ok' },
+        { verb: 'wave.record-task', outcome: 'ok' },
+      ],
+    }, ctx);
+    assert.ok(r.truncation, 'truncation annotation present when events supplied');
+    assert.equal(r.truncation.truncated, 'missing-terminal');
+    assert.equal(typeof r.truncation.reason, 'string');
+  } finally { cleanup(); }
+});
+
+test('subagent.post-done: clean event stream → truncated:false (C1)', async () => {
+  const { ctx, cleanup } = mkProject();
+  try {
+    const r = await query('subagent.post-done', {
+      subagentId: 'W12-A1',
+      reportText: 'Completed the task.',
+      events: [{ verb: 'subagent.post-done', outcome: 'ok' }],
+      journal: [],
+    }, ctx);
+    assert.ok(r.truncation);
+    assert.equal(r.truncation.truncated, false);
+  } finally { cleanup(); }
+});
+
+test('subagent.post-done: no events → no truncation annotation (back-compat)', async () => {
+  const { ctx, cleanup } = mkProject();
+  try {
+    const r = await query('subagent.post-done', {
+      subagentId: 'W12-A1',
+      reportText: 'Completed the task.',
+    }, ctx);
+    assert.equal('truncation' in r, false, 'absent without events/journal payload');
+  } finally { cleanup(); }
+});
+
+// v1.5.1 cleanup C1 — the `subagent.dispatch` verb is the LIVE production
+// caller of lib/worktree-guards.js. On a non-git temp root the guards skip
+// (fail-open) so brief composition still proceeds.
+test('subagent.dispatch: surfaces worktreeGuard outcome (C1)', async () => {
+  const { ctx, cleanup } = mkProject();
+  try {
+    const r = await query(
+      'subagent.dispatch',
+      { subagentId: 'W12-A1', waveId: 'W12-A', brief: 'do the thing', isolation: 'worktree' },
+      ctx,
+    );
+    assert.equal(r.ok, true);
+    assert.ok(r.worktreeGuard, 'dispatch result carries a worktreeGuard field');
+    assert.equal(r.worktreeGuard.ok, true);
+    // mkProject() builds a non-git temp dir → guards skip rather than fail.
+    assert.equal(r.worktreeGuard.skipped, 'not-a-git-repo');
+  } finally { cleanup(); }
+});
+
+test('subagent.dispatch: shared isolation skips worktree guards (C1)', async () => {
+  const { ctx, cleanup } = mkProject();
+  try {
+    const r = await query(
+      'subagent.dispatch',
+      { subagentId: 'W12-A1', waveId: 'W12-A', brief: 'do the thing', isolation: 'shared' },
+      ctx,
+    );
+    assert.equal(r.ok, true);
+    assert.equal(r.worktreeGuard.skipped, 'shared-isolation');
+  } finally { cleanup(); }
+});
+
+test('subagent.dispatch: worktree guards run + pass on a real git repo (C1)', async () => {
+  const { root, ctx, cleanup } = mkProject();
+  try {
+    // Real git repo on a non-protected branch → all 3 S08 guards execute and
+    // pass. This exercises worktree-guards.js's live path (not the skip).
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 't@test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
+    execFileSync('git', ['checkout', '-q', '-b', 'wave/W12-A'], { cwd: root });
+    writeFileSync(join(root, 'a.txt'), 'x');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root });
+
+    const r = await query(
+      'subagent.dispatch',
+      { subagentId: 'W12-A1', waveId: 'W12-A', brief: 'do the thing', isolation: 'worktree' },
+      ctx,
+    );
+    assert.equal(r.ok, true);
+    assert.equal(r.worktreeGuard.ok, true, 'guards passed on non-protected branch');
+    assert.equal(r.worktreeGuard.skipped, undefined, 'guards ran (not skipped)');
+    assert.equal(r.worktreeGuard.branch, 'wave/W12-A');
+  } finally { cleanup(); }
+});
+
+test('subagent.dispatch: worktree guards flag a protected-ref dispatch (C1)', async () => {
+  const { root, ctx, cleanup } = mkProject();
+  try {
+    // HEAD on `main` → assertNotProtectedRef fails. Non-strict mode (default)
+    // surfaces the violation on the result rather than throwing.
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 't@test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
+    execFileSync('git', ['checkout', '-q', '-b', 'main'], { cwd: root });
+    writeFileSync(join(root, 'a.txt'), 'x');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root });
+
+    const r = await query(
+      'subagent.dispatch',
+      { subagentId: 'W12-A1', waveId: 'W12-A', brief: 'do the thing', isolation: 'worktree' },
+      ctx,
+    );
+    assert.equal(r.ok, true, 'brief composition still proceeds in non-strict mode');
+    assert.equal(r.worktreeGuard.ok, false);
+    assert.equal(r.worktreeGuard.violations.length, 1);
+    assert.match(r.worktreeGuard.violations[0], /protected-ref/);
   } finally { cleanup(); }
 });

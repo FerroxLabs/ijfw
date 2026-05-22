@@ -40,6 +40,7 @@ import { join, isAbsolute, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 
 import { writeAtomic, readSafe } from '../lib/atomic-io.js';
 import { rotateJsonlIfNeeded } from '../lib/jsonl-rotation.js';
@@ -58,6 +59,17 @@ import {
   appendUnderHeldLock as appendEventUnderHeldLock,
   resolveEventLogPath,
 } from './state-events.js';
+// v1.5.1 cleanup C1: S08 incident-driven worktree safety guards. Previously
+// orphan (only importer was the unwired runtime-loop.js). Wired here as
+// preconditions of the LIVE `subagent.dispatch` verb — the genuinely-reachable
+// worktree-isolated spawn path (ijfw_state MCP tool → query → subagent.dispatch).
+// worktree-guards.js has no state-sdk dependency, so a static import is safe.
+import {
+  captureSpawnToplevel,
+  assertPathWithinToplevel,
+  assertNoCwdDrift,
+  assertNotProtectedRef,
+} from '../lib/worktree-guards.js';
 
 // ---------------------------------------------------------------------------
 // Gate-function indirection (T15 — Model 4 testability seam)
@@ -704,6 +716,88 @@ function requireStr(value, field) {
 
 function nowIso() { return new Date().toISOString(); }
 
+/**
+ * v1.5.1 cleanup C1 — S08 worktree-guard preconditions for `subagent.dispatch`.
+ *
+ * Runs the three incident-driven guards (worktree-guards.js) against the
+ * project root a worktree-isolated subagent is about to be dispatched into:
+ *   #3099 — assertPathWithinToplevel  (abs-path / symlink escape)
+ *   #3097 — assertNoCwdDrift          (cwd drifted off the toplevel)
+ *   #2924 — assertNotProtectedRef     (HEAD on main/master/develop/…)
+ *
+ * Semantics — `subagent.dispatch` is a brief-COMPOSITION verb (it produces a
+ * deterministic dispatch brief; the real spawn happens platform-side). The
+ * guards are therefore PRECONDITIONS surfaced on the result, not a hard abort
+ * of brief composition:
+ *   - Project root IS a git repo  → all 3 guards run. A failure is reported on
+ *     `guard.violations[]` and `guard.ok=false`. With IJFW_WORKTREE_GUARD_STRICT=1
+ *     a violation throws (aborts the dispatch before `_withLocks`).
+ *   - Project root is NOT a git repo (or guards can't run) → `guard.ok` stays
+ *     true with `guard.skipped` set; brief composition proceeds. This keeps the
+ *     verb usable from non-git temp dirs (tests, scratch projects).
+ *
+ * Only `'worktree'` isolation is guarded — `'shared'` dispatch spawns no
+ * separate worktree so containment/drift/protected-ref don't apply.
+ *
+ * @param {string} projectRoot   absolute path the subagent dispatches into
+ * @param {'shared'|'worktree'} isolation
+ * @returns {{ok:boolean, skipped?:string, violations:string[], branch?:string}}
+ * @throws {Error} only when IJFW_WORKTREE_GUARD_STRICT=1 and a guard fails
+ */
+function runWorktreeGuards(projectRoot, isolation) {
+  if (isolation !== 'worktree') {
+    return { ok: true, skipped: 'shared-isolation', violations: [] };
+  }
+  // Quiet git-repo pre-check — captureSpawnToplevel would otherwise let git's
+  // own "fatal: not a git repository" hit our stderr on non-git roots (common
+  // in tests / scratch projects). Suppress git stderr here, then run the real
+  // guards only when we know we're inside a work tree.
+  try {
+    const probe = execFileSync(
+      'git', ['rev-parse', '--is-inside-work-tree'],
+      { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    if (probe !== 'true') {
+      return { ok: true, skipped: 'not-a-git-repo', violations: [] };
+    }
+  } catch {
+    // Not a git tree — nothing to contain. Brief composition still proceeds.
+    return { ok: true, skipped: 'not-a-git-repo', violations: [] };
+  }
+  let toplevel;
+  try {
+    toplevel = captureSpawnToplevel(projectRoot);
+  } catch {
+    return { ok: true, skipped: 'not-a-git-repo', violations: [] };
+  }
+  const violations = [];
+  let branch;
+  try {
+    assertPathWithinToplevel(projectRoot, toplevel);
+  } catch (e) {
+    violations.push(`path-escape: ${e.message}`);
+  }
+  try {
+    assertNoCwdDrift(toplevel, projectRoot);
+  } catch (e) {
+    violations.push(`cwd-drift: ${e.message}`);
+  }
+  try {
+    branch = assertNotProtectedRef(projectRoot);
+  } catch (e) {
+    violations.push(`protected-ref: ${e.message}`);
+  }
+  const ok = violations.length === 0;
+  if (!ok && process.env.IJFW_WORKTREE_GUARD_STRICT === '1') {
+    throw new Error(
+      `state-sdk: subagent.dispatch S08 worktree guard failed — ${violations.join('; ')}`,
+    );
+  }
+  return ok
+    ? { ok: true, violations: [], branch }
+    : { ok: false, violations };
+}
+
 // ---------------------------------------------------------------------------
 // VERB HANDLERS — one per contract §7 block. Signature: (payload, ctx, env).
 // `env` carries the per-invocation { verbId } so handlers can stamp records.
@@ -1000,6 +1094,13 @@ const handlers = {
     const isolation = payload?.isolation === 'shared' ? 'shared' : 'worktree';
     const role = typeof payload?.role === 'string' && payload.role.length > 0
       ? payload.role : null;
+    // v1.5.1 cleanup C1 — S08 worktree-guard preconditions. Runs the three
+    // incident-driven guards BEFORE the wave-state mutation when isolation is
+    // 'worktree'. This is the production caller worktree-guards.js was missing
+    // (its only prior importer was the unwired runtime-loop.js). With
+    // IJFW_WORKTREE_GUARD_STRICT=1 a guard violation throws here, aborting the
+    // dispatch before `_withLocks`; otherwise it is surfaced on the result.
+    const worktreeGuard = runWorktreeGuards(root, isolation);
     // Caller-supplied env passthrough (object: name → value). Coerce values to
     // strings (env vars are always strings) and drop nullish entries.
     const callerEnv = (payload?.env && typeof payload.env === 'object'
@@ -1078,6 +1179,11 @@ const handlers = {
         isolation,
         inheritedEnv,
         eventLogPath,
+        // v1.5.1 cleanup C1 — S08 guard outcome. `{ok:true}` when guards passed
+        // or were skipped (non-git root / shared isolation); `{ok:false,
+        // violations[]}` when a containment/drift/protected-ref hazard was
+        // detected (non-strict mode — the orchestrator should not spawn).
+        worktreeGuard,
       };
     }, env);
   },
@@ -1127,12 +1233,39 @@ const handlers = {
       process.stderr.write(`[state-sdk] WARN subagent.post-done gate execution-fail: ${e.message}\n`);
       return { ok: true, advisory: true, gate: 'post-done-self-check', reason: e.message };
     }
+    // v1.5.1 cleanup C1 — T20 truncation classification. When the caller hands
+    // us the subagent's `events` stream and/or intent `journal` on the payload,
+    // run `detectTruncation` so a truncated post-DONE is classified on the LIVE
+    // path (ijfw_state MCP tool → query → subagent.post-done). This is the
+    // production caller recovery/truncation.js was missing — its only prior
+    // importer was the unwired runtime-loop.js. Annotation-only: the classifier
+    // never throws and never alters the self-check verdict.
+    let truncation;
+    if (Array.isArray(payload?.events) || Array.isArray(payload?.journal)) {
+      try {
+        const { detectTruncation } = await import('../recovery/truncation.js');
+        const det = detectTruncation({
+          events: payload.events,
+          journal: payload.journal,
+          expectedTerminalVerb: payload.expectedTerminalVerb,
+        });
+        truncation = {
+          truncated: det.truncated,
+          reason: det.reason,
+        };
+      } catch (e) {
+        process.stderr.write(
+          `[state-sdk] WARN subagent.post-done truncation classify failed: ${e.message}\n`,
+        );
+      }
+    }
     if (selfCheck.verdict !== 'PASSED') {
       const reason = `self-check FAILED — ${selfCheck.files_missing.length} missing file(s), `
         + `${selfCheck.commits_missing.length} missing commit(s)`;
       if (!GATE_BYPASS) {
         return {
           ok: false, refused: true, gate: 'post-done-self-check', reason,
+          ...(truncation ? { truncation } : {}),
         };
       }
       // Bypass masks a would-be refusal — emit a loud WARN + advisory
@@ -1149,6 +1282,7 @@ const handlers = {
           claimedCommits: selfCheck.commits_claimed,
           verified: false,
         },
+        ...(truncation ? { truncation } : {}),
       };
     }
     return {
@@ -1158,6 +1292,7 @@ const handlers = {
         claimedCommits: selfCheck.commits_claimed,
         verified: selfCheck.verdict === 'PASSED',
       },
+      ...(truncation ? { truncation } : {}),
     };
   },
 
