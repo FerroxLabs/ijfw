@@ -1,8 +1,10 @@
-// ui-review-runner.js -- v1.5.0 wire-W1.D + W1.E.
+// ui-review-runner.js -- v1.5.0 wire-W1.D + W1.E (v1.5.1 W2.A: intake wired).
 //
-// Production wire-up for the 7 design libs (uispec-intake, uispec-drift,
+// Production wire-up for the 6 design libs (uispec-intake, uispec-drift,
 // a11y-contract, lighthouse-pillar, playwright-baseline, sketches-gc) plus
 // the 7-pillar visual audit declared in `claude/agents/ijfw-ui-auditor.md`.
+// All 6 are imported below; the import list IS the canonical wiring count —
+// docstring and imports must move together (v1.5.1 W2.A audit finding).
 //
 // Before W1.D these libraries shipped with isolated tests but ZERO callers.
 // The auditor agent's "wave dispatch one subagent per pillar" was declared
@@ -38,6 +40,7 @@ import {
 import { evaluateLighthouse, LIGHTHOUSE_THRESHOLDS } from './lighthouse-pillar.js';
 import { compareToBaseline } from './playwright-baseline.js';
 import { runSketchesGc } from './sketches-gc.js';
+import { fromImage, fromFigma } from './uispec-intake.js';
 
 // Pillar order is canonical -- the auditor agent spec enumerates them in
 // this exact sequence. The runner emits per-pillar sections in the same
@@ -374,13 +377,16 @@ const GRADERS = Object.freeze({
  * @param {object} [args.peerInputs]      { axe, lighthouse, playwright } -- optional pre-computed peer-tool outputs
  * @param {boolean} [args.write]          when true, write UI-REVIEW.md (default true)
  * @param {boolean} [args.gcSketches]     when true, run sketches-gc as the finalizer (default false)
+ * @param {string}  [args.fromImage]      when set, run uispec-intake.fromImage and attach the stub to the result + UI-REVIEW.md "Intake" section.
+ * @param {string}  [args.fromFigma]      when set, run uispec-intake.fromFigma (same surfacing as fromImage).
  * @returns {Promise<{
  *   topVerdict: 'PASS'|'FLAG'|'BLOCK',
  *   pillarVerdicts: Record<string, string>,
  *   verdicts: Array<{pillar, verdict, findings, startedAt, finishedAt}>,
  *   reviewPath: string|null,
  *   reviewMarkdown: string,
- *   parallel: { minStart: number, maxStart: number, minFinish: number, maxFinish: number, parallelism: number }
+ *   parallel: { minStart: number, maxStart: number, minFinish: number, maxFinish: number, parallelism: number },
+ *   intake: { kind: 'image'|'figma', ok: boolean, stub: object|null, error: string|null }|null
  * }>}
  */
 export async function runUiReview({
@@ -390,6 +396,8 @@ export async function runUiReview({
   peerInputs = {},
   write = true,
   gcSketches = false,
+  fromImage: fromImagePath = null,
+  fromFigma: fromFigmaUrl = null,
 } = {}) {
   if (typeof uiSpecPath !== 'string' || uiSpecPath.length === 0) {
     throw new TypeError('runUiReview: uiSpecPath is required');
@@ -409,6 +417,20 @@ export async function runUiReview({
   const rawSpec = readFileSync(uiSpecPath, 'utf8');
   const spec = parseUISpec(rawSpec);
   spec.__rawText = rawSpec;
+
+  // v1.5.1 W2.A: optional uispec-intake pre-fill. When the caller supplies
+  // --from-image or --from-figma we run the intake helper and surface the
+  // resulting stub on the review (rendered into UI-REVIEW.md and returned
+  // structurally). This does NOT mutate the parsed spec used for grading —
+  // intake is purely a pre-fill hint for the user's next UI-SPEC edit.
+  let intake = null;
+  if (fromImagePath) {
+    const res = fromImage(fromImagePath, { projectRoot });
+    intake = { kind: 'image', ok: res.ok, stub: res.stub, error: res.error };
+  } else if (fromFigmaUrl) {
+    const res = await fromFigma(fromFigmaUrl);
+    intake = { kind: 'figma', ok: res.ok, stub: res.stub, error: res.error };
+  }
 
   const files = walkSourceFiles(scopes, projectRoot);
 
@@ -475,6 +497,7 @@ export async function runUiReview({
     sourceScope: scopes,
     verdicts,
     topVerdict,
+    intake,
   });
 
   let reviewPath = null;
@@ -488,7 +511,7 @@ export async function runUiReview({
     try { runSketchesGc({ root: join(projectRoot, '.planning', 'sketches') }); } catch {}
   }
 
-  return { topVerdict, pillarVerdicts, verdicts, reviewPath, reviewMarkdown, parallel };
+  return { topVerdict, pillarVerdicts, verdicts, reviewPath, reviewMarkdown, parallel, intake };
 }
 
 function computeTopVerdict(verdicts) {
@@ -503,7 +526,7 @@ function computeTopVerdict(verdicts) {
   return top;
 }
 
-function renderReview({ uiSpecPath, sourceScope, verdicts, topVerdict }) {
+function renderReview({ uiSpecPath, sourceScope, verdicts, topVerdict, intake = null }) {
   const date = new Date().toISOString().slice(0, 10);
   const scopeStr = Array.isArray(sourceScope) ? sourceScope.join(',') : String(sourceScope);
   const lines = [
@@ -512,9 +535,27 @@ function renderReview({ uiSpecPath, sourceScope, verdicts, topVerdict }) {
     `**Spec:** ${uiSpecPath}  **Source scope:** ${scopeStr}`,
     `**Top-level verdict:** ${topVerdict}`,
     '',
-    '## Per-pillar verdicts',
-    '',
   ];
+  if (intake) {
+    lines.push('## Intake (uispec-intake)');
+    lines.push('');
+    lines.push(`- **Source kind:** ${intake.kind}`);
+    lines.push(`- **Status:** ${intake.ok ? 'ok' : 'error'}`);
+    if (intake.error) lines.push(`- **Error:** ${intake.error}`);
+    if (intake.stub && intake.stub.advisory) lines.push(`- **Advisory:** ${intake.stub.advisory}`);
+    if (intake.stub && intake.stub.source) {
+      const src = intake.stub.source;
+      if (src.path) lines.push(`- **Path:** ${src.path}`);
+      if (src.url) lines.push(`- **URL:** ${src.url}`);
+      if (src.bytes != null) lines.push(`- **Bytes:** ${src.bytes}`);
+      if (src.dimensions) lines.push(`- **Dimensions:** ${src.dimensions.width}x${src.dimensions.height}`);
+      if (src.fileKey) lines.push(`- **Figma file key:** ${src.fileKey}`);
+      if (src.name) lines.push(`- **Figma file name:** ${src.name}`);
+    }
+    lines.push('');
+  }
+  lines.push('## Per-pillar verdicts');
+  lines.push('');
   for (const v of verdicts) {
     const title = PILLAR_TITLES[v.pillar] || v.pillar;
     lines.push(`### ${title} — ${v.verdict}`);
