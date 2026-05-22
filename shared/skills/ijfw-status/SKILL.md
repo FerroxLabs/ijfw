@@ -19,7 +19,7 @@ Read `.ijfw/config.json` if present. Report current mode: Quick / Deep / default
 Check `.ijfw/.prompt-check-state` for `"fired": true`. Report: "Prompt sharpener active" or "Prompt sharpener standing by".
 
 ## 4. MCP Server
-Call `ijfw_memory_status`. Report its output as a single line. If the tool is unreachable, report "Memory server standing by -- run `claude mcp add` to connect".
+Call `ijfw_metrics`. Report its output as a single line. If the tool is unreachable, report "Memory server standing by -- run `claude mcp add` to connect".
 
 ## 5. Last Handoff
 Read `.ijfw/memory/` for the most recent `HANDOFF*.md` or `handoff*.md`. Extract the date and first heading. Report as: "Last session: <date> -- <heading>". If none, "No handoff yet -- first session captures automatically".

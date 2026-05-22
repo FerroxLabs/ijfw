@@ -1848,32 +1848,6 @@ function handleMetrics({ period = '7d', metric = 'tokens' } = {}) {
   return { text: out.join('\n') };
 }
 
-function handleStatus() {
-  const sessionCount = getSessionCount();
-  const decisionCount = getDecisionCount();
-  const hasKnowledge = existsSync(join(MEMORY_DIR, 'knowledge.md'));
-  const hasHandoff = existsSync(join(MEMORY_DIR, 'handoff.md'));
-  const hasGlobal = readGlobalKnowledge().trim().length > 0;
-
-  const parts = [];
-  if (hasKnowledge) {
-    const kb = readKnowledgeBase();
-    const kbLines = kb.split('\n').filter(l => l.trim().startsWith('**')).length;
-    parts.push(`Knowledge: ${kbLines} entries`);
-  }
-  if (sessionCount > 0 || decisionCount > 0) {
-    parts.push(`History: ${sessionCount} sessions, ${decisionCount} decisions`);
-  }
-  if (hasHandoff) {
-    const handoff = readHandoff();
-    const statusLine = handoff.split('\n').find(l => l.trim().length > 0 && !l.startsWith('<!--') && !l.startsWith('#'));
-    if (statusLine) parts.push(`Last: ${statusLine.trim().substring(0, 150)}`);
-  }
-  if (hasGlobal) parts.push('Project preferences loaded');
-
-  return { text: parts.join('\n') || 'Fresh project -- no memory yet.' };
-}
-
 // --- MCP Protocol Handler (JSON-RPC 2.0 over stdio) ---
 
 function createResponse(id, result) {
@@ -2038,9 +2012,6 @@ function handleMessage(msg) {
             result = await handleSearch(searchArgs);
             break;
           }
-          case 'ijfw_memory_status':
-            result = handleStatus();
-            break;
           case 'ijfw_memory_prelude':
             result = await handlePrelude(args || {});
             break;

@@ -10,7 +10,7 @@ Run each check silently, then emit a single positive-framed report. Never say "f
 ## Checks (run in order)
 
 ### 1. MCP Server
-Call `ijfw_memory_status`. If it responds: "Memory server active". If unreachable: "Memory server ready to connect -- run `claude mcp add ijfw-memory node /path/to/mcp-server/src/index.js`".
+Call `ijfw_metrics`. If it responds: "Memory server active". If unreachable: "Memory server ready to connect -- run `claude mcp add ijfw-memory node /path/to/mcp-server/src/index.js`".
 
 ### 2. Memory Directory
 Check `.ijfw/memory/` exists and is writable (`test -w .ijfw/memory`). If writable: "Memory directory writable". If missing: "Memory directory ready to create -- first memory write will initialize it".

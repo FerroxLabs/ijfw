@@ -5,7 +5,7 @@ description: "Audit and clean project memory files. Trigger: 'memory audit', 'cl
 
 ## Execution
 
-1. Call `ijfw_memory_status` to get counts and last-update timestamps for all tiers.
+1. Call `ijfw_metrics` to get counts and last-update timestamps for all tiers.
 
 2. Scan `.ijfw/memory/` for all `.md` files. For each, note:
    - File name, size (lines), last modified date.

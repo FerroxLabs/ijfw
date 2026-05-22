@@ -8,7 +8,7 @@ description: "Surface relevant project memory at session start or on demand. Tri
 1. Call `ijfw_memory_recall` with the current task or goal as the query.
    If no specific query, use the last user message or the project name.
 
-2. Also call `ijfw_memory_status` to get tier sizes and last-update timestamps.
+2. Also call `ijfw_metrics` to get tier sizes and last-update timestamps.
 
 3. Present findings grouped by tier:
 
