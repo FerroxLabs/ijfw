@@ -69,6 +69,13 @@ import {
   initialDesignMarkdown,
   loadDesignContext,
 } from './design-intelligence.js';
+// v1.5.1 W3.A.4 — registry-driven usage + alias help.
+// SINGLE SOURCE OF TRUTH lives at installer/src/command-registry.js;
+// import sibling-package style, matching extension-installer.js precedent.
+import {
+  COMMAND_REGISTRY,
+  commandsByTier,
+} from '../../installer/src/command-registry.js';
 
 // ---------------------------------------------------------------------------
 // Auditor error translator (1.2.5)
@@ -449,8 +456,15 @@ function parseArgsInner(args) {
     return { cmd: 'codex', sub: args[1] || 'doctor' };
   }
 
-  if (args[0] === 'memory' && args[1] === 'checkpoint') {
-    return { cmd: 'memory-checkpoint', label: args[2] || 'manual' };
+  if (args[0] === 'memory') {
+    // `ijfw memory` / `ijfw memory --help` / `ijfw memory -h` → namespace help
+    if (args.length === 1 || args[1] === '--help' || args[1] === '-h') {
+      return { cmd: 'memory-help' };
+    }
+    if (args[1] === 'checkpoint') {
+      return { cmd: 'memory-checkpoint', label: args[2] || 'manual' };
+    }
+    return { cmd: 'memory-unknown', sub: args[1] };
   }
 
   if (args[0] === 'recover') {
@@ -515,83 +529,33 @@ function parseArgsInner(args) {
 // ---------------------------------------------------------------------------
 
 function printUsage() {
+  // v1.5.1 W1.D+E: orchestrator no longer ships its own usage block.
+  // Single source of truth is the installer side (`ijfw --help` for the
+  // primary user-facing surface, `ijfw commands` for the full verb list).
+  // The previous block listed stale entries (e.g. `ijfw memory store/recall`)
+  // that never existed. Keep this as a no-op for any historical callers that
+  // still reach `printUsage()` directly; unknown-command path now prints a
+  // clean pointer instead of dumping a wall of (possibly wrong) help.
+}
+
+function printMemoryHelp() {
   console.log(`
-ijfw -- It Just Fucking Works CLI
-Fire 2-4 AIs at any target. Receipts logged. Cache hits tracked. Memory follows you.
+ijfw memory -- project memory namespace
 
 Usage:
-  ijfw install
-  ijfw uninstall
-  ijfw preflight
-  ijfw dashboard [start|stop|status]
-  ijfw design [start|open|status|stop|push|clear|init|plan|audit|critique|polish|normalize|bolder|quieter|handoff]
-  ijfw blackboard [init|status|claim|release|note|handoff]
-  ijfw team [init|status]
-  ijfw swarm [plan|prepare|tasks|prompt|start|complete|block|ready|status]
-  ijfw swarm worktree [create|list|integrate|cleanup]
-  ijfw codex [doctor|sync-agents]
-  ijfw memory checkpoint <label>
-  ijfw recover [status|latest]
-  ijfw cross <mode> <target> [options]
-  ijfw cross project-audit <rule-file> [--dry-run]
-  ijfw import <tool> [--all] [--dry-run] [--force] [--path <p>]
-  ijfw status
-  ijfw doctor
-  ijfw update
-  ijfw receipt last
-  ijfw --purge-receipts
-  ijfw --help
+  ijfw memory checkpoint <label>   Snapshot current swarm/memory state under <label>.
+                                   <label> defaults to "manual" if omitted.
 
-Commands:
-  install           Install IJFW into your AI coding agents.
-  uninstall         Remove IJFW and revert AI-agent configs. Same as: ijfw off
-  preflight         Run the 11-gate quality pipeline (blocking + advisory).
-  dashboard         Control the dashboard server (start, stop, status).
-  design            Control the live visual design companion.
-  blackboard        Coordinate project-local swarm state and artifact claims.
-  team              Assemble project agents, charter, and workflow manifest.
-  swarm             Plan artifact-aware parallel work from the team manifest.
-  recover           Show the latest checkpoint and next recovery step.
-  demo              30-second live tour of the Trident (fires real auditors).
-  cross             Fire external auditors at a target. Try: ijfw cross audit README.md
-  import            Pull memory in from another tool. Try: ijfw import claude-mem --all
-  status            Show recent cross-audit activity. Try: ijfw status
-  doctor            Probe which CLIs and API keys are reachable. Try: ijfw doctor
-  update            Pull latest IJFW + reinstall merge-safely. Try: ijfw update
-  update --check    Non-invasive check. Exits 0 always; prints "update-available: <ver>" when an update exists (grep-safe).
-  receipt last      Print a redacted, shareable block from the last Trident run.
-  --purge-receipts  Clear the cross-runs receipt log. Try: ijfw --purge-receipts
-
-Modes (for ijfw cross):
-  audit           Adversarial review of a file, module, or path
-  research        Multi-source research on a topic
-  critique        Structured counter-argument generation
-  project-audit   Run the same audit across every registered IJFW project
-                  Usage: ijfw cross project-audit <rule-file> [--dry-run]
-
-Options for ijfw cross:
-  --with <id>   Force a specific auditor (comma-separated for multiple)
-  --confirm     Prompt for confirmation before firing
-  --expand      Include extended swarm when available
-
-Global flags:
-  --json    Emit JSON instead of human output. status and doctor auto-JSON
-            on non-TTY (gh-CLI convention); version stays one-line on pipe
-            and only JSON-ifies with explicit --json. Other commands ignore.
-
-Environment:
-  IJFW_AUDIT_BUDGET_USD   Session spend cap (default $2.00). First call is always
-                          allowed (no cap). Cap enforced from the 2nd call on.
-
-Examples:
-  ijfw demo
-  ijfw cross audit README.md
-  ijfw cross research "vector search approaches"
-  ijfw cross critique HEAD~3..HEAD
-  ijfw cross audit CLAUDE.md --with codex,gemini
-  ijfw status
-  ijfw doctor
+Related:
+  ijfw recover [status|latest]     Inspect checkpoints and recovery state.
+  ijfw --help                      Top-level user-facing commands.
+  ijfw commands                    Full command surface (all verbs).
 `.trim());
+}
+
+function printUnknownCommand(raw) {
+  console.error(`Unknown command: ${raw}`);
+  console.error('Run `ijfw --help` for the user-facing command list, or `ijfw commands` for the full surface.');
 }
 
 function cmdCommandAlias(alias) {
@@ -2353,8 +2317,23 @@ if (isMainModule) {
   }
 
   if (parsed.cmd === 'help') {
-    printUsage();
+    // v1.5.1 W1.D+E: orchestrator-side help is handled by the installer
+    // (`ijfw --help` for the primary surface, `ijfw commands` for full).
+    // Print a pointer instead of the old stale Usage block.
+    console.log('Run `ijfw --help` for the user-facing command list, or `ijfw commands` for the full surface.');
     process.exit(0);
+  }
+
+  if (parsed.cmd === 'memory-help') {
+    printMemoryHelp();
+    process.exit(0);
+  }
+
+  if (parsed.cmd === 'memory-unknown') {
+    console.error(`Unknown memory subcommand: ${parsed.sub}`);
+    console.error('');
+    printMemoryHelp();
+    process.exit(1);
   }
 
   if (parsed.cmd === 'status') {
@@ -2414,8 +2393,8 @@ if (isMainModule) {
   } else if (parsed.cmd === 'recover') {
     cmdRecover(parsed.sub);
   } else {
-    console.error(`Unknown command: ${parsed.raw}`);
-    printUsage();
+    // v1.5.1 W1.D+E: clean unknown-command message; no stale usage dump.
+    printUnknownCommand(parsed.raw);
     process.exit(1);
   }
 }
