@@ -11,11 +11,21 @@ export async function run(ctx) {
   const t0 = Date.now();
   const installerDir = join(ctx.repoRoot, 'installer');
 
+  // Strip inherited npm_* env vars. When this gate runs inside an outer
+  // npm publish (via the prepublishOnly hook), npm_config_dry_run and the
+  // other npm_config_* / npm_lifecycle_* vars leak into the nested npm
+  // pack/install -- a dry-run pack writes NO tarball, so the follow-up
+  // install hits ENOENT. Run every nested npm with a clean env.
+  const cleanEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith('npm_')),
+  );
+
   // 1. Build the package first
   const build = spawnSync('npm', ['run', 'build'], {
     encoding: 'utf8',
     cwd: installerDir,
     timeout: 60_000,
+    env: cleanEnv,
     shell: process.platform === 'win32',
   });
   if (build.status !== 0) {
@@ -28,11 +38,17 @@ export async function run(ctx) {
     };
   }
 
-  // 2. npm pack
-  const pack = spawnSync('npm', ['pack', '--silent'], {
+  // 2. npm pack -- into a dedicated tmp dir, NOT installerDir. Packing into
+  // installerDir collides with `npm publish`'s own tarball when this gate
+  // runs inside the prepublishOnly hook: the finally-block rmSync deletes
+  // the very ijfw-install-<v>.tgz npm publish is mid-upload, producing a
+  // "tarball corrupted / ENOENT" abort. --pack-destination isolates it.
+  const packDir = mkdtempSync(join(tmpdir(), 'ijfw-packsmoke-tgz-'));
+  const pack = spawnSync('npm', ['pack', '--silent', '--pack-destination', packDir], {
     encoding: 'utf8',
     cwd: installerDir,
     timeout: 30_000,
+    env: cleanEnv,
     shell: process.platform === 'win32',
   });
   if (pack.status !== 0) {
@@ -56,7 +72,7 @@ export async function run(ctx) {
     };
   }
 
-  const tarballPath = resolve(installerDir, tarball);
+  const tarballPath = resolve(packDir, tarball);
 
   // 3. Create isolated tmp dir + HOME
   const tmpRoot = mkdtempSync(join(tmpdir(), 'ijfw-pack-smoke-'));
@@ -73,7 +89,7 @@ export async function run(ctx) {
       encoding: 'utf8',
       cwd: installDir,
       timeout: 60_000,
-      env: { ...process.env, HOME: fakeHome, npm_config_prefix: fakeHome },
+      env: { ...cleanEnv, HOME: fakeHome, npm_config_prefix: fakeHome },
       shell: process.platform === 'win32',
     });
 
@@ -146,10 +162,9 @@ export async function run(ctx) {
       durationMs,
     };
   } finally {
-    // Clean up tmp dir
+    // Clean up both tmp dirs (the tarball lives inside packDir)
     try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-    // Clean up tarball
-    try { rmSync(tarballPath, { force: true }); } catch { /* best effort */ }
+    try { rmSync(packDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
 

@@ -13,11 +13,19 @@ export async function run(ctx) {
   const t0 = Date.now();
   const installerDir = join(ctx.repoRoot, 'installer');
 
+  // Strip inherited npm_* env vars -- see pack-smoke.js for the rationale.
+  // When this gate runs inside an outer npm publish, npm_config_dry_run
+  // leaks into the nested npm pack (writes no tarball) -> install ENOENT.
+  const cleanEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith('npm_')),
+  );
+
   // 1. Build HEAD tarball (build may already be done by pack-smoke, but we redo it to be safe)
   const build = spawnSync('npm', ['run', 'build'], {
     encoding: 'utf8',
     cwd: installerDir,
     timeout: 60_000,
+    env: cleanEnv,
     shell: process.platform === 'win32',
   });
   if (build.status !== 0) {
@@ -30,10 +38,15 @@ export async function run(ctx) {
     };
   }
 
-  const pack = spawnSync('npm', ['pack', '--silent'], {
+  // Pack into a dedicated tmp dir, NOT installerDir -- avoids colliding with
+  // `npm publish`'s own tarball when this gate runs inside the prepublishOnly
+  // hook (the finally-block rmSync would otherwise delete it mid-upload).
+  const packDir = mkdtempSync(join(tmpdir(), 'ijfw-upgradesmoke-tgz-'));
+  const pack = spawnSync('npm', ['pack', '--silent', '--pack-destination', packDir], {
     encoding: 'utf8',
     cwd: installerDir,
     timeout: 30_000,
+    env: cleanEnv,
     shell: process.platform === 'win32',
   });
   if (pack.status !== 0) {
@@ -47,7 +60,7 @@ export async function run(ctx) {
   }
 
   const tarball = pack.stdout.trim();
-  const tarballPath = resolve(installerDir, tarball);
+  const tarballPath = resolve(packDir, tarball);
 
   // 2. Create isolated tmp dir + fake HOME
   const tmpRoot = mkdtempSync(join(tmpdir(), 'ijfw-upgrade-smoke-'));
@@ -68,7 +81,7 @@ export async function run(ctx) {
       encoding: 'utf8',
       cwd: installDir,
       timeout: 60_000,
-      env: { ...process.env, HOME: fakeHome, npm_config_prefix: fakeHome },
+      env: { ...cleanEnv, HOME: fakeHome, npm_config_prefix: fakeHome },
       shell: process.platform === 'win32',
     });
 
@@ -173,7 +186,7 @@ export async function run(ctx) {
     };
   } finally {
     try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-    try { rmSync(tarballPath, { force: true }); } catch { /* best effort */ }
+    try { rmSync(packDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
 
