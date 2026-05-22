@@ -29,7 +29,12 @@ export class SchemaVersionError extends Error {
 // Discover and load every migration module under ./migrations/, sorted by
 // numeric prefix ascending. Each module must export VERSION (integer),
 // DESCRIPTION (string), and up(db) (function).
-async function loadMigrations() {
+//
+// Exported (v1.5.1 W3.B) so search.js (and any other consumer that needs
+// the sync migration pipeline) can reuse the SAME discovery path instead
+// of maintaining a parallel hardcoded list. Single source of truth: drop
+// a new NNN-name.js into ./migrations/ and every consumer sees it.
+export async function loadMigrations() {
   let files;
   try {
     files = readdirSync(MIGRATIONS_DIR);

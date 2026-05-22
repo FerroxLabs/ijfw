@@ -31,6 +31,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve, normalize, isAbsolute } from 'node:path';
 
 import { expandQuery } from '../compute/synonyms.js';
+import { loadMigrations } from './migration-runner.js';
 
 const MAX_RESULTS  = 50;
 const SNIPPET_HALF = 60;
@@ -50,30 +51,16 @@ try {
 }
 
 // Resolve migration modules synchronously at module load via top-level
-// await. Replayed inside searchMemory's sync path. Keep in lockstep with
-// ./migrations/.
-const MEMORY_MIGRATIONS = await loadMemoryMigrationsSync();
-
-async function loadMemoryMigrationsSync() {
-  const v1 = await import('./migrations/001-fts5-init.js');
-  const v2 = await import('./migrations/002-tier-semantic.js');
-  const v3 = await import('./migrations/003-stale-candidate.js');
-  const v4 = await import('./migrations/004-bitemporal.js');
-  const v5 = await import('./migrations/005-vector-cache.js');
-  const v6 = await import('./migrations/006-obsidian-graph.js');
-  const v7 = await import('./migrations/007-skill-telemetry.js');
-  const v8 = await import('./migrations/008-write-provenance.js');
-  return [
-    { version: v1.VERSION, description: v1.DESCRIPTION, up: v1.up },
-    { version: v2.VERSION, description: v2.DESCRIPTION, up: v2.up },
-    { version: v3.VERSION, description: v3.DESCRIPTION, up: v3.up },
-    { version: v4.VERSION, description: v4.DESCRIPTION, up: v4.up },
-    { version: v5.VERSION, description: v5.DESCRIPTION, up: v5.up },
-    { version: v6.VERSION, description: v6.DESCRIPTION, up: v6.up },
-    { version: v7.VERSION, description: v7.DESCRIPTION, up: v7.up },
-    { version: v8.VERSION, description: v8.DESCRIPTION, up: v8.up },
-  ].sort((a, b) => a.version - b.version);
-}
+// await. Replayed inside searchMemory's sync path.
+//
+// v1.5.1 W3.B: discovery is delegated to memory/migration-runner.js
+// (readdirSync over ./migrations/) so a single source of truth governs
+// which migrations search.js knows about. Prior to this, search.js
+// carried its OWN hardcoded list -- the v1.5.0 INT.7 hotfix patched
+// the symptom (006/007/008 missing); this kills the dual-registry bug
+// class outright. Drop migration 009 into ./migrations/, and search.js
+// will pick it up automatically.
+const MEMORY_MIGRATIONS = await loadMigrations();
 
 function highestMigrationVersion() {
   if (!MEMORY_MIGRATIONS.length) return 0;
