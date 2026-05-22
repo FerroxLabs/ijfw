@@ -1,0 +1,17 @@
+
+ijfw cross audit -- target: .planning/1.5.1/audit/CLEANUP-SYNTHESIS-ROUND2.md
+Probing roster...
+Fired: codex, gemini
+
+Heads up -- one or more auditors did not contribute this run:
+  - gemini: API timed out. Check network, retry, or pass --with to drop this auditor on the next run.
+Trident lineage diversity is reduced for this result. Re-run after fixing the auditor, or pass --with <id> to force a different combination.
+
+Findings:
+
+  Step 1.1 -- [high] | .planning/1.5.1/audit/CLEANUP-SYNTHESIS-ROUND2.md:7 -- The synthesis reports a test surface of 2477 pass / 2 fail / 1 skip but never identifies the two failing tests or whether they block the cleanup.
+  Step 1.2 -- [medium] | .planning/1.5.1/audit/CLEANUP-SYNTHESIS-ROUND2.md:C6 -- C6 calls for removing live `ijfw_memory_status` references but does not distinguish dead documentation references from live MCP registration paths that require test coverage.
+  Step 1.3 -- [medium] | .planning/1.5.1/audit/CLEANUP-SYNTHESIS-ROUND2.md:C1 -- C1 offers two incompatible fixes for `runtime-loop.js` without defining the canonical live path or acceptance test for reachability.
+  Step 1.4 -- [medium] | .planning/1.5.1/audit/CLEANUP-SYNTHESIS-ROUND2.md:C10 -- C10 says to validate the canonical platform count but does not name the canonical source file or allowlist historical changelog references.
+
+Receipt logged -- run `ijfw status` to see it.
