@@ -41,6 +41,11 @@ import { maybeRerankWithVectors } from './search-hybrid.js';
 import { crossProjectSearch } from './cross-project-search.js';
 // R2-E -- single source of truth for markdown/HTML/control-char defanger.
 import { sanitizeContent } from './sanitizer.js';
+// v1.5.1 R4-H3 — secret redaction on the direct ijfw_store write path.
+// The redactor is already wired into FTS5 ingest + auto-memorize; the
+// direct MCP store was the one bypass, so a secret pasted into an
+// ijfw_store call could land in .ijfw/memory/*.md cleartext.
+import { redactSecrets } from './redactor.js';
 // H5.5 / H5.6 — ingest-time fact extraction + semantic dedup. Closes
 // memory-engine.md competitor gaps (mem0/Zep extract facts; Graphiti dedups).
 // Both are pure-JS, zero-LLM, deterministic.
@@ -1119,6 +1124,7 @@ const TOOLS = [
         commitRange:   { type: 'string',  description: 'Git commit range to audit (e.g. "HEAD~1..HEAD", "main..feature/x"). Required.' },
         maxIterations: { type: 'number',  minimum: 1, maximum: 10, description: 'Max convergence iterations (default 3, capped at 10). 1 → single-shot (fallback mode).' },
         lenses:        { type: 'array',   items: { type: 'string' }, description: 'Lens ids to dispatch (default ["codex","gemini","claude"]).' },
+        autoFix:       { type: 'boolean', description: 'v1.5.1 (T27) — opt-in consensus auto-fix. When true, after a non-PASS convergence the consensus code-fixer runs an atomic per-finding fix loop over 2+-lens-agreed HIGH findings. Mutates the working tree; results surface on result.autoFix without changing the verdict. Default false.' },
       },
       required: ['commitRange'],
     },
@@ -1272,6 +1278,69 @@ function handleRecall({ context_hint, detail_level = 'standard', from_project })
   return { text: results.map(r => `[${r.source}] ${r.content}`).join('\n') };
 }
 
+// v1.5.1 R4-H2 — wire the v1.5.0 memory-moat to the real write path.
+//
+// M1 (Obsidian wikilink/tag/meta indexing -> memory_links/_tags/_meta) and
+// M2 (A-Mem auto-linking) only fire inside memory/fts5.js#indexEntry. But the
+// production memory writers never called indexEntry: handleStore wrote the
+// markdown journal only, and search.js#autoIndex did a raw INSERT. So the
+// memory-moat's flagship — "memory that learns about you" — ran ONLY in the
+// benchmark harness. This helper routes a real ijfw_store through indexEntry,
+// which in one atomic INSERT also fires M1 (synchronous, idempotent) + M2
+// (fire-and-forget, env-gated via IJFW_AUTOLINK_OFF, budget-capped).
+//
+// Best-effort + fire-and-forget: handleStore stays synchronous and a missing
+// driver / unmigrated schema / DB error never breaks the markdown-or-JSONL
+// store path. The journal markdown remains the source of truth (hot tier);
+// the FTS5 row is the warm-tier mirror. Dedup safety: handleStore previously
+// did NO DB INSERT at all, so this is a NEW row, not a duplicate of an
+// existing write. search.js#autoIndex only batch-rebuilds when the FTS table
+// is empty (rowCount === 0) — it will skip an already-populated table — so a
+// store followed by a search cannot double-index the same entry.
+async function indexStoredEntryToFts5({ body, source, sessionId }) {
+  if (typeof body !== 'string' || body.length === 0) return null;
+  const fts5Mod = await import('./memory/fts5.js');
+  const root = process.env.IJFW_PROJECT_DIR || PROJECT_DIR;
+  const db = await fts5Mod.openDb(root);
+  try {
+    // indexEntry runs the ingest scrub gate + M1 indexObsidianRelations +
+    // M2 autoLink internally. body is already sanitised + redacted by the
+    // handleStore caller; the scrub gate re-running over already-clean text
+    // is idempotent.
+    const inserted = fts5Mod.indexEntry(db, {
+      body,
+      source: source || 'memory_store',
+      session_id: sessionId || null,
+    });
+    // indexEntry dispatches M2 autoLink + the D2 graph auto-index as
+    // fire-and-forget promises that still hold the db handle. We own the
+    // handle here, so we MUST let those settle before closing the db —
+    // otherwise autoLink races into a "database connection is not open"
+    // error. Capture the promise references SYNCHRONOUSLY right after
+    // indexEntry returns (no await in between) so an interleaved store
+    // can't overwrite the module-level statics before we read them. Both
+    // promises swallow their own failures, so awaiting them never rejects.
+    // This keeps M2 wired on the real store path without changing
+    // handleStore's fire-and-forget contract (the caller already treats
+    // this whole function as fire-and-forget).
+    const autoLinkP = fts5Mod.indexEntry.__lastAutoLinkPromise;
+    const autoIndexP = typeof fts5Mod.__getLastAutoIndexPromise === 'function'
+      ? fts5Mod.__getLastAutoIndexPromise()
+      : null;
+    try { await autoLinkP; } catch { /* swallowed by indexEntry */ }
+    try { await autoIndexP; } catch { /* swallowed by indexEntry */ }
+    return inserted;
+  } finally {
+    try { fts5Mod.closeDb(db); } catch { /* best-effort */ }
+  }
+}
+
+// Diagnostic hook for tests — holds the most recent FTS5/M1/M2 indexing
+// promise fired by handleStore so end-to-end tests can await deterministic
+// completion before asserting on memory_links / memory_tags. Production
+// callers do not read this.
+handleStore.__lastIndexPromise = null;
+
 function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
   // --- Input Validation ---
   if (!content || typeof content !== 'string') {
@@ -1304,13 +1373,22 @@ function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
 
   // Sanitize ALL text fields -- never store raw user/agent text in markdown
   // that gets re-injected into a future LLM context.
-  const safeContent = sanitizeContent(content);
+  //
+  // v1.5.1 R4-H3 — secret redaction. sanitizeContent strips prompt-injection
+  // control chars but does NOT scrub secret-shaped tokens (API keys, OAuth
+  // secrets). Without this, a secret pasted into a direct ijfw_store call
+  // lands in .ijfw/memory/*.md cleartext and re-injects into every future
+  // recall. The redactor is already wired into the FTS5 ingest path
+  // (memory/fts5.js#indexEntry) and the auto-memorize path; this closes the
+  // direct MCP store as the one remaining bypass. Redact AFTER sanitize so
+  // the redaction labels ([REDACTED:*]) are never themselves scrubbed.
+  const safeContent = redactSecrets(sanitizeContent(content));
   if (!safeContent) {
     return { text: 'content was empty after sanitisation (only control/format chars).', isError: true };
   }
-  const safeSummary = summary ? sanitizeContent(summary).substring(0, 120) : '';
-  const safeWhy = why ? sanitizeContent(why) : '';
-  const safeHow = how_to_apply ? sanitizeContent(how_to_apply) : '';
+  const safeSummary = summary ? redactSecrets(sanitizeContent(summary)).substring(0, 120) : '';
+  const safeWhy = why ? redactSecrets(sanitizeContent(why)) : '';
+  const safeHow = how_to_apply ? redactSecrets(sanitizeContent(how_to_apply)) : '';
 
   const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
   const journalEntry = `**${type}**${tagStr}: ${safeSummary || safeContent.substring(0, 200)}`;
@@ -1343,6 +1421,27 @@ function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
   const journalResult = appendToJournal(journalEntry);
   if (!journalResult.ok) {
     return { text: `Memory journal is not writable (${journalResult.code}) -- check .ijfw/ directory permissions and retry.`, isError: true };
+  }
+
+  // v1.5.1 R4-H2 — mirror the stored entry into the FTS5 warm tier, which
+  // also fires M1 (Obsidian indexing) + M2 (A-Mem auto-linking). Index the
+  // full content (already sanitised + redacted above) so [[wikilinks]],
+  // #tags and [key:: value] metadata land in memory_links/_tags/_meta and
+  // the auto-linker sees the real body. Fire-and-forget: handleStore stays
+  // synchronous and a DB failure never breaks the markdown store. The
+  // promise is exposed for tests that need deterministic completion.
+  try {
+    handleStore.__lastIndexPromise = indexStoredEntryToFts5({
+      body: safeContent,
+      source: `memory_store:${type}`,
+      sessionId: null,
+    }).catch((e) => {
+      try { console.error('[ijfw memory] FTS5/M1/M2 index failed:', e?.message || e); } catch { /* never throw */ }
+      return null;
+    });
+  } catch (e) {
+    handleStore.__lastIndexPromise = null;
+    try { console.error('[ijfw memory] FTS5 index dispatch failed:', e?.message || e); } catch { /* never throw */ }
   }
 
   // H5.5 — Fact extraction AFTER successful append. Best-effort: a failure
@@ -1973,6 +2072,11 @@ function handleMessage(msg) {
                 lenses: Array.isArray(a.lenses) && a.lenses.length > 0 ? a.lenses : undefined,
                 dispatch: defaultConvergeDispatch,
                 projectRoot: process.cwd(),
+                // v1.5.1 R4-H4 — opt-in consensus auto-fix (T27). Threaded
+                // from the tool schema so the code-fixer can genuinely fire;
+                // default false so the audit stays non-mutating unless the
+                // caller explicitly asks for it.
+                autoFix: a.autoFix === true,
               });
               const isErr = r.verdict === 'consensus_failed' || r.verdict === 'FAIL' || r.verdict === 'UNREACHABLE';
               // v1.5.1 W2.D — emit a canonical gate-result block through the

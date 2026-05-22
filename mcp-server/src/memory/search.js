@@ -32,6 +32,12 @@ import { dirname, join, resolve, normalize, isAbsolute } from 'node:path';
 
 import { expandQuery } from '../compute/synonyms.js';
 import { loadMigrations } from './migration-runner.js';
+// v1.5.1 R4-H2 — auto-index rows must flow through indexEntry so the
+// v1.5.0 memory-moat (M1 Obsidian indexing + M2 A-Mem auto-linking) fires
+// for warm-tier rebuilds, not just the benchmark harness. obsidian-parser
+// is imported directly so M1 runs synchronously inside the same txn batch.
+import { indexObsidianRelations } from './obsidian-parser.js';
+import { autoLink } from './auto-linker.js';
 
 const MAX_RESULTS  = 50;
 const SNIPPET_HALF = 60;
@@ -207,12 +213,20 @@ function runMemoryMigrationsSync(db, currentVersion, targetVersion) {
 
 function autoIndex(db, files) {
   let n = 0;
+  // v1.5.1 R4-H2 — capture the rowid of every inserted entry so the
+  // memory-moat aux indexing (M1 Obsidian relations, M2 auto-link) can run
+  // over the warm-tier rebuild, not just the benchmark harness. The bulk
+  // INSERT stays in one transaction for FTS write performance; M1/M2 run
+  // AFTER commit so a parse/link failure can never abort the rebuild.
+  const inserted = [];
   const txfn = db.transaction((batch) => {
     const stmt = db.prepare(
       'INSERT INTO memory_entries (body, source, session_id, created_at) VALUES (?, ?, ?, ?)'
     );
     for (const item of batch) {
-      stmt.run(item.body, item.source, null, item.created_at);
+      const info = stmt.run(item.body, item.source, null, item.created_at);
+      const id = info && info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null;
+      inserted.push({ id, body: item.body });
       n++;
     }
   });
@@ -229,6 +243,26 @@ function autoIndex(db, files) {
   }
   if (batch.length === 0) return 0;
   try { txfn.immediate(batch); } catch { /* one bad batch should not abort the search */ }
+
+  // v1.5.1 R4-H2 — M1: Obsidian wikilink/tag/meta indexing into
+  // memory_links/_tags/_meta. Synchronous + idempotent (indexObsidianRelations
+  // clears prior rows for the id before re-inserting). Best-effort: a missing
+  // migration-006 schema or a parse failure must never break the search path.
+  // M2: A-Mem auto-linking — fire-and-forget, env-gated (IJFW_AUTOLINK_OFF),
+  // budget-capped (IJFW_AUTOLINK_BUDGET_USD); returns skipped cleanly when no
+  // API key, so a bulk rebuild without credentials does no LLM work.
+  for (const row of inserted) {
+    if (row.id == null) continue;
+    try {
+      indexObsidianRelations(db, String(row.id), row.body);
+    } catch { /* M1 best-effort -- never abort the search */ }
+    try {
+      const p = autoLink(db, { id: row.id, body: row.body });
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      // expose for tests that want deterministic completion
+      autoIndex.__lastAutoLinkPromise = p;
+    } catch { /* M2 dispatch best-effort */ }
+  }
   return n;
 }
 
