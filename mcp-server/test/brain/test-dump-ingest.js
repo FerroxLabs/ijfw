@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanInbox, classify } from '../../src/brain/dump-ingest.js';
+import { scanInbox, classify, writeManifest, commitProcessed, isProcessed, readManifest } from '../../src/brain/dump-ingest.js';
 
 function freshInbox() {
   return mkdtempSync(join(tmpdir(), 'brain-dump-'));
@@ -51,4 +51,54 @@ test('scanInbox returns depth-0 files only, classifies, skips dotfiles and subdi
       assert.ok(r.path.endsWith(r.name), `${r.name} path`);
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('writeManifest writes <name>.manifest.json atomically', () => {
+  const processed = freshInbox();
+  try {
+    writeManifest(processed, 'a.md', { facts: 3, pages: ['x'] });
+    assert.ok(existsSync(join(processed, 'a.md.manifest.json')));
+    // no .tmp leftover
+    const leftover = readdirSync(processed).some((f) => f.endsWith('.tmp'));
+    assert.equal(leftover, false, 'no .tmp left behind after atomic rename');
+  } finally { rmSync(processed, { recursive: true, force: true }); }
+});
+
+test('readManifest round-trips the payload', () => {
+  const processed = freshInbox();
+  try {
+    const payload = { facts: 7, pages: ['p', 'q'], note: 'ok' };
+    writeManifest(processed, 'b.md', payload);
+    assert.deepEqual(readManifest(processed, 'b.md'), payload);
+  } finally { rmSync(processed, { recursive: true, force: true }); }
+});
+
+test('isProcessed: true iff manifest present', () => {
+  const processed = freshInbox();
+  try {
+    assert.equal(isProcessed(processed, 'never.md'), false);
+    writeManifest(processed, 'c.md', { facts: 0 });
+    assert.equal(isProcessed(processed, 'c.md'), true);
+  } finally { rmSync(processed, { recursive: true, force: true }); }
+});
+
+test('commitProcessed renames inbox->processed; idempotent on recovery', () => {
+  const inbox = freshInbox();
+  const processed = freshInbox();
+  try {
+    const srcPath = join(inbox, 'd.md');
+    writeFileSync(srcPath, '# d\n');
+    // proper order: writeManifest first, then commitProcessed
+    writeManifest(processed, 'd.md', { facts: 1 });
+    commitProcessed(inbox, processed, 'd.md');
+    assert.equal(existsSync(srcPath), false, 'src removed by rename');
+    assert.equal(existsSync(join(processed, 'd.md')), true, 'dst present');
+    assert.equal(isProcessed(processed, 'd.md'), true);
+    // Idempotent: calling again is a no-op (recovery path)
+    commitProcessed(inbox, processed, 'd.md');
+    assert.equal(existsSync(join(processed, 'd.md')), true);
+  } finally {
+    rmSync(inbox, { recursive: true, force: true });
+    rmSync(processed, { recursive: true, force: true });
+  }
 });

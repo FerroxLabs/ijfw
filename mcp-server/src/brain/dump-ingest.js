@@ -7,7 +7,7 @@
 // Subdirs are reserved for future use (e.g., per-source folders); the dump
 // pipeline treats them as opaque and skips them.
 
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync, writeFileSync, readFileSync, renameSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
 
 function classify(name) {
@@ -44,3 +44,45 @@ export function scanInbox(inboxDir) {
 }
 
 export { classify };
+
+/**
+ * writeManifest -- write the per-file receipt as <processed>/<name>.manifest.json
+ * atomically via .tmp+rename. Must be called BEFORE commitProcessed so a crash
+ * between manifest-write and inbox-rename leaves the file as an orphan in
+ * inbox/ (reprocessable on next cycle) -- never a half-state.
+ */
+export function writeManifest(processedDir, fileName, payload) {
+  const final = manifestPath(processedDir, fileName);
+  const tmp = final + '.tmp';
+  writeFileSync(tmp, JSON.stringify(payload, null, 2));
+  renameSync(tmp, final);
+}
+
+/**
+ * commitProcessed -- atomically move <inbox>/<name> -> <processed>/<name>.
+ * Same-filesystem rename = atomic. Idempotent: silently succeeds if file
+ * already at destination and source is gone.
+ */
+export function commitProcessed(inboxDir, processedDir, fileName) {
+  const src = join(inboxDir, fileName);
+  const dst = join(processedDir, fileName);
+  if (!existsSync(src) && existsSync(dst)) return; // already committed (recovery no-op)
+  renameSync(src, dst);
+}
+
+/**
+ * isProcessed -- true iff the manifest exists for this file. The manifest is
+ * the source of truth for "this file completed" -- the inbox->processed rename
+ * is a cleanup step after the manifest is written.
+ */
+export function isProcessed(processedDir, fileName) {
+  return existsSync(manifestPath(processedDir, fileName));
+}
+
+export function readManifest(processedDir, fileName) {
+  return JSON.parse(readFileSync(manifestPath(processedDir, fileName), 'utf8'));
+}
+
+function manifestPath(processedDir, fileName) {
+  return join(processedDir, `${fileName}.manifest.json`);
+}
