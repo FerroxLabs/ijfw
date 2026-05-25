@@ -9,8 +9,10 @@
 // Wiki path: <ijfw|.ijfw>/wiki/<type>s/<slug>.md per the layout sentinel.
 // Slug is the subject lowercased + non-alphanum -> '-'.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+
+const STALE_LOCK_MS = 60_000; // 60s — locks older than this are assumed dead-process orphans
 import { resolveBrainPaths } from './paths.js';
 import { applyTemplate } from './wiki-templates.js';
 import { resolveCitations } from './citation-resolver.js';
@@ -83,9 +85,25 @@ export function compileWikiPage(db, { repoRoot, type, subject } = {}) {
     lockFd = openSync(lockPath, 'wx');
   } catch (e) {
     if (e.code === 'EEXIST') {
-      return { ok: false, error: 'page-locked-by-concurrent-compile', pagePath };
+      // FLAG-8: stale-lock recovery. If a prior compile process was SIGKILL'd
+      // between acquire and finally, the lockfile orphans and every subsequent
+      // compile fails. Check the lockfile's age; if older than STALE_LOCK_MS,
+      // assume it's a dead-process orphan and reclaim.
+      let stale = false;
+      try {
+        const age = Date.now() - statSync(lockPath).mtimeMs;
+        if (age > STALE_LOCK_MS) stale = true;
+      } catch { /* lockfile vanished while we checked — race won by us */ stale = true; }
+      if (stale) {
+        try { unlinkSync(lockPath); } catch {}
+        try { lockFd = openSync(lockPath, 'wx'); }
+        catch (e2) { return { ok: false, error: 'page-locked-by-concurrent-compile', pagePath, staleReclaimFailed: e2.code }; }
+      } else {
+        return { ok: false, error: 'page-locked-by-concurrent-compile', pagePath };
+      }
+    } else {
+      throw e;
     }
-    throw e;
   }
 
   try {

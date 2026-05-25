@@ -37,7 +37,15 @@ export function migrateFactsInternalOnce(repoRoot) {
   // intentional standalone deployment of just one is operator-territory and
   // we don't second-guess it.)
   if (existsSync(newJsonl) || existsSync(newDb)) {
-    return { skipped: true, reason: 'already-migrated' };
+    // FLAG-7: detect orphans — if a legacy path ALSO exists alongside the
+    // new path, surface it so the operator can clean up. Don't move
+    // automatically (could overwrite real data); just flag.
+    const orphans = [];
+    if (existsSync(oldJsonl)) orphans.push(oldJsonl);
+    if (existsSync(oldDb)) orphans.push(oldDb);
+    return orphans.length > 0
+      ? { skipped: true, reason: 'already-migrated', orphans }
+      : { skipped: true, reason: 'already-migrated' };
   }
 
   const moved = [];

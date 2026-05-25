@@ -71,16 +71,22 @@ export async function up(repoRoot) {
       return { skipped: true, reason: 'fresh-writes-detected', freshFiles };
     }
     let copiedFiles = 0;
+    // FLAG-4: force:false preserves any user-authored content already at the
+    // visible-layer destination (e.g. operator following the README's
+    // "commit ijfw/ to git" advice before migration runs). errorOnExist:false
+    // means existing destination files cause the COPY of THAT file to skip
+    // silently, but the rest of the tree still copies. Behaviour: union of
+    // existing visible files (winner) + legacy hidden files (filler).
     const memorySrc = join(repoRoot, '.ijfw', 'memory');
     if (existsSync(memorySrc)) {
       cpSync(memorySrc, join(repoRoot, 'ijfw', 'memory'),
-             { recursive: true, force: true, errorOnExist: false });
+             { recursive: true, force: false, errorOnExist: false });
       copiedFiles += walkMd(memorySrc).length;
     }
     const sessionsSrc = join(repoRoot, '.ijfw', 'sessions');
     if (existsSync(sessionsSrc)) {
       cpSync(sessionsSrc, join(repoRoot, 'ijfw', 'sessions'),
-             { recursive: true, force: true, errorOnExist: false });
+             { recursive: true, force: false, errorOnExist: false });
       copiedFiles += walkMd(sessionsSrc).length;
     }
     for (const parts of SCAFFOLD_DIRS) {

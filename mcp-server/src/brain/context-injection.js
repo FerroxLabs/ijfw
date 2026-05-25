@@ -15,6 +15,11 @@ import { resolveBrainPaths } from './paths.js';
 const WIKI_TYPES = ['concepts', 'entities', 'decisions', 'milestones'];
 const DEFAULT_TOP_N = 3;
 const DEFAULT_CHAR_BUDGET = 600;
+// FLAG-10: hard caps so a caller passing topN: 50 or charBudget: 100_000 can't
+// blow the prelude size. Defense in depth — the env-gate already requires
+// IJFW_BRAIN_INJECT=auto|always for any injection to happen at all.
+const MAX_TOP_N = 10;
+const MAX_CHAR_BUDGET = 2000;
 
 function listWikiPages(wikiDir) {
   const out = [];
@@ -45,16 +50,19 @@ function truncate(text, max) {
 
 export function buildContextInjection(repoRoot, { mode = 'auto', topN = DEFAULT_TOP_N, charBudget = DEFAULT_CHAR_BUDGET } = {}) {
   if (mode === 'never') return '';
+  // FLAG-10: enforce hard caps regardless of caller input.
+  const safeTopN = Math.max(1, Math.min(MAX_TOP_N, Number(topN) || DEFAULT_TOP_N));
+  const safeBudget = Math.max(100, Math.min(MAX_CHAR_BUDGET, Number(charBudget) || DEFAULT_CHAR_BUDGET));
   const paths = resolveBrainPaths(repoRoot);
   const pages = listWikiPages(paths.wikiDir);
   if (pages.length === 0) return '';
   pages.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  const top = pages.slice(0, topN);
+  const top = pages.slice(0, safeTopN);
   const blocks = [];
   for (const page of top) {
     let body;
     try { body = readFileSync(page.path, 'utf8'); } catch { continue; }
-    blocks.push(`### ${page.type}/${page.slug}\n\n${truncate(body, charBudget)}`);
+    blocks.push(`### ${page.type}/${page.slug}\n\n${truncate(body, safeBudget)}`);
   }
   if (blocks.length === 0) return '';
   return `\n\n--- Recently relevant from your brain ---\n\n${blocks.join('\n\n')}\n\n--- end brain context ---\n`;

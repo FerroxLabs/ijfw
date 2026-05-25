@@ -17,8 +17,8 @@
 //
 // Each verb dispatches to a private handler. All return JSON-safe shapes.
 
-import { existsSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, copyFileSync, constants as fsConstants } from 'node:fs';
+import { join, resolve as pathResolve } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveBrainPaths } from '../brain/paths.js';
 import { compileWikiPage, slugify } from '../brain/wiki-compiler.js';
@@ -60,7 +60,12 @@ async function verbThink(db, repoRoot, args, opts = {}) {
   const topPages = candidates.slice(0, 3).map((c) => ({
     type: c.type, slug: c.slug, body: existsSync(c.path) ? readFileSync(c.path, 'utf8').slice(0, 1500) : '',
   }));
-  // Gather facts where subject or object loosely matches
+  // Gather facts where subject or object loosely matches.
+  // FLAG-3 note: LIKE metachars `%` and `_` are NOT escaped — a token like
+  // "50%" pattern-matches more broadly than intended. Same behaviour as
+  // every other LIKE callsite in the codebase, so this stays consistent.
+  // Not a security issue (params still parameterised via `?`), just a
+  // relevance quirk that's deliberate.
   let facts = [];
   try {
     if (tokens.length > 0) {
@@ -170,13 +175,34 @@ function verbWikiPromote(db, repoRoot, args) {
   const globalDir = join(homedir(), 'IJFW', 'wiki', found.type);
   mkdirSync(globalDir, { recursive: true });
   const dst = join(globalDir, `${slug}.md`);
-  copyFileSync(found.path, dst);
-  return { ok: true, slug, type: found.type, src: found.path, dst };
+  // FLAG-2: refuse to overwrite an existing global page unless force=true.
+  // Operator may have hand-curated content there; silent clobber is data loss.
+  if (existsSync(dst) && args.force !== true) {
+    return { ok: false, error: 'global-page-exists', dst, hint: 'pass force:true to overwrite' };
+  }
+  try {
+    copyFileSync(found.path, dst, args.force === true ? 0 : fsConstants.COPYFILE_EXCL);
+  } catch (e) {
+    if (e.code === 'EEXIST') {
+      return { ok: false, error: 'global-page-exists', dst, hint: 'pass force:true to overwrite' };
+    }
+    return { ok: false, error: 'copy-failed', message: e.message };
+  }
+  return { ok: true, slug, type: found.type, src: found.path, dst, overwrote: args.force === true && existsSync(dst) };
 }
 
 function verbWikiExport(db, repoRoot, args) {
   if (!args.slug || !args.outFile) return { ok: false, error: 'missing-args' };
-  const r = exportPageBundle(repoRoot, slugify(args.slug), args.outFile);
+  // FLAG-1: outFile must resolve under repoRoot. Without this guard, a caller
+  // (or a prompt-injection that gets through the think delimiter) could pass
+  // outFile: "/etc/passwd" or "/Users/.../id_rsa" and write there at the
+  // user's privilege level. We do NOT trust args.outFile.
+  const resolvedRoot = pathResolve(repoRoot);
+  const resolvedOut = pathResolve(args.outFile);
+  if (!(resolvedOut === resolvedRoot || resolvedOut.startsWith(resolvedRoot + '/'))) {
+    return { ok: false, error: 'outFile-escapes-repo', resolvedOut, repoRoot: resolvedRoot };
+  }
+  const r = exportPageBundle(repoRoot, slugify(args.slug), resolvedOut);
   if (r.error) return { ok: false, error: r.error, slug: r.slug };
   return { ok: true, ...r };
 }
@@ -189,17 +215,19 @@ function verbConflictResolve(db, repoRoot, args) {
   if (!args.subject || !args.predicate || args.winnerId == null) {
     return { ok: false, error: 'missing-args' };
   }
-  // F3: verify the winnerId exists AND matches (subject, predicate). Without
-  // this, a stale or bogus winnerId would close every OTHER open fact for
-  // the pair and leave ZERO open facts — silent data loss.
+  // F3 + FLAG-6: verify the winnerId exists AND matches (subject, predicate)
+  // AND is still OPEN (valid_to IS NULL). Without the valid_to clause, a
+  // stale winnerId (already closed by a prior race) would still proceed,
+  // closing every OTHER open fact and leaving ZERO open — the exact silent
+  // data loss F3 was meant to prevent.
   let winnerExists;
   try {
     winnerExists = db.prepare(
-      'SELECT 1 FROM facts WHERE id = ? AND subject = ? AND predicate = ?'
+      'SELECT 1 FROM facts WHERE id = ? AND subject = ? AND predicate = ? AND valid_to IS NULL'
     ).get(args.winnerId, args.subject, args.predicate);
   } catch { winnerExists = null; }
   if (!winnerExists) {
-    return { ok: false, error: 'winner-not-found', winnerId: args.winnerId, subject: args.subject, predicate: args.predicate };
+    return { ok: false, error: 'winner-not-found-or-already-closed', winnerId: args.winnerId, subject: args.subject, predicate: args.predicate };
   }
   const supersede = args.supersede !== false; // default true
   if (!supersede) return { ok: true, resolved: false, reason: 'supersede=false' };

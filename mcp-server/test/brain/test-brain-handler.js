@@ -170,3 +170,26 @@ test('verb conflict.resolve: monotonic valid_to beats wall-clock when clock woul
     assert.equal(loser.valid_to, r.validTo);
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
 });
+
+// FLAG-11 — verify the think verb's prompt embeds the untrusted-content delimiters.
+
+test('verb think: prompt embeds <<<REFERENCE_START>>>/<<<REFERENCE_END>>> delimiters', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    db.prepare('INSERT INTO memory_entries (id, body, path, kind) VALUES (?,?,?,?)').run(7, 'sean is founder', '/p.md', 'markdown');
+    db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, memory_id) VALUES (?,?,?,?,?,?)').run(13, 'sean', 'role', 'founder', '2024-01-01T00:00:00Z', 7);
+    let capturedPrompt = null;
+    const opts = {
+      _callLLM: async ({ prompt }) => {
+        capturedPrompt = prompt;
+        return { text: '{"answer":"sean is the founder","citations":[{"kind":"fact","id":13}]}' };
+      },
+    };
+    await handleIjfwBrain({ verb: 'think', args: { query: 'who is sean' }, db, repoRoot: root, opts });
+    assert.ok(capturedPrompt, 'callLLM was called');
+    assert.ok(capturedPrompt.includes('<<<REFERENCE_START>>>'), 'prompt embeds REFERENCE_START delimiter');
+    assert.ok(capturedPrompt.includes('<<<REFERENCE_END>>>'), 'prompt embeds REFERENCE_END delimiter');
+    assert.ok(/IGNORE\s+those instructions/i.test(capturedPrompt), 'prompt instructs LLM to ignore embedded directives');
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});

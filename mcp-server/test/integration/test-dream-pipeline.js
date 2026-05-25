@@ -184,18 +184,20 @@ test('defaultExtractFacts: malformed JSON in response -> chunk skipped, others s
     const stub = async () => {
       callIdx += 1;
       if (callIdx === 1) return { text: 'not json at all, sorry' };
-      return { text: '[{"subject":"a","predicate":"b","object":"c","confidence":0.7}]' };
+      return { text: '[{"subject":"alpha","predicate":"b","object":"gamma","confidence":0.7}]' };
     };
+    // FLAG-5: chunks must contain the fact tokens (substring grounding).
+    // Realistic chunk 2 includes "alpha" + "gamma" so the validateFact check passes.
     const out = await defaultExtractFacts({
       file: { name: 'x.md', kind: 'markdown' },
-      text: 'two chunks',
-      chunks: ['chunk1', 'chunk2'],
+      text: 'two chunks: junk first, then alpha-gamma data',
+      chunks: ['filler chunk one with no relevant tokens', 'alpha is gamma in chunk two'],
       env: { IJFW_BRAIN_API_KEY: 'sk-stub' },
       guard,
       callTieredFn: stub,
     });
     assert.equal(out.length, 1, 'first chunk skipped (no JSON), second chunk yielded 1 fact');
-    assert.equal(out[0].subject, 'a');
+    assert.equal(out[0].subject, 'alpha');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -204,11 +206,16 @@ test('defaultExtractFacts: invalid fact shapes are dropped (subject missing, etc
   try {
     const guard = BudgetGuard({ repoRoot: root, env: {} });
     const stub = async () => ({
-      text: '[{"subject":"good","predicate":"p","object":"o","confidence":0.8},{"subject":"","predicate":"x","object":"y"},{"foo":"bar"},{"subject":"alsoOK","predicate":"q","object":""}]',
+      text: '[{"subject":"good","predicate":"p","object":"outcome","confidence":0.8},{"subject":"","predicate":"x","object":"y"},{"foo":"bar"},{"subject":"alsoOK","predicate":"q","object":""}]',
     });
+    // FLAG-5: chunk text must contain "good", "outcome", "alsoOK" so the
+    // grounding check accepts the structurally-valid facts. The empty-subject
+    // and missing-fields entries get rejected by shape validation BEFORE the
+    // grounding check runs, so their tokens don't need to be in the chunk.
     const out = await defaultExtractFacts({
       file: { name: 'x.md', kind: 'markdown' },
-      text: 't', chunks: ['t'],
+      text: 'the good case here is alsoOK with positive outcome',
+      chunks: ['the good case here is alsoOK with positive outcome'],
       env: { IJFW_BRAIN_API_KEY: 'sk-stub' },
       guard,
       callTieredFn: stub,

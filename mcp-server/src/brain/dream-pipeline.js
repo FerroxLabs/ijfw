@@ -67,11 +67,23 @@ function llmReachable(env) {
   return !!(env.IJFW_BRAIN_LOCAL_URL || env.IJFW_BRAIN_API_KEY || env.ANTHROPIC_API_KEY);
 }
 
-function validateFact(f) {
+function validateFact(f, sourceText) {
   if (!f || typeof f !== 'object') return null;
   if (typeof f.subject !== 'string' || !f.subject.trim()) return null;
   if (typeof f.predicate !== 'string' || !f.predicate.trim()) return null;
   if (typeof f.object !== 'string') return null; // empty-string object allowed
+  // FLAG-5: hallucination defense via substring grounding. The LLM might
+  // invent a plausible fact ("sean owns anthropic") that wasn't in the
+  // source. Require at least one of (subject, object) to appear case-
+  // insensitively in the source chunk. Lowers recall a touch; defends
+  // against permanent storage of confabulated facts that the bi-temporal
+  // citation gate can't catch (the fact lacks a memory_id reference).
+  if (typeof sourceText === 'string' && sourceText.length > 0) {
+    const lower = sourceText.toLowerCase();
+    const subjHit = f.subject.toLowerCase().split(/\s+/).some((tok) => tok.length > 1 && lower.includes(tok));
+    const objHit = f.object && f.object.toLowerCase().split(/\s+/).some((tok) => tok.length > 1 && lower.includes(tok));
+    if (!subjHit && !objHit) return null;
+  }
   const confidence =
     typeof f.confidence === 'number' && f.confidence >= 0 && f.confidence <= 1
       ? f.confidence
@@ -146,7 +158,7 @@ export async function defaultExtractFacts({ file, text, chunks, env, guard, call
     if (!Array.isArray(parsed)) continue;
 
     for (const f of parsed) {
-      const valid = validateFact(f);
+      const valid = validateFact(f, chunk);
       if (valid) out.push(valid);
     }
   }
