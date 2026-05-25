@@ -1750,7 +1750,21 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
     return { text: abstain.join('\n') };
   }
 
-  return { text };
+  // v1.5.2 brain context injection — env-gated (IJFW_BRAIN_INJECT=auto|always|never).
+  // Default 'never' keeps existing behavior unchanged; opt-in surfaces the
+  // top-N most-recently-touched wiki pages to the prelude. Best-effort —
+  // any failure is swallowed so prelude never breaks.
+  let injectedText = text;
+  try {
+    const mode = process.env.IJFW_BRAIN_INJECT || 'never';
+    if (mode === 'auto' || mode === 'always') {
+      const { buildContextInjection } = await import('./brain/context-injection.js');
+      const injection = buildContextInjection(REPO_ROOT, { mode });
+      if (injection) injectedText = text + injection;
+    }
+  } catch { /* swallow — injection is best-effort */ }
+
+  return { text: injectedText };
 }
 
 async function handleSearch({ query, limit = 10, scope = 'project', label }) {
