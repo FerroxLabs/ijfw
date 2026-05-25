@@ -98,15 +98,16 @@ async function runTest() {
     console.log('\nTools:');
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     resp = await waitForResponse(2);
-    // updated 2026-05-20 v1.5.0 T13 (cap fixed at 12 since v1.5.0-major):
-    // slot 11 = ijfw_state (state-SDK verb facade; absorbs the retired
-    //           ijfw_subagent_post_done — `subagent.post-done` is now a verb),
-    // slot 12 = ijfw_cross_audit_converge (N03 Trident-as-a-service).
-    // CLAUDE.md fixes the cap at 13 (raised 12 → 13 in v1.5.0 memory-moat
-    // amendment for ijfw_memory_facts — the bi-temporal facts read path).
-    // If a 14th appears, this assertion forces an explicit, intentional
-    // update rather than silent drift.
-    const CANONICAL_TOOLS_V150 = [
+    // updated 2026-05-25 v1.5.2.1 (cap raised to 14 in v1.5.2 for ijfw_brain):
+    // slot 11 = ijfw_run (subagent dispatch),
+    // slot 12 = ijfw_brain (v1.5.2 — visible-layer + dream-cycle + wiki MCP face),
+    // slot 13 = ijfw_state (state-SDK verb facade; absorbs retired ijfw_subagent_post_done),
+    // slot 14 = ijfw_cross_audit_converge (N03 Trident-as-a-service).
+    // CLAUDE.md fixes the cap at 14. mcp-server/TOOLS.md is the canonical
+    // manifest; scripts/check-mcp-count.sh enforces TOOLS array ↔ TOOLS.md
+    // coherence at preflight. If a 15th appears, this assertion forces an
+    // explicit, intentional update rather than silent drift.
+    const CANONICAL_TOOLS_V152 = [
       'ijfw_memory_recall',
       'ijfw_memory_store',
       'ijfw_memory_search',
@@ -118,13 +119,14 @@ async function runTest() {
       'ijfw_update_check',
       'ijfw_update_apply',
       'ijfw_run',
+      'ijfw_brain',
       'ijfw_state',
       'ijfw_cross_audit_converge',
     ];
-    assert(resp.result?.tools?.length === CANONICAL_TOOLS_V150.length,
-      `Lists exactly ${CANONICAL_TOOLS_V150.length} tools (v1.5.0 cap; got ${resp.result?.tools?.length})`);
+    assert(resp.result?.tools?.length === CANONICAL_TOOLS_V152.length,
+      `Lists exactly ${CANONICAL_TOOLS_V152.length} tools (v1.5.2 cap; got ${resp.result?.tools?.length})`);
     const toolNames = resp.result?.tools?.map(t => t.name) || [];
-    for (const name of CANONICAL_TOOLS_V150) {
+    for (const name of CANONICAL_TOOLS_V152) {
       assert(toolNames.includes(name), `Has ${name} tool`);
     }
 

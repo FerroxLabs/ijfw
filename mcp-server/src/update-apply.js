@@ -7,7 +7,7 @@
 // terminal CLI does not require the sentinel to confirm — the token itself is
 // authoritative. The tool is retained for v1.5.0 back-compat (older skills that
 // still call it work unchanged) and slated for retirement in v1.6.0 to free the
-// MCP-tool slot (see CLAUDE.md "MCP server: ≤13 tools" cap).
+// MCP-tool slot (see CLAUDE.md "MCP server: ≤14 tools" cap).
 //
 // Does NOT execute the update. Validates the token, writes (or overwrites)
 // the pending sentinel, returns instruction telling the user to run the

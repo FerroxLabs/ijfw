@@ -1157,7 +1157,7 @@ const TOOLS = [
     // (codex/gemini/claude by default) in parallel; if verdicts diverge,
     // re-runs with a CYCLE_SUMMARY of the disagreement until consensus or
     // maxIterations (default 3).  Stall breaker halts on byte-identical
-    // iterations.  Slot 12 of the 13/13 tool cap.
+    // iterations.  Slot 14 of the 14/14 tool cap.
     name: 'ijfw_cross_audit_converge',
     description: 'Multi-lens Trident audit with consensus convergence loop. Dispatches codex/gemini/claude in parallel against a commit range, detects verdict divergence, and re-runs with a cycle summary until consensus or maxIterations. Returns {verdict, iterations, findings, divergence?, stalled?}. Verdict: PASS / CONDITIONAL / FAIL / consensus_failed / UNREACHABLE.',
     inputSchema: {
