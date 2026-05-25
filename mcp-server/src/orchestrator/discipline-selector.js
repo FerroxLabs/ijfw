@@ -139,6 +139,25 @@ function hasDirEntryMatching(dir, predicate) {
 }
 
 /**
+ * Return true if `name` is a direct child of `repoRoot` that is a directory
+ * AND contains at least one `.md` file. Avoids false-positive on plain files
+ * named `chapters` or `manuscript`.
+ *
+ * @param {string} repoRoot
+ * @param {string} name  directory name to check
+ * @returns {boolean}
+ */
+function isDirWithMd(repoRoot, name) {
+  const p = join(repoRoot, name);
+  try {
+    if (!statSync(p).isDirectory()) return false;
+    return readdirSync(p).some((n) => n.endsWith('.md'));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Detect the project type from a repository root.
  *
  * Priority:
@@ -184,43 +203,45 @@ export function detectProjectTypeFromRepo(repoRoot) {
     }
   }
 
-  // (b) File-signal fallback -- existsSync only, no glob.
+  // (b) File-signal fallback -- read root entries once, then use cached list.
+  // Priority: earlier tier wins. e.g., pyproject.toml beats notebooks/ when both present (code projects may contain notebooks).
+  let _entries = null;
+  try { _entries = readdirSync(repoRoot); } catch { _entries = []; }
+  function has(predicate) { return _entries.some(predicate); }
+
   // --- code signals ---
   const CODE_FILES = [
     'package.json', 'tsconfig.json', 'Cargo.toml', 'go.mod',
     'pyproject.toml', 'setup.py', 'Gemfile',
   ];
   for (const f of CODE_FILES) {
-    if (existsSync(join(repoRoot, f))) return 'code';
+    if (_entries.includes(f)) return 'code';
   }
-  // *.csproj -- project-named file; scan root dir entries.
-  if (hasDirEntryMatching(repoRoot, (n) => n.endsWith('.csproj'))) return 'code';
+  // *.csproj -- project-named file; scan cached root entries.
+  if (has((n) => n.endsWith('.csproj'))) return 'code';
 
-  // --- narrative signals ---
-  if (
-    existsSync(join(repoRoot, 'chapters')) ||
-    existsSync(join(repoRoot, 'manuscript'))
-  ) return 'narrative';
+  // --- narrative signals --- (must be a directory containing at least one .md)
+  if (isDirWithMd(repoRoot, 'chapters') || isDirWithMd(repoRoot, 'manuscript')) return 'narrative';
 
   // --- business signals ---
   if (
-    hasDirEntryMatching(repoRoot, (n) => n.startsWith('pitch-deck')) ||
-    hasDirEntryMatching(repoRoot, (n) => n.startsWith('business-plan')) ||
-    hasDirEntryMatching(repoRoot, (n) => n.endsWith('.numbers'))
+    has((n) => n.startsWith('pitch-deck')) ||
+    has((n) => n.startsWith('business-plan')) ||
+    has((n) => n.endsWith('.numbers'))
   ) return 'business';
 
   // --- design signals ---
   if (
-    hasDirEntryMatching(repoRoot, (n) => n.startsWith('figma-')) ||
-    hasDirEntryMatching(repoRoot, (n) => n.endsWith('.sketch')) ||
-    existsSync(join(repoRoot, 'design-system'))
+    has((n) => n.startsWith('figma-')) ||
+    has((n) => n.endsWith('.sketch')) ||
+    _entries.includes('design-system')
   ) return 'design';
 
   // --- research signals ---
   if (
-    existsSync(join(repoRoot, 'research')) ||
-    existsSync(join(repoRoot, 'notebooks')) ||
-    hasDirEntryMatching(repoRoot, (n) => n.endsWith('.ipynb'))
+    _entries.includes('research') ||
+    _entries.includes('notebooks') ||
+    has((n) => n.endsWith('.ipynb'))
   ) return 'research';
 
   return 'unknown';

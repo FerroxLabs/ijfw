@@ -192,15 +192,17 @@ test('detectProjectTypeFromRepo: *.csproj entry -> code', () => {
   assert.equal(detectProjectTypeFromRepo(dir), 'code');
 });
 
-test('detectProjectTypeFromRepo: chapters/ dir -> narrative', () => {
+test('detectProjectTypeFromRepo: chapters/ dir with .md -> narrative', () => {
   const dir = makeTmpDir('chapters');
   mkdirSync(join(dir, 'chapters'), { recursive: true });
+  writeFileSync(join(dir, 'chapters', 'chapter1.md'), '# Chapter 1\n');
   assert.equal(detectProjectTypeFromRepo(dir), 'narrative');
 });
 
-test('detectProjectTypeFromRepo: manuscript/ dir -> narrative', () => {
+test('detectProjectTypeFromRepo: manuscript/ dir with .md -> narrative', () => {
   const dir = makeTmpDir('manuscript');
   mkdirSync(join(dir, 'manuscript'), { recursive: true });
+  writeFileSync(join(dir, 'manuscript', 'draft.md'), '# Draft\n');
   assert.equal(detectProjectTypeFromRepo(dir), 'narrative');
 });
 
