@@ -333,7 +333,13 @@ export function storeFactBitemporal(db, fact, now) {
     const factId = insertFact(db, f, t);
     return { invalidated, factId };
   });
-  const r = txn(fact, ts);
+  // F2.7: .immediate() issues BEGIN IMMEDIATE — see brain-handler conflict.resolve.
+  // Sister writers (conflict.resolve) hold IMMEDIATE locks; if we ran DEFERRED here
+  // we would hit SQLITE_BUSY when upgrading SHARED→RESERVED on the first write
+  // inside the txn body and the user's memory write would silently drop (or
+  // throw SQLITE_BUSY at the caller). Lock-mode alignment with sister writers
+  // is what makes the cross-connection contract honest.
+  const r = txn.immediate(fact, ts);
   return { invalidated: r.invalidated, factId: r.factId, deduped: false };
 }
 

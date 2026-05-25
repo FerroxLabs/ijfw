@@ -243,8 +243,12 @@ export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, 
       continue;
     }
 
-    // Insert facts inside BEGIN IMMEDIATE so the rollback boundary is one
-    // file = atomic from the db's perspective.
+    // F2.7: Insert facts under BEGIN IMMEDIATE so the rollback boundary is one
+    // file = atomic from the db's perspective AND the lock mode matches sister
+    // writers (conflict.resolve, storeFactBitemporal). Plain txn() would be
+    // BEGIN DEFERRED — a sister IMMEDIATE writer holding RESERVED would force
+    // us to SQLITE_BUSY-or-retry on first INSERT. .immediate() acquires
+    // RESERVED at BEGIN so the busy_timeout serialises us correctly.
     const insertFact = db.prepare(
       'INSERT INTO facts (subject, predicate, object, valid_from, source, confidence) VALUES (?,?,?,?,?,?)'
     );
@@ -261,7 +265,7 @@ export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, 
       }
     });
     try {
-      txn(extracted);
+      txn.immediate(extracted);
     } catch (e) {
       errors.push({ file: file.name, stage: 'insert', message: e.message });
       continue;
