@@ -52,11 +52,15 @@ const EXPECTED_TOOLS = [
   // Cap raised 12 → 13 for this single read-only surface (combined-tool
   // pattern remains preferred for future growth).
   'ijfw_memory_facts',
+  // v1.5.2 IJFW Brain (Plan A): combined-tool MCP surface for the brain
+  // backend. 8 verbs (think / links / wiki.{get,compile,promote,export,
+  // shareReadme} / conflict.resolve). Cap raised 13 → 14.
+  'ijfw_brain',
 ];
 // v1.5.0 T13: ijfw_subagent_post_done was retired (absorbed into ijfw_state as
 // the `subagent.post-done` verb). The tool MUST NOT appear in tools/list.
 const RETIRED_TOOLS = ['ijfw_subagent_post_done'];
-const EXPECTED_COUNT = 13;
+const EXPECTED_COUNT = 14;
 
 function send(child, msg) {
   child.stdin.write(JSON.stringify(msg) + '\n');

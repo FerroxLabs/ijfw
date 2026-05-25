@@ -2990,12 +2990,28 @@ function codexDoctor(projectRoot) {
   const agentsMd = join(root, 'AGENTS.md');
 
   const plugin = readJsonFile(pluginPath);
+  // v1.5.2.1: read the canonical version dynamically from
+  // installer/package.json instead of comparing against a hardcoded literal.
+  // The previous hardcoded '1.3.2' check drifted out of sync on every
+  // release (latest observed: project at 1.5.1, doctor still expecting
+  // 1.3.2 → false-positive failures on every fresh install). Reading from
+  // installer/package.json keeps the doctor honest as long as that file
+  // and the codex plugin.json are bumped together at ship-gate.
+  let canonicalVersion = null;
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'installer', 'package.json');
+    canonicalVersion = JSON.parse(readFileSync(pkgPath, 'utf8')).version;
+  } catch { /* canonical version unreadable; check below will fail */ }
   checks.push({
     name: 'plugin metadata',
-    ok: plugin?.version === '1.3.2',
+    ok: !!canonicalVersion && plugin?.version === canonicalVersion,
     required: true,
-    message: plugin ? `version ${plugin.version}` : 'missing plugin.json',
-    fix: 'update codex/.codex-plugin/plugin.json',
+    message: plugin
+      ? (canonicalVersion
+          ? `version ${plugin.version}${plugin.version === canonicalVersion ? '' : ` (expected ${canonicalVersion})`}`
+          : `version ${plugin.version} (canonical version unreadable)`)
+      : 'missing plugin.json',
+    fix: 'update codex/.codex-plugin/plugin.json to match installer/package.json version',
   });
 
   const hooks = readJsonFile(hooksPath);

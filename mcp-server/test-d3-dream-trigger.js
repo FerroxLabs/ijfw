@@ -393,8 +393,16 @@ test('runner.mjs --project-root completes cleanly without args extras', () => {
 
 // --- 9. tool-cap budget unchanged ------------------------------------------
 
-test('MCP tool-cap stays under 12 (D3 adds zero new tools; v1.5.0-major fully populated cap at 12 with ijfw_cross_audit_converge)', () => {
+// v1.5.2.1: cap is 14 (raised 13 -> 14 in v1.5.2 for ijfw_brain). D3 itself
+// adds zero MCP tools — dream-trigger is a CLI verb, not an MCP tool — so
+// the regex count must stay at or below 14. The earlier `<= 12` assertion
+// was stale from before v1.5.0's `ijfw_memory_facts` and v1.5.2's
+// `ijfw_brain` raises. Note: the regex counts inline `name: 'ijfw_*` entries
+// only (not the UPPER_SNAKE_TOOL named-import references for update_check /
+// _apply at the array tail) — so the matched count is 12, the real
+// advertised count is 14. Both are within the documented ≤14 cap.
+test('MCP tool-cap inline name entries stay within the 14-tool cap', () => {
   const server = readFileSync(join(REPO_ROOT, 'mcp-server', 'src', 'server.js'), 'utf8');
   const matches = server.match(/name:\s*'ijfw_/g) || [];
-  assert.ok(matches.length <= 12, `tool-cap must be <= 12; saw ${matches.length}`);
+  assert.ok(matches.length <= 14, `tool-cap must be <= 14; saw ${matches.length}`);
 });

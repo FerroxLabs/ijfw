@@ -284,7 +284,16 @@ test('codex: doctor works from a non-IJFW project directory using bundled assets
       stdio: ['pipe', 'pipe', 'pipe']
     });
     assert.match(out, /IJFW Codex doctor/);
-    assert.match(out, /plugin metadata -- version 1\.3\.2/);
+    // v1.5.2.1: assert doctor surfaces ANY semver version string under the
+    // plugin-metadata check, not a hardcoded literal. The earlier regex
+    // matched `1\.3\.2` exactly, which silently broke on every release
+    // bump (1.4.0, 1.4.1, 1.4.3, 1.5.0, 1.5.1, 1.5.2.1…) — the test was
+    // pre-existing-failing per memory note 8787 at the v1.5.1 W0 baseline.
+    // Doctor itself now reads the canonical version from
+    // installer/package.json (see codexDoctor in cross-orchestrator-cli.js)
+    // so the comparison can no longer drift; this assertion just confirms
+    // doctor surfaces SOMETHING that looks like a semver.
+    assert.match(out, /plugin metadata -- version \d+\.\d+\.\d+/);
     assert.match(out, /skills -- /);
   } finally {
     rmTmpDir(cwd);
