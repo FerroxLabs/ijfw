@@ -1169,12 +1169,24 @@ const handlers = {
       // F-LENS2-13: pre-canonicalize via realpathSync so a Windows 8.3 short-
       // name (PROGRA~1) or a macOS /tmp -> /private/tmp symlink doesn't make
       // the path.relative containment check spuriously claim "outside repo".
-      // realpathSync may throw if the path doesn't exist yet (event log is
-      // about to be created), so fall back to the un-canonicalized strings.
-      let canonicalRoot = root;
-      let canonicalEventLog = eventLogPath;
-      try { canonicalRoot = realpathSync(root); } catch { /* not yet realised */ }
-      try { canonicalEventLog = realpathSync(eventLogPath); } catch { /* not yet realised */ }
+      //
+      // Canonicalization MUST be atomic across both sides: realpathSync(root)
+      // can succeed (root exists) while realpathSync(eventLogPath) throws
+      // ENOENT (event log file is about to be created). Independent try/catches
+      // produce ASYMMETRIC results — on macOS /var/folders is a symlink to
+      // /private/var/folders, so canonicalRoot becomes the long form while
+      // canonicalEventLog stays short, path.relative returns a `..`-leading
+      // string, and the containment check spuriously rejects — leaking the
+      // absolute path into the dispatch brief. One try/catch keeps both sides
+      // either canonical or both un-canonical.
+      let canonicalRoot, canonicalEventLog;
+      try {
+        canonicalRoot = realpathSync(root);
+        canonicalEventLog = realpathSync(eventLogPath);
+      } catch {
+        canonicalRoot = root;
+        canonicalEventLog = eventLogPath;
+      }
       const _rel = pathRelative(canonicalRoot, canonicalEventLog);
       const eventLogRel = (_rel === '' || _rel.startsWith('..') || pathIsAbsolute(_rel))
         ? eventLogPath
