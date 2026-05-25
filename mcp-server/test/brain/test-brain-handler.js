@@ -171,6 +171,118 @@ test('verb conflict.resolve: monotonic valid_to beats wall-clock when clock woul
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
 });
 
+// v1.5.2.1 FLAG-1 cross-platform — verify wiki.export rejects outFile paths
+// that escape repoRoot. Original guard used `startsWith(resolvedRoot + '/')`
+// which broke on Windows (separator is `\`) and would silently fail-open if
+// "fixed" naively to `startsWith(resolvedRoot)` (prefix-collision bypass).
+// New guard uses path.relative + isAbsolute + '..' checks.
+
+test('verb wiki.export rejects outFile traversal via ..', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    seedPage(root, 'entities', 'sean', '# sean\n\nfounder');
+    const r = await handleIjfwBrain({
+      verb: 'wiki.export',
+      args: { slug: 'sean', outFile: join(root, '..', 'escape.md') },
+      db, repoRoot: root,
+    });
+    assert.equal(r.ok, false, 'must reject .. traversal');
+    assert.equal(r.error, 'outFile-escapes-repo');
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
+
+test('verb wiki.export rejects outFile in prefix-collision sibling dir', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  // Construct a sibling directory whose path starts with root + a suffix.
+  // The OLD `startsWith(resolvedRoot + '/')` guard correctly caught this on
+  // POSIX (by accident of the trailing '/'); the NEW path.relative guard
+  // catches it on every platform.
+  const sibling = `${root}-evil`;
+  try {
+    mkdirSync(sibling, { recursive: true });
+    seedPage(root, 'entities', 'sean', '# sean');
+    const r = await handleIjfwBrain({
+      verb: 'wiki.export',
+      args: { slug: 'sean', outFile: join(sibling, 'leak.md') },
+      db, repoRoot: root,
+    });
+    assert.equal(r.ok, false, 'must reject prefix-collision sibling dir');
+    assert.equal(r.error, 'outFile-escapes-repo');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(sibling, { recursive: true, force: true });
+    db.close();
+  }
+});
+
+test('verb wiki.export rejects outFile equal to repoRoot itself', async () => {
+  // The relative path would be '' (empty) — never a valid outFile because
+  // root is a directory, and exportPageBundle expects a file path.
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    seedPage(root, 'entities', 'sean', '# sean');
+    const r = await handleIjfwBrain({
+      verb: 'wiki.export',
+      args: { slug: 'sean', outFile: root },
+      db, repoRoot: root,
+    });
+    assert.equal(r.ok, false, 'must reject outFile === repoRoot');
+    assert.equal(r.error, 'outFile-escapes-repo');
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
+
+// v1.5.2.1 conflict.resolve atomic-verify — regression guard for the
+// cross-connection race where the winner could be closed between the
+// auto-commit verify and the lock-acquired update. The verify now runs
+// INSIDE the BEGIN IMMEDIATE transaction so verify + close-losers operate
+// on the same locked snapshot.
+
+test('verb conflict.resolve: stale winnerId (already closed) returns winner-not-found-or-already-closed', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    const ins = db.prepare(
+      'INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to) VALUES (?,?,?,?,?,?)'
+    );
+    ins.run(1, 'sean', 'role', 'A', '2024-01-01T00:00:00Z', null);
+    ins.run(2, 'sean', 'role', 'B', '2024-01-01T00:00:00Z', '2024-06-01T00:00:00Z');
+    // Try to use the already-closed fact (id=2) as the winner. The
+    // FLAG-6 + valid_to IS NULL check (now inside the transaction) must
+    // reject — anything less leaves the system with zero open rows.
+    const r = await handleIjfwBrain({
+      verb: 'conflict.resolve',
+      args: { subject: 'sean', predicate: 'role', winnerId: 2 },
+      db, repoRoot: root,
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'winner-not-found-or-already-closed');
+    // And the still-open row (id=1) must remain open — no UPDATE leaked
+    // out of a partial transaction.
+    const open = db.prepare("SELECT id FROM facts WHERE valid_to IS NULL").all().map((r) => r.id);
+    assert.deepEqual(open, [1], 'open rows must be untouched after rejected resolve');
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
+
+test('verb conflict.resolve: supersede=false short-circuits with the same verify guard', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    db.prepare(
+      'INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to) VALUES (?,?,?,?,?,?)'
+    ).run(99, 'sean', 'role', 'old', '2024-01-01T00:00:00Z', '2024-06-01T00:00:00Z');
+    const r = await handleIjfwBrain({
+      verb: 'conflict.resolve',
+      args: { subject: 'sean', predicate: 'role', winnerId: 99, supersede: false },
+      db, repoRoot: root,
+    });
+    assert.equal(r.ok, false, 'closed winner must fail even on supersede=false');
+    assert.equal(r.error, 'winner-not-found-or-already-closed');
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
+
 // FLAG-11 — verify the think verb's prompt embeds the untrusted-content delimiters.
 
 test('verb think: prompt embeds <<<REFERENCE_START>>>/<<<REFERENCE_END>>> delimiters', async () => {
