@@ -2461,10 +2461,19 @@ function repoRootFromCli() {
   return join(here, '..', '..');
 }
 function findCliAsset(...rel) {
+  // F-C-4 (Lens 3): probe XDG_DATA_HOME and XDG_CONFIG_HOME in addition to
+  // ~/.ijfw and IJFW_HOME. Users who installed via a distro-aware packager
+  // (e.g. dotfiles repo, nix, distro RPM, or any wrapper that honours XDG
+  // base-dir spec) land their ijfw tree under $XDG_DATA_HOME/ijfw rather
+  // than ~/.ijfw, and were silently invisible to the doctor fallback.
+  const xdgData = process.env.XDG_DATA_HOME;
+  const xdgConfig = process.env.XDG_CONFIG_HOME;
   const candidates = [
     join(repoRootFromCli(), ...rel),
     process.env.IJFW_HOME ? join(process.env.IJFW_HOME, ...rel) : null,
     join(homedir(), '.ijfw', ...rel),
+    xdgData ? join(xdgData, 'ijfw', ...rel) : null,
+    xdgConfig ? join(xdgConfig, 'ijfw', ...rel) : null,
   ].filter(Boolean);
   return candidates.find(p => existsSync(p)) || null;
 }
