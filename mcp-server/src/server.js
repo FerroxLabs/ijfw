@@ -16,7 +16,8 @@ import { createInterface } from 'readline';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
   appendFileSync, readdirSync, statSync, renameSync, unlinkSync,
-  openSync, closeSync, fsyncSync, realpathSync
+  openSync, closeSync, fsyncSync, realpathSync,
+  accessSync, constants as fsConstants
 } from 'fs';
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
 import { resolveBrainPaths } from './brain/paths.js';
@@ -284,14 +285,16 @@ function validatePath(raw) {
 function isWritable(dir) {
   try {
     if (!existsSync(dir)) {
-      // Try to create it; if that works it's writable.
+      // Try to create it; if mkdir fails, treat as non-writable.
       mkdirSync(dir, { recursive: true });
       return true;
     }
-    // Exists -- probe with a tmp file.
-    const probe = join(dir, `.ijfw-probe-${process.pid}-${Date.now()}`);
-    writeFileSync(probe, '');
-    unlinkSync(probe);
+    // v1.5.2.1 H-1 (Lens 1): previously wrote+unlinked a probe file
+    // (`.ijfw-probe-<pid>-<ts>`). That broke the "importing server.js
+    // produces ZERO filesystem artifacts" contract: the probe leaked
+    // under inotify/fswatch even when self-tests in tmpdir saw nothing.
+    // accessSync(W_OK) gives the same writability signal with no I/O.
+    accessSync(dir, fsConstants.W_OK);
     return true;
   } catch {
     return false;
