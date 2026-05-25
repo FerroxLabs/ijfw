@@ -513,6 +513,38 @@ export function applyDecayToFacts(rows, now, options = {}) {
   });
 }
 
+/**
+ * getHistoryWindow -- bounded slice of facts about (subject[, predicate]) for
+ * the wiki compiler's "history" section. Returns at most `limit` rows ordered
+ * by valid_from DESC. When rollupOlder is true and rows.length === limit,
+ * also returns an `older` rollup of facts beyond the window so the wiki page
+ * can show "Older: 55 events between 2024-03-01 and 2025-06-30" without
+ * bloating the page.
+ *
+ * Trident F-B2 protection: prevents page-bloat for hot subjects with hundreds
+ * of facts.
+ */
+export function getHistoryWindow(db, subject, predicate, { limit = 50, since = null, rollupOlder = true } = {}) {
+  const params = [subject];
+  let where = 'subject = ?';
+  if (predicate != null) { where += ' AND predicate = ?'; params.push(predicate); }
+  if (since) { where += ' AND valid_from >= ?'; params.push(since); }
+  const rows = db.prepare(
+    `SELECT id, predicate, object, valid_from, valid_to, memory_id, source, confidence
+     FROM facts WHERE ${where} ORDER BY valid_from DESC LIMIT ?`
+  ).all(...params, limit);
+  let older = null;
+  if (rollupOlder && rows.length === limit) {
+    const earliest = rows[rows.length - 1].valid_from;
+    const r = db.prepare(
+      `SELECT COUNT(*) AS count, MIN(valid_from) AS fromIso, MAX(valid_from) AS toIso
+       FROM facts WHERE ${where} AND valid_from < ?`
+    ).get(...params, earliest);
+    if (r.count > 0) older = r;
+  }
+  return { rows, older };
+}
+
 export default {
   openTemporalDb,
   openTemporalDbSync,
@@ -524,6 +556,7 @@ export default {
   getHistory,
   getAllFactsWithWindows,
   applyDecayToFacts,
+  getHistoryWindow,
   DECAY_HALFLIFE_DAYS,
   DECAY_HALFLIFE_SESSION_DAYS,
 };
