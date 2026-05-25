@@ -40,6 +40,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isOnCooldown, markCompleted } from './cooldown.js';
 import { shouldRunNow } from './state-file.js';
 import { runStages } from './stage-runner.js';
+import { runDreamCycle } from '../brain/dream-pipeline.js';
+import { openDb } from '../memory/fts5.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -381,6 +383,25 @@ function safeJournalSummary() {
         run: async () => {
           const out = await runTierPromotion();
           return out || { skipped: 'no-op' };
+        },
+      },
+      {
+        name: 'wiki-compile',
+        run: async () => {
+          let db;
+          try {
+            db = await openDb(opts.projectRoot);
+          } catch (err) {
+            log(`wiki-compile: db open skipped (${err && err.message ? err.message : err})`);
+            return { skipped: 'db-unavailable' };
+          }
+          try {
+            const out = await runDreamCycle({ db, repoRoot: opts.projectRoot, cycleId: `${Date.now()}-wiki` });
+            log(`wiki-compile: processed=${out.processed} pages=${out.pagesCompiled} facts=${out.factsInserted} budgetExhausted=${out.budgetExhausted}`);
+            return out;
+          } finally {
+            try { db.close(); } catch { /* best effort */ }
+          }
         },
       },
       {
