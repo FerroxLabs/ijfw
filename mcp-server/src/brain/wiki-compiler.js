@@ -9,7 +9,7 @@
 // Wiki path: <ijfw|.ijfw>/wiki/<type>s/<slug>.md per the layout sentinel.
 // Slug is the subject lowercased + non-alphanum -> '-'.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBrainPaths } from './paths.js';
 import { applyTemplate } from './wiki-templates.js';
@@ -72,24 +72,46 @@ export function compileWikiPage(db, { repoRoot, type, subject } = {}) {
   const pageDir = join(paths.wikiDir, pluralType(type));
   const pagePath = join(pageDir, `${slug}.md`);
 
-  const existing = existsSync(pagePath) ? readFileSync(pagePath, 'utf8') : '';
-  const facts = queryFacts(db, subject);
-  const history = getHistoryWindow(db, subject, null, { limit: 50 });
-  const backlinks = queryBacklinks(db, slug);
-  const sources = querySources(db, subject);
-
-  const candidate = applyTemplate(type, existing, { subject, facts, history, backlinks, sources });
-
-  const verdict = resolveCitations(db, candidate);
-  if (!verdict.ok) {
-    return { ok: false, error: 'unresolved-citations', unresolved: verdict.unresolved, pagePath };
+  // F8: per-page advisory lock prevents two concurrent compiles for the
+  // same subject from interleaving (both read existing → both render →
+  // both rename → operator NOTES from the intermediate state could be
+  // lost). EEXIST-based exclusive open is portable + atomic.
+  mkdirSync(pageDir, { recursive: true });
+  const lockPath = pagePath + '.lock';
+  let lockFd;
+  try {
+    lockFd = openSync(lockPath, 'wx');
+  } catch (e) {
+    if (e.code === 'EEXIST') {
+      return { ok: false, error: 'page-locked-by-concurrent-compile', pagePath };
+    }
+    throw e;
   }
 
-  // Atomic write
-  mkdirSync(pageDir, { recursive: true });
-  const tmp = pagePath + '.tmp';
-  writeFileSync(tmp, candidate);
-  renameSync(tmp, pagePath);
+  try {
+    // Read existing AFTER acquiring the lock so we see the freshest committed
+    // state (no race with another compile that just landed its rename).
+    const existing = existsSync(pagePath) ? readFileSync(pagePath, 'utf8') : '';
+    const facts = queryFacts(db, subject);
+    const history = getHistoryWindow(db, subject, null, { limit: 50 });
+    const backlinks = queryBacklinks(db, slug);
+    const sources = querySources(db, subject);
 
-  return { ok: true, pagePath, factsCount: facts.length, historyRows: history.rows.length };
+    const candidate = applyTemplate(type, existing, { subject, facts, history, backlinks, sources });
+
+    const verdict = resolveCitations(db, candidate);
+    if (!verdict.ok) {
+      return { ok: false, error: 'unresolved-citations', unresolved: verdict.unresolved, pagePath };
+    }
+
+    // Atomic write
+    const tmp = pagePath + '.tmp';
+    writeFileSync(tmp, candidate);
+    renameSync(tmp, pagePath);
+
+    return { ok: true, pagePath, factsCount: facts.length, historyRows: history.rows.length };
+  } finally {
+    try { closeSync(lockFd); } catch {}
+    try { unlinkSync(lockPath); } catch {}
+  }
 }

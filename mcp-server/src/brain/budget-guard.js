@@ -42,8 +42,15 @@ function readSpend(repoRoot, cycleId) {
 }
 
 export function BudgetGuard({ repoRoot, cycleId, cycleUsd, dayUsd, env = process.env } = {}) {
-  const cycleCap = Number.isFinite(cycleUsd) ? cycleUsd : Number(env.IJFW_DREAM_BUDGET_USD) || DEFAULT_CYCLE_USD;
-  const dayCap = Number.isFinite(dayUsd) ? dayUsd : Number(env.IJFW_DREAM_BUDGET_DAY_USD) || DEFAULT_DAY_USD;
+  // F1 fix: Number('0') is 0 (falsy), so `Number(env.X) || DEFAULT` silently
+  // dropped a zero cap and fell through to the default. Use isFinite checks
+  // so the caller's "$0 means off" intent is respected.
+  const cycleEnv = env.IJFW_DREAM_BUDGET_USD != null ? Number(env.IJFW_DREAM_BUDGET_USD) : NaN;
+  const dayEnv = env.IJFW_DREAM_BUDGET_DAY_USD != null ? Number(env.IJFW_DREAM_BUDGET_DAY_USD) : NaN;
+  const cycleCap = Number.isFinite(cycleUsd) ? cycleUsd
+    : (Number.isFinite(cycleEnv) ? cycleEnv : DEFAULT_CYCLE_USD);
+  const dayCap = Number.isFinite(dayUsd) ? dayUsd
+    : (Number.isFinite(dayEnv) ? dayEnv : DEFAULT_DAY_USD);
   const id = cycleId || `cycle-${Date.now()}`;
   let spent = readSpend(repoRoot, id);
 

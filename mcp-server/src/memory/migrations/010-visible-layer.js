@@ -59,13 +59,16 @@ export async function up(repoRoot) {
   if (readLayoutVersion(repoRoot) >= 2) {
     return { skipped: true, reason: 'already-migrated' };
   }
-  const freshFiles = findFreshFiles(repoRoot);
-  if (freshFiles.length > 0) {
-    return { skipped: true, reason: 'fresh-writes-detected', freshFiles };
-  }
   return await withLayoutLock(repoRoot, async () => {
     if (readLayoutVersion(repoRoot) >= 2) {
       return { skipped: true, reason: 'already-migrated' };
+    }
+    // F4: freshness gate runs INSIDE the lock so a writer cannot sneak in
+    // between gate-pass and lock-acquire. The lock holds the freshness
+    // contract for the entire copy phase.
+    const freshFiles = findFreshFiles(repoRoot);
+    if (freshFiles.length > 0) {
+      return { skipped: true, reason: 'fresh-writes-detected', freshFiles };
     }
     let copiedFiles = 0;
     const memorySrc = join(repoRoot, '.ijfw', 'memory');
