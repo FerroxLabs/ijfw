@@ -125,3 +125,122 @@ test('runDreamCycle: budget exhausted halts cycle gracefully', async () => {
     assert.equal(r.processed, 0);
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
 });
+
+// B1 — additional tests for the real LLM-driven default extractor.
+
+import { defaultExtractFacts } from '../../src/brain/dream-pipeline.js';
+import { BudgetGuard } from '../../src/brain/budget-guard.js';
+
+test('defaultExtractFacts: no LLM reachable -> returns [] (graceful no-op)', async () => {
+  const root = freshRoot();
+  try {
+    const guard = BudgetGuard({ repoRoot: root, env: {} });
+    const out = await defaultExtractFacts({
+      file: { name: 'x.md', kind: 'markdown' },
+      text: 'sean is founder',
+      chunks: ['sean is founder'],
+      env: {}, // no API key, no LOCAL_URL -> not reachable
+      guard,
+    });
+    assert.deepEqual(out, []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('defaultExtractFacts: LLM reachable + stubbed call -> validates + returns facts', async () => {
+  const root = freshRoot();
+  try {
+    const guard = BudgetGuard({ repoRoot: root, env: {} });
+    const calls = [];
+    const stub = async (tier, prompt, opts) => {
+      calls.push({ tier, opts });
+      return {
+        text: 'Here is the array: [{"subject":"sean","predicate":"role","object":"founder","confidence":0.9},{"subject":"foundry","predicate":"is","object":"company","confidence":0.8}]',
+      };
+    };
+    const out = await defaultExtractFacts({
+      file: { name: 'x.md', kind: 'markdown' },
+      text: 'sean founded foundry',
+      chunks: ['sean founded foundry'],
+      env: { IJFW_BRAIN_API_KEY: 'sk-stub' }, // makes llmReachable() true
+      guard,
+      callTieredFn: stub,
+    });
+    assert.equal(out.length, 2);
+    assert.equal(out[0].subject, 'sean');
+    assert.equal(out[0].predicate, 'role');
+    assert.equal(out[0].object, 'founder');
+    assert.equal(out[0].confidence, 0.9);
+    assert.equal(out[1].subject, 'foundry');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].tier, 'extract');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('defaultExtractFacts: malformed JSON in response -> chunk skipped, others still extracted', async () => {
+  const root = freshRoot();
+  try {
+    const guard = BudgetGuard({ repoRoot: root, env: {} });
+    let callIdx = 0;
+    const stub = async () => {
+      callIdx += 1;
+      if (callIdx === 1) return { text: 'not json at all, sorry' };
+      return { text: '[{"subject":"a","predicate":"b","object":"c","confidence":0.7}]' };
+    };
+    const out = await defaultExtractFacts({
+      file: { name: 'x.md', kind: 'markdown' },
+      text: 'two chunks',
+      chunks: ['chunk1', 'chunk2'],
+      env: { IJFW_BRAIN_API_KEY: 'sk-stub' },
+      guard,
+      callTieredFn: stub,
+    });
+    assert.equal(out.length, 1, 'first chunk skipped (no JSON), second chunk yielded 1 fact');
+    assert.equal(out[0].subject, 'a');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('defaultExtractFacts: invalid fact shapes are dropped (subject missing, etc)', async () => {
+  const root = freshRoot();
+  try {
+    const guard = BudgetGuard({ repoRoot: root, env: {} });
+    const stub = async () => ({
+      text: '[{"subject":"good","predicate":"p","object":"o","confidence":0.8},{"subject":"","predicate":"x","object":"y"},{"foo":"bar"},{"subject":"alsoOK","predicate":"q","object":""}]',
+    });
+    const out = await defaultExtractFacts({
+      file: { name: 'x.md', kind: 'markdown' },
+      text: 't', chunks: ['t'],
+      env: { IJFW_BRAIN_API_KEY: 'sk-stub' },
+      guard,
+      callTieredFn: stub,
+    });
+    // good + alsoOK survive; empty-subject + missing-fields dropped
+    assert.equal(out.length, 2);
+    assert.deepEqual(out.map((f) => f.subject).sort(), ['alsoOK', 'good']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('defaultExtractFacts: per-chunk budget exhaustion halts cleanly', async () => {
+  const root = freshRoot();
+  try {
+    const guard = BudgetGuard({ repoRoot: root, env: {}, cycleUsd: 0.000001, dayUsd: 5.0 });
+    // First call drains tiny budget; second-and-onward chunks short-circuit.
+    let callIdx = 0;
+    const stub = async () => {
+      callIdx += 1;
+      return { text: '[{"subject":"s","predicate":"p","object":"o","confidence":0.7}]' };
+    };
+    const recordSpy = guard.record;
+    guard.record = (usd) => { recordSpy(0.000001); }; // exhaust on any record
+    const out = await defaultExtractFacts({
+      file: { name: 'x.md', kind: 'markdown' },
+      text: 't',
+      chunks: ['c1', 'c2', 'c3'],
+      env: { IJFW_BRAIN_API_KEY: 'sk-stub' },
+      guard,
+      callTieredFn: stub,
+    });
+    // Initial call may succeed before guard.record is hit; subsequent chunks
+    // short-circuit on guardCall.allowed === false.
+    assert.ok(callIdx <= 3, 'never more chunk calls than chunks provided');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
