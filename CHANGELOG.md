@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.5.2] — 2026-05-25
+
+### Added — IJFW Brain (Plan A)
+- **Visible `ijfw/` layer** with backward-compat fallback. Migration 010 copies `.ijfw/{memory,sessions}/*` to `ijfw/{memory,sessions}/*`, scaffolds `ijfw/dump/{inbox,processed}` + `ijfw/wiki/{concepts,entities,decisions,milestones}`, and flips the `.layout-version` sentinel atomically. Legacy paths preserved for one-version fallback. Trident F-B3 safety: lock + 30s mtime freshness gate.
+- **Dump folder pipeline**: drop `.md`, `.txt`, `.transcript.*`, or `.pdf` files into `ijfw/dump/inbox/`. Next dream cycle classifies, extracts, persists, and writes a `.manifest.json` receipt before atomically moving to `processed/`. Crash atomicity per Trident F-B4.
+- **Tiered LLM router** (`brain/tiered-llm.js`): `extract` tier (`claude-haiku-4-5-20251001`) + `synth` tier (`claude-sonnet-4-6`), env-overridable. Local-first via `IJFW_BRAIN_LOCAL_URL` (Ollama-compatible) with Anthropic fallback.
+- **Budget guard** (`brain/budget-guard.js`): per-cycle (`IJFW_DREAM_BUDGET_USD` default $0.50) + per-day (`IJFW_DREAM_BUDGET_DAY_USD` default $5.00) caps. Per-call `max_tokens` derivation prevents single-call overshoot. Separate envelope from the legacy A-Mem `IJFW_AUTOLINK_BUDGET_USD`. Trident F-B5.
+- **Wiki tier** with bi-temporal projection. Pages rendered from `getValidAt`-style fact queries + bounded `getHistoryWindow` (with "Older: N events" rollup) + backlinks + sources. Template-driven (no LLM-prose); citation-enforced — any unresolved `[mem:N]`/`[fact:N]` rejects the whole page (Trident F-B1). Operator NOTES outside `ijfw:auto:` sentinels preserved verbatim (Trident F-F2).
+- **Discovery dual-marker**: `~/.ijfw/registry.md` (operator-curated) + opt-in filesystem scan with `node_modules`/dotdir skip and marker-stop-descent. v2 layout wins over legacy.
+- **First-run scan** (`brain/first-run-scan.js`): walks `.claude/projects`, `.codex`, `.gemini`, `.cursor`, `.windsurf`, plus global `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` — surfaces the operator's existing CLI memory on day one. Data source for the M1 dashboard / M2 Wayland portal "wow" cold-start flow.
+- **Entity collapse + promotion suggester**: surfaces canonicalization candidates (`Sean Donahoe` vs `sean donahoe`) and cross-project triples present in ≥3 projects. Promotion is always operator-confirmed — never auto-applied.
+- **Stub detector**: surfaces wikilink targets with N+ incoming references but no actual page yet.
+- **Wiki-as-context-injection**: env-gated (`IJFW_BRAIN_INJECT=auto|always|never`, default `never`). When opted in, `handlePrelude` appends the top-N most-recently-touched wiki pages to the prelude. Best-effort — never breaks prelude on failure.
+- **Export + share**: `brain/export.js` inlines `[[linked]]` pages into a bundle file; `writeShareReadme` writes `ijfw/README.md` with team-share instructions (commit `ijfw/` to git + teammates `ijfw memory reindex`).
+
+### Added — MCP surface
+- **New combined MCP tool `ijfw_brain`** with 8 verbs: `think`, `links`, `wiki.get`, `wiki.compile`, `wiki.promote`, `wiki.export`, `wiki.shareReadme`, `conflict.resolve`. Combined-tool pattern keeps the cap at 14/14 instead of 17/13 that 4 separate tools would have required. `think` uses the synth-tier LLM with strict citation enforcement against `memory_entries`/`facts` ids.
+
+### Changed
+- **MCP cap raised 13 → 14** to accommodate the new `ijfw_brain` slot.
+- `mcp-server/src/server.js`: 13 internal `MEMORY_DIR`/`SESSIONS_DIR` references refactored to lazy `paths().memoryDir`/`paths().sessionsDir` via `resolveBrainPaths(REPO_ROOT)`. Re-reads the layout sentinel on every call so long-running servers pick up the migration without restart (Trident F-B3). Back-compat exports preserved.
+- `mcp-server/src/memory/temporal.js`: new bounded `getHistoryWindow` export with optional "Older: N events" rollup (Trident F-B2).
+- `mcp-server/src/memory/search.js`: new `format: 'structured'` option returns `[{source, anchor, snippet, confidence, ageDays, decayFactor, whyMatched, backlinkCount}]`. Default unchanged for back-compat.
+- `mcp-server/src/dream/runner.mjs`: new `wiki-compile` stage runs `runDreamCycle` after `tier_promotion` with the same per-stage error isolation.
+
+### Dependencies
+- New runtime dep: `chokidar@^4.0.1` (for future file-watch in M2 Wayland portal).
+
+### Plan A → Plans B+C handoff
+- `.planning/wayland-memory/CONTRACT.md` documents the locked M1→M2/B/C interface contract per Trident F-B6.
+
+### Notes
+- `FACTS_FILE` and `FACTS_DB_FILE` intentionally remain under `MEMORY_DIR` for back-compat (TODO comments mark them for relocation to `paths().factsJsonl` / `paths().indexDb` in a future data migration).
+- Full-suite regression check is deferred to ship-gate; per-task tests and the end-to-end integration test (Task 30) confirm cross-module contracts.
+
 ## [1.5.1] -- 2026-05-22 ("Honest Surfaces") — correctness + honesty release
 
 v1.5.0 shipped with surface drift: a CLI that advertised commands that did
