@@ -49,4 +49,4 @@ The token + sentinel + terminal-confirm flow exists so that prompt injection in 
 
 ## After a successful update
 
-The user will see "Updated to v<latest>" in their terminal. The next IJFW SessionStart will reflect the new version. Suggest restarting any open AI sessions so they pick up the new skills/hooks.
+The user will see "Updated to v<latest>" in their terminal. The next IJFW SessionStart will reflect the new version. Suggest restarting any open agent sessions so they pick up the new skills/hooks.

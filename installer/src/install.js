@@ -255,7 +255,24 @@ async function main() {
   await runInstallScript(target);
   console.log('  platform configs applied');
 
-  if (!opts.noMarketplace) {
+  // v1.5.2.1 -- scope-leak fix. The marketplace merge writes
+  // `~/.claude/settings.json` (the REAL user's settings, via
+  // `claudeSettingsPath()` -> `homedir() + .claude/settings.json`). Without
+  // a customDir guard, that write happens even when the operator passed
+  // `--dir /tmp/scratch` or set `IJFW_CUSTOM_DIR=1` -- i.e., the installer
+  // was supposed to stay inside the scratch dir but still leaks into the
+  // real $HOME. e2e-smoke.sh Mode 1 catches this as a scope leak:
+  //   "Bug A regressed, installer is leaking into real $HOME"
+  // Two conditions mean "do not touch the real settings":
+  //   (a) IJFW_CUSTOM_DIR=1 env var (e2e-smoke + CI smoke harnesses)
+  //   (b) --dir or IJFW_HOME points at a non-canonical install root
+  // Either one is sufficient to skip the merge.
+  const canonicalDir = join(homedir(), '.ijfw');
+  const isCustomDir =
+    process.env.IJFW_CUSTOM_DIR === '1' ||
+    resolve(target) !== canonicalDir;
+
+  if (!opts.noMarketplace && !isCustomDir) {
     const settingsPath = claudeSettingsPath();
     // Pass the resolved install root so the marketplace entry's directory
     // path matches the actual install -- including --dir and IJFW_HOME paths.
@@ -263,6 +280,8 @@ async function main() {
     // path that doesn't exist on that machine.
     mergeMarketplace(settingsPath, { rootDir: target });
     console.log(`  marketplace registered in ${settingsPath}`);
+  } else if (isCustomDir) {
+    console.log('  marketplace merge skipped (custom-dir install)');
   }
 
   // V3-F3 cold-scan -- fire-and-forget detached child that populates
