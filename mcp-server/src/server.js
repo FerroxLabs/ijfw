@@ -21,11 +21,11 @@ import {
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
 import { resolveBrainPaths } from './brain/paths.js';
 import { migrateFactsInternalOnce } from './brain/migrate-facts-internal-once.js';
-// v1.5.2.1 F1: fs-layout migration 010 (visible ijfw/ layer). NOT a SQL
-// migration — runs at server startup alongside the facts relocation, gated
-// by the .layout-version sentinel rather than by SQLite user_version. Async;
-// awaited at top level below.
-import { up as runVisibleLayerMigration } from './memory/migrations/010-visible-layer.js';
+// v1.5.2.1 F3: fs-layout migrations live in their own directory with their
+// own registry (not auto-discovered by the SQL migration-runner). Invoked
+// inside __mainEntryPoint() only — never as a top-level side effect of
+// importing server.js.
+import { runLayoutMigrations } from './memory/layout-migrations/index.js';
 import { homedir } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { createHash, randomBytes } from 'crypto';
@@ -325,47 +325,27 @@ const REPO_ROOT = dirname(IJFW_DIR);
 // paths() re-reads the layout sentinel on every call so a long-running server
 // process picks up the migration-010 sentinel flip without restart.
 function paths() { return resolveBrainPaths(REPO_ROOT); }
-// v1.5.2 F5: one-shot move of FACTS_FILE / FACTS_DB_FILE from the legacy
-// .ijfw/memory/ location into the .ijfw/ internal-only location they were
-// designed for. Sync + idempotent — safe at every module-load. Must run
-// BEFORE FACTS_FILE / FACTS_DB_FILE consts evaluate so they pick up the
-// new path.
-migrateFactsInternalOnce(REPO_ROOT);
-// v1.5.2.1 F1: invoke the fs-layout migration explicitly. Was previously
-// auto-discovered by the SQL migration runner and would crash every
-// memory-db open with `TypeError: Path must be a string. Received <Database>`
-// because runMigrations passes a db handle as the first arg but 010 expects
-// repoRoot. The SQL=false export in 010 now opts it out of the SQL runner;
-// this top-level await is its only invocation path. Best-effort: a failure
-// here must not block the rest of server startup, so the catch logs to
-// stderr and continues (the operator can re-run on next boot once the
-// underlying fs issue is resolved).
-//
-// Entry-point gate (v1.5.2.1 follow-up): only fire when server.js is the
-// Node entry point. Without this gate, any module that imports server.js
-// (tests, the dashboard backend, future helpers) would trigger the
-// visible-layer scaffold against the importer's cwd — creating stray
-// `ijfw/` trees in places that aren't IJFW projects (test artifacts,
-// CI scratch dirs, etc.). The visible layer is a real feature for
-// end-user projects (this is where users drop files into dump/inbox and
-// where the wiki appears for sharing) — it MUST be created when a user
-// actually launches the MCP server in their project, but it MUST NOT
-// be created as a side effect of an import.
+// v1.5.2.1 F1: __isServerEntryPoint gates ALL top-level imperative effects
+// (facts relocation, fs-layout migration, dir bootstrap, WS client, stdio
+// transport, signal handlers). Without this gate, importing server.js from
+// a test or helper would fire every side-effect against the importer's cwd:
+// stray `ijfw/`, `.ijfw/`, .ijfw-probe-* files in repos that aren't IJFW
+// projects. The gate uses realpathSync on BOTH sides because process.argv[1]
+// can be a symlinked bin shim (npm global installs) while import.meta.url
+// resolves to the real path inside node_modules.
 const __isServerEntryPoint = (() => {
+  if (!process.argv[1]) return false;
   try {
-    const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-    return entry === import.meta.url;
-  } catch { return false; }
-})();
-if (__isServerEntryPoint) {
-  try {
-    await runVisibleLayerMigration(REPO_ROOT);
+    const entryReal = realpathSync(process.argv[1]);
+    const selfReal = realpathSync(fileURLToPath(import.meta.url));
+    return entryReal === selfReal;
   } catch (e) {
-    try {
-      process.stderr.write(`[ijfw layout-migrate] failed: ${e && e.message ? e.message : e}\n`);
-    } catch { /* stderr may be detached during smoke tests */ }
+    if (process.env.IJFW_DEBUG) {
+      try { process.stderr.write(`[ijfw entry-gate] check failed: ${e.message}\n`); } catch {}
+    }
+    return false;
   }
-}
+})();
 // Back-compat values for the line-2349 re-export. New code MUST use paths().memoryDir / paths().sessionsDir.
 const MEMORY_DIR = join(IJFW_DIR, 'memory');
 const SESSIONS_DIR = join(IJFW_DIR, 'sessions');
@@ -402,14 +382,18 @@ const NATIVE_CLAUDE_DIR = join(
 // Failures here do NOT write to stderr during startup -- any stderr byte during
 // MCP handshake can make strict clients (incl. Claude Code) mark the server
 // as failed. Subsequent store/read calls surface structured errors instead.
-try {
-  [paths().memoryDir, paths().sessionsDir].forEach(dir => {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  });
-} catch { /* handleStore/recall surface structured errors on first use */ }
-try {
-  if (!existsSync(GLOBAL_DIR)) mkdirSync(GLOBAL_DIR, { recursive: true });
-} catch { /* handleStore reports on attempted write */ }
+// v1.5.2.1 F1: called from __mainEntryPoint() so importing server.js no
+// longer creates directories in the importer's cwd.
+function __bootstrapDirs() {
+  try {
+    [paths().memoryDir, paths().sessionsDir].forEach(dir => {
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    });
+  } catch { /* handleStore/recall surface structured errors on first use */ }
+  try {
+    if (!existsSync(GLOBAL_DIR)) mkdirSync(GLOBAL_DIR, { recursive: true });
+  } catch { /* handleStore reports on attempted write */ }
+}
 
 // R2-E -- sanitizeContent moved to mcp-server/src/sanitizer.js so MCP stores
 // and auto-memorize stores share a single implementation. Imported above.
@@ -2389,7 +2373,11 @@ function handleMessage(msg) {
 // of the import graph entirely unless the operator opts in via the env var, so
 // MCP startup never opens a socket for the common (unset) case. Best-effort:
 // a failed WS bind must never block the stdio transport.
-if (process.env.IJFW_REGISTRY_WS_URL || process.env.IJFW_REGISTRY_WS_SOURCE) {
+// v1.5.2.1 F1: called from __mainEntryPoint() so importing server.js no
+// longer fires the WS client even when the env var is set in the importer's
+// process (relevant in tests / dashboards that share env with the server).
+function __maybeStartWsClient() {
+  if (!process.env.IJFW_REGISTRY_WS_URL && !process.env.IJFW_REGISTRY_WS_SOURCE) return;
   (async () => {
     try {
       const { initWsClient } = await import('./extension-registry-ws.js');
@@ -2404,50 +2392,115 @@ if (process.env.IJFW_REGISTRY_WS_URL || process.env.IJFW_REGISTRY_WS_SOURCE) {
 }
 
 // --- stdio Transport ---
-const rl = createInterface({ input: process.stdin, terminal: false });
-
-rl.on('line', (line) => {
-  if (!line.trim()) return;
-  let msg;
-  try {
-    msg = JSON.parse(line);
-  } catch {
-    process.stdout.write(JSON.stringify({
-      jsonrpc: '2.0', id: null,
-      error: { code: -32700, message: 'Parse error' }
-    }) + '\n');
-    return;
-  }
-  try {
-    const response = handleMessage(msg);
-    if (response && typeof response.then === 'function') {
-      response.then(r => { if (r) process.stdout.write(r + '\n'); }).catch(err => {
-        process.stdout.write(JSON.stringify({
-          jsonrpc: '2.0',
-          id: msg && msg.id ? msg.id : null,
-          error: { code: -32603, message: `Internal error: ${err.message}` }
-        }) + '\n');
-      });
-    } else if (response) {
-      process.stdout.write(response + '\n');
+// v1.5.2.1 F1: called from __mainEntryPoint(). Importing server.js used to
+// install a global stdin listener that swallowed every byte the importer's
+// process received — making the import poisonous to any host with its own
+// stdin loop.
+function __attachStdioTransport() {
+  const rl = createInterface({ input: process.stdin, terminal: false });
+  rl.on('line', (line) => {
+    if (!line.trim()) return;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0', id: null,
+        error: { code: -32700, message: 'Parse error' }
+      }) + '\n');
+      return;
     }
-  } catch (err) {
-    process.stdout.write(JSON.stringify({
-      jsonrpc: '2.0',
-      id: msg && msg.id ? msg.id : null,
-      error: { code: -32603, message: `Internal error: ${err.message}` }
-    }) + '\n');
-  }
-});
+    try {
+      const response = handleMessage(msg);
+      if (response && typeof response.then === 'function') {
+        response.then(r => { if (r) process.stdout.write(r + '\n'); }).catch(err => {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: '2.0',
+            id: msg && msg.id ? msg.id : null,
+            error: { code: -32603, message: `Internal error: ${err.message}` }
+          }) + '\n');
+        });
+      } else if (response) {
+        process.stdout.write(response + '\n');
+      }
+    } catch (err) {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0',
+        id: msg && msg.id ? msg.id : null,
+        error: { code: -32603, message: `Internal error: ${err.message}` }
+      }) + '\n');
+    }
+  });
+}
 
-process.on('SIGINT', () => process.exit(0));
-process.on('SIGTERM', () => process.exit(0));
-process.on('uncaughtException', (err) => {
-  process.stderr.write(`IJFW: uncaught: ${err.stack || err.message}\n`);
-});
-process.on('unhandledRejection', (err) => {
-  process.stderr.write(`IJFW: unhandled rejection: ${err}\n`);
-});
+// v1.5.2.1 F1: signal handlers belong to the server process — installing
+// them on import would steal SIGINT/SIGTERM from whatever host imported us.
+function __attachSignalHandlers() {
+  process.on('SIGINT', () => process.exit(0));
+  process.on('SIGTERM', () => process.exit(0));
+  process.on('uncaughtException', (err) => {
+    process.stderr.write(`IJFW: uncaught: ${err.stack || err.message}\n`);
+  });
+  process.on('unhandledRejection', (err) => {
+    process.stderr.write(`IJFW: unhandled rejection: ${err}\n`);
+  });
+}
+
+// v1.5.2.1 F6.META: when migrateFactsInternalOnce returns a list of orphan
+// files (stray facts at visible-layer paths after relocation), surface them
+// to the operator ONCE — keyed by a sentinel containing the fingerprint of
+// the orphan list, so repeated server starts don't spam stderr unless the
+// orphan set changes. Best-effort: any write failure is silent (stderr may
+// be detached during smoke tests; the sentinel may be in a read-only fs).
+async function __maybeWarnFactsOrphans(orphans) {
+  if (!orphans || orphans.length === 0) return;
+  const sentinelPath = join(REPO_ROOT, '.ijfw', '.facts-orphan-warned');
+  const orphanFingerprint = orphans.slice().sort().join('\n');
+  try {
+    const prev = readFileSync(sentinelPath, 'utf8');
+    if (prev === orphanFingerprint) return;
+  } catch { /* sentinel missing; fall through to warn */ }
+  try {
+    process.stderr.write(
+      `[ijfw facts-migrate] stray facts files at visible-layer paths ` +
+      `(NOT read at runtime; safe to delete after backup):\n` +
+      orphans.map(p => `  rm "${p}"`).join('\n') + '\n'
+    );
+    try { writeFileSync(sentinelPath, orphanFingerprint, 'utf8'); } catch {}
+  } catch { /* stderr detached */ }
+}
+
+// v1.5.2.1 F1: the single entry point for ALL server-startup side effects.
+// Anything that touches the filesystem, opens sockets, or installs process
+// listeners belongs here. The __isServerEntryPoint gate below ensures this
+// only fires when server.js is the Node entry point — never on import.
+async function __mainEntryPoint() {
+  // F5: relocate FACTS_FILE / FACTS_DB_FILE from legacy .ijfw/memory/ to
+  // .ijfw/. Sync + idempotent. F6.META: surface any orphan files left
+  // behind so the operator can clean them up.
+  try {
+    const factsResult = migrateFactsInternalOnce(REPO_ROOT);
+    if (factsResult && Array.isArray(factsResult.orphans) && factsResult.orphans.length > 0) {
+      await __maybeWarnFactsOrphans(factsResult.orphans);
+    }
+  } catch (e) {
+    try { process.stderr.write(`[ijfw facts-migrate] failed: ${e && e.message ? e.message : e}\n`); } catch {}
+  }
+  // F3.4: fs-layout migrations via static registry (NOT the SQL runner).
+  try {
+    await runLayoutMigrations(REPO_ROOT);
+  } catch (e) {
+    try { process.stderr.write(`[ijfw layout-migrate] failed: ${e && e.message ? e.message : e}\n`); } catch {}
+  }
+  __bootstrapDirs();
+  __maybeStartWsClient();
+  __attachStdioTransport();
+  __attachSignalHandlers();
+}
+
+if (__isServerEntryPoint) {
+  await __mainEntryPoint();
+}
 
 // Export for tests (Node ESM allows this -- only consumed when imported, not on stdio run)
 // gatePermissionAndQuota is exported inline at its declaration above (B16/SEC-M-03)
