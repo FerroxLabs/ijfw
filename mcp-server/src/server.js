@@ -2483,7 +2483,11 @@ function __attachSignalHandlers() {
 async function __maybeWarnFactsOrphans(orphans) {
   if (!orphans || orphans.length === 0) return;
   const sentinelPath = join(REPO_ROOT, '.ijfw', '.facts-orphan-warned');
-  const orphanFingerprint = orphans.slice().sort().join('\n');
+  // v1.5.2.1 M-5 (Lens 1): switched from '\n'.join to JSON.stringify so a
+  // path containing an embedded newline cannot collide-by-fingerprint with
+  // a different orphan set. JSON encodes the separator and each element
+  // unambiguously.
+  const orphanFingerprint = JSON.stringify(orphans.slice().sort());
   try {
     const prev = readFileSync(sentinelPath, 'utf8');
     if (prev === orphanFingerprint) return;
@@ -2494,7 +2498,14 @@ async function __maybeWarnFactsOrphans(orphans) {
       `(NOT read at runtime; safe to delete after backup):\n` +
       orphans.map(p => `  rm "${p}"`).join('\n') + '\n'
     );
-    try { writeFileSync(sentinelPath, orphanFingerprint, 'utf8'); } catch {}
+    // v1.5.2.1 M-4 (Lens 1): ensure parent dir exists before writing the
+    // sentinel. The orphan-warn helper can fire before any code has created
+    // .ijfw/ (e.g. on a brand-new repo where the only IJFW artifact is the
+    // stray legacy file we're warning about).
+    try {
+      mkdirSync(dirname(sentinelPath), { recursive: true });
+      writeFileSync(sentinelPath, orphanFingerprint, 'utf8');
+    } catch {}
   } catch { /* stderr detached */ }
 }
 
