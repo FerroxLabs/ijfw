@@ -37,7 +37,7 @@
  */
 
 import {
-  readFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, readdirSync,
+  readFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, readdirSync, realpathSync,
 } from 'node:fs';
 import { join, isAbsolute, isAbsolute as pathIsAbsolute, relative as pathRelative, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
@@ -1166,7 +1166,16 @@ const handlers = {
       // path.relative + isAbsolute so the relative form is computed correctly
       // cross-platform, and fall back to the absolute path only when the
       // event log is genuinely outside the repo (rel '..' or different drive).
-      const _rel = pathRelative(root, eventLogPath);
+      // F-LENS2-13: pre-canonicalize via realpathSync so a Windows 8.3 short-
+      // name (PROGRA~1) or a macOS /tmp -> /private/tmp symlink doesn't make
+      // the path.relative containment check spuriously claim "outside repo".
+      // realpathSync may throw if the path doesn't exist yet (event log is
+      // about to be created), so fall back to the un-canonicalized strings.
+      let canonicalRoot = root;
+      let canonicalEventLog = eventLogPath;
+      try { canonicalRoot = realpathSync(root); } catch { /* not yet realised */ }
+      try { canonicalEventLog = realpathSync(eventLogPath); } catch { /* not yet realised */ }
+      const _rel = pathRelative(canonicalRoot, canonicalEventLog);
       const eventLogRel = (_rel === '' || _rel.startsWith('..') || pathIsAbsolute(_rel))
         ? eventLogPath
         : _rel;
