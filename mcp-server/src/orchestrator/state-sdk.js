@@ -1188,8 +1188,16 @@ const handlers = {
         canonicalEventLog = eventLogPath;
       }
       const _rel = pathRelative(canonicalRoot, canonicalEventLog);
+      // F-LENS2-14: when the event log is genuinely outside the repo, the
+      // earlier behaviour leaked the FULL absolute path (often containing
+      // $HOME / $USERPROFILE) into the dispatch brief — which the subagent
+      // sees and may forward to an external LLM provider. Redact to a
+      // pseudo-path so the subagent knows the log exists by basename without
+      // leaking the absolute prefix. The orchestrator still has the real
+      // eventLogPath in its return value for its own I/O.
+      const _basename = (eventLogPath || '').split(/[\\/]/).pop() || 'events.jsonl';
       const eventLogRel = (_rel === '' || _rel.startsWith('..') || pathIsAbsolute(_rel))
-        ? eventLogPath
+        ? `<external>/${_basename}`
         : _rel;
       const dispatchBrief = [
         `# Subagent dispatch — ${subagentId} (wave ${waveId})`,
