@@ -35,6 +35,36 @@ Author: Sean Donahoe
 2. Steve Krug: don't make me think. Zero config. Smart defaults.
 3. Sean Donahoe: one install, it just fucking works.
 
+## Subagent Model Routing (v1.5.2 — proactive layer)
+
+When you dispatch a subagent for code work, the model MUST match the scope. Failure to route correctly was the root cause of the v1.5.1 multi-file hallucination bug. This policy is the proactive layer; the reactive backstop is the SCOPE GATE inside `ijfw:builder` itself.
+
+**Decision tree — apply BEFORE selecting subagent_type or model:**
+
+1. Count the files the task will modify. Read the brief carefully — count actual files, not just file mentions.
+2. Scan for scope-keywords: `across`, `integration`, `wire X into Y`, `throughout`, `rewire`, `thread`, `ripple`, `cross-module`, `refactor multiple`, `globally`.
+3. Apply the routing:
+
+| Task signal | Dispatch via |
+|---|---|
+| Single file, mechanical, spec-complete | `ijfw:builder` — Sonnet, fast, cheap |
+| 2 files (source + test) with clear spec | `ijfw:builder` — Sonnet |
+| 3+ files OR any scope-keyword present | `ijfw:architect` — Opus, high effort |
+| Architectural choice (multiple valid approaches) | `ijfw:architect` — Opus |
+| Cross-file refactor / migration | `ijfw:architect` — Opus |
+| Pure read-only investigation | `ijfw:scout` — Haiku (read-only is safe at any model tier) |
+| Ambiguous / unknown scope | `Agent(subagent_type='general-purpose', model='opus')` — over-spend beats hallucinate |
+
+**Verification after every dispatch (trust-but-verify):**
+
+Run `git diff --stat HEAD` from the dispatcher's perspective. If the diff is empty and the subagent claimed DONE, the subagent hallucinated — treat as a failed dispatch. Either redispatch via Opus or complete the work inline.
+
+**Hallucination signature to watch for:**
+
+If a subagent's final report contains a ` ```diff ` block presented as if it were the deliverable, the work probably did NOT land. Confirm via `git show <sha>` or `git diff --stat`. The diff is the Edit-tool input, never the final-response output.
+
+**Why this exists:** v1.5.1 had a 100% hallucination rate on multi-file dispatches through `ijfw:builder` — Sonnet at medium effort interpreted the instruction "Output diffs for edits" as "the diff IS my output" and generated polished diff text in the final report without calling the Edit tool. v1.5.2 fixed `builder.md` (SCOPE GATE + anti-hallucination verification gate). This section closes the loop on the dispatcher side so the mismatch can't happen in the first place.
+
 <!-- IJFW-MEMORY-START (managed -- do not edit manually) -->
 <ijfw-memory>
 Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context.
