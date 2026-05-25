@@ -104,7 +104,11 @@ a spec, not a discipline file.
 
 ## Sources
 
-- `ijfw:ijfw-design-critic` — hierarchy, contrast, alignment, consistency, intent
-- `ijfw:ijfw-accessibility-reviewer` — WCAG 2.1 AA: contrast, semantics, focus, ARIA
-- `ijfw:ijfw-accessibility-eng` — WCAG AA conformance for shipped frontend surfaces
-- `ijfw:ijfw-ui-auditor` — 7-pillar audit: layout, typography, color, spacing, components, interaction, security
+These IJFW specialist agents back this discipline's domain rules:
+
+- `ijfw-design-critic` — hierarchy, contrast, alignment, consistency, intent
+- `ijfw-accessibility-reviewer` — WCAG 2.1 AA: contrast, semantics, focus, ARIA
+- `ijfw-accessibility-eng` — WCAG AA conformance for shipped frontend surfaces
+- `ijfw-ui-auditor` — 7-pillar audit: layout, typography, color, spacing, components, interaction, security
+
+*Agents are available in `claude/agents/` and are invoked by IJFW Brain v1.6.0+. In v1.5.2.1 they can be referenced manually but are not auto-fired.*

@@ -91,6 +91,10 @@ discipline.
 
 ## Sources
 
-- `ijfw:ijfw-lore-keeper` — canonical world bible; characters, places, rules, factions
-- `ijfw:ijfw-narrative-continuity-checker` — plot, character, timeline, setting continuity
-- `ijfw:ijfw-line-editor` — rhythm, clarity, repetition, dialogue-tag hygiene
+These IJFW specialist agents back this discipline's domain rules:
+
+- `ijfw-lore-keeper` — canonical world bible; characters, places, rules, factions
+- `ijfw-narrative-continuity-checker` — plot, character, timeline, setting continuity
+- `ijfw-line-editor` — rhythm, clarity, repetition, dialogue-tag hygiene
+
+*Agents are available in `claude/agents/` and are invoked by IJFW Brain v1.6.0+. In v1.5.2.1 they can be referenced manually but are not auto-fired.*

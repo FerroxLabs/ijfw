@@ -1,6 +1,6 @@
 <!--
 Code-discipline rules adapted from https://gitlab.com/therealseandonahoe/agents-md
-(Sean Donahoe, MIT). Sections 0-9 are maintained verbatim; sections 10-11 are
+(Sean Donahoe, MIT). Sections 0-9 are adapted from; sections 10-11 are
 project-specific and live in user-editable AGENTS.md regions outside the
 IJFW-DISCIPLINE marker block. This file is auto-installed when the IJFW
 brainstorm-LOCK or plan-LOCK hook detects a software / code project type.

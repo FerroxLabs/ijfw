@@ -97,6 +97,10 @@ discipline file and become a post-mortem catalogue.
 
 ## Sources
 
-- `ijfw:ijfw-strategy-lead` — objective alignment, stakeholder fit, decision quality
-- `ijfw:ijfw-risk-reviewer` — feasibility, downside math, risk surface, metric realism
-- `ijfw:ijfw-campaign-strategist` — objective alignment, audience fit, channel coherence
+These IJFW specialist agents back this discipline's domain rules:
+
+- `ijfw-strategy-lead` — objective alignment, stakeholder fit, decision quality
+- `ijfw-risk-reviewer` — feasibility, downside math, risk surface, metric realism
+- `ijfw-campaign-strategist` — objective alignment, audience fit, channel coherence
+
+*Agents are available in `claude/agents/` and are invoked by IJFW Brain v1.6.0+. In v1.5.2.1 they can be referenced manually but are not auto-fired.*

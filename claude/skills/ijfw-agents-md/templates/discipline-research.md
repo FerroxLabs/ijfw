@@ -105,5 +105,9 @@ file.
 
 ## Sources
 
-- `ijfw:ijfw-research-lead` — question framing, methodology fit, source coverage, synthesis integrity
-- `ijfw:ijfw-method-reviewer` — research method, bias surface, source quality, traceability
+These IJFW specialist agents back this discipline's domain rules:
+
+- `ijfw-research-lead` — question framing, methodology fit, source coverage, synthesis integrity
+- `ijfw-method-reviewer` — research method, bias surface, source quality, traceability
+
+*Agents are available in `claude/agents/` and are invoked by IJFW Brain v1.6.0+. In v1.5.2.1 they can be referenced manually but are not auto-fired.*
