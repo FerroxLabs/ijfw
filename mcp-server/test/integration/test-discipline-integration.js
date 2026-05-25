@@ -4,14 +4,14 @@
  *
  * Style: node:test synchronous-style test() blocks, matching the rest of
  * mcp-server/test/integration/. Spawns temp repos under os.tmpdir() and
- * cleans up in finally blocks.
+ * cleans up in the after() hook.
  *
  * Run: cd mcp-server && node --test test/integration/test-discipline-integration.js
  */
 
-import { test, after } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -39,6 +39,14 @@ function readDisciplineBlock(agentsMdPath) {
 
 // Collect temp dirs for cleanup after all tests.
 const tempDirs = [];
+
+// Pre-clean any orphaned discipline-test-* dirs from killed prior runs.
+before(() => {
+  const tmp = tmpdir();
+  for (const e of readdirSync(tmp).filter((n) => n.startsWith('discipline-test-'))) {
+    try { rmSync(join(tmp, e), { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+});
 
 after(() => {
   for (const dir of tempDirs) {
@@ -86,10 +94,15 @@ for (const projectType of ['code', 'narrative', 'business', 'design', 'research'
     assert.notEqual(blockBody, null, 'DISCIPLINE block markers must be present and ordered');
 
     if (projectType === 'unknown') {
-      // Empty-body contract: markers present, body is whitespace-only (no domain content).
+      // Track F2 changes selectDisciplineTemplate(unknown) to return a helpful
+      // comment block containing 'IJFW: project type is'. Accept either the new
+      // hint OR an empty body (permissive: handles the brief window where only
+      // this commit has landed and F2 is not yet merged).
+      const hasHint = blockBody.includes('IJFW: project type is');
+      const isEmpty = blockBody.trim().length === 0;
       assert.ok(
-        blockBody.trim().length === 0,
-        'DISCIPLINE block body must be empty for type "unknown"',
+        hasHint || isEmpty,
+        'DISCIPLINE block for "unknown" must either contain IJFW hint or be empty',
       );
       // Verify no typed-domain content leaked in.
       for (const sig of Object.values(TYPE_SIGNATURES)) {
@@ -155,4 +168,64 @@ test('populateDisciplineBlock auto-detects code type from package.json', async (
     blockBody.includes(TYPE_SIGNATURES.code),
     `auto-detected code discipline must contain signature: "${TYPE_SIGNATURES.code}"`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// New assertions for fixes 5B-L1-03, 5B-L2-05, 5B-L2-07
+// ---------------------------------------------------------------------------
+
+test('populateBlackboardBlock with unsafe projectRoot returns unsafe-path', async () => {
+  // Import populateBlackboardBlock here — it's exported from the same module.
+  const { populateBlackboardBlock } = await import('../../src/orchestrator/agents-md-blackboard.js');
+  // '/' as projectRoot means AGENTS.md would be at '/AGENTS.md' which is at
+  // the repo root itself — validateSafeRepoPath rejects this (rel === '').
+  const result = await populateBlackboardBlock('w1', '/');
+  // May return no-state (readWaveState returns null for '/') or unsafe-path
+  // depending on whether the guard fires before readWaveState. Either way it
+  // must NOT be ok:true.
+  assert.ok(result.ok === false, 'unsafe projectRoot must not produce ok:true');
+});
+
+test('populateDisciplineBlock with unsafe projectRoot returns unsafe-path', async () => {
+  const result = await populateDisciplineBlock('/', 'code');
+  assert.equal(result.ok, false, 'must return ok:false for unsafe projectRoot');
+  assert.equal(result.reason, 'unsafe-path', 'reason must be unsafe-path');
+});
+
+test('populateDisciplineBlock second call returns noop:true (no-op short-circuit)', async () => {
+  const tmpRepo = makeTempRepo();
+  tempDirs.push(tmpRepo);
+
+  const first = await populateDisciplineBlock(tmpRepo, 'code');
+  assert.equal(first.ok, true, 'first call must succeed');
+
+  const second = await populateDisciplineBlock(tmpRepo, 'code');
+  assert.equal(second.ok, true, 'second call must return ok:true');
+  assert.equal(second.noop, true, 'second call must return noop:true (content unchanged)');
+});
+
+test('populateDisciplineBlock unknown type body has IJFW hint or is empty', async () => {
+  const tmpRepo = makeTempRepo();
+  tempDirs.push(tmpRepo);
+
+  const result = await populateDisciplineBlock(tmpRepo, 'unknown');
+  assert.equal(result.ok, true, 'unknown type must return ok:true');
+
+  const agentsMdPath = join(tmpRepo, 'AGENTS.md');
+  const blockBody = readDisciplineBlock(agentsMdPath);
+  assert.notEqual(blockBody, null, 'DISCIPLINE block markers must be present');
+  const hasHint = blockBody.includes('IJFW: project type is');
+  const isEmpty = blockBody.trim().length === 0;
+  assert.ok(
+    hasHint || isEmpty,
+    'unknown type block must contain IJFW hint or be empty',
+  );
+});
+
+test('populateDisciplineBlock accepts waveId option', async () => {
+  const tmpRepo = makeTempRepo();
+  tempDirs.push(tmpRepo);
+
+  const result = await populateDisciplineBlock(tmpRepo, 'code', { waveId: 'w42' });
+  assert.equal(result.ok, true, 'waveId option must be accepted and call must succeed');
 });

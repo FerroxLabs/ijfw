@@ -175,9 +175,11 @@ export async function populateBlackboardBlock(waveId, projectRoot) {
  *
  * @param {string} projectRoot
  * @param {string} [projectType]  optional; inferred when absent
+ * @param {{waveId?: string}} [opts]  optional; waveId defaults to 'system'
  * @returns {Promise<{ok: boolean, reason?: string, error?: string}>}
  */
-export async function populateDisciplineBlock(projectRoot, projectType) {
+export async function populateDisciplineBlock(projectRoot, projectType, opts = {}) {
+  const waveId = opts.waveId || 'system';
   const type = projectType !== undefined && projectType !== null
     ? String(projectType)
     : detectProjectTypeFromRepo(projectRoot);
@@ -223,7 +225,7 @@ export async function populateDisciplineBlock(projectRoot, projectType) {
   try {
     await query('event.emit', {
       subagentId: 'parent',
-      waveId: 'discipline',
+      waveId,
       eventType: 'agents-md.discipline.set',
       data: {
         path: mergeResult?.path ?? agentsMdPath,
@@ -231,12 +233,16 @@ export async function populateDisciplineBlock(projectRoot, projectType) {
         seeded: !!mergeResult?.seeded,
         project_type: type,
       },
-      dedupKey: `agents-md.discipline.set:${projectRoot}:${type}`,
+      dedupKey: `agents-md.discipline.set:${waveId}:${type}`,
     }, { projectRoot, subagentId: 'parent' });
   } catch {
     // Observability is best-effort; never demote a successful AGENTS.md
     // rewrite because the event tap had a hiccup.
   }
 
-  return { ok: true };
+  // Forward noop flag from the short-circuit so callers can detect idempotent
+  // calls (5B-L2-05). When mergeResult.noop is true the file was unchanged.
+  const result = { ok: true };
+  if (mergeResult?.noop) result.noop = true;
+  return result;
 }
