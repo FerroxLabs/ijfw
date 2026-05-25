@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { up } from '../../src/memory/migrations/010-visible-layer.js';
+// v1.5.2.1 F3.4: fs-layout migrations moved to their own directory.
+// Old path: src/memory/migrations/010-visible-layer.js (auto-discovered by
+// the SQL runner via SQL=false skip; root cause of F3). New path: own
+// directory, own sequence (001), own registry. The visible-layer migration
+// is unchanged behaviourally — only the import path moved.
+import { up } from '../../src/memory/layout-migrations/001-visible-layer.js';
 import { readLayoutVersion, writeLayoutVersion } from '../../src/brain/layout-sentinel.js';
 
 function freshRoot() {

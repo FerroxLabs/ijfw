@@ -4,7 +4,9 @@ import Database from 'better-sqlite3';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { up as migrate010 } from '../../src/memory/migrations/010-visible-layer.js';
+// v1.5.2.1 F3.4: visible-layer fs-migration relocated to layout-migrations/.
+// Alias `migrate010` kept for symbol-stability of existing test bodies.
+import { up as migrate010 } from '../../src/memory/layout-migrations/001-visible-layer.js';
 import { readLayoutVersion } from '../../src/brain/layout-sentinel.js';
 import { resolveBrainPaths } from '../../src/brain/paths.js';
 import { runDreamCycle } from '../../src/brain/dream-pipeline.js';
