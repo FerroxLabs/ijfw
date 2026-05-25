@@ -2526,8 +2526,19 @@ async function __mainEntryPoint() {
     try { process.stderr.write(`[ijfw facts-migrate] failed: ${e && e.message ? e.message : e}\n`); } catch {}
   }
   // F3.4: fs-layout migrations via static registry (NOT the SQL runner).
+  // L-2 (Lens 1): runLayoutMigrations returns per-migration results so one
+  // failure cannot abort siblings. Surface each failure to stderr.
   try {
-    await runLayoutMigrations(REPO_ROOT);
+    const layoutResults = await runLayoutMigrations(REPO_ROOT);
+    for (const r of layoutResults) {
+      if (!r.ok) {
+        try {
+          process.stderr.write(
+            `[ijfw layout-migrate] ${r.description}: ${r.error}\n`
+          );
+        } catch {}
+      }
+    }
   } catch (e) {
     try { process.stderr.write(`[ijfw layout-migrate] failed: ${e && e.message ? e.message : e}\n`); } catch {}
   }

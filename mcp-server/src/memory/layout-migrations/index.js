@@ -13,12 +13,38 @@
 
 import * as visibleLayer from './001-visible-layer.js';
 
-export const LAYOUT_MIGRATIONS = Object.freeze([visibleLayer]);
+// L-1 (Lens 1): defense-in-depth deep freeze. ESM namespace objects ARE
+// already frozen by spec (Node throws TypeError if you Object.freeze them),
+// so we rewrap each namespace import in a plain object literal exposing the
+// minimal contract, then freeze that. Future refactors that swap a
+// namespace import for a class instance or factory keep the immutability
+// invariant rather than silently going mutable.
+function wrap(ns) {
+  return Object.freeze({
+    DESCRIPTION: ns.DESCRIPTION,
+    up: ns.up,
+  });
+}
+export const LAYOUT_MIGRATIONS = Object.freeze([wrap(visibleLayer)]);
 
+// L-2 (Lens 1): per-migration try/catch so one failing migration cannot
+// abort subsequent independent ones. Caller decides whether to bail on
+// failures (server.js __mainEntryPoint logs each failure to stderr).
+// Returns an array of { description, ok, result?, error? } in invocation
+// order — preserved even on partial failure for debugging.
 export async function runLayoutMigrations(repoRoot) {
   const results = [];
   for (const m of LAYOUT_MIGRATIONS) {
-    results.push(await m.up(repoRoot));
+    try {
+      const result = await m.up(repoRoot);
+      results.push({ description: m.DESCRIPTION, ok: true, result });
+    } catch (err) {
+      results.push({
+        description: m.DESCRIPTION,
+        ok: false,
+        error: err && err.message ? err.message : String(err),
+      });
+    }
   }
   return results;
 }
