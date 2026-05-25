@@ -150,6 +150,7 @@ test('dispatch: every parsed.cmd literal in orchestrator maps to a registry entr
     'memory-reindex',      // sub-command of `memory` (R5-1.2 M1/M2 backfill)
     'memory-help',         // optional namespace-level help for `ijfw memory`
     'memory-unknown',      // optional unknown-subcmd handler for `ijfw memory <x>`
+    'env',                 // v1.5.2 F6: env-var discoverability verb
     'purge-receipts',      // synthetic literal for the `--purge-receipts` flag-command
     'metrics-benchmark',   // synthetic literal for the `metrics --benchmark` flag-command (W2.H)
     'unknown',             // unknown-command sink

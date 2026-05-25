@@ -410,6 +410,13 @@ function parseArgsInner(args) {
     return { cmd: 'extension', sub: args[1] || 'list', rest: args.slice(2) };
   }
 
+  if (args[0] === 'env') {
+    // v1.5.2 F6: `ijfw env` lists every IJFW_* env var with current value,
+    // default, and one-line description. Closes the configuration-sprawl
+    // discoverability gap surfaced in the v1.5.2 cross-audit.
+    return { cmd: 'env' };
+  }
+
   if (args[0] === 'swarm') {
     return { cmd: 'swarm', sub: args[1] || 'status' };
   }
@@ -500,6 +507,40 @@ function parseArgsInner(args) {
 // Commands
 // ---------------------------------------------------------------------------
 
+// v1.5.2 F6: every IJFW_* env var the brain + memory subsystems read at runtime.
+// Order: most-likely-to-set first. `default` is the documented fallback when
+// the var is unset; `description` is one short line for `ijfw env` output.
+const IJFW_ENV_VARS = [
+  // Brain (v1.5.2)
+  { name: 'IJFW_DREAM_BUDGET_USD',     default: '0.50',                                description: 'Per-cycle USD cap for dream-cycle LLM extraction.' },
+  { name: 'IJFW_DREAM_BUDGET_DAY_USD', default: '5.00',                                description: 'Per-day USD cap; cycle stops when reached.' },
+  { name: 'IJFW_BRAIN_LOCAL_URL',      default: '(unset)',                             description: 'Ollama-compatible local LLM endpoint to try first.' },
+  { name: 'IJFW_BRAIN_EXTRACT_MODEL',  default: 'claude-haiku-4-5-20251001',           description: 'Cheap-tier model id for fact extraction.' },
+  { name: 'IJFW_BRAIN_SYNTH_MODEL',    default: 'claude-sonnet-4-6',                   description: 'Mid-tier model id for reconciliation + page synthesis.' },
+  { name: 'IJFW_BRAIN_API_KEY',        default: '(falls back to ANTHROPIC_API_KEY)',   description: 'API key for the synth-tier Anthropic call.' },
+  { name: 'IJFW_BRAIN_INJECT',         default: 'never',                               description: '"auto"|"always" appends top-N wiki pages to handlePrelude.' },
+  // Memory-moat (v1.5.0 — A-Mem auto-linker)
+  { name: 'IJFW_AUTOLINK_OFF',         default: '(unset)',                             description: 'Set to disable the A-Mem auto-linker entirely.' },
+  { name: 'IJFW_AUTOLINK_BUDGET_USD',  default: '(unbounded if unset)',                description: 'Per-write USD cap for auto-linker LLM calls.' },
+  { name: 'IJFW_AUTOLINK_BACKFILL',    default: '(unset)',                             description: 'Set to "1" to opt into M2 backfill during `memory reindex --m2`.' },
+];
+
+export function cmdEnv() {
+  const widthName = Math.max(...IJFW_ENV_VARS.map((v) => v.name.length)) + 2;
+  console.log('IJFW environment variables\n');
+  for (const v of IJFW_ENV_VARS) {
+    const current = process.env[v.name];
+    const shownValue = current !== undefined && current !== '' ? current : '(unset)';
+    const isOverridden = current !== undefined && current !== '';
+    const tag = isOverridden ? ' [SET]' : '';
+    console.log(`  ${v.name.padEnd(widthName)} = ${shownValue}${tag}`);
+    console.log(`  ${' '.repeat(widthName)}   default: ${v.default}`);
+    console.log(`  ${' '.repeat(widthName)}   ${v.description}`);
+    console.log('');
+  }
+  console.log('Tip: variables tagged [SET] override their defaults. Unset values show the documented default in effect.');
+}
+
 function printMemoryHelp() {
   console.log(`
 ijfw memory -- project memory namespace
@@ -516,6 +557,7 @@ Usage:
 
 Related:
   ijfw recover [status|latest]     Inspect checkpoints and recovery state.
+  ijfw env                         List every IJFW_* env var, current value, default, description.
   ijfw --help                      Top-level user-facing commands.
   ijfw commands                    Full command surface (all verbs).
 `.trim());
@@ -2395,6 +2437,8 @@ if (isMainModule) {
     cmdMemoryCheckpoint(parsed.label);
   } else if (parsed.cmd === 'memory-reindex') {
     cmdMemoryReindex(parsed).catch(err => { console.error(err.message); process.exit(1); });
+  } else if (parsed.cmd === 'env') {
+    cmdEnv();
   } else if (parsed.cmd === 'recover') {
     cmdRecover(parsed.sub);
   } else {
