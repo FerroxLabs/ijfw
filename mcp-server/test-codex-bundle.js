@@ -361,20 +361,37 @@ test('codex doctor: emits actionable fix text when canonical source missing', ()
   assert.equal(result.canonicalSource, null);
   assert.equal(result.canonicalParseError, null);
 
-  // Cross-check: simulate the doctor's fix-text branch directly to confirm the
-  // actionable string composition (the doctor itself runs this exact ternary).
-  const canonicalVersion = result.canonicalVersion;
-  const canonicalParseError = result.canonicalParseError;
+  // Cross-check: simulate the doctor's fix-text branch (mirrors the live
+  // ternary in codexDoctor — F-C-9 added the !plugin branch, F-C-2 labels
+  // canonicalParseError with "source: msg"). When plugin.json is present
+  // and no canonical source resolved, the user should be steered at
+  // install @ijfw/install or IJFW_HOME.
+  const { canonicalVersion, canonicalParseError } = result;
   const plugin = { version: '1.5.1' };
-  const fix = canonicalVersion
-    ? (plugin && plugin.version !== canonicalVersion
-        ? `update codex/.codex-plugin/plugin.json version to ${canonicalVersion}`
-        : null)
-    : canonicalParseError
-      ? `restore installer/package.json (try \`git checkout installer/package.json\`)`
-      : `install @ijfw/install (npm i -g @ijfw/install), or set IJFW_HOME=<ijfw-repo-checkout>`;
+  const fixText = (pluginObj, cv, cpe) =>
+    !pluginObj
+      ? `restore codex/.codex-plugin/plugin.json (try \`git checkout codex/.codex-plugin/plugin.json\`)`
+      : cv
+        ? (pluginObj.version !== cv
+            ? `update codex/.codex-plugin/plugin.json version to ${cv}`
+            : null)
+        : cpe
+          ? `restore canonical source (try \`git checkout ${cpe.split(':')[0]}/package.json\`)`
+          : `install @ijfw/install (npm i -g @ijfw/install), or set IJFW_HOME=<ijfw-repo-checkout>`;
+
+  const fix = fixText(plugin, canonicalVersion, canonicalParseError);
   assert.match(fix, /install @ijfw\/install/);
   assert.match(fix, /IJFW_HOME/);
+
+  // F-C-9: when plugin.json itself is missing, fix text must restore it.
+  const fixMissingPlugin = fixText(null, null, null);
+  assert.match(fixMissingPlugin, /restore codex\/\.codex-plugin\/plugin\.json/);
+
+  // F-C-2: a labelled mcp-server parse error must route to mcp-server, not
+  // installer (the pre-fix behaviour always said "installer/package.json").
+  const fixCorruptMcp = fixText(plugin, null, 'mcp-server: Unexpected end of JSON input');
+  assert.match(fixCorruptMcp, /mcp-server\/package\.json/);
+  assert.doesNotMatch(fixCorruptMcp, /installer\/package\.json/);
 });
 
 test('codex: stop hook stays quiet for routine session saves', () => {
