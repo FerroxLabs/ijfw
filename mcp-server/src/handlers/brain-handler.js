@@ -204,17 +204,44 @@ function verbConflictResolve(db, repoRoot, args) {
   const supersede = args.supersede !== false; // default true
   if (!supersede) return { ok: true, resolved: false, reason: 'supersede=false' };
   const supersededIds = [];
-  const nowIso = new Date().toISOString();
+  let chosenValidTo = null;
   const txn = db.transaction(() => {
+    // F2: monotonic valid_to. Read the latest valid_to that EXISTS for this
+    // (subject, predicate) pair, then pick MAX(now, maxValidTo + 1ms). This
+    // guarantees the bi-temporal ordering contract holds even when:
+    //  - two concurrent resolves race (cross-process SQLite is locked, but
+    //    wall-clock can still hand both the same ISO string under low
+    //    resolution)
+    //  - the system clock skews backward (NTP correction, manual change)
+    //  - a prior fact's valid_to is already in the immediate future for any
+    //    reason
+    const maxRow = db.prepare(
+      `SELECT MAX(valid_to) AS maxValidTo, MAX(valid_from) AS maxValidFrom
+       FROM facts WHERE subject = ? AND predicate = ?`
+    ).get(args.subject, args.predicate);
+    const nowMs = Date.now();
+    const maxIsoCandidate = [maxRow?.maxValidTo, maxRow?.maxValidFrom]
+      .filter((v) => typeof v === 'string' && v.length > 0)
+      .sort()
+      .pop();
+    let chosenMs = nowMs;
+    if (maxIsoCandidate) {
+      const maxMs = Date.parse(maxIsoCandidate);
+      if (Number.isFinite(maxMs) && maxMs >= nowMs) {
+        chosenMs = maxMs + 1;
+      }
+    }
+    chosenValidTo = new Date(chosenMs).toISOString();
+
     const rows = db.prepare(
       `SELECT id FROM facts WHERE subject = ? AND predicate = ? AND valid_to IS NULL AND id != ?`
     ).all(args.subject, args.predicate, args.winnerId);
     const upd = db.prepare(`UPDATE facts SET valid_to = ? WHERE id = ?`);
-    for (const r of rows) { upd.run(nowIso, r.id); supersededIds.push(r.id); }
+    for (const r of rows) { upd.run(chosenValidTo, r.id); supersededIds.push(r.id); }
   });
   try { txn(); }
   catch (e) { return { ok: false, error: 'db-error', message: e.message }; }
-  return { ok: true, resolved: true, winnerId: args.winnerId, supersededIds };
+  return { ok: true, resolved: true, winnerId: args.winnerId, supersededIds, validTo: chosenValidTo };
 }
 
 export async function handleIjfwBrain({ verb, args = {}, db, repoRoot, env, opts = {} } = {}) {

@@ -146,3 +146,27 @@ test('verb conflict.resolve closes other open facts via valid_to=now', async () 
     assert.equal(winner.valid_to, null, 'winner stays open');
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
 });
+
+// F2 — monotonic valid_to.
+
+test('verb conflict.resolve: monotonic valid_to beats wall-clock when clock would tie', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    const ins = db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to) VALUES (?,?,?,?,?,?)');
+    ins.run(1, 'sean', 'role', 'founder', '2024-01-01T00:00:00Z', null);
+    ins.run(2, 'sean', 'role', 'cto', '2023-06-01T00:00:00Z', null);
+    // Pre-existing valid_to in the FUTURE (e.g. clock skew or another process
+    // already committed forward). chosenValidTo must be > this.
+    const farFuture = new Date(Date.now() + 60_000).toISOString();
+    db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to) VALUES (?,?,?,?,?,?)')
+      .run(3, 'sean', 'role', 'old', '2022-01-01T00:00:00Z', farFuture);
+    const r = await handleIjfwBrain({ verb: 'conflict.resolve', args: { subject: 'sean', predicate: 'role', winnerId: 1 }, db, repoRoot: root });
+    assert.equal(r.ok, true);
+    assert.ok(r.validTo, 'returns chosen validTo');
+    assert.ok(r.validTo > farFuture, `chosenValidTo (${r.validTo}) must exceed pre-existing future valid_to (${farFuture})`);
+    // The loser (id=2) should have validTo === r.validTo
+    const loser = db.prepare('SELECT valid_to FROM facts WHERE id = 2').get();
+    assert.equal(loser.valid_to, r.validTo);
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
