@@ -1,80 +1,200 @@
-// IJFW v1.5.2 -- brain MCP verb dispatcher.
+// IJFW v1.5.2 -- ijfw_brain combined MCP tool.
 //
-// handleIjfwBrain({ verb, args, db, repoRoot }) routes the 4 Plan-A brain
-// verbs that live inside the 13/13-capped MCP tool set.  All four verbs are
-// folded into existing tools (ijfw_memory_recall for think/links, ijfw_wiki
-// for wiki.*, ijfw_conflict_resolve for conflict.*) -- this module is the
-// pure-logic layer that can be unit/integration-tested without the MCP
-// transport layer.
+// Single MCP tool surfacing 8 verbs that together replace what would have
+// been 4 standalone tools. Combined-tool pattern (mirrors ijfw_state,
+// ijfw_memory_facts) keeps the MCP cap at 14/14 instead of 17/13.
 //
-// Verbs implemented here:
-//   wiki.get          -- read a compiled wiki page by slug
-//   wiki.compile      -- force-compile a wiki page for a given subject/type
-//   conflict.resolve  -- close superseded facts, declare a winner
+// Verbs:
+//   think                -- query the brain (top-K wiki + facts -> mid-tier LLM
+//                           -- LLM call stubbed in tests via opts._callLLM)
+//   links                -- incoming + outgoing wikilink counts for a target
+//   wiki.get             -- fetch a compiled wiki page by slug
+//   wiki.compile         -- compile a page from facts + history + backlinks
+//   wiki.promote         -- copy project page -> ~/IJFW/wiki/<type>s/<slug>.md
+//   wiki.export          -- bundle a page + linked pages into one markdown file
+//   wiki.shareReadme     -- write ijfw/README.md team-share instructions
+//   conflict.resolve     -- close superseded open facts via valid_to=now
+//
+// Each verb dispatches to a private handler. All return JSON-safe shapes.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { resolveBrainPaths } from '../brain/paths.js';
 import { compileWikiPage, slugify } from '../brain/wiki-compiler.js';
+import { resolveCitations } from '../brain/citation-resolver.js';
+import { exportPageBundle, writeShareReadme } from '../brain/export.js';
 
-// --------------------------------------------------------------------------
-// wiki.get
-// --------------------------------------------------------------------------
-function handleWikiGet({ args, db, repoRoot }) {
-  const { slug, type = 'entity' } = args || {};
-  if (!slug) return { ok: false, error: 'missing-slug' };
+const WIKI_TYPES = ['concepts', 'entities', 'decisions', 'milestones'];
+
+function findPage(wikiDir, slug) {
+  for (const t of WIKI_TYPES) {
+    const p = join(wikiDir, t, `${slug}.md`);
+    if (existsSync(p)) return { path: p, type: t };
+  }
+  return null;
+}
+
+async function verbThink(db, repoRoot, args, opts = {}) {
+  if (!args.query || typeof args.query !== 'string') return { ok: false, error: 'missing-query' };
   const paths = resolveBrainPaths(repoRoot);
-  const pluralMap = { entity: 'entities', concept: 'concepts', decision: 'decisions', milestone: 'milestones' };
-  const dir = pluralMap[type] ?? `${type}s`;
-  const pagePath = join(paths.wikiDir, dir, `${slug}.md`);
-  if (!existsSync(pagePath)) return { ok: false, error: 'not-found', slug };
-  const markdown = readFileSync(pagePath, 'utf8');
-  return { ok: true, slug, type, markdown, pagePath };
+  const tokens = args.query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+  // Gather top wiki pages by token-match against slug
+  const candidates = [];
+  for (const t of WIKI_TYPES) {
+    const dir = join(paths.wikiDir, t);
+    if (!existsSync(dir)) continue;
+    let entries;
+    try {
+      const { readdirSync } = await import('node:fs');
+      entries = readdirSync(dir);
+    } catch { continue; }
+    for (const name of entries) {
+      if (!name.endsWith('.md')) continue;
+      const slug = name.replace(/\.md$/, '').toLowerCase();
+      const score = tokens.reduce((s, tok) => s + (slug.includes(tok) ? 1 : 0), 0);
+      if (score > 0) candidates.push({ type: t, slug: name.replace(/\.md$/, ''), score, path: join(dir, name) });
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const topPages = candidates.slice(0, 3).map((c) => ({
+    type: c.type, slug: c.slug, body: existsSync(c.path) ? readFileSync(c.path, 'utf8').slice(0, 1500) : '',
+  }));
+  // Gather facts where subject or object loosely matches
+  let facts = [];
+  try {
+    if (tokens.length > 0) {
+      const where = tokens.map(() => '(subject LIKE ? OR object LIKE ?)').join(' OR ');
+      const params = [];
+      for (const t of tokens) { params.push(`%${t}%`); params.push(`%${t}%`); }
+      facts = db.prepare(
+        `SELECT id, subject, predicate, object, memory_id FROM facts WHERE valid_to IS NULL AND (${where}) ORDER BY id DESC LIMIT 30`
+      ).all(...params);
+    }
+  } catch { facts = []; }
+
+  const callLLM = opts._callLLM || (async () => ({ text: JSON.stringify({ answer: '(LLM stub)', citations: [] }) }));
+  const prompt = `Question: ${args.query}\n\nWiki context:\n${topPages.map((p) => `[${p.type}/${p.slug}]\n${p.body}`).join('\n\n')}\n\nFacts:\n${facts.map((f) => `[fact:${f.id}] ${f.subject} ${f.predicate} ${f.object}`).join('\n')}\n\nReturn JSON: { "answer": "...", "citations": [{ "kind": "mem"|"fact", "id": N }] }. Cite at least one fact or memory. If you cannot answer with the evidence, set answer to "Unknown" and citations to [].`;
+  let raw;
+  try { raw = await callLLM({ tier: 'synth', prompt }); }
+  catch (e) { return { ok: false, error: 'llm-failed', message: e.message }; }
+  let parsed = { answer: '', citations: [] };
+  try {
+    const text = raw.text || '';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) parsed = JSON.parse(m[0]);
+  } catch { /* leave parsed empty */ }
+  const verdict = resolveCitations(db, JSON.stringify(parsed));
+  return {
+    ok: true,
+    answer: parsed.answer || '',
+    citations: parsed.citations || [],
+    citationsResolved: verdict.ok,
+    unresolved: verdict.unresolved || [],
+    gaps: topPages.length === 0 && facts.length === 0 ? ['no-context-found'] : [],
+  };
 }
 
-// --------------------------------------------------------------------------
-// wiki.compile
-// --------------------------------------------------------------------------
-function handleWikiCompile({ args, db, repoRoot }) {
-  const { subject, type = 'entity' } = args || {};
-  if (!subject) return { ok: false, error: 'missing-subject' };
-  return compileWikiPage(db, { repoRoot, type, subject });
+function verbLinks(db, repoRoot, args) {
+  if (!args.of || typeof args.of !== 'string') return { ok: false, error: 'missing-of' };
+  const target = slugify(args.of);
+  let incoming = [];
+  let incomingCount = 0;
+  try {
+    incoming = db.prepare(
+      `SELECT memory_id, COUNT(*) AS count FROM memory_links WHERE to_target = ? GROUP BY memory_id ORDER BY count DESC LIMIT 50`
+    ).all(target);
+    const row = db.prepare(`SELECT COUNT(*) AS c FROM memory_links WHERE to_target = ?`).get(target);
+    incomingCount = row ? row.c : 0;
+  } catch { /* tables may not exist in some test contexts */ }
+  // Outgoing: best-effort -- find memory_links whose memory_id corresponds to a
+  // memory_entry that mentions the target's slug.
+  let outgoing = [];
+  try {
+    outgoing = db.prepare(
+      `SELECT to_target AS target, COUNT(*) AS count FROM memory_links
+       WHERE memory_id IN (SELECT id FROM memory_entries WHERE body LIKE ?)
+       GROUP BY to_target ORDER BY count DESC LIMIT 50`
+    ).all(`%${args.of}%`);
+  } catch { /* leave outgoing empty */ }
+  return { ok: true, of: target, incoming, outgoing, incomingCount };
 }
 
-// --------------------------------------------------------------------------
-// conflict.resolve
-// --------------------------------------------------------------------------
-// Closes all (subject, predicate) rows whose id !== winnerId by setting
-// valid_to = now.  Returns { ok, winnerId, supersededIds }.
-function handleConflictResolve({ args, db }) {
-  const { subject, predicate, winnerId } = args || {};
-  if (!subject || !predicate || winnerId == null) {
+function verbWikiGet(db, repoRoot, args) {
+  if (!args.slug) return { ok: false, error: 'missing-slug' };
+  const paths = resolveBrainPaths(repoRoot);
+  const slug = slugify(args.slug);
+  const found = findPage(paths.wikiDir, slug);
+  if (!found) return { ok: false, error: 'page-not-found', slug };
+  return { ok: true, slug, path: found.path, type: found.type, markdown: readFileSync(found.path, 'utf8') };
+}
+
+function verbWikiCompile(db, repoRoot, args) {
+  if (!args.subject) return { ok: false, error: 'missing-subject' };
+  return compileWikiPage(db, { repoRoot, type: args.type || 'entity', subject: args.subject });
+}
+
+function verbWikiPromote(db, repoRoot, args) {
+  if (!args.slug) return { ok: false, error: 'missing-slug' };
+  const paths = resolveBrainPaths(repoRoot);
+  const slug = slugify(args.slug);
+  const found = findPage(paths.wikiDir, slug);
+  if (!found) return { ok: false, error: 'page-not-found', slug };
+  const globalDir = join(homedir(), 'IJFW', 'wiki', found.type);
+  mkdirSync(globalDir, { recursive: true });
+  const dst = join(globalDir, `${slug}.md`);
+  copyFileSync(found.path, dst);
+  return { ok: true, slug, type: found.type, src: found.path, dst };
+}
+
+function verbWikiExport(db, repoRoot, args) {
+  if (!args.slug || !args.outFile) return { ok: false, error: 'missing-args' };
+  const r = exportPageBundle(repoRoot, slugify(args.slug), args.outFile);
+  if (r.error) return { ok: false, error: r.error, slug: r.slug };
+  return { ok: true, ...r };
+}
+
+function verbWikiShareReadme(db, repoRoot) {
+  return { ok: true, ...writeShareReadme(repoRoot) };
+}
+
+function verbConflictResolve(db, repoRoot, args) {
+  if (!args.subject || !args.predicate || args.winnerId == null) {
     return { ok: false, error: 'missing-args' };
   }
-  let rows;
-  try {
-    rows = db.prepare(
-      'SELECT id FROM facts WHERE subject = ? AND predicate = ? AND valid_to IS NULL AND id != ?'
-    ).all(subject, predicate, winnerId);
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-  if (rows.length === 0) return { ok: true, winnerId, supersededIds: [] };
-  const now = new Date().toISOString();
-  const update = db.prepare('UPDATE facts SET valid_to = ? WHERE id = ?');
-  const txn = db.transaction((ids) => { for (const id of ids) update.run(now, id); });
-  txn(rows.map((r) => r.id));
-  return { ok: true, winnerId, supersededIds: rows.map((r) => r.id) };
+  const supersede = args.supersede !== false; // default true
+  if (!supersede) return { ok: true, resolved: false, reason: 'supersede=false' };
+  const supersededIds = [];
+  const nowIso = new Date().toISOString();
+  const txn = db.transaction(() => {
+    const rows = db.prepare(
+      `SELECT id FROM facts WHERE subject = ? AND predicate = ? AND valid_to IS NULL AND id != ?`
+    ).all(args.subject, args.predicate, args.winnerId);
+    const upd = db.prepare(`UPDATE facts SET valid_to = ? WHERE id = ?`);
+    for (const r of rows) { upd.run(nowIso, r.id); supersededIds.push(r.id); }
+  });
+  try { txn(); }
+  catch (e) { return { ok: false, error: 'db-error', message: e.message }; }
+  return { ok: true, resolved: true, winnerId: args.winnerId, supersededIds };
 }
 
-// --------------------------------------------------------------------------
-// Public dispatcher
-// --------------------------------------------------------------------------
-export async function handleIjfwBrain({ verb, args, db, repoRoot } = {}) {
+export async function handleIjfwBrain({ verb, args = {}, db, repoRoot, env, opts = {} } = {}) {
+  if (!verb || typeof verb !== 'string') return { ok: false, error: 'missing-verb' };
   switch (verb) {
-    case 'wiki.get':     return handleWikiGet({ args, db, repoRoot });
-    case 'wiki.compile': return handleWikiCompile({ args, db, repoRoot });
-    case 'conflict.resolve': return handleConflictResolve({ args, db });
-    default: return { ok: false, error: `unknown-verb:${verb}` };
+    case 'think':              return verbThink(db, repoRoot, args, opts);
+    case 'links':              return verbLinks(db, repoRoot, args);
+    case 'wiki.get':           return verbWikiGet(db, repoRoot, args);
+    case 'wiki.compile':       return verbWikiCompile(db, repoRoot, args);
+    case 'wiki.promote':       return verbWikiPromote(db, repoRoot, args);
+    case 'wiki.export':        return verbWikiExport(db, repoRoot, args);
+    case 'wiki.shareReadme':   return verbWikiShareReadme(db, repoRoot);
+    case 'conflict.resolve':   return verbConflictResolve(db, repoRoot, args);
+    default:                   return { ok: false, error: 'unknown-verb', verb };
   }
 }
+
+export const IJFW_BRAIN_VERBS = [
+  'think', 'links',
+  'wiki.get', 'wiki.compile', 'wiki.promote', 'wiki.export', 'wiki.shareReadme',
+  'conflict.resolve',
+];

@@ -31,6 +31,7 @@ const PKG_VERSION = (() => {
   catch { return 'unknown'; }
 })();
 import { checkPrompt } from './prompt-check.js';
+import { handleIjfwBrain, IJFW_BRAIN_VERBS } from './handlers/brain-handler.js';
 import { applyCaps, CAP_CONTENT } from './caps.js';
 import { ensureSchemaHeader, SCHEMA_HEADER } from './schema.js';
 import { searchCorpus } from './search-bm25.js';
@@ -1081,6 +1082,21 @@ const TOOLS = [
     },
   },
   {
+    // v1.5.2 T24-27+T29: ijfw_brain — combined brain-query tool (slot 14/14).
+    // Replaces what would have been 4 standalone tools; combined-tool pattern
+    // keeps the cap raise to +1 instead of +4.
+    name: 'ijfw_brain',
+    description: 'IJFW Brain — query, links, wiki, conflict-resolve in one combined tool. verb=' + IJFW_BRAIN_VERBS.join('|'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verb: { type: 'string', enum: IJFW_BRAIN_VERBS, description: 'Brain verb: think|links|wiki.get|wiki.compile|wiki.promote|wiki.export|wiki.shareReadme|conflict.resolve' },
+        args: { type: 'object', description: 'Verb-specific arguments (see verb docs).' },
+      },
+      required: ['verb'],
+    },
+  },
+  {
     // v1.5.0 T13: ijfw_state — single MCP face for the state-SDK verb facade.
     // Absorbs the retired ijfw_subagent_post_done tool (post-done IS a state
     // transition → reachable as the `subagent.post-done` verb). All 20 frozen
@@ -2022,6 +2038,28 @@ function handleMessage(msg) {
           case 'ijfw_update_check': {
             const r = await ijfwUpdateCheck(args || {});
             result = { text: JSON.stringify(r, null, 2), isError: !!(r && r.error) };
+            break;
+          }
+          case 'ijfw_brain': {
+            // v1.5.2 T24-27+T29: combined brain verb facade.
+            const a = args || {};
+            if (typeof a.verb !== 'string' || a.verb.length === 0) {
+              result = { text: JSON.stringify({ ok: false, error: 'verb (string) is required' }), isError: true };
+              break;
+            }
+            try {
+              const r = await handleIjfwBrain({
+                verb: a.verb,
+                args: (a.args && typeof a.args === 'object') ? a.args : {},
+                db: getFactsDb(),
+                repoRoot: REPO_ROOT,
+                env: process.env,
+              });
+              result = { text: JSON.stringify(r, null, 2), isError: r.ok === false };
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              result = { text: JSON.stringify({ ok: false, error: msg }), isError: true };
+            }
             break;
           }
           case 'ijfw_state': {

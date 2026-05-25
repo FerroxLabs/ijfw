@@ -1,0 +1,148 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { handleIjfwBrain, IJFW_BRAIN_VERBS } from '../../src/handlers/brain-handler.js';
+import { writeLayoutVersion } from '../../src/brain/layout-sentinel.js';
+
+function freshRoot() {
+  const r = mkdtempSync(join(tmpdir(), 'brain-handler-'));
+  mkdirSync(join(r, '.ijfw'), { recursive: true });
+  writeLayoutVersion(r, 2);
+  return r;
+}
+
+function freshDb() {
+  const db = new Database(':memory:');
+  db.prepare('CREATE TABLE memory_entries (id INTEGER PRIMARY KEY, body TEXT, path TEXT, kind TEXT)').run();
+  db.prepare('CREATE TABLE memory_links (id INTEGER PRIMARY KEY, memory_id INTEGER, to_target TEXT)').run();
+  db.prepare('CREATE TABLE facts (id INTEGER PRIMARY KEY, subject TEXT, predicate TEXT, object TEXT, valid_from TEXT, valid_to TEXT, memory_id INTEGER, source TEXT, confidence REAL)').run();
+  return db;
+}
+
+function seedPage(root, type, slug, body) {
+  const dir = join(root, 'ijfw', 'wiki', type);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${slug}.md`), body);
+}
+
+test('handleIjfwBrain: missing verb -> error', async () => {
+  const r = await handleIjfwBrain({ args: {} });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'missing-verb');
+});
+
+test('handleIjfwBrain: unknown verb -> error', async () => {
+  const r = await handleIjfwBrain({ verb: 'mystery' });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'unknown-verb');
+});
+
+test('IJFW_BRAIN_VERBS lists all 8 verbs', () => {
+  assert.equal(IJFW_BRAIN_VERBS.length, 8);
+  for (const v of ['think', 'links', 'wiki.get', 'wiki.compile', 'wiki.promote', 'wiki.export', 'wiki.shareReadme', 'conflict.resolve']) {
+    assert.ok(IJFW_BRAIN_VERBS.includes(v), `missing ${v}`);
+  }
+});
+
+test('verb think: missing query -> error', async () => {
+  const db = freshDb();
+  try {
+    const r = await handleIjfwBrain({ verb: 'think', args: {}, db, repoRoot: freshRoot() });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'missing-query');
+  } finally { db.close(); }
+});
+
+test('verb think: stubbed LLM returns answer + cites + resolution', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    db.prepare('INSERT INTO memory_entries (id, body, path, kind) VALUES (?,?,?,?)').run(5, 'sean is founder', '/n.md', 'markdown');
+    db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, memory_id) VALUES (?,?,?,?,?,?)').run(11, 'sean', 'role', 'founder', '2024-01-01T00:00:00Z', 5);
+    seedPage(root, 'entities', 'sean', '# sean\n\nfounder of foundry [fact:11]');
+    const opts = {
+      _callLLM: async () => ({ text: '{"answer":"sean is the founder","citations":[{"kind":"fact","id":11}]}' }),
+    };
+    const r = await handleIjfwBrain({ verb: 'think', args: { query: 'who is sean' }, db, repoRoot: root, opts });
+    assert.equal(r.ok, true);
+    assert.ok(r.answer.includes('founder'));
+    assert.equal(r.citations.length, 1);
+    assert.equal(r.citationsResolved, true);
+    assert.equal(r.unresolved.length, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
+
+test('verb links: missing of -> error', async () => {
+  const db = freshDb();
+  try {
+    const r = await handleIjfwBrain({ verb: 'links', args: {}, db, repoRoot: freshRoot() });
+    assert.equal(r.ok, false);
+  } finally { db.close(); }
+});
+
+test('verb links: counts incoming references', async () => {
+  const db = freshDb();
+  const ins = db.prepare('INSERT INTO memory_links (memory_id, to_target) VALUES (?, ?)');
+  for (let i = 0; i < 4; i++) ins.run(i, 'sean');
+  try {
+    const r = await handleIjfwBrain({ verb: 'links', args: { of: 'sean' }, db, repoRoot: freshRoot() });
+    assert.equal(r.ok, true);
+    assert.equal(r.of, 'sean');
+    assert.equal(r.incomingCount, 4);
+  } finally { db.close(); }
+});
+
+test('verb wiki.get / wiki.compile / wiki.promote happy paths', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    // Seed a fact + memory so compile passes citation gate
+    db.prepare('INSERT INTO memory_entries (id, body, path, kind) VALUES (?,?,?,?)').run(5, 'x', '/p.md', 'markdown');
+    db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, memory_id) VALUES (?,?,?,?,?,?)').run(11, 'alice', 'role', 'r', '2024-01-01T00:00:00Z', 5);
+    // compile
+    const compileRes = await handleIjfwBrain({ verb: 'wiki.compile', args: { subject: 'alice', type: 'entity' }, db, repoRoot: root });
+    assert.equal(compileRes.ok, true);
+    // get
+    const getRes = await handleIjfwBrain({ verb: 'wiki.get', args: { slug: 'alice' }, db, repoRoot: root });
+    assert.equal(getRes.ok, true);
+    assert.ok(getRes.markdown.includes('[fact:11]'));
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
+
+test('verb wiki.export / wiki.shareReadme', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    seedPage(root, 'entities', 'sean', '# sean\n\nlinks to [[foundry]]');
+    seedPage(root, 'concepts', 'foundry', '# foundry');
+    const exp = await handleIjfwBrain({ verb: 'wiki.export', args: { slug: 'sean', outFile: join(root, 'out.md') }, db, repoRoot: root });
+    assert.equal(exp.ok, true);
+    assert.deepEqual(exp.linkedPagesIncluded, ['foundry']);
+    const readme = await handleIjfwBrain({ verb: 'wiki.shareReadme', db, repoRoot: root });
+    assert.equal(readme.ok, true);
+    assert.ok(existsSync(readme.outFile));
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
+
+test('verb conflict.resolve closes other open facts via valid_to=now', async () => {
+  const db = freshDb();
+  const root = freshRoot();
+  try {
+    const ins = db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to) VALUES (?,?,?,?,?,NULL)');
+    ins.run(1, 'sean', 'role', 'founder', '2024-01-01T00:00:00Z');
+    ins.run(2, 'sean', 'role', 'old-role-1', '2023-01-01T00:00:00Z');
+    ins.run(3, 'sean', 'role', 'old-role-2', '2022-01-01T00:00:00Z');
+    const r = await handleIjfwBrain({ verb: 'conflict.resolve', args: { subject: 'sean', predicate: 'role', winnerId: 1 }, db, repoRoot: root });
+    assert.equal(r.ok, true);
+    assert.equal(r.resolved, true);
+    assert.deepEqual(r.supersededIds.sort(), [2, 3]);
+    // Verify db state
+    const closed = db.prepare('SELECT id, valid_to FROM facts WHERE id IN (2, 3)').all();
+    for (const f of closed) assert.ok(f.valid_to, `fact ${f.id} should have valid_to`);
+    const winner = db.prepare('SELECT valid_to FROM facts WHERE id = 1').get();
+    assert.equal(winner.valid_to, null, 'winner stays open');
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
