@@ -16,7 +16,7 @@
 // Budget: every LLM call goes through BudgetGuard. budgetExhausted=true
 // signals the cycle stopped voluntarily (not crashed).
 
-import { mkdirSync, appendFileSync } from 'node:fs';
+import { mkdirSync, appendFileSync, lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { resolveBrainPaths } from './paths.js';
 import { scanInbox, writeManifest, commitProcessed, isProcessed } from './dump-ingest.js';
@@ -24,6 +24,7 @@ import { extractFile } from './extractors/index.js';
 import { BudgetGuard } from './budget-guard.js';
 import { compileWikiPage } from './wiki-compiler.js';
 import { callTiered } from './tiered-llm.js';
+import { validateSafeRepoPath } from './path-guard.js';
 
 function ensureFactsTable(db) {
   // Idempotent: matches the schema downstream consumers expect.
@@ -37,8 +38,19 @@ function ensureFactsTable(db) {
   }
 }
 
-function appendLog(wikiLogPath, line) {
+function appendLog(wikiLogPath, line, repoRoot) {
   try {
+    // F-LENS2-05/11: refuse to follow a symlinked log path out of the repo.
+    // lstat (NOT stat) so we see the symlink itself; if the path is a
+    // symlink, drop the append rather than write through it.
+    if (repoRoot) {
+      const guard = validateSafeRepoPath(repoRoot, wikiLogPath);
+      if (!guard.ok) return;
+    }
+    try {
+      const lst = lstatSync(wikiLogPath);
+      if (lst.isSymbolicLink()) return; // F-LENS2-11: refuse symlink follow
+    } catch { /* file doesn't exist yet — ok to create */ }
     mkdirSync(dirname(wikiLogPath), { recursive: true });
     appendFileSync(wikiLogPath, line + '\n');
   } catch { /* logging is best-effort */ }
@@ -294,7 +306,7 @@ export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, 
       continue;
     }
     processed += 1;
-    appendLog(paths.wikiLog, `${nowIso()} ingest ${file.name} +${extracted.length}f cycle=${cid}`);
+    appendLog(paths.wikiLog, `${nowIso()} ingest ${file.name} +${extracted.length}f cycle=${cid}`, repoRoot);
   }
 
   // Compile pages for touched subjects. Failures are logged, not fatal.
@@ -302,9 +314,9 @@ export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, 
     const r = compileWikiPage(db, { repoRoot, type: 'entity', subject });
     if (r.ok) {
       pagesCompiled += 1;
-      appendLog(paths.wikiLog, `${nowIso()} compile entity ${subject} facts=${r.factsCount}`);
+      appendLog(paths.wikiLog, `${nowIso()} compile entity ${subject} facts=${r.factsCount}`, repoRoot);
     } else {
-      appendLog(paths.wikiLog, `${nowIso()} compile-fail ${subject} reason=${r.error}`);
+      appendLog(paths.wikiLog, `${nowIso()} compile-fail ${subject} reason=${r.error}`, repoRoot);
     }
   }
 

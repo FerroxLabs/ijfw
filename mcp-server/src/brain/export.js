@@ -15,6 +15,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { resolveBrainPaths } from './paths.js';
+import { validateSafeRepoPath } from './path-guard.js';
 
 const WIKI_TYPES = ['concepts', 'entities', 'decisions', 'milestones'];
 const WIKILINK_RE = /\[\[([^\]\n|]+)(?:\|[^\]\n]*)?\]\]/g;
@@ -38,6 +39,12 @@ function parseWikilinks(md) {
 }
 
 export function exportPageBundle(repoRoot, slug, outFile) {
+  // F-LENS2-05 defense-in-depth: brain-handler already validates outFile via
+  // validateSafeRepoPath, but exportPageBundle is also exported and may be
+  // called directly by future callers. Re-validate here so the policy holds
+  // at the writer boundary too.
+  const guard = validateSafeRepoPath(repoRoot, outFile);
+  if (!guard.ok) return { error: guard.error };
   const paths = resolveBrainPaths(repoRoot);
   const root = findPage(paths.wikiDir, slug);
   if (!root) return { error: 'page-not-found', slug };
@@ -93,8 +100,13 @@ Everything in \`ijfw/\` is plain markdown / json. Inspect it. Edit it. Diff it. 
 
 export function writeShareReadme(repoRoot) {
   const paths = resolveBrainPaths(repoRoot);
-  mkdirSync(paths.contentDir, { recursive: true });
   const out = join(paths.contentDir, 'README.md');
+  // F-LENS2-05: validate the share-readme path before writing. A symlinked
+  // ijfw/ directory or contentDir resolution outside the repo would otherwise
+  // let writeFileSync clobber an arbitrary path.
+  const guard = validateSafeRepoPath(repoRoot, out);
+  if (!guard.ok) return { error: guard.error };
+  mkdirSync(paths.contentDir, { recursive: true });
   writeFileSync(out, SHARE_README);
   return { outFile: out, bytes: Buffer.byteLength(SHARE_README, 'utf8') };
 }

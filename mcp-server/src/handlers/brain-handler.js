@@ -17,13 +17,14 @@
 //
 // Each verb dispatches to a private handler. All return JSON-safe shapes.
 
-import { existsSync, mkdirSync, readFileSync, copyFileSync, realpathSync, constants as fsConstants } from 'node:fs';
-import { join, join as pathJoin, resolve as pathResolve, relative as pathRelative, isAbsolute as pathIsAbsolute, dirname as pathDirname, basename as pathBasename } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, copyFileSync, constants as fsConstants } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveBrainPaths } from '../brain/paths.js';
 import { compileWikiPage, slugify } from '../brain/wiki-compiler.js';
 import { resolveCitations } from '../brain/citation-resolver.js';
 import { exportPageBundle, writeShareReadme } from '../brain/export.js';
+import { validateSafeRepoPath } from '../brain/path-guard.js';
 
 const WIKI_TYPES = ['concepts', 'entities', 'decisions', 'milestones'];
 
@@ -193,50 +194,13 @@ function verbWikiPromote(db, repoRoot, args) {
 
 function verbWikiExport(db, repoRoot, args) {
   if (!args.slug || !args.outFile) return { ok: false, error: 'missing-args' };
-  // FLAG-1: outFile must resolve under repoRoot. Without this guard, a caller
-  // (or a prompt-injection that gets through the think delimiter) could pass
-  // outFile: "/etc/passwd" or "/Users/.../id_rsa" and write there at the
-  // user's privilege level. We do NOT trust args.outFile.
-  //
-  // v1.5.2.1: cross-platform containment via path.relative. The earlier
-  // implementation used `startsWith(resolvedRoot + '/')` which (a) broke on
-  // Windows because the separator is `\`, not `/`, and (b) was a denial-of-
-  // service on Windows runners — every legitimate write was rejected. Using
-  // path.relative + isAbsolute also catches the different-drive case on
-  // Windows (C:\repo vs D:\evil → relative returns an absolute path).
-  // The relative path must be non-empty (rel === '' would mean outFile IS the
-  // root, which is a directory — exportPageBundle would fail anyway), must
-  // not start with '..' (escape), and must not be absolute (different drive).
-  // v1.5.2.1 F5.2: canonicalize via realpath. path.resolve does NOT follow
-  // symlinks. A symlink inside the repo pointing OUTSIDE the repo would pass
-  // the .. / isAbsolute check (the lexical path stays inside repoRoot) and
-  // the write would land outside the sandbox. Canonicalize the PARENT
-  // directory (the destination file may not exist yet) so any intermediate
-  // symlink is unmasked BEFORE the containment check.
-  const resolvedRoot = realpathSync(pathResolve(repoRoot));
-  let resolvedOut = pathResolve(args.outFile);
-  try {
-    const parent = realpathSync(pathDirname(resolvedOut));
-    resolvedOut = pathJoin(parent, pathBasename(resolvedOut));
-  } catch {
-    // Parent doesn't exist yet; mkdir/writeFile inside exportPageBundle
-    // will create it. The lexical .. / isAbsolute check below still applies.
-  }
-  const rel = pathRelative(resolvedRoot, resolvedOut);
-  if (rel === '' || rel.startsWith('..') || pathIsAbsolute(rel)) {
-    return { ok: false, error: 'outFile-escapes-repo', resolvedOut, repoRoot: resolvedRoot };
-  }
-  // v1.5.2.1 F5.5: Windows reserved device names. On Windows these open
-  // kernel devices (CON, NUL, PRN, COM1-9, LPT1-9, AUX) instead of files —
-  // writing to them is a sandbox escape AND a denial-of-service on the
-  // operator's terminal. Reject cross-platform so the same brain.export
-  // payload is portable; lower-case basename so 'con.md' / 'Con' / 'CON'
-  // all collapse to the same reject path.
-  const WIN_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
-  if (WIN_RESERVED.test(pathBasename(resolvedOut))) {
-    return { ok: false, error: 'outFile-reserved-name', resolvedOut };
-  }
-  const r = exportPageBundle(repoRoot, slugify(args.slug), resolvedOut);
+  // F-LENS2-05/06/10: containment + Windows reserved-name + repoRoot-missing
+  // all live in validateSafeRepoPath now. Shared with wiki.compile,
+  // wiki.shareReadme, dream/budget logs so the policy can't drift across
+  // callsites the way it had in v1.5.2 (only wiki.export was guarded).
+  const guard = validateSafeRepoPath(repoRoot, args.outFile);
+  if (!guard.ok) return guard;
+  const r = exportPageBundle(repoRoot, slugify(args.slug), guard.resolved);
   if (r.error) return { ok: false, error: r.error, slug: r.slug };
   return { ok: true, ...r };
 }

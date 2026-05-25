@@ -7,8 +7,9 @@
 // Separate from IJFW_AUTOLINK_BUDGET_USD (the legacy A-Mem gate) -- the
 // brain budget never starves the auto-linker and vice versa.
 
-import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, appendFileSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { validateSafeRepoPath } from './path-guard.js';
 
 const SPEND_LOG_REL = ['.ijfw', 'metrics', 'brain-spend.jsonl'];
 const DEFAULT_CYCLE_USD = 0.50;
@@ -67,6 +68,16 @@ export function BudgetGuard({ repoRoot, cycleId, cycleUsd, dayUsd, env = process
   }
   function record(usd) {
     const p = join(repoRoot, ...SPEND_LOG_REL);
+    // F-LENS2-05/11: containment + symlink-follow refusal before the append.
+    // A symlink at .ijfw/metrics/brain-spend.jsonl pointing outside the repo
+    // would otherwise let appendFileSync write attacker-controlled bytes to
+    // an arbitrary path. lstat (NOT stat) so we see the link itself.
+    const guard = validateSafeRepoPath(repoRoot, p);
+    if (!guard.ok) return; // silent drop — spend log is best-effort
+    try {
+      const lst = lstatSync(p);
+      if (lst.isSymbolicLink()) return; // F-LENS2-11: refuse symlink follow
+    } catch { /* file doesn't exist yet — ok to create */ }
     mkdirSync(dirname(p), { recursive: true });
     appendFileSync(p, JSON.stringify({ day: todayKey(), cycleId: id, usd, ts: Date.now() }) + '\n');
     spent.cycle += usd; spent.day += usd;

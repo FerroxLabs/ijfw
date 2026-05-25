@@ -17,6 +17,7 @@ import { resolveBrainPaths } from './paths.js';
 import { applyTemplate } from './wiki-templates.js';
 import { resolveCitations } from './citation-resolver.js';
 import { getHistoryWindow } from '../memory/temporal.js';
+import { validateSafeRepoPath } from './path-guard.js';
 
 export function slugify(s) {
   return String(s || '').toLowerCase().trim()
@@ -73,6 +74,14 @@ export function compileWikiPage(db, { repoRoot, type, subject } = {}) {
   const slug = slugify(subject);
   const pageDir = join(paths.wikiDir, pluralType(type));
   const pagePath = join(pageDir, `${slug}.md`);
+
+  // F-LENS2-05: enforce containment + reserved-name on the compile target.
+  // A symlinked wiki dir or a maliciously-crafted subject (slugify removes
+  // most danger, but defense-in-depth) could otherwise direct the atomic
+  // rename outside the repo. mkdirSync(pageDir,…) below runs only if guard
+  // passes so we never even create a parent directory outside repoRoot.
+  const guard = validateSafeRepoPath(repoRoot, pagePath);
+  if (!guard.ok) return guard;
 
   // F8: per-page advisory lock prevents two concurrent compiles for the
   // same subject from interleaving (both read existing → both render →
