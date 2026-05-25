@@ -118,7 +118,10 @@ linux:test:
     # --experimental-sqlite: Node 22.x ships node:sqlite behind a flag; the
     # claude-mem importer test needs it to actually run instead of skipping.
     # Unflagged in Node 23+ -- when CI bumps off 22.x this can drop.
-    - node --experimental-sqlite --test --test-force-exit test-*.js 2>&1 | tee ../ci-logs/linux-node-test.log | tail -100
+    # F5.1: include test/brain + test/memory + test/integration so the brain
+    # handler / memory layout / integration suites actually run in CI. Prior
+    # glob `test-*.js` matched root-level only and silently skipped 21+ brain tests.
+    - node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js 2>&1 | tee ../ci-logs/linux-node-test.log | tail -100
     # 2. Graders (D2 spec, D2 consistency, D4 cascading-staleness, A3 project-types)
     - node test/grade-symbol-graph-spec.js 2>&1 | tee ../ci-logs/linux-grader-d2-spec.log
     - node test/grade-symbol-graph-consistency.js 2>&1 | tee ../ci-logs/linux-grader-d2-consistency.log
@@ -180,7 +183,9 @@ macos:test:
     - cd mcp-server
     - npm ci --no-audit --no-fund 2>&1 | tee ../ci-logs/macos-npm-ci.log | tail -30
     - npm test 2>&1 | tee ../ci-logs/macos-npm-test.log
-    - node --experimental-sqlite --test --test-force-exit test-*.js 2>&1 | tee ../ci-logs/macos-node-test.log | tail -100
+    # F5.1: include test/brain + test/memory + test/integration so the brain
+    # handler / memory layout / integration suites actually run in CI.
+    - node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js 2>&1 | tee ../ci-logs/macos-node-test.log | tail -100
     - node test/grade-symbol-graph-spec.js 2>&1 | tee ../ci-logs/macos-grader-d2-spec.log
     - node test/grade-symbol-graph-consistency.js 2>&1 | tee ../ci-logs/macos-grader-d2-consistency.log
     - node test/grade-cascading-staleness.js 2>&1 | tee ../ci-logs/macos-grader-d4.log
@@ -263,7 +268,11 @@ windows:test:
     - Set-Location mcp-server
     - npm ci --no-audit --no-fund 2>&1 | Tee-Object -FilePath ../ci-logs/windows-npm-ci.log | Select-Object -Last 30
     - npm test 2>&1 | Tee-Object -FilePath ../ci-logs/windows-npm-test.log
-    - node --experimental-sqlite --test --test-force-exit (Get-ChildItem -Filter 'test-*.js' | Select-Object -ExpandProperty Name) 2>&1 | Tee-Object -FilePath ../ci-logs/windows-node-test.log | Select-Object -Last 100
+    # F5.1: include test/brain + test/memory + test/integration so the brain
+    # handler / memory layout / integration suites actually run in CI. Prior
+    # PowerShell glob enumerated only root-level files (no -Recurse, no subdir
+    # paths) and silently skipped 21+ brain tests.
+    - node --experimental-sqlite --test --test-force-exit @((Get-ChildItem -Filter 'test-*.js' | Select-Object -ExpandProperty Name) + (Get-ChildItem -Path 'test/brain','test/memory','test/integration' -Filter 'test-*.js' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })) 2>&1 | Tee-Object -FilePath ../ci-logs/windows-node-test.log | Select-Object -Last 100
     # Graders (D2 spec, D2 consistency, D4 cascading-staleness, A3 project-types)
     - node test/grade-symbol-graph-spec.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-d2-spec.log
     - node test/grade-symbol-graph-consistency.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-d2-consistency.log
