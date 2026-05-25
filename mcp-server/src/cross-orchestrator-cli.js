@@ -2963,6 +2963,36 @@ function cmdCodex(sub) {
   process.exit(1);
 }
 
+// F4.1/F4.2: resolve the canonical IJFW version with explicit source labelling
+// and a corrupt-vs-missing distinction. Exported so the codex-doctor tests can
+// exercise the fallback matrix without spawning the CLI against synthetic
+// repo trees. Inputs are absolute paths (or null) so callers can stub them.
+//
+// Returns: { canonicalVersion, canonicalSource, canonicalParseError } where
+//   canonicalVersion : string | null  (first source whose JSON parses)
+//   canonicalSource  : 'installer' | 'mcp-server' | null
+//   canonicalParseError : string | null  (only set if installer pkg corrupt)
+export function resolveCanonicalVersion({ installerPkg, selfPkg } = {}) {
+  let canonicalVersion = null;
+  let canonicalSource = null;
+  let canonicalParseError = null;
+  for (const [src, p] of [['installer', installerPkg], ['mcp-server', selfPkg]]) {
+    if (!p || !existsSync(p)) continue;
+    let raw;
+    try {
+      raw = readFileSync(p, 'utf8');
+    } catch { continue; }
+    try {
+      canonicalVersion = JSON.parse(raw).version;
+      canonicalSource = src;
+      break;
+    } catch (e) {
+      if (src === 'installer') canonicalParseError = e.message;
+    }
+  }
+  return { canonicalVersion, canonicalSource, canonicalParseError };
+}
+
 function codexDoctor(projectRoot) {
   const root = resolve(projectRoot);
   const checks = [];
@@ -3001,25 +3031,11 @@ function codexDoctor(projectRoot) {
   // F4.1: standalone @ijfw/memory-server installs do not ship installer/.
   // F4.3: regressing against the established findCliAsset() convention. Reuse it.
   // F4.2: differentiate ENOENT (missing) from SyntaxError (corrupt).
-  let canonicalVersion = null;
-  let canonicalSource = null;
-  let canonicalParseError = null;
-  const installerPkg = findCliAsset('installer', 'package.json');
-  const selfPkg = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
-  for (const [src, p] of [['installer', installerPkg], ['mcp-server', selfPkg]]) {
-    if (!p || !existsSync(p)) continue;
-    let raw;
-    try {
-      raw = readFileSync(p, 'utf8');
-    } catch { continue; }
-    try {
-      canonicalVersion = JSON.parse(raw).version;
-      canonicalSource = src;
-      break;
-    } catch (e) {
-      if (src === 'installer') canonicalParseError = e.message;
-    }
-  }
+  const { canonicalVersion, canonicalSource, canonicalParseError } =
+    resolveCanonicalVersion({
+      installerPkg: findCliAsset('installer', 'package.json'),
+      selfPkg: join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'),
+    });
   checks.push({
     name: 'plugin metadata',
     ok: !!plugin && !!canonicalVersion && plugin.version === canonicalVersion,

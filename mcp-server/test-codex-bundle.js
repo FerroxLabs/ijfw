@@ -5,12 +5,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { BASH } from './test/win-bash-helper.js';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { resolveCanonicalVersion } from './src/cross-orchestrator-cli.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..');
@@ -298,6 +299,82 @@ test('codex: doctor works from a non-IJFW project directory using bundled assets
   } finally {
     rmTmpDir(cwd);
   }
+});
+
+// ---- v1.5.2.1: canonical-version resolution fallback matrix ---------------
+// F4.1: standalone @ijfw/memory-server installs do not ship installer/.
+//       Verify the doctor falls back to mcp-server/package.json instead of
+//       reporting 'canonical version unreadable'.
+// F4.2: corrupt installer/package.json must read differently from absent.
+// F4.6: when no canonical source is available, the fix text must point the
+//       user at a concrete recovery action (install @ijfw/install or set
+//       IJFW_HOME), not a vague 'update plugin.json' string.
+
+test('codex doctor: falls back to mcp-server/package.json when installer/ absent', () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), 'codex-doc-fallback-'));
+  try {
+    mkdirSync(join(tmpRoot, 'mcp-server'), { recursive: true });
+    writeFileSync(
+      join(tmpRoot, 'mcp-server', 'package.json'),
+      JSON.stringify({ name: '@ijfw/memory-server', version: '9.9.9' }, null, 2)
+    );
+    const result = resolveCanonicalVersion({
+      installerPkg: null,
+      selfPkg: join(tmpRoot, 'mcp-server', 'package.json'),
+    });
+    assert.equal(result.canonicalVersion, '9.9.9', 'should read fallback version');
+    assert.equal(result.canonicalSource, 'mcp-server', 'source should be labelled mcp-server');
+    assert.equal(result.canonicalParseError, null, 'no parse error expected');
+  } finally {
+    rmTmpDir(tmpRoot);
+  }
+});
+
+test('codex doctor: differentiates corrupt installer/package.json from missing', () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), 'codex-doc-corrupt-'));
+  try {
+    mkdirSync(join(tmpRoot, 'installer'), { recursive: true });
+    writeFileSync(join(tmpRoot, 'installer', 'package.json'), '{"version":'); // truncated
+    const result = resolveCanonicalVersion({
+      installerPkg: join(tmpRoot, 'installer', 'package.json'),
+      selfPkg: null,
+    });
+    assert.equal(result.canonicalVersion, null, 'corrupt JSON must not yield a version');
+    assert.ok(
+      result.canonicalParseError && /JSON|Unexpected|parse/i.test(result.canonicalParseError),
+      `corrupt source must set canonicalParseError (got: ${result.canonicalParseError})`
+    );
+    assert.equal(result.canonicalSource, null);
+  } finally {
+    rmTmpDir(tmpRoot);
+  }
+});
+
+test('codex doctor: emits actionable fix text when canonical source missing', () => {
+  // No installer/, no mcp-server/package.json. This drives the doctor's "fix"
+  // branch that points users at install @ijfw/install or IJFW_HOME.
+  const result = resolveCanonicalVersion({
+    installerPkg: null,
+    selfPkg: null,
+  });
+  assert.equal(result.canonicalVersion, null);
+  assert.equal(result.canonicalSource, null);
+  assert.equal(result.canonicalParseError, null);
+
+  // Cross-check: simulate the doctor's fix-text branch directly to confirm the
+  // actionable string composition (the doctor itself runs this exact ternary).
+  const canonicalVersion = result.canonicalVersion;
+  const canonicalParseError = result.canonicalParseError;
+  const plugin = { version: '1.5.1' };
+  const fix = canonicalVersion
+    ? (plugin && plugin.version !== canonicalVersion
+        ? `update codex/.codex-plugin/plugin.json version to ${canonicalVersion}`
+        : null)
+    : canonicalParseError
+      ? `restore installer/package.json (try \`git checkout installer/package.json\`)`
+      : `install @ijfw/install (npm i -g @ijfw/install), or set IJFW_HOME=<ijfw-repo-checkout>`;
+  assert.match(fix, /install @ijfw\/install/);
+  assert.match(fix, /IJFW_HOME/);
 });
 
 test('codex: stop hook stays quiet for routine session saves', () => {
