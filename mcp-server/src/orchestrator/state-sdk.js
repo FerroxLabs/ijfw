@@ -39,7 +39,7 @@
 import {
   readFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, readdirSync,
 } from 'node:fs';
-import { join, isAbsolute, dirname, basename } from 'node:path';
+import { join, isAbsolute, isAbsolute as pathIsAbsolute, relative as pathRelative, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
@@ -1159,8 +1159,17 @@ const handlers = {
       const envLines = Object.keys(inheritedEnv).sort()
         .map((k) => `  ${k}=${inheritedEnv[k]}`);
       const eventLogPath = resolveEventLogPath(root, waveId, subagentId);
-      const eventLogRel = eventLogPath.startsWith(root + '/')
-        ? eventLogPath.slice(root.length + 1) : eventLogPath;
+      // F5.6: the prior `startsWith(root + '/')` form (a) wired only on POSIX
+      // because the separator is `/`, breaking on Windows where the separator
+      // is `\`, and (b) silently leaked absolute paths into the dispatch brief
+      // on Windows because the startsWith check always returned false. Use
+      // path.relative + isAbsolute so the relative form is computed correctly
+      // cross-platform, and fall back to the absolute path only when the
+      // event log is genuinely outside the repo (rel '..' or different drive).
+      const _rel = pathRelative(root, eventLogPath);
+      const eventLogRel = (_rel === '' || _rel.startsWith('..') || pathIsAbsolute(_rel))
+        ? eventLogPath
+        : _rel;
       const dispatchBrief = [
         `# Subagent dispatch — ${subagentId} (wave ${waveId})`,
         role ? `Role: ${role}` : null,
