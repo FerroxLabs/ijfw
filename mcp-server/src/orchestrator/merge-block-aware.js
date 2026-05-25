@@ -310,6 +310,18 @@ export function mergeFile(targetAbsPath, pairs, opts = {}) {
     seeded = true;
   }
 
+  const src = readFileSync(abs, 'utf8');
+  const next = mergeBlocks(src, pairs);
+
+  // No-op short-circuit: if content is unchanged and this is not a seed,
+  // skip backup rotation and the atomic write entirely. Idempotent calls
+  // will no longer accumulate identical-content backups.
+  if (!seeded && next === src) {
+    return {
+      ok: true, path: abs, bytes: Buffer.byteLength(next), seeded: false, noop: true,
+    };
+  }
+
   // Backup + retention (best-effort, defaults on). `opts.backups === false`
   // suppresses (used by some tests to keep tmp clean).
   let backup;
@@ -318,8 +330,6 @@ export function mergeFile(targetAbsPath, pairs, opts = {}) {
     if (rot.taken && rot.path) backup = rot.path;
   }
 
-  const src = readFileSync(abs, 'utf8');
-  const next = mergeBlocks(src, pairs);
   const res = writeAtomic(abs, next, { mode: 0o644, ensureDir: true });
   return {
     ok: true, path: res.path, bytes: res.bytes, backup, seeded,
