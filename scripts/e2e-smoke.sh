@@ -601,14 +601,27 @@ else
   fail "1.1.6: publish.yml missing required publish-with-provenance contract"
 fi
 
-# 8) installer/package.json has publishConfig.provenance:true
+# 8) NEITHER package.json declares publishConfig.provenance.
+# Policy (v1.5.0, see mcp-server/test-ci-publish-config.js): provenance is
+# enabled via the `npm publish --provenance --access public` CLI flag in
+# .gitlab-ci.yml -- NOT via publishConfig.provenance:true in package.json.
+# The CLI flag is the canonical npmjs+GitLab trusted-publisher pattern;
+# the package.json field is the legacy/alternate path that the project
+# explicitly does not use. Gate 7 above already asserts the CLI flag is
+# present in CI -- this gate asserts the absence-in-package.json half of
+# the same contract. Originally this gate REQUIRED provenance:true in
+# installer/package.json, contradicting the unit test; flipped in v1.5.2.1
+# to match the canonical policy.
 if node -e "
-  const d=JSON.parse(require('fs').readFileSync('$REPO_ROOT/installer/package.json','utf8'));
-  process.exit(d && d.publishConfig && d.publishConfig.provenance===true ? 0 : 1)
+  const i=JSON.parse(require('fs').readFileSync('$REPO_ROOT/installer/package.json','utf8'));
+  const m=JSON.parse(require('fs').readFileSync('$REPO_ROOT/mcp-server/package.json','utf8'));
+  const iHas = i.publishConfig && i.publishConfig.provenance === true;
+  const mHas = m.publishConfig && m.publishConfig.provenance === true;
+  process.exit((!iHas && !mHas) ? 0 : 1)
 "; then
-  pass "1.1.6: installer/package.json publishConfig.provenance:true"
+  pass "1.1.6: neither package.json declares publishConfig.provenance (flag path preferred)"
 else
-  fail "1.1.6: installer/package.json missing publishConfig.provenance"
+  fail "1.1.6: a package.json declares publishConfig.provenance -- remove it; CI flag is canonical"
 fi
 
 # 9) ijfw-update skill mirrored across 4 trees with identical content
