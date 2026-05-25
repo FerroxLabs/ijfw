@@ -19,6 +19,7 @@ import {
   openSync, closeSync, fsyncSync, realpathSync
 } from 'fs';
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
+import { resolveBrainPaths } from './brain/paths.js';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { createHash, randomBytes } from 'crypto';
@@ -312,6 +313,12 @@ function safeProjectDir() {
 const PROJECT_DIR = safeProjectDir();
 const PROJECT_HASH = createHash('sha256').update(PROJECT_DIR).digest('hex').slice(0, 12);
 const IJFW_DIR = join(PROJECT_DIR, '.ijfw');
+// REPO_ROOT is the parent of .ijfw/ — required by resolveBrainPaths.
+const REPO_ROOT = dirname(IJFW_DIR);
+// paths() re-reads the layout sentinel on every call so a long-running server
+// process picks up the migration-010 sentinel flip without restart.
+function paths() { return resolveBrainPaths(REPO_ROOT); }
+// Back-compat values for the line-2349 re-export. New code MUST use paths().memoryDir / paths().sessionsDir.
 const MEMORY_DIR = join(IJFW_DIR, 'memory');
 const SESSIONS_DIR = join(IJFW_DIR, 'sessions');
 const GLOBAL_DIR = join(homedir(), '.ijfw', 'memory');
@@ -348,7 +355,7 @@ const NATIVE_CLAUDE_DIR = join(
 // MCP handshake can make strict clients (incl. Claude Code) mark the server
 // as failed. Subsequent store/read calls surface structured errors instead.
 try {
-  [MEMORY_DIR, SESSIONS_DIR].forEach(dir => {
+  [paths().memoryDir, paths().sessionsDir].forEach(dir => {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   });
 } catch { /* handleStore/recall surface structured errors on first use */ }
@@ -467,7 +474,7 @@ function emitRecallObservation({ context_hint, from_project } = {}) {
 
 // --- Storage helpers ---
 function appendToJournal(entry) {
-  const journalPath = join(MEMORY_DIR, 'project-journal.md');
+  const journalPath = join(paths().memoryDir, 'project-journal.md');
   const ts = new Date().toISOString();
   const line = `- [${ts}] ${entry}`;
   return appendLine(journalPath, line);
@@ -477,7 +484,7 @@ function appendToJournal(entry) {
 // similar to Claude's native auto-memory format: YAML frontmatter plus a body with
 // Why / How-to-apply sections. This is the format users retrieve well from.
 function appendStructuredToKnowledge({ type, summary, content, why, howToApply, tags }) {
-  const filepath = join(MEMORY_DIR, 'knowledge.md');
+  const filepath = join(paths().memoryDir, 'knowledge.md');
   const ts = new Date().toISOString();
   const tagLine = tags && tags.length ? tags.join(', ') : '';
   const block = [
@@ -524,10 +531,10 @@ function appendToGlobalPrefs(entry, tags = []) {
 }
 
 function readKnowledgeBase() {
-  return readOr(join(MEMORY_DIR, 'knowledge.md'));
+  return readOr(join(paths().memoryDir, 'knowledge.md'));
 }
 function readHandoff() {
-  return readOr(join(MEMORY_DIR, 'handoff.md'));
+  return readOr(join(paths().memoryDir, 'handoff.md'));
 }
 // Read Claude Code native auto-memory for this project. Returns concatenated
 // sanitized content of all project_*.md files (skipping MEMORY.md index).
@@ -597,7 +604,7 @@ function readGlobalKnowledge() {
 }
 
 function getRecentJournalEntries(count = 5) {
-  const journal = readOr(join(MEMORY_DIR, 'project-journal.md'));
+  const journal = readOr(join(paths().memoryDir, 'project-journal.md'));
   if (!journal) return '';
   const entries = journal.split('\n').filter(l => /^- \[\d{4}-/.test(l));
   return entries.slice(-count).join('\n');
@@ -608,7 +615,7 @@ function getRecentJournalEntries(count = 5) {
 // down to ms; collisions would only happen on near-simultaneous writes which
 // our atomic-append + fs flush ordering already serialise).
 function getRecentMemoriesForDedup(limit = 50) {
-  const journal = readOr(join(MEMORY_DIR, 'project-journal.md'));
+  const journal = readOr(join(paths().memoryDir, 'project-journal.md'));
   if (!journal) return [];
   const lines = journal.split('\n').filter(l => /^- \[\d{4}-/.test(l));
   // Most-recent-last in the file → reverse so findNearDuplicate sees newest first.
@@ -623,6 +630,7 @@ function getRecentMemoriesForDedup(limit = 50) {
 
 // H5.5 — sidecar file for structured facts (one JSON object per line).
 // Append-only; consumed by handleRecall({context_hint:'facts'}).
+// TODO(v1.5.2 post-Task-5): relocate to paths().factsJsonl / paths().indexDb via a data migration; current location preserved for back-compat.
 const FACTS_FILE = join(MEMORY_DIR, 'facts.jsonl');
 
 // Stable short id for joining a fact back to its journal entry. We don't have
@@ -652,6 +660,7 @@ function appendFactsToSidecar(facts, meta) {
 // table (queryable point-in-time view) stay co-located. Lazy-opened on first
 // use so a project that never stores a memory never pays the better-sqlite3
 // load cost.
+// TODO(v1.5.2 post-Task-5): relocate to paths().factsJsonl / paths().indexDb via a data migration; current location preserved for back-compat.
 const FACTS_DB_FILE = join(MEMORY_DIR, 'facts.db');
 let _factsDbHandle = null;
 function getFactsDb() {
@@ -792,10 +801,10 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   }
 
   const sources = [
-    { name: 'team',          content: readTeamKnowledge(),                          boost: 1.25, path: join(MEMORY_DIR, 'team-knowledge.md') },
-    { name: 'knowledge',     content: readKnowledgeBase(),                          boost: 1.15, path: join(MEMORY_DIR, 'knowledge.md') },
-    { name: 'journal',       content: readOr(join(MEMORY_DIR, 'project-journal.md')), boost: 1.0,  path: join(MEMORY_DIR, 'project-journal.md') },
-    { name: 'handoff',       content: readHandoff(),                                boost: 1.1,  path: join(MEMORY_DIR, 'handoff.md') },
+    { name: 'team',          content: readTeamKnowledge(),                          boost: 1.25, path: join(paths().memoryDir, 'team-knowledge.md') },
+    { name: 'knowledge',     content: readKnowledgeBase(),                          boost: 1.15, path: join(paths().memoryDir, 'knowledge.md') },
+    { name: 'journal',       content: readOr(join(paths().memoryDir, 'project-journal.md')), boost: 1.0,  path: join(paths().memoryDir, 'project-journal.md') },
+    { name: 'handoff',       content: readHandoff(),                                boost: 1.1,  path: join(paths().memoryDir, 'handoff.md') },
     { name: 'global',        content: readGlobalKnowledge(),                        boost: 0.95, path: null },
     { name: 'claude-native', content: readNativeClaudeMemory(),                     boost: 0.95, path: null },
   ];
@@ -1467,7 +1476,7 @@ function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
   }
 
   if (type === 'handoff') {
-    const handoffPath = join(MEMORY_DIR, 'handoff.md');
+    const handoffPath = join(paths().memoryDir, 'handoff.md');
     const prior = readMarkdownFile(handoffPath);
     if (prior.ok && prior.content.trim()) {
       appendToJournal(`prior-handoff-archived: ${sanitizeContent(prior.content).substring(0, 500)}`);
@@ -2348,4 +2357,5 @@ export {
   handleStore, handleRecall, handleSearch, handlePrelude,
   MEMORY_DIR, FACTS_FILE, FACTS_DB_FILE,
   getFactsDb,
+  paths,
 };
