@@ -155,6 +155,16 @@ else
 fi
 
 # ============================================================
+# Version lockstep gate (F4.4 -- installer/mcp-server/codex must match)
+# ============================================================
+hdr "Version lockstep gate"
+if (cd "$REPO_ROOT" && bash scripts/check-version-lockstep.sh); then
+  pass "version-lockstep: installer/mcp-server/codex versions match"
+else
+  fail "version-lockstep: drift detected between installer/mcp-server/codex package versions"
+fi
+
+# ============================================================
 # MODE 2: CANONICAL install in isolated HOME
 # ============================================================
 hdr "Mode 2 of 2 -- canonical install in isolated HOME"
