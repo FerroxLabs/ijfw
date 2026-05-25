@@ -5,6 +5,26 @@
 # the parent rule later.
 .ijfw/index/
 
+# v1.5.2 visible-layer (Plan A IJFW Brain).
+#
+# `ijfw/` at a project root is a real user-facing feature: it's where end
+# users drop files into `ijfw/dump/inbox/` for the dream cycle to process,
+# where the bi-temporal wiki materialises (`ijfw/wiki/<type>/<slug>.md`),
+# and where teams commit shared brain context for cross-project search.
+# End-user projects SHOULD commit `ijfw/` (per `ijfw_brain.wiki.shareReadme`
+# instructions in the generated `ijfw/README.md`).
+#
+# In THIS repo (the IJFW source-of-truth), `ijfw/` is just a runtime artifact
+# created whenever someone runs `mcp-server/src/server.js` as the MCP entry
+# point with the repo as cwd — the framework consuming its own dogfood. It
+# does NOT belong in the published package, because the package ships the
+# framework, not anyone's particular brain. So we gitignore it HERE.
+#
+# This rule is repo-local; it does not propagate to user projects that
+# install IJFW via npm. They get a fresh .gitignore that does not exclude
+# `ijfw/`.
+ijfw/
+
 # v1.5.0 T20: truncation-recovery fixtures need committed target/.ijfw/
 # state to seed the "moment of truncation" project root in CI. Without
 # this negation the .ijfw/ rule above silently strips them from git, so
