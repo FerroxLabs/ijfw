@@ -117,6 +117,7 @@ Pre-mortem flash: `Top risk: <concrete scenario>. Mitigation: <concrete fix>.` S
 - One word: `lock` / `fix <X>` / `go deeper`.
 - On `lock`: write `.ijfw/memory/brief.md`. Route straight to PLAN (see `references/post-brainstorm-workflow.md`).
 - Invoke `ijfw-agents-md` skill with intent context (brief.md) to seed AGENTS.md if missing; create platform adapter (e.g. CLAUDE.md) from template if detected IDE file is absent.
+- N7 LOCK-hook: call `populateDisciplineBlock(projectRoot)` (from `mcp-server/src/orchestrator/agents-md-blackboard.js`) immediately after `ijfw-agents-md` returns. This writes the DISCIPLINE block to AGENTS.md with the project-type-appropriate discipline template. Non-throwing -- a failure here is logged but never blocks the workflow.
 
 **Quick-mode closer:** `You went from <original-ask> to locked brief with <N> risks mitigated in <M> minutes.`
 
@@ -142,7 +143,7 @@ Sketch **4-5 approaches** as 2-line bullets (shape + tradeoff). User picks 2, re
 Draft success metrics / acceptance criteria. Pre-mortem: 4-5 plausible failures. User picks top 2 risks; propose mitigations. Append metrics + risks + mitigations to brief.md.
 
 ### Module 6 -- LOCK (2 min)
-Paste the full brief (goal / HMW / approach / metrics / risks / mitigations). Optional Trident cross-critique fires here if ENABLED. User says `lock` / `fix <X>` / `skip Trident` / `route to plan`. On `lock`: promote brief-draft.md → brief.md, route to PLAN, invoke `ijfw-agents-md` skill.
+Paste the full brief (goal / HMW / approach / metrics / risks / mitigations). Optional Trident cross-critique fires here if ENABLED. User says `lock` / `fix <X>` / `skip Trident` / `route to plan`. On `lock`: promote brief-draft.md → brief.md, route to PLAN, invoke `ijfw-agents-md` skill. N7 LOCK-hook: call `populateDisciplineBlock(projectRoot)` (from `mcp-server/src/orchestrator/agents-md-blackboard.js`) immediately after `ijfw-agents-md` returns to write the DISCIPLINE block. Non-throwing -- failure is logged and never blocks the workflow.
 
 **Optional modules:** EXTERNAL BRIEF, ANTI-SCOPE, TRIDENT CROSS-CRITIQUE — see `references/deep-mode-optional.md` for triggers + procedure.
 
