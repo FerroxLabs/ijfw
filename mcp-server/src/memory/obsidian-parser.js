@@ -84,7 +84,9 @@ export function indexObsidianRelations(db, memoryId, text) {
     for (const t of parsed.tags) insTag.run(memoryId, t.path, t.depth);
     for (const m of parsed.meta) insMeta.run(memoryId, m.key, m.value);
   });
-  tx();
+  // F-LENS2-01: use IMMEDIATE so all facts-table sister-writers acquire the
+  // RESERVED lock in the same order — no DEFERRED→IMMEDIATE upgrade collision.
+  tx.immediate();
   return parsed;
 }
 

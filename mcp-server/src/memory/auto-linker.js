@@ -101,7 +101,11 @@ function applyProposal(db, entry, proposal) {
       }
     }
   });
-  tx();
+  // F-LENS2-01: use IMMEDIATE so all facts-table sister-writers acquire the
+  // RESERVED lock in the same order — no DEFERRED→IMMEDIATE upgrade collision
+  // when another writer (storeFactBitemporal, dream-pipeline, obsidian-parser)
+  // holds the lock.
+  tx.immediate();
   return { links_added: linksAdded, neighbor_tags_added: neighborTagsAdded };
 }
 
