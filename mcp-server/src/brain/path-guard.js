@@ -19,7 +19,7 @@
 // stream suffix (everything after the first ':'). The tightened character
 // class is `com[1-9]|lpt[1-9]` (1-9, not 0-9) per Microsoft's documented set.
 
-import { realpathSync } from 'node:fs';
+import { realpathSync, lstatSync } from 'node:fs';
 import {
   resolve as pathResolve,
   relative as pathRelative,
@@ -81,6 +81,21 @@ export function validateSafeRepoPath(repoRoot, targetPath) {
   const stem = baseTrimmed.split(':')[0].split('.')[0];
   if (WIN_RESERVED.test(stem)) {
     return { ok: false, error: 'outFile-reserved-name', resolved };
+  }
+  // F-LENS2-07: TOCTOU hardening. Even after parent-ancestor canonicalization,
+  // an attacker could create the TARGET itself as a symlink between this
+  // guard and the writeFileSync. lstatSync (does NOT follow symlinks) catches
+  // an existing symlink at the resolved path. Pre-existing regular file is
+  // fine — writers either overwrite or 'wx'-fail on their own. The residual
+  // TOCTOU window between this check and the writer's open is microseconds
+  // and requires a same-uid attacker; documented threat model.
+  try {
+    const st = lstatSync(resolved);
+    if (st.isSymbolicLink()) {
+      return { ok: false, error: 'outFile-is-symlink', resolved };
+    }
+  } catch {
+    // ENOENT — target doesn't exist yet; the most common case. OK to proceed.
   }
   return { ok: true, resolved };
 }
