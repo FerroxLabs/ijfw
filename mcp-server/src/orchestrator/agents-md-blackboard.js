@@ -56,6 +56,7 @@ import {
   selectDisciplineTemplate,
   detectProjectTypeFromRepo,
 } from './discipline-selector.js';
+import { validateSafeRepoPath } from '../brain/path-guard.js';
 
 /**
  * Render the BLACKBOARD marker-block payload from a wave's STATE.md
@@ -99,6 +100,8 @@ export async function populateBlackboardBlock(waveId, projectRoot) {
 
   const payload = renderBlackboardPayload(waveId, state);
   const agentsMdPath = join(projectRoot, 'AGENTS.md');
+  const guard = validateSafeRepoPath(projectRoot, agentsMdPath);
+  if (!guard.ok) return { ok: false, reason: 'unsafe-path', error: guard.error };
   const lockPath = lockPathFor(agentsMdPath);
 
   let mergeResult;
@@ -191,6 +194,8 @@ export async function populateDisciplineBlock(projectRoot, projectType) {
   }
 
   const agentsMdPath = join(projectRoot, 'AGENTS.md');
+  const guard = validateSafeRepoPath(projectRoot, agentsMdPath);
+  if (!guard.ok) return { ok: false, reason: 'unsafe-path', error: guard.error };
   const lockPath = lockPathFor(agentsMdPath);
 
   let mergeResult;
