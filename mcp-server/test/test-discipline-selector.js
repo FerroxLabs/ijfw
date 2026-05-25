@@ -69,19 +69,21 @@ test('selectDisciplineTemplate: throws TypeError on undefined', () => {
   );
 });
 
-test('selectDisciplineTemplate: returns empty string for "unknown"', () => {
+test('selectDisciplineTemplate: returns IJFW hint body for "unknown"', () => {
+  // Wave 5B L3-03/L3-04: previously returned empty string; now returns an
+  // HTML-comment hint documenting how to activate domain-specific rules.
   const result = selectDisciplineTemplate('unknown');
-  assert.equal(result, '');
+  assert.ok(result.includes('IJFW: project type is "unknown"'));
 });
 
-test('selectDisciplineTemplate: returns empty string for "mixed"', () => {
+test('selectDisciplineTemplate: returns IJFW hint body for "mixed"', () => {
   const result = selectDisciplineTemplate('mixed');
-  assert.equal(result, '');
+  assert.ok(result.includes('IJFW: project type is "mixed"'));
 });
 
-test('selectDisciplineTemplate: returns empty string for unrecognized type string', () => {
+test('selectDisciplineTemplate: unrecognized type string collapses to "unknown" hint', () => {
   const result = selectDisciplineTemplate('fantasy-novel-generator');
-  assert.equal(result, '');
+  assert.ok(result.includes('IJFW: project type is "unknown"'));
 });
 
 test('selectDisciplineTemplate: "code" returns non-empty string when template present', {
@@ -120,18 +122,41 @@ test('selectDisciplineTemplate: "research" returns non-empty string when templat
   assert.ok(typeof result === 'string' && result.length > 0);
 });
 
-test('selectDisciplineTemplate: throws Error when typed template file is absent', () => {
-  // We cannot remove real templates, but we can call with a valid type code
-  // and a missing file by monkey-patching is not practical in ESM. Instead,
-  // confirm the throw path is exercised by directly checking the error message
-  // of a known-missing type. Use a temporary approach: if ALL templates are
-  // present we just verify the function doesn't throw for 'code'; if the
-  // template is absent the outer test above covers the skip path. This test
-  // instead validates the TypeError path which is always testable.
-  assert.throws(
-    () => selectDisciplineTemplate(null),
-    (err) => err instanceof TypeError,
-  );
+test(
+  'selectDisciplineTemplate: throws Error when typed template file is absent',
+  { todo: 'requires dependency-injection refactor to mock TEMPLATES_DIR in ESM' },
+  () => {
+    // The Error-throw path at discipline-selector.js fires when a TYPED_CODES
+    // value resolves to a path under TEMPLATES_DIR that does not exist. We
+    // ship all 5 templates in-tree so this path is not reachable from a
+    // standard test setup. Marked todo until selectDisciplineTemplate accepts
+    // an opts.templatesDir injection point.
+  },
+);
+
+test('selectDisciplineTemplate: throws TypeError on non-string projectType', () => {
+  assert.throws(() => selectDisciplineTemplate(42), TypeError);
+  assert.throws(() => selectDisciplineTemplate({}), TypeError);
+  assert.throws(() => selectDisciplineTemplate([]), TypeError);
+  assert.throws(() => selectDisciplineTemplate(true), TypeError);
+});
+
+test('selectDisciplineTemplate: unknown returns IJFW hint with correction path', () => {
+  const body = selectDisciplineTemplate('unknown');
+  assert.ok(body.includes('IJFW: project type is "unknown"'));
+  assert.ok(body.includes('.ijfw/memory/brief.md'));
+  assert.ok(body.includes('brainstorm-LOCK'));
+});
+
+test('selectDisciplineTemplate: mixed returns IJFW hint labelled "mixed"', () => {
+  const body = selectDisciplineTemplate('mixed');
+  assert.ok(body.includes('IJFW: project type is "mixed"'));
+  assert.ok(body.includes('.ijfw/memory/brief.md'));
+});
+
+test('selectDisciplineTemplate: garbage type collapses to "unknown" label in hint', () => {
+  const body = selectDisciplineTemplate('xyz123-not-a-real-type');
+  assert.ok(body.includes('IJFW: project type is "unknown"'));
 });
 
 // ---------------------------------------------------------------------------

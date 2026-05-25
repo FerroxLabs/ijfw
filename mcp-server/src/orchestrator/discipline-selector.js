@@ -63,8 +63,10 @@ const EMPTY_BODY_CODES = new Set(['unknown', 'mixed']);
  *
  * @param {string} projectType  one of: code | narrative | business | design |
  *                              research | unknown | mixed
- * @returns {string}  template body (utf-8). Empty string for unknown/mixed.
- * @throws {TypeError}  when projectType is null or undefined.
+ * @returns {string}  template body (utf-8). For unknown/mixed (and any
+ *                    unrecognized string), returns an HTML-comment hint
+ *                    body documenting how the user activates a domain.
+ * @throws {TypeError}  when projectType is null, undefined, or non-string.
  * @throws {Error}      when the template file is absent for a typed project.
  */
 export function selectDisciplineTemplate(projectType) {
@@ -73,18 +75,34 @@ export function selectDisciplineTemplate(projectType) {
       'selectDisciplineTemplate: projectType must be a string (got null/undefined)',
     );
   }
+  if (typeof projectType !== 'string') {
+    throw new TypeError(
+      `selectDisciplineTemplate: projectType must be a string (got ${typeof projectType})`,
+    );
+  }
 
   const type = String(projectType).trim().toLowerCase();
 
+  // Helpful hint body for "no domain rules to apply" cases. Replaces what
+  // was previously an empty marker block (Wave 5B finding L3-03 + L3-04):
+  // a labelled-but-empty DISCIPLINE region left users unsure what to do.
+  // The hint is an HTML comment so it stays invisible in rendered markdown
+  // but visible to anyone reading the raw AGENTS.md, and documents the
+  // correction path inline.
+  const emptyBodyHint = (label) =>
+    `<!-- IJFW: project type is "${label}" -- domain-specific discipline rules not yet activated.\n`
+    + `To activate, set frontmatter \`type: code\` (or narrative | business | design | research)\n`
+    + `in .ijfw/memory/brief.md and re-run the brainstorm-LOCK or plan-LOCK in the IJFW workflow. -->`;
+
   if (EMPTY_BODY_CODES.has(type)) {
-    // Marker present, body intentionally empty -- skip the file read.
-    return '';
+    return emptyBodyHint(type);
   }
 
   if (!TYPED_CODES.has(type)) {
-    // Unrecognized type string -- treat as empty rather than throwing, to
-    // match the graceful-degradation philosophy of populateDisciplineBlock.
-    return '';
+    // Unrecognized type string -- treat as 'unknown' for the hint label so
+    // the message stays sensible, rather than echoing whatever garbage came
+    // in. The graceful-degradation policy is preserved: no throw.
+    return emptyBodyHint('unknown');
   }
 
   const templatePath = join(TEMPLATES_DIR, `discipline-${type}.md`);
