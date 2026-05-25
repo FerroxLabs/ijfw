@@ -35,6 +35,7 @@ is user-authored and untouched.
 | ROUTING     | Peer-skill routing rules (workflow, design, etc.)        |
 | AGENTS      | Auto-generated agent definitions from `.ijfw/agents/`    |
 | BLACKBOARD  | Reserved for Pillar B (multi-CLI orchestration); empty   |
+| DISCIPLINE  | Per-domain discipline rules (code \| narrative \| business \| design \| research) |
 
 Each block is delimited by `<!-- IJFW-<NAME>-START -->` /
 `<!-- IJFW-<NAME>-END -->` markers. Replace inside; never overwrite.
@@ -115,6 +116,86 @@ any manual skill invocation.
 
 ---
 
+## Discipline Block Population (v1.5.2 Wave 5B)
+
+The `DISCIPLINE` marker block is populated by
+`mcp-server/src/orchestrator/agents-md-blackboard.js::populateDisciplineBlock`
+at brainstorm-LOCK and plan-LOCK in `ijfw-workflow`. It injects per-domain
+rules so every agent operating in the project gets domain-appropriate
+discipline guidance without manual configuration.
+
+### Block content shape
+
+The block body is the raw text of the matching
+`claude/skills/ijfw-agents-md/templates/discipline-<type>.md` file, written
+verbatim between the markers. For `unknown` or `mixed` project types the body
+is intentionally empty (markers present, body empty — this is the correct
+state, not an error).
+
+Example for a `code` project (abbreviated):
+
+```
+<!-- IJFW-DISCIPLINE-START -->
+# Code Discipline
+
+Working code only. Finish the job. Plausibility is not correctness.
+…
+<!-- IJFW-DISCIPLINE-END -->
+```
+
+### Write rules
+
+1. The populator replaces content **only** between
+   `<!-- IJFW-DISCIPLINE-START -->` and `<!-- IJFW-DISCIPLINE-END -->` markers.
+2. **Never write outside those markers.** Uses `mergeFile()` from
+   `merge-block-aware.js` with `DISCIPLINE` as the block name — same mechanism
+   as MEMORY/ROUTING/AGENTS/BLACKBOARD.
+3. **Same `withFsLock` tier-#8 AGENTS.md lock** as `populateBlackboardBlock` —
+   both writers serialise on the single §3 #8 lock so concurrent fires cannot
+   interleave their writes.
+4. **Idempotency**: re-running `populateDisciplineBlock` on unchanged project
+   type produces byte-identical output; git sees no diff noise. The template
+   files are static; the content written is purely a function of `projectType`.
+5. **Empty-body contract**: if `selectDisciplineTemplate` returns an empty
+   string (for `unknown` or `mixed` types), `mergeFile` still writes the
+   block — the marker pair is present in AGENTS.md with an empty body. This
+   is intentional: consumers can detect the block's presence without needing
+   to distinguish "block absent" from "block empty".
+
+### Auto-fire trigger
+
+`ijfw-workflow` fires `populateDisciplineBlock` at:
+
+- **brainstorm-LOCK** — when the brainstorm output is locked and project type
+  is known (or inferable from the repo).
+- **plan-LOCK** — when the plan is locked, to refresh discipline context after
+  any type reclassification that may have occurred during planning.
+
+These are the same LOCK hooks that fire `populateBlackboardBlock` and
+intent-aware seeding — the three fires are sequential within the same lock
+acquisition to preserve the §3 ordering invariant.
+
+### Conditional activation (project-type detection)
+
+When `projectType` is not supplied explicitly, `populateDisciplineBlock` calls
+`detectProjectTypeFromRepo(projectRoot)` from `discipline-selector.js` to
+infer the type. Detection priority:
+
+1. `.ijfw/memory/brief.md` frontmatter `type` key — highest fidelity, set by
+   brainstorm-LOCK.
+2. Well-known file/dir signals (existsSync only, no glob):
+   - `code`: `package.json`, `tsconfig.json`, `Cargo.toml`, `go.mod`,
+     `pyproject.toml`, `setup.py`, `Gemfile`, or any `*.csproj` in root.
+   - `narrative`: `chapters/` or `manuscript/` directory present.
+   - `business`: root entry starting with `pitch-deck` or `business-plan`, or
+     any `*.numbers` file.
+   - `design`: root entry starting with `figma-`, any `*.sketch` file, or
+     `design-system/` directory.
+   - `research`: `research/` or `notebooks/` directory, or any `*.ipynb` file.
+   - `unknown`: fallback when no signal matches.
+
+---
+
 ## Intent-aware seeding (v1.4.4 N7)
 
 When AGENTS.md is being **created fresh** (file missing), the bootstrap is fed
@@ -176,6 +257,6 @@ All project conventions live in [AGENTS.md](./AGENTS.md). Read it first.
 
 ## Don'ts
 
-- Do not write outside the four marker blocks.
+- Do not write outside the five marker blocks.
 - Do not replace the whole file; the merger is block-scoped by design.
 - Do not write a `.bak` restore unless the user explicitly confirms.
