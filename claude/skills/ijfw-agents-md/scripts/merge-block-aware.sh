@@ -7,7 +7,7 @@
 #   Multi-pair (P2-M2 -- single transaction, single backup, single rename):
 #     merge-block-aware.sh <target> <BLOCK1>:<file1> [<BLOCK2>:<file2> ...]
 #
-# Block names: MEMORY | ROUTING | AGENTS | BLACKBOARD | FRONTMATTER
+# Block names: MEMORY | ROUTING | AGENTS | BLACKBOARD | FRONTMATTER | DISCIPLINE
 #
 # Behaviour:
 #   - If target file is absent: seed from templates/AGENTS.md.tmpl, then merge.
@@ -46,7 +46,7 @@ is_pair_form() {
   # First remaining arg must contain a colon AND its prefix must be a valid
   # block name. This avoids mistaking single-pair `BLOCK "content with: colon"`.
   case "$1" in
-    MEMORY:*|ROUTING:*|AGENTS:*|BLACKBOARD:*|FRONTMATTER:*) return 0 ;;
+    MEMORY:*|ROUTING:*|AGENTS:*|BLACKBOARD:*|FRONTMATTER:*|DISCIPLINE:*) return 0 ;;
   esac
   return 1
 }
@@ -57,9 +57,9 @@ if [ "$#" -ge 1 ] && is_pair_form "$1"; then
     BLOCK="${pair%%:*}"
     FILE="${pair#*:}"
     case "$BLOCK" in
-      MEMORY|ROUTING|AGENTS|BLACKBOARD|FRONTMATTER) ;;
+      MEMORY|ROUTING|AGENTS|BLACKBOARD|FRONTMATTER|DISCIPLINE) ;;
       *)
-        printf '[ijfw-agents-md] block name reserved set: MEMORY ROUTING AGENTS BLACKBOARD FRONTMATTER (got %s)\n' "$BLOCK" >&2
+        printf '[ijfw-agents-md] block name reserved set: MEMORY ROUTING AGENTS BLACKBOARD FRONTMATTER DISCIPLINE (got %s)\n' "$BLOCK" >&2
         exit 2
         ;;
     esac
@@ -76,9 +76,9 @@ elif [ "$#" -eq 2 ]; then
   BLOCK="$1"
   CONTENT="$2"
   case "$BLOCK" in
-    MEMORY|ROUTING|AGENTS|BLACKBOARD|FRONTMATTER) ;;
+    MEMORY|ROUTING|AGENTS|BLACKBOARD|FRONTMATTER|DISCIPLINE) ;;
     *)
-      printf '[ijfw-agents-md] block name reserved set: MEMORY ROUTING AGENTS BLACKBOARD FRONTMATTER (got %s)\n' "$BLOCK" >&2
+      printf '[ijfw-agents-md] block name reserved set: MEMORY ROUTING AGENTS BLACKBOARD FRONTMATTER DISCIPLINE (got %s)\n' "$BLOCK" >&2
       exit 2
       ;;
   esac

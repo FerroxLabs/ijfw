@@ -34,7 +34,7 @@
  *
  * RESERVED BLOCK NAMES
  *   Matches the shell script verbatim:
- *     MEMORY | ROUTING | AGENTS | BLACKBOARD | FRONTMATTER
+ *     MEMORY | ROUTING | AGENTS | BLACKBOARD | FRONTMATTER | DISCIPLINE
  *
  * ESM, Node ≥18, zero new prod deps.
  */
@@ -60,7 +60,7 @@ import { writeAtomic } from '../lib/atomic-io.js';
  * name yields `ERR_BAD_BLOCK` (the same exit-2 the shell script returns).
  */
 export const RESERVED_BLOCKS = Object.freeze([
-  'MEMORY', 'ROUTING', 'AGENTS', 'BLACKBOARD', 'FRONTMATTER',
+  'MEMORY', 'ROUTING', 'AGENTS', 'BLACKBOARD', 'FRONTMATTER', 'DISCIPLINE',
 ]);
 
 const RESERVED_BLOCK_SET = new Set(RESERVED_BLOCKS);
@@ -149,7 +149,7 @@ export function mergeBlocks(src, pairs) {
     if (typeof block !== 'string' || !RESERVED_BLOCK_SET.has(block)) {
       throw new MergeBlockAwareError(
         'ERR_BAD_BLOCK',
-        `mergeBlocks: block name reserved set: ${RESERVED_BLOCKS.join(' ')} (got ${JSON.stringify(block)})`,
+        `mergeBlocks: unknown block ${JSON.stringify(block)} -- reserved set: ${RESERVED_BLOCKS.join(' ')}`,
       );
     }
     const content = (pair.content === undefined || pair.content === null)
