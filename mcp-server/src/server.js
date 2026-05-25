@@ -2412,7 +2412,13 @@ function __maybeStartWsClient() {
 // install a global stdin listener that swallowed every byte the importer's
 // process received — making the import poisonous to any host with its own
 // stdin loop.
+// v1.5.2.1 M-3 (Lens 1): idempotency flag so a re-entrant invocation (test
+// harness, repeated __mainEntryPoint call, etc.) does NOT install a second
+// stdin listener — duplicate listeners cause double-handling of each line.
+let __stdioAttached = false;
 function __attachStdioTransport() {
+  if (__stdioAttached) return;
+  __stdioAttached = true;
   const rl = createInterface({ input: process.stdin, terminal: false });
   rl.on('line', (line) => {
     if (!line.trim()) return;
@@ -2451,7 +2457,13 @@ function __attachStdioTransport() {
 
 // v1.5.2.1 F1: signal handlers belong to the server process — installing
 // them on import would steal SIGINT/SIGTERM from whatever host imported us.
+// v1.5.2.1 M-2 (Lens 1): idempotency flag — a re-entrant call would stack
+// duplicate SIGINT/SIGTERM handlers (each calling process.exit(0)) and
+// stack uncaughtException loggers (duplicating stderr noise per crash).
+let __signalsAttached = false;
 function __attachSignalHandlers() {
+  if (__signalsAttached) return;
+  __signalsAttached = true;
   process.on('SIGINT', () => process.exit(0));
   process.on('SIGTERM', () => process.exit(0));
   process.on('uncaughtException', (err) => {
