@@ -668,7 +668,15 @@ function getRecentMemoriesForDedup(limit = 50) {
 // v1.5.2 F5: now resolves via paths().factsJsonl (.ijfw/facts.jsonl) — internal
 // hidden location per Task 3 design. The one-shot migrateFactsInternalOnce()
 // call above relocated existing data from the legacy .ijfw/memory/ location.
-const FACTS_FILE = paths().factsJsonl;
+//
+// v1.5.2.1 H-2 (Lens 1): use accessor functions for internal callers so that
+// a layout-migration sentinel flip mid-process (rare but possible) is picked
+// up without a server restart. The named export `FACTS_FILE` (consumed by
+// test-server-ingest.js as a one-shot import-time snapshot) is preserved
+// below for back-compat.
+function factsFile() { return paths().factsJsonl; }
+function factsDbFile() { return paths().indexDb; }
+const FACTS_FILE = factsFile();
 
 // Stable short id for joining a fact back to its journal entry. We don't have
 // a uuid; the journal-line text itself + ts is unique enough for cross-ref.
@@ -683,7 +691,8 @@ function appendFactsToSidecar(facts, meta) {
   if (!Array.isArray(facts) || facts.length === 0) return { ok: true, written: 0 };
   try {
     const lines = facts.map(f => factToJsonl(f, meta)).join('\n') + '\n';
-    appendFileSync(FACTS_FILE, lines);
+    // v1.5.2.1 H-2: factsFile() re-reads layout sentinel each call.
+    appendFileSync(factsFile(), lines);
     return { ok: true, written: facts.length };
   } catch (err) {
     // Non-fatal: facts are augmentation, not source-of-truth. Journal already
@@ -699,12 +708,14 @@ function appendFactsToSidecar(facts, meta) {
 // load cost.
 // v1.5.2 F5: now resolves via paths().indexDb (.ijfw/index/memory.db) — internal
 // hidden location per Task 3 design. Data migrated by migrateFactsInternalOnce().
-const FACTS_DB_FILE = paths().indexDb;
+// v1.5.2.1 H-2: FACTS_DB_FILE is the export-time snapshot; internal use goes
+// through factsDbFile() above so mid-process sentinel flips are honored.
+const FACTS_DB_FILE = factsDbFile();
 let _factsDbHandle = null;
 function getFactsDb() {
   if (_factsDbHandle) return _factsDbHandle;
   try {
-    _factsDbHandle = openTemporalDbSync(FACTS_DB_FILE);
+    _factsDbHandle = openTemporalDbSync(factsDbFile());
     return _factsDbHandle;
   } catch (err) {
     // Non-fatal. JSONL sidecar still gets written; we just lose the bi-temporal
@@ -1301,10 +1312,12 @@ function handleRecall({ context_hint, detail_level = 'standard', from_project })
         }
         // SQL table empty -- fall through to JSONL back-compat path below.
       }
-      if (!existsSync(FACTS_FILE)) {
+      // v1.5.2.1 H-2: factsFile() re-resolves via paths() each call.
+      const _ff = factsFile();
+      if (!existsSync(_ff)) {
         return { text: 'No structured facts extracted yet. Store memories with key:value lines, "X uses Y", or "decided to ..." phrases to populate.' };
       }
-      const raw = readFileSync(FACTS_FILE, 'utf8');
+      const raw = readFileSync(_ff, 'utf8');
       // detail_level === 'summary' → just count + a sample tail. Keeps token
       // usage bounded for session-start hydration.
       if (detail_level === 'summary') {
