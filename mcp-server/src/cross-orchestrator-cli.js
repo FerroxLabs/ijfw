@@ -2997,21 +2997,47 @@ function codexDoctor(projectRoot) {
   // 1.3.2 → false-positive failures on every fresh install). Reading from
   // installer/package.json keeps the doctor honest as long as that file
   // and the codex plugin.json are bumped together at ship-gate.
+  //
+  // F4.1: standalone @ijfw/memory-server installs do not ship installer/.
+  // F4.3: regressing against the established findCliAsset() convention. Reuse it.
+  // F4.2: differentiate ENOENT (missing) from SyntaxError (corrupt).
   let canonicalVersion = null;
-  try {
-    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'installer', 'package.json');
-    canonicalVersion = JSON.parse(readFileSync(pkgPath, 'utf8')).version;
-  } catch { /* canonical version unreadable; check below will fail */ }
+  let canonicalSource = null;
+  let canonicalParseError = null;
+  const installerPkg = findCliAsset('installer', 'package.json');
+  const selfPkg = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+  for (const [src, p] of [['installer', installerPkg], ['mcp-server', selfPkg]]) {
+    if (!p || !existsSync(p)) continue;
+    let raw;
+    try {
+      raw = readFileSync(p, 'utf8');
+    } catch { continue; }
+    try {
+      canonicalVersion = JSON.parse(raw).version;
+      canonicalSource = src;
+      break;
+    } catch (e) {
+      if (src === 'installer') canonicalParseError = e.message;
+    }
+  }
   checks.push({
     name: 'plugin metadata',
-    ok: !!canonicalVersion && plugin?.version === canonicalVersion,
+    ok: !!plugin && !!canonicalVersion && plugin.version === canonicalVersion,
     required: true,
     message: plugin
       ? (canonicalVersion
-          ? `version ${plugin.version}${plugin.version === canonicalVersion ? '' : ` (expected ${canonicalVersion})`}`
-          : `version ${plugin.version} (canonical version unreadable)`)
+          ? `version ${plugin.version}${plugin.version === canonicalVersion ? '' : ` (expected ${canonicalVersion} per ${canonicalSource}/package.json)`}`
+          : canonicalParseError
+            ? `version ${plugin.version} (canonical source corrupt: ${canonicalParseError})`
+            : `version ${plugin.version} (canonical version unreadable -- install @ijfw/install or set IJFW_HOME)`)
       : 'missing plugin.json',
-    fix: 'update codex/.codex-plugin/plugin.json to match installer/package.json version',
+    fix: canonicalVersion
+      ? (plugin && plugin.version !== canonicalVersion
+          ? `update codex/.codex-plugin/plugin.json version to ${canonicalVersion}`
+          : null)
+      : canonicalParseError
+        ? `restore installer/package.json (try \`git checkout installer/package.json\`)`
+        : `install @ijfw/install (npm i -g @ijfw/install), or set IJFW_HOME=<ijfw-repo-checkout>`,
   });
 
   const hooks = readJsonFile(hooksPath);
