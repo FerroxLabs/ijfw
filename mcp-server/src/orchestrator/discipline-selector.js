@@ -23,9 +23,10 @@
  * No deps beyond node:fs and node:path (Node >=18, ESM).
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateSafeRepoPath } from '../brain/path-guard.js';
 
 // ---------------------------------------------------------------------------
 // Module-relative template root
@@ -110,7 +111,8 @@ export function selectDisciplineTemplate(projectType) {
  * @returns {string|null}  value of `type` key, or null if absent
  */
 function extractTypeFromFrontmatter(raw) {
-  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const stripped = String(raw).replace(/^﻿/, '').replace(/^\s+/, '');
+  const m = stripped.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!m) return null;
   for (const line of m[1].split('\n')) {
     const kv = line.match(/^type:\s*(.+)/i);
@@ -164,11 +166,19 @@ export function detectProjectTypeFromRepo(repoRoot) {
   const briefPath = join(repoRoot, '.ijfw', 'memory', 'brief.md');
   if (existsSync(briefPath)) {
     try {
-      const raw = readFileSync(briefPath, 'utf8');
-      const type = extractTypeFromFrontmatter(raw);
-      if (type && (TYPED_CODES.has(type) || EMPTY_BODY_CODES.has(type))) {
-        return /** @type {any} */ (type);
+      const guard = validateSafeRepoPath(repoRoot, briefPath);
+      if (guard.ok) {
+        const briefStat = statSync(briefPath);
+        if (briefStat.size <= 256 * 1024) {
+          const raw = readFileSync(briefPath, 'utf8');
+          const type = extractTypeFromFrontmatter(raw);
+          if (type && (TYPED_CODES.has(type) || EMPTY_BODY_CODES.has(type))) {
+            return /** @type {any} */ (type);
+          }
+        }
+        // brief.md too large -- fall through to file signals
       }
+      // symlink outside repo (guard.ok === false) -- skip frontmatter
     } catch {
       // Brief read failure is non-fatal -- fall through to file signals.
     }

@@ -22,7 +22,8 @@ const PREVIEW_CHARS = 300;
 /** Parse YAML-style frontmatter (key: value lines between --- fences). */
 function parseFrontmatter(raw) {
   const fm = { title: null, description: null, type: null };
-  const m  = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const stripped = String(raw).replace(/^﻿/, '').replace(/^\s+/, '');
+  const m  = stripped.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!m) return fm;
   for (const line of m[1].split('\n')) {
     const kv = line.match(/^(\w+):\s*(.+)/);
