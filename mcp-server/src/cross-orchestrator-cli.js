@@ -2987,7 +2987,13 @@ export function resolveCanonicalVersion({ installerPkg, selfPkg } = {}) {
       canonicalSource = src;
       break;
     } catch (e) {
-      if (src === 'installer') canonicalParseError = e.message;
+      // F-C-2 (Lens 3): capture parse error from whichever source was attempted
+      // and label the source. Previously only installer parse errors surfaced,
+      // so a corrupt mcp-server/package.json (e.g. partial pnpm install) caused
+      // the doctor to render misleading "install @ijfw/install" fix text.
+      if (canonicalParseError == null) {
+        canonicalParseError = `${src}: ${e.message}`;
+      }
     }
   }
   return { canonicalVersion, canonicalSource, canonicalParseError };
@@ -3034,7 +3040,11 @@ function codexDoctor(projectRoot) {
   const { canonicalVersion, canonicalSource, canonicalParseError } =
     resolveCanonicalVersion({
       installerPkg: findCliAsset('installer', 'package.json'),
-      selfPkg: join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'),
+      // F-C-1 (Lens 3): IJFW_HOME fallback was previously installer-only; make
+      // mcp-server resolution symmetric so a custom-checkout user with IJFW_HOME
+      // pointed at a partial tree also gets a working fallback.
+      selfPkg: findCliAsset('mcp-server', 'package.json')
+        ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'),
     });
   checks.push({
     name: 'plugin metadata',
@@ -3047,13 +3057,19 @@ function codexDoctor(projectRoot) {
             ? `version ${plugin.version} (canonical source corrupt: ${canonicalParseError})`
             : `version ${plugin.version} (canonical version unreadable -- install @ijfw/install or set IJFW_HOME)`)
       : 'missing plugin.json',
-    fix: canonicalVersion
-      ? (plugin && plugin.version !== canonicalVersion
-          ? `update codex/.codex-plugin/plugin.json version to ${canonicalVersion}`
-          : null)
-      : canonicalParseError
-        ? `restore installer/package.json (try \`git checkout installer/package.json\`)`
-        : `install @ijfw/install (npm i -g @ijfw/install), or set IJFW_HOME=<ijfw-repo-checkout>`,
+    // F-C-9 (Lens 3): if plugin.json itself is missing, the fix text needs
+    // to point at restoring plugin.json, NOT at the canonical-version dance.
+    // canonicalParseError is now source-labelled by F-C-2 ("installer: ..."
+    // or "mcp-server: ..."), so derive the specific package.json to restore.
+    fix: !plugin
+      ? `restore codex/.codex-plugin/plugin.json (try \`git checkout codex/.codex-plugin/plugin.json\`)`
+      : canonicalVersion
+        ? (plugin.version !== canonicalVersion
+            ? `update codex/.codex-plugin/plugin.json version to ${canonicalVersion}`
+            : null)
+        : canonicalParseError
+          ? `restore canonical source (try \`git checkout ${canonicalParseError.split(':')[0]}/package.json\`)`
+          : `install @ijfw/install (npm i -g @ijfw/install), or set IJFW_HOME=<ijfw-repo-checkout>`,
   });
 
   const hooks = readJsonFile(hooksPath);
