@@ -17,8 +17,8 @@
 //
 // Each verb dispatches to a private handler. All return JSON-safe shapes.
 
-import { existsSync, mkdirSync, readFileSync, copyFileSync, constants as fsConstants } from 'node:fs';
-import { join, resolve as pathResolve, relative as pathRelative, isAbsolute as pathIsAbsolute } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, copyFileSync, realpathSync, constants as fsConstants } from 'node:fs';
+import { join, join as pathJoin, resolve as pathResolve, relative as pathRelative, isAbsolute as pathIsAbsolute, dirname as pathDirname, basename as pathBasename } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveBrainPaths } from '../brain/paths.js';
 import { compileWikiPage, slugify } from '../brain/wiki-compiler.js';
@@ -207,11 +207,34 @@ function verbWikiExport(db, repoRoot, args) {
   // The relative path must be non-empty (rel === '' would mean outFile IS the
   // root, which is a directory — exportPageBundle would fail anyway), must
   // not start with '..' (escape), and must not be absolute (different drive).
-  const resolvedRoot = pathResolve(repoRoot);
-  const resolvedOut = pathResolve(args.outFile);
+  // v1.5.2.1 F5.2: canonicalize via realpath. path.resolve does NOT follow
+  // symlinks. A symlink inside the repo pointing OUTSIDE the repo would pass
+  // the .. / isAbsolute check (the lexical path stays inside repoRoot) and
+  // the write would land outside the sandbox. Canonicalize the PARENT
+  // directory (the destination file may not exist yet) so any intermediate
+  // symlink is unmasked BEFORE the containment check.
+  const resolvedRoot = realpathSync(pathResolve(repoRoot));
+  let resolvedOut = pathResolve(args.outFile);
+  try {
+    const parent = realpathSync(pathDirname(resolvedOut));
+    resolvedOut = pathJoin(parent, pathBasename(resolvedOut));
+  } catch {
+    // Parent doesn't exist yet; mkdir/writeFile inside exportPageBundle
+    // will create it. The lexical .. / isAbsolute check below still applies.
+  }
   const rel = pathRelative(resolvedRoot, resolvedOut);
   if (rel === '' || rel.startsWith('..') || pathIsAbsolute(rel)) {
     return { ok: false, error: 'outFile-escapes-repo', resolvedOut, repoRoot: resolvedRoot };
+  }
+  // v1.5.2.1 F5.5: Windows reserved device names. On Windows these open
+  // kernel devices (CON, NUL, PRN, COM1-9, LPT1-9, AUX) instead of files —
+  // writing to them is a sandbox escape AND a denial-of-service on the
+  // operator's terminal. Reject cross-platform so the same brain.export
+  // payload is portable; lower-case basename so 'con.md' / 'Con' / 'CON'
+  // all collapse to the same reject path.
+  const WIN_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
+  if (WIN_RESERVED.test(pathBasename(resolvedOut))) {
+    return { ok: false, error: 'outFile-reserved-name', resolvedOut };
   }
   const r = exportPageBundle(repoRoot, slugify(args.slug), resolvedOut);
   if (r.error) return { ok: false, error: r.error, slug: r.slug };
