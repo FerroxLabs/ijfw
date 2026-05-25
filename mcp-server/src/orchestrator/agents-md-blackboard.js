@@ -52,6 +52,10 @@ import { withFsLock, lockPathFor } from '../fs-lock.js';
 import { readWaveState } from './wave-state.js';
 import { mergeFile, MergeBlockAwareError } from './merge-block-aware.js';
 import { query } from './state-sdk.js';
+import {
+  selectDisciplineTemplate,
+  detectProjectTypeFromRepo,
+} from './discipline-selector.js';
 
 /**
  * Render the BLACKBOARD marker-block payload from a wave's STATE.md
@@ -142,6 +146,87 @@ export async function populateBlackboardBlock(waveId, projectRoot) {
         wave_status: state?.frontmatter?.status ?? null,
       },
       dedupKey: `agents-md.blackboard.set:${waveId}:${mergeResult?.bytes ?? 0}`,
+    }, { projectRoot, subagentId: 'parent' });
+  } catch {
+    // Observability is best-effort; never demote a successful AGENTS.md
+    // rewrite because the event tap had a hiccup.
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Populate the DISCIPLINE marker block in `<projectRoot>/AGENTS.md` with the
+ * project-appropriate discipline template body. Held under the §3 #8 AGENTS.md
+ * lock; in-process (no spawn). Best-effort SDK event emit after lock release.
+ *
+ * If `projectType` is not supplied, `detectProjectTypeFromRepo(projectRoot)`
+ * is called to infer it. For `unknown` / `mixed` types the DISCIPLINE block
+ * is written with an empty body (marker present, body empty) -- this is the
+ * correct state, not an error.
+ *
+ * Return shapes:
+ *   `{ ok: true }`                               -- wrote AGENTS.md
+ *   `{ ok: false, reason: 'merge-error', error }` -- merger threw
+ *   `{ ok: false, reason: 'template-missing', error }` -- template file absent
+ *
+ * @param {string} projectRoot
+ * @param {string} [projectType]  optional; inferred when absent
+ * @returns {Promise<{ok: boolean, reason?: string, error?: string}>}
+ */
+export async function populateDisciplineBlock(projectRoot, projectType) {
+  const type = projectType !== undefined && projectType !== null
+    ? String(projectType)
+    : detectProjectTypeFromRepo(projectRoot);
+
+  let content;
+  try {
+    content = selectDisciplineTemplate(type);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'template-missing',
+      error: String(err.message || err),
+    };
+  }
+
+  const agentsMdPath = join(projectRoot, 'AGENTS.md');
+  const lockPath = lockPathFor(agentsMdPath);
+
+  let mergeResult;
+  let mergeError = null;
+  try {
+    mergeResult = await withFsLock(lockPath, async () => mergeFile(
+      agentsMdPath,
+      [{ block: 'DISCIPLINE', content }],
+    ));
+  } catch (err) {
+    mergeError = err;
+  }
+
+  if (mergeError) {
+    const code = mergeError instanceof MergeBlockAwareError ? mergeError.code : null;
+    return {
+      ok: false,
+      reason: code === 'ERR_TEMPLATE_MISSING' ? 'template-missing' : 'merge-error',
+      error: String(mergeError.message || mergeError),
+    };
+  }
+
+  // SDK-routed observability event -- fire-and-forget AFTER lock release.
+  // Mirrors the agents-md.blackboard.set emit pattern above.
+  try {
+    await query('event.emit', {
+      subagentId: 'parent',
+      waveId: 'discipline',
+      eventType: 'agents-md.discipline.set',
+      data: {
+        path: mergeResult?.path ?? agentsMdPath,
+        bytes: mergeResult?.bytes ?? 0,
+        seeded: !!mergeResult?.seeded,
+        project_type: type,
+      },
+      dedupKey: `agents-md.discipline.set:${projectRoot}:${type}`,
     }, { projectRoot, subagentId: 'parent' });
   } catch {
     // Observability is best-effort; never demote a successful AGENTS.md
