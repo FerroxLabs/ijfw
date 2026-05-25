@@ -15,7 +15,7 @@
       "memory": true,
       "rules": true,
       "skills": 34,
-      "agents": 34,
+      "agents": 37,
       "commands": 22,
       "hooks": 17,
       "hookEvents": 6,
