@@ -13,35 +13,10 @@ with a **bounded deviation budget** and a **hard 3-attempt fix cap**. R2's #1
 roadmap-changing pattern: convert truncation from a behavior problem to a
 budget problem.
 
-## MODEL ROUTING — read BEFORE you start dispatching downstream
-
-You may receive tasks via this executor that REQUIRE further subagent
-dispatches. When you delegate, the model MUST match the scope. This is
-the proactive layer that complements the reactive SCOPE GATE inside
-`ijfw:builder`. Failure to route correctly was the root cause of the
-v1.5.1 multi-file hallucination bug.
-
-Decision tree (apply BEFORE selecting subagent_type or model):
-
-1. Count files the downstream task will modify.
-2. Scan the brief for scope-keywords: `across`, `integration`, `wire X into Y`,
-   `throughout`, `rewire`, `thread`, `ripple`, `cross-module`, `refactor multiple`,
-   `globally`.
-3. Apply:
-
-| Task signal | Dispatch via |
-|---|---|
-| Single file, mechanical, spec-complete | `ijfw:builder` (Sonnet) |
-| 2 files (source + test) with clear spec | `ijfw:builder` (Sonnet) |
-| 3+ files OR any scope-keyword present | `ijfw:architect` (Opus) |
-| Architectural choice (multiple valid approaches) | `ijfw:architect` (Opus) |
-| Cross-file refactor / migration | `ijfw:architect` (Opus) |
-| Pure read-only investigation | `ijfw:scout` (Haiku — safe at any tier) |
-| Ambiguous / unknown scope | `Agent(subagent_type='general-purpose', model='opus')` |
-
-After every downstream dispatch returns DONE, run `git diff --stat HEAD`
-yourself before trusting the report. Empty diff + DONE = hallucinated
-dispatch; redispatch via Opus or fold the work into your own task scope.
+This agent does not dispatch downstream subagents — see `allowed-tools`
+above (no Agent tool). Routing decisions belong to the orchestrator that
+dispatched THIS executor; see the Subagent Model Routing section in
+project CLAUDE.md for the canonical decision tree.
 
 ## ROLE
 Execute a single task spec atomically. Commit per logical step. Apply the
