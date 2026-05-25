@@ -10,8 +10,16 @@ canonical agent-instructions surface for this project. Platform-specific
 files (CLAUDE.md, GEMINI.md, WAYLAND.md, codex/AGENTS.md, .cursorrules,
 .windsurfrules, copilot-instructions.md) are thin adapters that point here.
 
-Four IJFW-managed regions live in this file. Content outside the markers is
+Five IJFW-managed regions live in this file. Content outside the markers is
 yours -- IJFW will never touch it.
+
+| Region | Purpose |
+|---|---|
+| MEMORY | Project memory recalled from `.ijfw/memory/` |
+| ROUTING | Platform skill-routing rules |
+| AGENTS | Registered agent roster |
+| BLACKBOARD | Multi-CLI orchestration scratchpad (Pillar B) |
+| DISCIPLINE | Per-domain discipline rules (code \| narrative \| business \| design \| research) |
 
 <!-- IJFW-MEMORY-START -->
 <!-- IJFW-MEMORY-END -->
@@ -25,3 +33,6 @@ yours -- IJFW will never touch it.
 <!-- IJFW-BLACKBOARD-START -->
 <!-- Reserved for Pillar B multi-CLI orchestration. Empty in alpha. -->
 <!-- IJFW-BLACKBOARD-END -->
+
+<!-- IJFW-DISCIPLINE-START -->
+<!-- IJFW-DISCIPLINE-END -->
