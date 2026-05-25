@@ -20,6 +20,7 @@ import {
 } from 'fs';
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
 import { resolveBrainPaths } from './brain/paths.js';
+import { migrateFactsInternalOnce } from './brain/migrate-facts-internal-once.js';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { createHash, randomBytes } from 'crypto';
@@ -319,6 +320,12 @@ const REPO_ROOT = dirname(IJFW_DIR);
 // paths() re-reads the layout sentinel on every call so a long-running server
 // process picks up the migration-010 sentinel flip without restart.
 function paths() { return resolveBrainPaths(REPO_ROOT); }
+// v1.5.2 F5: one-shot move of FACTS_FILE / FACTS_DB_FILE from the legacy
+// .ijfw/memory/ location into the .ijfw/ internal-only location they were
+// designed for. Sync + idempotent — safe at every module-load. Must run
+// BEFORE FACTS_FILE / FACTS_DB_FILE consts evaluate so they pick up the
+// new path.
+migrateFactsInternalOnce(REPO_ROOT);
 // Back-compat values for the line-2349 re-export. New code MUST use paths().memoryDir / paths().sessionsDir.
 const MEMORY_DIR = join(IJFW_DIR, 'memory');
 const SESSIONS_DIR = join(IJFW_DIR, 'sessions');
@@ -631,8 +638,10 @@ function getRecentMemoriesForDedup(limit = 50) {
 
 // H5.5 — sidecar file for structured facts (one JSON object per line).
 // Append-only; consumed by handleRecall({context_hint:'facts'}).
-// TODO(v1.5.2 post-Task-5): relocate to paths().factsJsonl / paths().indexDb via a data migration; current location preserved for back-compat.
-const FACTS_FILE = join(MEMORY_DIR, 'facts.jsonl');
+// v1.5.2 F5: now resolves via paths().factsJsonl (.ijfw/facts.jsonl) — internal
+// hidden location per Task 3 design. The one-shot migrateFactsInternalOnce()
+// call above relocated existing data from the legacy .ijfw/memory/ location.
+const FACTS_FILE = paths().factsJsonl;
 
 // Stable short id for joining a fact back to its journal entry. We don't have
 // a uuid; the journal-line text itself + ts is unique enough for cross-ref.
@@ -661,8 +670,9 @@ function appendFactsToSidecar(facts, meta) {
 // table (queryable point-in-time view) stay co-located. Lazy-opened on first
 // use so a project that never stores a memory never pays the better-sqlite3
 // load cost.
-// TODO(v1.5.2 post-Task-5): relocate to paths().factsJsonl / paths().indexDb via a data migration; current location preserved for back-compat.
-const FACTS_DB_FILE = join(MEMORY_DIR, 'facts.db');
+// v1.5.2 F5: now resolves via paths().indexDb (.ijfw/index/memory.db) — internal
+// hidden location per Task 3 design. Data migrated by migrateFactsInternalOnce().
+const FACTS_DB_FILE = paths().indexDb;
 let _factsDbHandle = null;
 function getFactsDb() {
   if (_factsDbHandle) return _factsDbHandle;
