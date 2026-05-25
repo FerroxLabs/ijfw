@@ -48,6 +48,14 @@ export async function loadMigrations() {
   for (const f of matches) {
     const url = pathToFileURL(join(MIGRATIONS_DIR, f)).href;
     const mod = await import(url);
+    // v1.5.2.1 F1: fs-layout migrations live alongside SQL migrations in this
+    // directory but MUST opt out of the SQL runner by exporting `SQL = false`.
+    // The SQL runner passes a better-sqlite3 Database as the first arg; fs
+    // migrations expect a repoRoot string. Skipping here prevents the runner
+    // from invoking `up(db)` on a migration that crashes on the first
+    // `join(db, …)` call. fs migrations are invoked explicitly by server
+    // startup (see server.js, around the migrateFactsInternalOnce call site).
+    if (mod.SQL === false) continue;
     if (typeof mod.VERSION !== 'number' || typeof mod.up !== 'function') {
       throw new Error(`Memory migration ${f} is missing VERSION or up().`);
     }

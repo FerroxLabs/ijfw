@@ -52,6 +52,12 @@ function findFreshFiles(repoRoot) {
 }
 
 export const VERSION = 10;
+// v1.5.2.1 F1: SQL = false marks this as an fs-layout migration, NOT a SQL
+// migration. The migration-runner skips files with SQL=false (otherwise the
+// runner would pass a Database as repoRoot and crash on the first
+// `join(db, …)`). Server startup invokes `up(repoRoot)` explicitly — see
+// server.js, right after the migrateFactsInternalOnce call.
+export const SQL = false;
 export const DESCRIPTION =
   'fs-layout v2 -- visible ijfw/ + scaffolded dump/wiki dirs (NOT a SQL migration)';
 
@@ -68,7 +74,36 @@ export async function up(repoRoot) {
     // contract for the entire copy phase.
     const freshFiles = findFreshFiles(repoRoot);
     if (freshFiles.length > 0) {
+      // v1.5.2.1 F2: observability — surface the deferral to stderr so an
+      // operator running `ijfw doctor` or watching server logs can see why
+      // the visible layer hasn't materialised yet. Silent skip leaves the
+      // operator wondering what happened.
+      try {
+        process.stderr.write(
+          `[ijfw layout-migrate] deferred: ${freshFiles.length} file(s) written ` +
+          `< ${FRESHNESS_MS}ms ago in .ijfw/memory or .ijfw/sessions; ` +
+          `will retry on next server start\n`
+        );
+      } catch { /* stderr may be detached */ }
       return { skipped: true, reason: 'fresh-writes-detected', freshFiles };
+    }
+    // v1.5.2.1 F4: detect operator downgrade. If sentinel is 1 but the visible
+    // layer destination already has .md content, the operator probably flipped
+    // .ijfw/.layout-version back to 1 manually (e.g. attempting downgrade to
+    // v1.5.1). cpSync({force:false}) would silently skip the existing files
+    // and leave drift between the two layers. Refuse, log, keep sentinel at 1
+    // so the operator resolves the conflict manually.
+    const memoryDst = join(repoRoot, 'ijfw', 'memory');
+    const sessionsDst = join(repoRoot, 'ijfw', 'sessions');
+    if (walkMd(memoryDst).length > 0 || walkMd(sessionsDst).length > 0) {
+      try {
+        process.stderr.write(
+          `[ijfw layout-migrate] aborted: visible layer (ijfw/memory or ijfw/sessions) ` +
+          `already populated but sentinel=1 (downgrade detected). Resolve manually, ` +
+          `then set .ijfw/.layout-version to 2.\n`
+        );
+      } catch { /* stderr may be detached */ }
+      return { skipped: true, reason: 'downgrade-conflict' };
     }
     let copiedFiles = 0;
     // FLAG-4: force:false preserves any user-authored content already at the
@@ -79,13 +114,13 @@ export async function up(repoRoot) {
     // existing visible files (winner) + legacy hidden files (filler).
     const memorySrc = join(repoRoot, '.ijfw', 'memory');
     if (existsSync(memorySrc)) {
-      cpSync(memorySrc, join(repoRoot, 'ijfw', 'memory'),
+      cpSync(memorySrc, memoryDst,
              { recursive: true, force: false, errorOnExist: false });
       copiedFiles += walkMd(memorySrc).length;
     }
     const sessionsSrc = join(repoRoot, '.ijfw', 'sessions');
     if (existsSync(sessionsSrc)) {
-      cpSync(sessionsSrc, join(repoRoot, 'ijfw', 'sessions'),
+      cpSync(sessionsSrc, sessionsDst,
              { recursive: true, force: false, errorOnExist: false });
       copiedFiles += walkMd(sessionsSrc).length;
     }

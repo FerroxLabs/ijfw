@@ -21,6 +21,11 @@ import {
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
 import { resolveBrainPaths } from './brain/paths.js';
 import { migrateFactsInternalOnce } from './brain/migrate-facts-internal-once.js';
+// v1.5.2.1 F1: fs-layout migration 010 (visible ijfw/ layer). NOT a SQL
+// migration — runs at server startup alongside the facts relocation, gated
+// by the .layout-version sentinel rather than by SQLite user_version. Async;
+// awaited at top level below.
+import { up as runVisibleLayerMigration } from './memory/migrations/010-visible-layer.js';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { createHash, randomBytes } from 'crypto';
@@ -326,6 +331,22 @@ function paths() { return resolveBrainPaths(REPO_ROOT); }
 // BEFORE FACTS_FILE / FACTS_DB_FILE consts evaluate so they pick up the
 // new path.
 migrateFactsInternalOnce(REPO_ROOT);
+// v1.5.2.1 F1: invoke the fs-layout migration explicitly. Was previously
+// auto-discovered by the SQL migration runner and would crash every
+// memory-db open with `TypeError: Path must be a string. Received <Database>`
+// because runMigrations passes a db handle as the first arg but 010 expects
+// repoRoot. The SQL=false export in 010 now opts it out of the SQL runner;
+// this top-level await is its only invocation path. Best-effort: a failure
+// here must not block the rest of server startup, so the catch logs to
+// stderr and continues (the operator can re-run on next boot once the
+// underlying fs issue is resolved).
+try {
+  await runVisibleLayerMigration(REPO_ROOT);
+} catch (e) {
+  try {
+    process.stderr.write(`[ijfw layout-migrate] failed: ${e && e.message ? e.message : e}\n`);
+  } catch { /* stderr may be detached during smoke tests */ }
+}
 // Back-compat values for the line-2349 re-export. New code MUST use paths().memoryDir / paths().sessionsDir.
 const MEMORY_DIR = join(IJFW_DIR, 'memory');
 const SESSIONS_DIR = join(IJFW_DIR, 'sessions');

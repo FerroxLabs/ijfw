@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.5.2.1] — 2026-05-25 (audit fixes)
+
+Adversarial cross-audit of the v1.5.2 ship-candidate surfaced eight defects
+that did not show up in the F10 review. All eight closed inline before tag.
+
+### Fixed — routing
+- **Ship the routing-fix agents.** `claude/agents/builder.md`, `architect.md`, `scout.md` had never been added to the source repo — they lived only at `~/.ijfw/claude/agents/` on the maintainer's machine. Since the IJFW Claude marketplace registers `~/.ijfw/claude/` as a `source: directory`, new users got no `ijfw:builder`/`ijfw:architect`/`ijfw:scout` at all, and the CLAUDE.md routing rule shipped in v1.5.2 referenced agents that did not exist for them. All three now live in source, copy-shipped by the installer.
+- **Remove unenforceable executor MODEL ROUTING.** `claude/agents/ijfw-executor.md` carried a `## MODEL ROUTING` section that was unenforceable from inside the executor — its `allowed-tools` lists no `Agent` tool. Replaced with a one-paragraph pointer to CLAUDE.md's canonical decision tree. The handoff narrative now correctly says "two defensive layers" (CLAUDE.md proactive + builder SCOPE GATE reactive), not three.
+- **Builder Read-vs-paraphrase rule.** When asked to quote its own instructions, the builder must use the Read tool against the file rather than reproducing text from memory. Closes the smaller-scale variant of the v1.5.1 paraphrase failure mode.
+- **`scripts/check-routing-agents.sh`**: new packaging-level test asserts all four routing agents present in source with correct model tiers (sonnet/opus/haiku/sonnet), SCOPE GATE markers + escalation status + verification gate intact, executor MODEL ROUTING section absent, and CLAUDE.md routing policy present. Six checks, all green at tag.
+
+### Fixed — migration runner (F1 critical, production-bricking)
+- **Migration 010 was auto-discovered by the SQL migration loader and would crash every memory db open** on installs with `user_version < 10` (every install on disk before v1.5.2). The runner passed a `Database` handle as the first arg, but 010 expects `repoRoot` — `join(db, '.ijfw', '.layout-version')` throws `TypeError: Path must be a string. Received <Database>`. Fix: 010 now exports `SQL = false`, the runner skips files with that flag, and server.js invokes `up(repoRoot)` explicitly at startup right after `migrateFactsInternalOnce`. Server-start failure of the layout migration is logged to stderr and does not block the rest of boot.
+
+### Fixed — bi-temporal correctness
+- **`conflict.resolve` cross-connection race** (F-audit). The FLAG-6 winner-still-open check ran auto-commit *before* `BEGIN`; the transaction itself was DEFERRED, not IMMEDIATE. A concurrent writer between the verify and the lock acquisition could close the winner, and `conflict.resolve` would then close every OTHER open row, leaving ZERO open for `(subject, predicate)` — silent data loss. Fix: verify moved inside the transaction; transaction switched to `txn.immediate()` (`BEGIN IMMEDIATE`); single locked snapshot for verify + chosenValidTo + close-losers.
+
+### Fixed — cross-platform
+- **`wiki.export` outFile guard broken on Windows.** The FLAG-1 fix used `startsWith(resolvedRoot + '/')` which never matches Windows paths (separator is `\`). Net effect on Windows: every legitimate write rejected (denial-of-service), and any naive "fix" to `startsWith(resolvedRoot)` re-opens the prefix-collision bypass (`/tmp/repo-evil` matching `/tmp/repo`). Replaced with `path.relative` + `isAbsolute` + `..` checks — idiomatic, cross-platform, and catches the different-drive Windows case.
+
+### Fixed — migration edge cases
+- **F2 observability:** when migration 010's freshness gate defers, stderr now logs the deferral with reason + file count. Silent skip left operators wondering why the visible layer never materialised.
+- **F3 visible-layer facts orphans:** `migrate-facts-internal-once` (011) now detects and surfaces `ijfw/memory/facts.{jsonl,db}` as orphans if 010 ran first and copied them into the visible layer. They are NEVER valid as a runtime source (facts live at the internal paths); operator prunes manually.
+- **F4 sentinel downgrade detection:** if `.ijfw/.layout-version` is 1 but `ijfw/memory/` or `ijfw/sessions/` already has content, 010 now aborts with `downgrade-conflict` and logs to stderr instead of silently no-op'ing `cpSync({force:false})` and leaving drift.
+
+### Tooling — packaging-level checks
+- **`scripts/check-mcp-count.sh`**: new lint that reconciles the count claim in `mcp-server/TOOLS.md` against the actual entries in `mcp-server/src/server.js`'s TOOLS array (both inline `name: 'ijfw_*'` objects AND `UPPER_SNAKE_TOOL` named-import references). Catches the regression class where tools drop out of the advertised array while docs continue to advertise them. CI invokes it alongside the existing `scripts/check-mcp.sh` launch health probe. (An earlier draft of this audit reported a 12/14 mismatch — that was a false positive caused by counting only inline-`name:` lines and missing the `UPDATE_CHECK_TOOL` + `UPDATE_APPLY_TOOL` import references. The lint script counts both forms; running it now confirms 14/14 matches.)
+
 ## [1.5.2] — 2026-05-25
 
 ### Added — IJFW Brain (Plan A)
@@ -26,7 +54,7 @@
 - `mcp-server/src/dream/runner.mjs`: new `wiki-compile` stage runs `runDreamCycle` after `tier_promotion` with the same per-stage error isolation.
 
 ### Dependencies
-- New runtime dep: `chokidar@^4.0.1` (for future file-watch in M2 Wayland portal).
+- New runtime dep: `chokidar@^4.0.3` (for future file-watch in M2 Wayland portal).
 
 ### Plan A → Plans B+C handoff
 - `.planning/wayland-memory/CONTRACT.md` documents the locked M1→M2/B/C interface contract per Trident F-B6.

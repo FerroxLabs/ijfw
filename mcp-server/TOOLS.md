@@ -1,9 +1,9 @@
 # IJFW MCP Tool Manifest
 
 **Cap:** ≤14 tools. Combine before raise.
-**Last updated:** 2026-05-25 (v1.5.2).
+**Last updated:** 2026-05-25 (v1.5.2.1 — added count-lint).
 
-This file is the **source of truth** for the IJFW MCP server's tool surface. CLAUDE.md links here. Lint check (`scripts/check-mcp.sh`) reconciles this manifest against `mcp-server/src/server.js` TOOLS array length on every release.
+This file is the **source of truth** for the IJFW MCP server's tool surface. CLAUDE.md links here. `scripts/check-mcp.sh` is a launch health probe (initialize + ping handshake); `scripts/check-mcp-count.sh` reconciles the count claim below against `mcp-server/src/server.js`'s TOOLS array length, counting both inline `name: 'ijfw_*'` entries AND `UPPER_SNAKE_TOOL` named-import references. CI invokes both on every release.
 
 ## Active tools (14/14)
 

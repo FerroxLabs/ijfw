@@ -18,7 +18,7 @@
 // Each verb dispatches to a private handler. All return JSON-safe shapes.
 
 import { existsSync, mkdirSync, readFileSync, copyFileSync, constants as fsConstants } from 'node:fs';
-import { join, resolve as pathResolve } from 'node:path';
+import { join, resolve as pathResolve, relative as pathRelative, isAbsolute as pathIsAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveBrainPaths } from '../brain/paths.js';
 import { compileWikiPage, slugify } from '../brain/wiki-compiler.js';
@@ -197,9 +197,20 @@ function verbWikiExport(db, repoRoot, args) {
   // (or a prompt-injection that gets through the think delimiter) could pass
   // outFile: "/etc/passwd" or "/Users/.../id_rsa" and write there at the
   // user's privilege level. We do NOT trust args.outFile.
+  //
+  // v1.5.2.1: cross-platform containment via path.relative. The earlier
+  // implementation used `startsWith(resolvedRoot + '/')` which (a) broke on
+  // Windows because the separator is `\`, not `/`, and (b) was a denial-of-
+  // service on Windows runners — every legitimate write was rejected. Using
+  // path.relative + isAbsolute also catches the different-drive case on
+  // Windows (C:\repo vs D:\evil → relative returns an absolute path).
+  // The relative path must be non-empty (rel === '' would mean outFile IS the
+  // root, which is a directory — exportPageBundle would fail anyway), must
+  // not start with '..' (escape), and must not be absolute (different drive).
   const resolvedRoot = pathResolve(repoRoot);
   const resolvedOut = pathResolve(args.outFile);
-  if (!(resolvedOut === resolvedRoot || resolvedOut.startsWith(resolvedRoot + '/'))) {
+  const rel = pathRelative(resolvedRoot, resolvedOut);
+  if (rel === '' || rel.startsWith('..') || pathIsAbsolute(rel)) {
     return { ok: false, error: 'outFile-escapes-repo', resolvedOut, repoRoot: resolvedRoot };
   }
   const r = exportPageBundle(repoRoot, slugify(args.slug), resolvedOut);
@@ -215,25 +226,40 @@ function verbConflictResolve(db, repoRoot, args) {
   if (!args.subject || !args.predicate || args.winnerId == null) {
     return { ok: false, error: 'missing-args' };
   }
-  // F3 + FLAG-6: verify the winnerId exists AND matches (subject, predicate)
-  // AND is still OPEN (valid_to IS NULL). Without the valid_to clause, a
-  // stale winnerId (already closed by a prior race) would still proceed,
-  // closing every OTHER open fact and leaving ZERO open — the exact silent
-  // data loss F3 was meant to prevent.
-  let winnerExists;
-  try {
-    winnerExists = db.prepare(
-      'SELECT 1 FROM facts WHERE id = ? AND subject = ? AND predicate = ? AND valid_to IS NULL'
-    ).get(args.winnerId, args.subject, args.predicate);
-  } catch { winnerExists = null; }
-  if (!winnerExists) {
-    return { ok: false, error: 'winner-not-found-or-already-closed', winnerId: args.winnerId, subject: args.subject, predicate: args.predicate };
-  }
   const supersede = args.supersede !== false; // default true
-  if (!supersede) return { ok: true, resolved: false, reason: 'supersede=false' };
+  if (!supersede) {
+    // Pre-flight winner verify for the no-supersede path. (For supersede=true,
+    // the verify happens inside the IMMEDIATE transaction below.)
+    let winnerExists;
+    try {
+      winnerExists = db.prepare(
+        'SELECT 1 FROM facts WHERE id = ? AND subject = ? AND predicate = ? AND valid_to IS NULL'
+      ).get(args.winnerId, args.subject, args.predicate);
+    } catch { winnerExists = null; }
+    if (!winnerExists) {
+      return { ok: false, error: 'winner-not-found-or-already-closed', winnerId: args.winnerId, subject: args.subject, predicate: args.predicate };
+    }
+    return { ok: true, resolved: false, reason: 'supersede=false' };
+  }
   const supersededIds = [];
   let chosenValidTo = null;
   const txn = db.transaction(() => {
+    // v1.5.2.1: F3 + FLAG-6 winner verify moved INSIDE the transaction so it
+    // runs against the same locked snapshot as the close-the-losers UPDATEs.
+    // Previously the verify ran auto-commit BEFORE BEGIN, so a concurrent
+    // writer between the verify and the lock acquisition could close the
+    // winner — and conflict.resolve would still happily close every OTHER
+    // open row, leaving ZERO open for (subject, predicate). The atomic unit
+    // is now: verify-winner-open ∧ pick-chosenValidTo ∧ close-losers, all
+    // under one IMMEDIATE lock.
+    const winnerExists = db.prepare(
+      'SELECT 1 FROM facts WHERE id = ? AND subject = ? AND predicate = ? AND valid_to IS NULL'
+    ).get(args.winnerId, args.subject, args.predicate);
+    if (!winnerExists) {
+      const err = new Error('winner-not-found-or-already-closed');
+      err.code = 'IJFW_WINNER_GONE';
+      throw err;
+    }
     // F2: monotonic valid_to. Read the latest valid_to that EXISTS for this
     // (subject, predicate) pair, then pick MAX(now, maxValidTo + 1ms). This
     // guarantees the bi-temporal ordering contract holds even when:
@@ -267,8 +293,20 @@ function verbConflictResolve(db, repoRoot, args) {
     const upd = db.prepare(`UPDATE facts SET valid_to = ? WHERE id = ?`);
     for (const r of rows) { upd.run(chosenValidTo, r.id); supersededIds.push(r.id); }
   });
-  try { txn(); }
-  catch (e) { return { ok: false, error: 'db-error', message: e.message }; }
+  try {
+    // v1.5.2.1: txn.immediate() opens with BEGIN IMMEDIATE — acquires RESERVED
+    // at BEGIN rather than upgrading at first write. Cross-connection writers
+    // serialise on the busy_timeout (set in temporal.js) so neither can read a
+    // stale "winner is open" snapshot while another resolve is in flight.
+    // Plain txn() would be BEGIN DEFERRED, leaving a write-write race window
+    // between the auto-commit verify and the lock-acquired UPDATE.
+    txn.immediate();
+  } catch (e) {
+    if (e && e.code === 'IJFW_WINNER_GONE') {
+      return { ok: false, error: 'winner-not-found-or-already-closed', winnerId: args.winnerId, subject: args.subject, predicate: args.predicate };
+    }
+    return { ok: false, error: 'db-error', message: e.message };
+  }
   return { ok: true, resolved: true, winnerId: args.winnerId, supersededIds, validTo: chosenValidTo };
 }
 
