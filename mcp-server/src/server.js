@@ -27,7 +27,7 @@ import { migrateFactsInternalOnce } from './brain/migrate-facts-internal-once.js
 // awaited at top level below.
 import { up as runVisibleLayerMigration } from './memory/migrations/010-visible-layer.js';
 import { homedir } from 'os';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { createHash, randomBytes } from 'crypto';
 
 // Read version dynamically from package.json so bumps don't require a code change.
@@ -340,12 +340,31 @@ migrateFactsInternalOnce(REPO_ROOT);
 // here must not block the rest of server startup, so the catch logs to
 // stderr and continues (the operator can re-run on next boot once the
 // underlying fs issue is resolved).
-try {
-  await runVisibleLayerMigration(REPO_ROOT);
-} catch (e) {
+//
+// Entry-point gate (v1.5.2.1 follow-up): only fire when server.js is the
+// Node entry point. Without this gate, any module that imports server.js
+// (tests, the dashboard backend, future helpers) would trigger the
+// visible-layer scaffold against the importer's cwd — creating stray
+// `ijfw/` trees in places that aren't IJFW projects (test artifacts,
+// CI scratch dirs, etc.). The visible layer is a real feature for
+// end-user projects (this is where users drop files into dump/inbox and
+// where the wiki appears for sharing) — it MUST be created when a user
+// actually launches the MCP server in their project, but it MUST NOT
+// be created as a side effect of an import.
+const __isServerEntryPoint = (() => {
   try {
-    process.stderr.write(`[ijfw layout-migrate] failed: ${e && e.message ? e.message : e}\n`);
-  } catch { /* stderr may be detached during smoke tests */ }
+    const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+    return entry === import.meta.url;
+  } catch { return false; }
+})();
+if (__isServerEntryPoint) {
+  try {
+    await runVisibleLayerMigration(REPO_ROOT);
+  } catch (e) {
+    try {
+      process.stderr.write(`[ijfw layout-migrate] failed: ${e && e.message ? e.message : e}\n`);
+    } catch { /* stderr may be detached during smoke tests */ }
+  }
 }
 // Back-compat values for the line-2349 re-export. New code MUST use paths().memoryDir / paths().sessionsDir.
 const MEMORY_DIR = join(IJFW_DIR, 'memory');
