@@ -72,3 +72,63 @@ test('conflict.resolve: cross-connection winner-closed race is caught atomically
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// F-LENS2-08: the original test (above) caught the verify-snapshot bug but
+// did NOT exercise the BEGIN IMMEDIATE invariant directly. Plain BEGIN
+// DEFERRED would still serialise eventually if the lock-acquisition timed
+// out gracefully — the bug-shape this second test guards against is the
+// OPPOSITE: when a sister writer holds RESERVED via IMMEDIATE, our resolve
+// MUST block on busy_timeout and then reject loudly. If a future refactor
+// downgraded conflict.resolve back to plain txn() (BEGIN DEFERRED), the
+// first INSERT would SQLITE_BUSY immediately and the call would return in
+// <50ms — failing the t0+150ms wait assertion below.
+test('conflict.resolve: A blocks on busy_timeout when B holds RESERVED via BEGIN IMMEDIATE', async () => {
+  const root = freshRoot();
+  const dbPath = join(root, 'race-busy.db');
+  const dbA = setupDb(dbPath);
+  const dbB = setupDb(dbPath);
+  // Tight timeout for the test (vs the 5000ms production default). Long
+  // enough that conflict.resolve genuinely waits on the lock; short enough
+  // that the test fails fast if a regression breaks lock acquisition.
+  dbA.pragma('busy_timeout = 300');
+  try {
+    dbA.prepare(
+      'INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to) VALUES (?,?,?,?,?,?)'
+    ).run(1, 'sean', 'role', 'founder', '2024-01-01T00:00:00Z', null);
+    dbA.prepare(
+      'INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to) VALUES (?,?,?,?,?,?)'
+    ).run(2, 'sean', 'role', 'cto', '2023-01-01T00:00:00Z', null);
+
+    // Acquire RESERVED on dbB via BEGIN IMMEDIATE. Use db.prepare().run()
+    // since some envs intercept db.exec(); prepare-driven SQL passes.
+    dbB.prepare('BEGIN IMMEDIATE').run();
+    try {
+      const t0 = Date.now();
+      let r;
+      try {
+        r = await handleIjfwBrain({
+          verb: 'conflict.resolve',
+          args: { subject: 'sean', predicate: 'role', winnerId: 1 },
+          db: dbA,
+          repoRoot: root,
+        });
+      } catch (e) {
+        r = { ok: false, error: e.code || 'threw' };
+      }
+      const dt = Date.now() - t0;
+      // Must have spent close to the busy_timeout window waiting on the
+      // lock before returning — proves the resolve actually attempted to
+      // acquire RESERVED via BEGIN IMMEDIATE (txn.immediate). A regression
+      // to plain txn() (DEFERRED) would not block at BEGIN; the SQLITE_BUSY
+      // would surface much faster on the first INSERT.
+      assert.ok(dt >= 200, `must wait on busy_timeout (got ${dt}ms; floor 200ms)`);
+      assert.equal(r.ok, false, 'must reject when sister writer holds IMMEDIATE');
+    } finally {
+      dbB.prepare('ROLLBACK').run();
+    }
+  } finally {
+    dbA.close();
+    dbB.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
