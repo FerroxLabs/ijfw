@@ -470,7 +470,7 @@ async function applyEdit(filePath, fix) {
     // Exactly-one occurrence guarantee — same rule the Edit tool uses.
     const occurrences = before.split(fix.old_string).length - 1;
     if (occurrences > 1 && !fix.replace_all) {
-      return { ok: false, evidence: `old_string occurs ${occurrences}×; ambiguous`, before };
+      return { ok: false, evidence: `old_string occurs ${occurrences}x; ambiguous`, before };
     }
     after = fix.replace_all
       ? before.split(fix.old_string).join(fix.new_string)

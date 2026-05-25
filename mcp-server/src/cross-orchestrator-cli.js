@@ -1079,7 +1079,7 @@ async function cmdCross({ mode, target, only, confirm, expand, chunk }) {
       const chunks = buildChunkedTargets(absPath, rawTarget);
       console.log('');
       console.log(`--chunk: splitting ${rawTarget} into ${chunks.length} chunks (≈${(CHUNKER_DEFAULTS.chunkSize / 1024).toFixed(0)} KB each, ${(CHUNKER_DEFAULTS.overlap / 1024).toFixed(0)} KB overlap).`);
-      console.log(`Trident dispatches: ${chunks.length} × per-chunk audit. Cost scales linearly.`);
+      console.log(`Trident dispatches: ${chunks.length} x per-chunk audit. Cost scales linearly.`);
 
       const perChunkResults = [];
       const auditorIds = new Set();
@@ -1114,7 +1114,7 @@ async function cmdCross({ mode, target, only, confirm, expand, chunk }) {
       }
       for (const f of merged) {
         const sev = (f.severity || 'note').toUpperCase();
-        const cluster = f.clusterSize > 1 ? ` [×${f.clusterSize}]` : '';
+        const cluster = f.clusterSize > 1 ? ` [x${f.clusterSize}]` : '';
         const tgt = f.target ? ` ${f.target} —` : '';
         // v1.5.0 wire-W4: widen field fallback to cover description/issue/
         // detail/note/summary keys auditors emit. Closes the r19 "(no detail)"

@@ -1047,7 +1047,7 @@ export async function startServer(options = {}) {
             if (!existsSync(eventsPath)) return;
             try {
               // Use the tail-chunk reader (bounded read) rather than slurping the
-              // full file. At 10K lines × ~1-2KB each = 10-20MB sync read per watch
+              // full file. At 10K lines x ~1-2KB each = 10-20MB sync read per watch
               // event, which is unacceptable for a long-lived SSE connection.
               try { statSync(eventsPath); } catch { return; }
               const buf = (() => {

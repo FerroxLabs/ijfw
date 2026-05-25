@@ -13,9 +13,28 @@ ok()   { printf "  [ok] %s\n" "$1"; }
 fail() { printf "  [fail] %s\n" "$1" >&2; }
 
 echo "== banned-char lint =="
-# Banned set: section sign, box-drawing heavy horizontal, em-dash, Greek delta,
-# multiplication sign, unicode minus, check marks, middle dot. Covers the same
-# surfaces Phase 10+11+12 audited.
+# v1.5.2.1 banned set: unicode minus and multiplication sign ONLY.
+#
+# Rationale: these are the two glyphs that LOOK identical to ASCII characters
+# (`-` and `x`) but are different codepoints (U+2212 MINUS SIGN, U+00D7
+# MULTIPLICATION SIGN). They cause real bugs when copy-pasted into code:
+# the unicode minus next to a number is not the ASCII minus operator, and
+# the unicode multiplication sign in a string can masquerade as letter x.
+#
+# Dropped vs the original Phase 10+11+12 audit:
+#   - em-dash `--`        : proper prose punctuation, 200+ legitimate uses
+#   - section sign `s`    : standard technical-writing section reference
+#   - box-drawing `=`     : intentional visual section dividers in skill markdown
+#   - middle dot `*`      : intentional breadcrumb separator in dashboard HTML titles
+#   - check marks `OK`    : intentional UI status indicators in dashboard HTML
+#   - heavy check mark    : same
+#   - Greek delta `D`     : no legitimate hit pattern observed; would be decorative
+#
+# Visual UI glyphs render fine in browsers + modern terminals and are
+# stylistically distinct from ASCII. The original audit targeted user-visible
+# CLI strings, then the TARGETS list drifted broader over time. The narrowed
+# set keeps the genuinely-dangerous look-alike check; everything else moved
+# into the "intentional UI choice" bucket.
 TARGETS=(
   ".planning/wayland-parity"
   "claude/skills" "claude/commands" "claude/hooks/scripts" "claude/rules"
@@ -34,7 +53,7 @@ TARGETS=(
 HITS=0
 for t in "${TARGETS[@]}"; do
   [ -e "$t" ] || continue
-  if matches=$(LC_ALL=C grep -RInE $'\302\247|\342\224\201|\342\200\224|\316\224|\303\227|\342\210\222|\342\234\223|\342\234\224|\302\267' "$t" 2>/dev/null); then
+  if matches=$(LC_ALL=C grep -RInE $'\303\227|\342\210\222' "$t" 2>/dev/null); then
     if [ -n "$matches" ]; then
       echo "$matches" >&2
       HITS=$((HITS + 1))

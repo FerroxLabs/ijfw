@@ -1084,7 +1084,7 @@ const DEFAULT_LENSES        = ['codex', 'gemini', 'claude'];
 
 // v1.5.0 audit-H4.1 — hard upper bound on convergence iterations. A caller
 // asking for 100 rounds would burn 100 rounds of full Trident dispatch (~3
-// auditors × ~90s = ~4.5h per cycle on cold start). 10 is well above the
+// auditors x ~90s = ~4.5h per cycle on cold start). 10 is well above the
 // observed empirical ceiling — the convergence loop almost always settles in
 // 2-3 iters; >5 is a smell, >10 is a misuse. Anything above the cap is
 // silently clamped to MAX_CONVERGE_ITERATIONS + emits a single dedup'd warning.
@@ -1176,7 +1176,7 @@ function buildCycleSummary(iteration, prior) {
 //   projectRoot    string (passed through to dispatch)
 //   totalTimeoutMs v1.5.0 audit-MED-trident-M6 — cumulative wall-clock cap.
 //                  When set, an AbortController fires at the deadline and
-//                  cancels remaining iterations. 3 iters × 3 lenses × 90s =
+//                  cancels remaining iterations. 3 iters x 3 lenses x 90s =
 //                  270s worst case without a cap; this lets a caller say
 //                  "no more than 4 minutes for the whole convergence".
 //                  Defaults to env IJFW_AUDIT_CONVERGE_TOTAL_TIMEOUT_SEC.

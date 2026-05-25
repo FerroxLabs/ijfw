@@ -316,7 +316,7 @@ code changes, not product bugs. Closed so the full suite is green:
   `--no-ff` merge with an `ijfw merge: <task-id>` message (so `git log
   --grep` can recover the merge boundary). Assertion updated to the real
   contract.
-- **specialist registration (×2)** — `test-orchestrator-specialists*.js`
+- **specialist registration (x2)** -- `test-orchestrator-specialists*.js`
   asserted the v1.4.4 + v1.5.0 specialist rosters register for *every*
   project type. audit-MED-teams-#6 deliberately superseded that: book /
   content / marketing / research / design get domain-specific benches
@@ -832,7 +832,7 @@ Phase E executed by the v1.4.4 N10 feature itself (`cross-orchestrator.runCrossO
 
 - **1356/1356** mcp-server tests on main (+85 over v1.4.3's 1271; 77 from Wave 10 + 8 from Trident r13 fix-wave regressions)
 - **Preflight 11/11** (carry from v1.4.3; no schema or build pipeline changes)
-- **34 files / +3,292 / −13 lines** delta from v1.4.3 tag
+- **34 files / +3,292 / -13 lines** delta from v1.4.3 tag
 - **Zero new production deps** (orchestrator/* uses `node:fs`, `node:path`, `node:child_process`, `node:net` only; dashboard-client-planning.html uses zero CDN deps; markdown renderer is ~70 LOC of vanilla DOM construction)
 
 ### Acknowledged but deferred to v1.4.5+ (with rationale)
@@ -885,7 +885,7 @@ Phase E executed by the v1.4.4 N10 feature itself (`cross-orchestrator.runCrossO
 
 ### Wave 8: Open Ecosystem completion (B6-B13)
 
-- **B6 — Hosted publisher key registry** with embedded Ed25519 meta-key as compile-time trust root. `ijfw extension trust-registry [<url>]` pulls a signed registry from `https://registry.ijfw.dev/publishers/v1.json` (GitLab Pages fallback at `therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json`); 24-hour TTL cache; HTTPS-only with 10s timeout, 3-redirect cap, 1 MiB body cap. Trust now scales O(publishers), not O(users × publishers). Admin subcommands: `keygen-meta` / `sign-registry` / `verify-registry` / `registry-status`. New `pages:` deploy job in `.gitlab-ci.yml` ships the registry on push to main. Meta-key rotation = new tagged v1.4.x release with new constant inlined (source-controlled trust root).
+- **B6 — Hosted publisher key registry** with embedded Ed25519 meta-key as compile-time trust root. `ijfw extension trust-registry [<url>]` pulls a signed registry from `https://registry.ijfw.dev/publishers/v1.json` (GitLab Pages fallback at `therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json`); 24-hour TTL cache; HTTPS-only with 10s timeout, 3-redirect cap, 1 MiB body cap. Trust now scales O(publishers), not O(users x publishers). Admin subcommands: `keygen-meta` / `sign-registry` / `verify-registry` / `registry-status`. New `pages:` deploy job in `.gitlab-ci.yml` ships the registry on push to main. Meta-key rotation = new tagged v1.4.x release with new constant inlined (source-controlled trust root).
 - **B7 — Tier-2 hooks for 4 more platforms.** Codex / Gemini get bash scripts; Hermes / Wayland get Python ports — all wrap the new shared `mcp-server/src/extension-permission-check.mjs` for one source of truth. Codex's stdin shape matches Claude verbatim; Gemini's adapter reshapes `{event, tool:{name,input}}` → `{hook_event_name, tool_name, tool_input}` before delegating. Cursor / Windsurf / Copilot are rules-only platforms with an explicit "tier-1 only" notice block added to their rules files. All five tier-2 platforms emit to `~/.ijfw/state/permission-events.jsonl` for the dashboard tile (closed in W8.1).
 - **B8 — Key rotation + revocation distribution.** `signRotationToken(oldPriv, newPub)` produces a JSON token signed by the OLD private key (proof of control); `verifyRotationToken` confirms `fingerprint(oldPub) === token.old_key_id` AND token age ≤ 90 days. `rotate-keys <oldKeyId> <newKeyId>` and `verify-rotation-token` CLI surface. Registry maintainer signs the revocation list; clients auto-remove on next `trust-registry` fetch and record in `~/.ijfw/state/revoked-publishers.json`. A compromised new key cannot forge a rotation backward without the old key. Lost-old-key flow documented in REGISTRY-MAINTAINER.md.
 - **B9 — Dashboard "Extension permissions" tile expansion** with three sub-views: Installed (enumerates `~/.ijfw/state-{org,user}/extension-registry.json` plus project scope), Active (current `~/.ijfw/state/active-extension.json`), Events stream (SSE-friendly tail with allowlist-enforced filters by extension/tool/denied). Sidebar item count stays at 10. Log rotation triggers at 10K lines (rename to `.0`, start fresh; cap at 1 rotation file). Path-traversal defence uses `realpathSync` on both `home` and target (macOS `/var/folders` symlink case). SSE handler uses 2 MB tail-chunk slice instead of full-file slurp.

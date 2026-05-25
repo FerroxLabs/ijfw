@@ -93,11 +93,11 @@ function printCommands() {
   const t = commandsByTier();
   let out = '\nijfw -- full command surface\n';
   out += '\nPRIMARY (shown in --help)\n';
-  out += '  ' + t.primary.map(e => e.name).join(' · ') + '\n';
+  out += '  ' + t.primary.map(e => e.name).join(' | ') + '\n';
   out += '\nCOORDINATION (agents drive these; humans inspect)\n';
-  out += '  ' + t.coordination.map(e => e.name).join(' · ') + '\n';
+  out += '  ' + t.coordination.map(e => e.name).join(' | ') + '\n';
   out += '\nPLUMBING (most users never need these)\n';
-  out += '  ' + t.plumbing.map(e => e.name).join(' · ') + '\n';
+  out += '  ' + t.plumbing.map(e => e.name).join(' | ') + '\n';
   console.log(out);
 }
 

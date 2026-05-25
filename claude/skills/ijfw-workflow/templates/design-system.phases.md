@@ -16,7 +16,7 @@ Done signal:
 
 ## Phase: Plan
 
-Prioritize components by consumer demand, not by alphabetical or "easy first." Survey the north-star surface and rank components by frequency × pain. Set the accessibility floor per component (focus states, keyboard handling, ARIA, contrast). Plan token JSON schema before any code — schema changes mid-build are expensive.
+Prioritize components by consumer demand, not by alphabetical or "easy first." Survey the north-star surface and rank components by frequency x pain. Set the accessibility floor per component (focus states, keyboard handling, ARIA, contrast). Plan token JSON schema before any code — schema changes mid-build are expensive.
 
 Done signal:
 - Component priority list with consumer-frequency justification

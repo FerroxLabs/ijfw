@@ -1641,7 +1641,7 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
       try {
         const top = topKSuccessfulSkills(db, { k: 5 });
         if (top.length > 0) {
-          const names = top.map((r) => `${r.skill_id} (${r.success_count}×)`).join(', ');
+          const names = top.map((r) => `${r.skill_id} (${r.success_count}x)`).join(', ');
           parts.push(
             '<ijfw-recommended-skills>',
             `Observed success this project: ${names}`,

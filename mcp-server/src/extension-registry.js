@@ -1147,7 +1147,7 @@ export async function refreshTrustFromAllRegistries(opts = {}) {
 
   // v1.5.0 audit M9 (F-SPD-3): parallelise the per-source pipeline. Previously
   // this was a sequential `for await` loop — with the 10s fetch timeout and N
-  // federated sources, worst-case wait was N×10s (50s for 5 sources). The
+  // federated sources, worst-case wait was Nx10s (50s for 5 sources). The
   // network-bound and cache-IO phases for each source are independent, so we
   // fan out with Promise.all and process results in priority order afterward
   // (preserves deterministic warning order + applyMultiRegistry input order).
@@ -1230,7 +1230,7 @@ export async function refreshTrustFromAllRegistries(opts = {}) {
     };
   }
 
-  // Promise.all — N×10s worst case collapses to ~10s. safe-by-construction:
+  // Promise.all — Nx10s worst case collapses to ~10s. safe-by-construction:
   // every worker catches its own errors and returns a result envelope.
   const processed = await Promise.all(sources.map((s) => processSource(s)));
 
