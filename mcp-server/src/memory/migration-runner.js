@@ -27,8 +27,16 @@ export class SchemaVersionError extends Error {
 }
 
 // Discover and load every migration module under ./migrations/, sorted by
-// numeric prefix ascending. Each module must export VERSION (integer),
-// DESCRIPTION (string), and up(db) (function).
+// numeric prefix ascending. Each module MUST export VERSION (number),
+// DESCRIPTION (string), and up(db) (function). The filename's numeric prefix
+// MUST equal the exported VERSION (enforced below).
+//
+// SQL=false is REJECTED — fs-layout migrations live in ../layout-migrations/
+// (see v1.5.2.1 F3). The runner used to silently skip SQL=false; that escape
+// hatch was a runtime workaround for a directory-structure mistake and is
+// gone. If a file in this directory declares SQL=false, the runner fails
+// loudly so the structural error is caught at startup, not at the next
+// schema-bricking copy-paste.
 //
 // Exported (v1.5.1 W3.B) so search.js (and any other consumer that needs
 // the sync migration pipeline) can reuse the SAME discovery path instead
@@ -48,16 +56,29 @@ export async function loadMigrations() {
   for (const f of matches) {
     const url = pathToFileURL(join(MIGRATIONS_DIR, f)).href;
     const mod = await import(url);
-    // v1.5.2.1 F1: fs-layout migrations live alongside SQL migrations in this
-    // directory but MUST opt out of the SQL runner by exporting `SQL = false`.
-    // The SQL runner passes a better-sqlite3 Database as the first arg; fs
-    // migrations expect a repoRoot string. Skipping here prevents the runner
-    // from invoking `up(db)` on a migration that crashes on the first
-    // `join(db, …)` call. fs migrations are invoked explicitly by server
-    // startup (see server.js, around the migrateFactsInternalOnce call site).
-    if (mod.SQL === false) continue;
+    // v1.5.2.1 F3: SQL=false is no longer an in-directory escape hatch. The
+    // fs-layout migrations live in ../layout-migrations/ and are statically
+    // registered there. If anything in this directory still declares
+    // SQL=false it's a structural error (likely a misplaced fs-layout
+    // migration). Fail loudly rather than silently skip.
+    if (mod.SQL === false) {
+      throw new Error(
+        `Memory migration ${f} declares SQL=false — fs-layout migrations belong in ` +
+        `layout-migrations/, not migrations/. Move the file or remove SQL=false.`
+      );
+    }
     if (typeof mod.VERSION !== 'number' || typeof mod.up !== 'function') {
       throw new Error(`Memory migration ${f} is missing VERSION or up().`);
+    }
+    // v1.5.2.1 F3.2: filename numeric prefix MUST equal exported VERSION.
+    // Catches reordering / rename mistakes immediately rather than at the
+    // next user_version comparison (where the failure mode is silent).
+    const filenamePrefix = parseInt(f.match(/^(\d+)/)[1], 10);
+    if (filenamePrefix !== mod.VERSION) {
+      throw new Error(
+        `Memory migration ${f}: filename prefix ${filenamePrefix} does not match ` +
+        `exported VERSION ${mod.VERSION}. Rename the file or fix the VERSION.`
+      );
     }
     out.push({
       file: f,

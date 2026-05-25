@@ -1,48 +1,40 @@
-// v1.5.2.1 F1 regression test: migration-runner must skip files that
-// export `SQL = false`. fs-layout migrations (e.g. 010-visible-layer.js)
-// live in the same migrations/ directory as SQL migrations but expect a
-// repoRoot string rather than a Database handle. Without the SQL=false
-// filter, the runner would call up(db) on them and crash with
-// 'TypeError: Path must be a string. Received <Database>' the first time
-// any memory db opened on an install with user_version < 10.
+// v1.5.2.1 F3 regression test: migrations/ directory holds SQL migrations
+// ONLY. fs-layout migrations live in ../layout-migrations/ (own namespace,
+// own sequence, own registry). The runner rejects SQL=false and asserts the
+// filename's numeric prefix matches the exported VERSION.
+//
+// History: at v1.5.2 this file tested the *opposite* invariant — that the
+// runner silently skipped SQL=false files in the SAME directory. That
+// escape hatch was the F3 root cause: a copy-paste mistake on a future SQL
+// migration would brick the schema. v1.5.2.1 moves fs-layout to its own
+// directory and turns the skip into a loud reject.
 //
 // This test asserts that:
-//   1. loadMigrations() does NOT return 010-visible-layer.js (the only
-//      SQL=false file in the directory at v1.5.2.1).
-//   2. highestKnownVersion() does NOT include 010's VERSION=10 — the
-//      reported version reflects only SQL migrations.
+//   1. Every file in migrations/ matches the SQL contract (VERSION + up).
+//   2. No file declares SQL=false (those belong in layout-migrations/).
+//   3. Filename numeric prefix equals the exported VERSION.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadMigrations, highestKnownVersion } from '../../src/memory/migration-runner.js';
+import { readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-test('loadMigrations skips files that export SQL = false (010-visible-layer)', async () => {
-  const migrations = await loadMigrations();
-  const files = migrations.map((m) => m.file);
-  assert.ok(
-    !files.includes('010-visible-layer.js'),
-    `010-visible-layer.js (SQL=false) must NOT appear in loadMigrations() result; got: ${JSON.stringify(files)}`,
-  );
-});
+const MIGRATIONS_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..', '..', 'src', 'memory', 'migrations'
+);
 
-test('highestKnownVersion does not advance to 10 because of the fs-layout migration', async () => {
-  const v = await highestKnownVersion();
-  // 010 is SQL=false; the highest SQL migration is whatever the last
-  // numbered SQL migration before 010 is. The exact number can change as
-  // new SQL migrations land — what matters is that v is NEVER 10. If it
-  // ever equals 10, the SQL=false skip stopped working and every memory
-  // db open on a v1.5.1 install will crash.
-  assert.notEqual(v, 10, 'highestKnownVersion() must not equal 10; 010 is fs-layout, not SQL');
-});
-
-test('loadMigrations returns at least the v1.5.0-era SQL migrations', async () => {
-  // Sanity check: SQL migrations DO get loaded — the SQL=false filter is
-  // not throwing the baby out with the bathwater. If this test ever
-  // returns an empty list, the filter logic in the runner regressed.
-  const migrations = await loadMigrations();
-  assert.ok(migrations.length > 0, 'expected at least one SQL migration; got empty list');
-  for (const m of migrations) {
-    assert.equal(typeof m.version, 'number', `migration ${m.file} version must be a number`);
-    assert.equal(typeof m.up, 'function', `migration ${m.file} up must be a function`);
+test('migrations/: every file matches VERSION+up contract; no SQL=false files', async () => {
+  const files = readdirSync(MIGRATIONS_DIR).filter(f => /^\d+-.+\.js$/.test(f));
+  assert.ok(files.length > 0, 'at least one SQL migration must exist');
+  for (const f of files) {
+    const mod = await import(pathToFileURL(join(MIGRATIONS_DIR, f)).href);
+    assert.equal(mod.SQL, undefined, `${f}: SQL property forbidden in SQL migrations dir`);
+    assert.equal(typeof mod.VERSION, 'number', `${f}: must export VERSION (number)`);
+    assert.equal(typeof mod.up, 'function', `${f}: must export up()`);
+    const prefix = parseInt(f.match(/^(\d+)/)[1], 10);
+    assert.equal(prefix, mod.VERSION,
+      `${f}: filename prefix ${prefix} must match exported VERSION ${mod.VERSION}`);
   }
 });
