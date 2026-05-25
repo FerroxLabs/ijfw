@@ -1,10 +1,13 @@
-// IJFW v1.5.2 -- fs-layout migration 010: visible ijfw/ layer.
+// IJFW v1.5.2.1 -- fs-layout migration 001: visible ijfw/ layer.
 //
-// NOT a SQL migration. Filesystem-only — no db arg, async, tracked via the
-// .layout-version sentinel from brain/layout-sentinel.js (NOT via SQLite
-// user_version, which stays at 9). NOT auto-run by the SQL migration loader;
-// Task 5 (lazy MEMORY_DIR) will invoke it explicitly at server startup.
-// Future SQL migrations should number from 011.
+// Lives in src/memory/layout-migrations/ (NOT src/memory/migrations/). This
+// directory is reserved for filesystem-layout migrations — they reshape on-disk
+// directory layout and track version via sentinel files (see
+// brain/layout-sentinel.js), NOT via SQLite user_version. The SQL
+// migration-runner deliberately rejects files declaring SQL=false (F3 root
+// cause: when SQL and fs-layout migrations coexist, an accidental copy-paste
+// can brick schema migrations). These files are statically registered in
+// layout-migrations/index.js and invoked by server.js at startup.
 //
 // Trident F-B3 safety:
 //  - acquires withLayoutLock (serializes concurrent migrations)
@@ -51,13 +54,6 @@ function findFreshFiles(repoRoot) {
   return candidates.filter((p) => statSync(p).mtimeMs >= cutoff);
 }
 
-export const VERSION = 10;
-// v1.5.2.1 F1: SQL = false marks this as an fs-layout migration, NOT a SQL
-// migration. The migration-runner skips files with SQL=false (otherwise the
-// runner would pass a Database as repoRoot and crash on the first
-// `join(db, …)`). Server startup invokes `up(repoRoot)` explicitly — see
-// server.js, right after the migrateFactsInternalOnce call.
-export const SQL = false;
 export const DESCRIPTION =
   'fs-layout v2 -- visible ijfw/ + scaffolded dump/wiki dirs (NOT a SQL migration)';
 
@@ -132,4 +128,4 @@ export async function up(repoRoot) {
   });
 }
 
-export default { version: VERSION, description: DESCRIPTION, up };
+export default { description: DESCRIPTION, up };
