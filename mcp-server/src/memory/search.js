@@ -346,6 +346,108 @@ function rowCount(db) {
   }
 }
 
+// --- Structured provenance helpers -----------------------------------------
+
+/**
+ * Convert a raw FTS row + fileBySource map to a structured provenance object.
+ * Used when opts.format === 'structured'.
+ *
+ * Fields that aren't computed in the existing pipeline are returned as
+ * null / 0 rather than introducing new compute work (Task 28 spec).
+ *
+ * @param {object} row  - raw DB row from searchFts5
+ * @param {Map}    fileBySource
+ * @param {string} rawQuery  - original user query (for whyMatched extraction)
+ * @param {object} db        - open DB handle (for backlink count query)
+ * @returns {object}
+ */
+function ftsRowToStructured(row, fileBySource, rawQuery, db) {
+  const src = row.source || '';
+  const meta = fileBySource.get(src) || null;
+  const source = (meta && meta.path) || src;
+  const text = String(row.body || '');
+  const snip = text.slice(0, 200).replace(/\s+/g, ' ').trim();
+
+  // confidence: bm25 rank is negative (more negative = better). Convert to 0..1.
+  // rank returned from searchFts5 can be 0 or negative; we use the same
+  // score formula as ftsRowToResult (100 - rank) but normalise to 0..1 by
+  // clamping to [0, 100] and dividing.
+  const rawRank = Number(row.rank || 0);
+  const scoreRaw = 100 - rawRank;         // same as ftsRowToResult
+  const confidence = Math.min(1, Math.max(0, scoreRaw / 100));
+
+  // ageDays: created_at is unix ms
+  const createdAt = Number(row.created_at || 0);
+  const ageDays = createdAt > 0
+    ? Math.max(0, (Date.now() - createdAt) / 86400000)
+    : 0;
+
+  // decayFactor: not yet computed in pipeline — return null per spec
+  const decayFactor = null;
+
+  // whyMatched: tokenise the raw query into distinct non-trivial terms
+  const whyMatched = rawQuery
+    .trim()
+    .split(/\s+/)
+    .map(t => t.replace(/['"*()]/g, '').toLowerCase())
+    .filter(t => t.length > 0);
+
+  // backlinkCount: count rows in memory_links where to_target matches source
+  let backlinkCount = 0;
+  if (db && row.id != null) {
+    try {
+      const idStr = String(row.id);
+      const r = db.prepare(
+        'SELECT COUNT(*) AS n FROM memory_links WHERE to_target = ?'
+      ).get(idStr);
+      backlinkCount = r ? Number(r.n) : 0;
+    } catch { /* memory_links may not exist in older dbs */ }
+  }
+
+  return {
+    source,
+    anchor: null,
+    snippet: snip,
+    confidence,
+    ageDays,
+    decayFactor,
+    whyMatched,
+    backlinkCount,
+  };
+}
+
+/**
+ * Convert a hot-linear result to a structured provenance object.
+ * Linear results lack a DB row id so backlinkCount is always 0.
+ *
+ * @param {object} result  - from searchLinear
+ * @param {string} rawQuery
+ * @returns {object}
+ */
+function linearResultToStructured(result, rawQuery) {
+  const scoreRaw = Number(result.score || 0);
+  // Hot-linear score is titleMatches*3 + bodyMatches; normalise loosely to 0..1
+  // by capping at 50 matches (arbitrary but safe)
+  const confidence = Math.min(1, scoreRaw / 50);
+
+  const whyMatched = rawQuery
+    .trim()
+    .split(/\s+/)
+    .map(t => t.replace(/['"*()]/g, '').toLowerCase())
+    .filter(t => t.length > 0);
+
+  return {
+    source: result.path || result.relpath || '',
+    anchor: null,
+    snippet: result.snippet || '',
+    confidence,
+    ageDays: 0,
+    decayFactor: null,
+    whyMatched,
+    backlinkCount: 0,
+  };
+}
+
 // --- Public API -------------------------------------------------------------
 
 /**
@@ -365,30 +467,41 @@ function rowCount(db) {
  *   the hot-linear fallback is unfiltered (D1 does not yet write tier
  *   metadata into the markdown surface).
  *
+ * format option (Task 28 — structured provenance):
+ *   opts.format === 'structured' returns an Array of provenance objects:
+ *     [{source, anchor, snippet, confidence, ageDays, decayFactor,
+ *       whyMatched, backlinkCount}]
+ *   Default (no format) returns Array<{path,relpath,title,snippet,score,
+ *   tier_semantic}> — byte-identical to pre-Task-28 behaviour.
+ *
  * @param {string} q
  * @param {Array<{path,relpath,title,preview}>} files
  * @param {number} limit
  * @param {object|undefined} options
- * @returns {Array<{path,relpath,title,snippet,score,tier_semantic}>}
+ * @returns {Array<{path,relpath,title,snippet,score,tier_semantic}>|Array<provenance>}
  */
 export function searchMemory(q, files, limit = MAX_RESULTS, options) {
   if (!q || !q.trim() || !files || files.length === 0) return [];
 
-  // Normalise options. Allow undefined / { tier_semantic, include_stale } /
-  // a bare string (treated as the tier_semantic value) for ergonomic call
-  // sites. include_stale defaults to false -- D4 GA-B2 retrieval guard.
+  // Normalise options. Allow undefined / { tier_semantic, include_stale,
+  // format } / a bare string (treated as the tier_semantic value) for
+  // ergonomic call sites. include_stale defaults to false -- D4 GA-B2
+  // retrieval guard. format === 'structured' enables Task-28 provenance.
   let tier_semantic;
   let include_stale = false;
+  let format;
   if (typeof options === 'string') {
     tier_semantic = options;
   } else if (options && typeof options === 'object') {
     tier_semantic = options.tier_semantic;
     include_stale = options.include_stale === true;
+    format = options.format;
   }
 
   const { expanded, synonym_matches, applied } = expandQuery(q);
 
   let warmHits = null;
+  let warmRawRows = null;  // preserved for structured format (Task 28)
   let warmEmpty = false;
   let db = null;
 
@@ -424,6 +537,11 @@ export function searchMemory(q, files, limit = MAX_RESULTS, options) {
             if (f.relpath) fileBySource.set(f.relpath, f);
             if (f.path) fileBySource.set(f.path, f);
           }
+          if (format === 'structured') {
+            // Task 28: map raw rows to provenance objects while db is still open
+            // (backlinkCount query needs the handle)
+            warmRawRows = rows.map(r => ftsRowToStructured(r, fileBySource, q, db));
+          }
           warmHits = rows.map(r => ftsRowToResult(r, fileBySource));
         } else {
           warmEmpty = true;
@@ -432,31 +550,41 @@ export function searchMemory(q, files, limit = MAX_RESULTS, options) {
     }
   } catch {
     warmHits = null;
+    warmRawRows = null;
   } finally {
     if (db) { try { db.close(); } catch { /* ignore */ } }
   }
 
   let results;
   if (warmHits && warmHits.length > 0) {
-    results = warmHits.slice(0, limit);
+    results = format === 'structured'
+      ? warmRawRows.slice(0, limit)
+      : warmHits.slice(0, limit);
   } else if (tier_semantic) {
     // Tier filter active and warm tier has no matches -- the hot-linear
     // tier doesn't carry tier metadata so it can't honour the filter.
     // Returning [] here keeps the contract honest ("only matching tier").
     results = [];
   } else {
-    results = searchLinear(q, files, limit);
+    const linearResults = searchLinear(q, files, limit);
+    results = format === 'structured'
+      ? linearResults.map(r => linearResultToStructured(r, q))
+      : linearResults;
   }
 
-  Object.defineProperty(results, 'synonym_matches', {
-    value: applied ? synonym_matches : {},
-    enumerable: false,
-  });
-  Object.defineProperty(results, 'tier', {
-    value: warmHits && warmHits.length > 0
-      ? 'warm-fts5'
-      : (warmEmpty ? 'hot-linear-empty-fts5' : 'hot-linear'),
-    enumerable: false,
-  });
+  // Structured results are plain arrays — no non-enumerable decorations needed.
+  // Legacy path: attach non-enumerable metadata as before (byte-identical).
+  if (format !== 'structured') {
+    Object.defineProperty(results, 'synonym_matches', {
+      value: applied ? synonym_matches : {},
+      enumerable: false,
+    });
+    Object.defineProperty(results, 'tier', {
+      value: warmHits && warmHits.length > 0
+        ? 'warm-fts5'
+        : (warmEmpty ? 'hot-linear-empty-fts5' : 'hot-linear'),
+      enumerable: false,
+    });
+  }
   return results;
 }
