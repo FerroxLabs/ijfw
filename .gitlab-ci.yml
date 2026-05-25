@@ -121,7 +121,12 @@ linux:test:
     # F5.1: include test/brain + test/memory + test/integration so the brain
     # handler / memory layout / integration suites actually run in CI. Prior
     # glob `test-*.js` matched root-level only and silently skipped 21+ brain tests.
-    - node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js 2>&1 | tee ../ci-logs/linux-node-test.log | tail -100
+    # F-LENS2-04: enable failglob so a missing test dir / empty match fails
+    # loud instead of silently dropping the suite. Pre-check the three subdirs
+    # exist before the node invocation — if a future refactor renames or
+    # removes one, CI bombs explicitly with the dir name.
+    - for d in test/brain test/memory test/integration; do test -d "$d" || { echo "missing test dir $d"; exit 1; }; done
+    - bash -O failglob -c 'node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js' 2>&1 | tee ../ci-logs/linux-node-test.log | tail -100
     # 2. Graders (D2 spec, D2 consistency, D4 cascading-staleness, A3 project-types)
     - node test/grade-symbol-graph-spec.js 2>&1 | tee ../ci-logs/linux-grader-d2-spec.log
     - node test/grade-symbol-graph-consistency.js 2>&1 | tee ../ci-logs/linux-grader-d2-consistency.log
@@ -185,7 +190,9 @@ macos:test:
     - npm test 2>&1 | tee ../ci-logs/macos-npm-test.log
     # F5.1: include test/brain + test/memory + test/integration so the brain
     # handler / memory layout / integration suites actually run in CI.
-    - node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js 2>&1 | tee ../ci-logs/macos-node-test.log | tail -100
+    # F-LENS2-04: failglob + pre-check so a missing test dir fails loud.
+    - for d in test/brain test/memory test/integration; do test -d "$d" || { echo "missing test dir $d"; exit 1; }; done
+    - bash -O failglob -c 'node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js' 2>&1 | tee ../ci-logs/macos-node-test.log | tail -100
     - node test/grade-symbol-graph-spec.js 2>&1 | tee ../ci-logs/macos-grader-d2-spec.log
     - node test/grade-symbol-graph-consistency.js 2>&1 | tee ../ci-logs/macos-grader-d2-consistency.log
     - node test/grade-cascading-staleness.js 2>&1 | tee ../ci-logs/macos-grader-d4.log
@@ -272,7 +279,11 @@ windows:test:
     # handler / memory layout / integration suites actually run in CI. Prior
     # PowerShell glob enumerated only root-level files (no -Recurse, no subdir
     # paths) and silently skipped 21+ brain tests.
-    - node --experimental-sqlite --test --test-force-exit @((Get-ChildItem -Filter 'test-*.js' | Select-Object -ExpandProperty Name) + (Get-ChildItem -Path 'test/brain','test/memory','test/integration' -Filter 'test-*.js' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })) 2>&1 | Tee-Object -FilePath ../ci-logs/windows-node-test.log | Select-Object -Last 100
+    # F-LENS2-03: drop -ErrorAction SilentlyContinue so a missing subdir
+    # explodes the job instead of silently shipping a partial suite. Explicit
+    # Test-Path pre-check identifies the missing dir by name.
+    - foreach ($d in 'test/brain','test/memory','test/integration') { if (-not (Test-Path $d)) { throw "missing test dir: $d" } }
+    - node --experimental-sqlite --test --test-force-exit @((Get-ChildItem -Filter 'test-*.js' | Select-Object -ExpandProperty Name) + (Get-ChildItem -Path 'test/brain','test/memory','test/integration' -Filter 'test-*.js' | ForEach-Object { $_.FullName })) 2>&1 | Tee-Object -FilePath ../ci-logs/windows-node-test.log | Select-Object -Last 100
     # Graders (D2 spec, D2 consistency, D4 cascading-staleness, A3 project-types)
     - node test/grade-symbol-graph-spec.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-d2-spec.log
     - node test/grade-symbol-graph-consistency.js 2>&1 | Tee-Object -FilePath ../ci-logs/windows-grader-d2-consistency.log
