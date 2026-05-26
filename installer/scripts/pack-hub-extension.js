@@ -72,19 +72,129 @@ const HUB_EXT_DIR = join(__dirname, 'hub-extension');
 //   node scripts/pack-hub-extension.js                       (default dist/)
 //   node scripts/pack-hub-extension.js --output /tmp/stage    (custom dir)
 //   npx -y @ijfw/install --pack-hub-extension --output /tmp   (via ijfw CLI)
-function parseOutputArg(argv) {
-  const idx = argv.indexOf('--output');
-  if (idx !== -1 && idx + 1 < argv.length) {
-    const dir = argv[idx + 1];
-    if (!dir || dir.startsWith('-')) {
-      console.error('[pack-hub-extension] --output requires a directory argument');
-      process.exit(2);
+
+// ---------------------------------------------------------------------------
+// System-path blocklist for --output validation (L1-02, L1-06)
+// ---------------------------------------------------------------------------
+
+const POSIX_SYSTEM_DIRS = [
+  '/etc', '/usr', '/bin', '/sbin', '/var',
+  '/System', '/Library', '/private',
+];
+
+const WINDOWS_SYSTEM_DIRS = [
+  'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
+  'C:\\System Volume Information',
+];
+
+/**
+ * Returns true if the resolved path is the filesystem root or a known system
+ * directory (or a child of one).
+ * @param {string} absPath  Already-resolved absolute path.
+ * @returns {boolean}
+ */
+function isSystemPath(absPath) {
+  // Reject bare filesystem roots: '/', 'C:\', 'D:\', etc.
+  if (/^[A-Za-z]:\\?$/.test(absPath) || absPath === '/') return true;
+
+  const lc = absPath.toLowerCase();
+  const allBlocked = [...POSIX_SYSTEM_DIRS, ...WINDOWS_SYSTEM_DIRS];
+  for (const blocked of allBlocked) {
+    const bl = blocked.toLowerCase();
+    if (lc === bl || lc.startsWith(bl + '/') || lc.startsWith(bl + '\\')) {
+      return true;
     }
-    return resolve(process.cwd(), dir);
   }
-  return join(INSTALLER_DIR, 'dist');
+  return false;
 }
-const DIST_DIR = parseOutputArg(process.argv.slice(2));
+
+/**
+ * Parse --output from argv. Last occurrence wins (L2-02 last-wins convention).
+ * Validates non-empty, non-flag-shaped, non-system-path (L2-01, L1-02, L1-06).
+ * Returns the resolved absolute path, or null if --output was not present.
+ * @param {string[]} argv  process.argv.slice(2)
+ * @returns {string|null}
+ */
+function parseOutputArg(argv) {
+  let dir = null;
+
+  // Iterate all positions so last --output wins (L2-02).
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--output') {
+      if (i + 1 >= argv.length) {
+        console.error('[pack-hub-extension] ERROR: --output requires a directory argument');
+        process.exit(2);
+      }
+      dir = argv[i + 1];
+      i++; // skip value on next iteration
+    }
+  }
+
+  if (dir === null) return null; // flag not present — caller uses default
+
+  // L2-01: reject whitespace-only or flag-shaped values.
+  if (!dir || dir.trim() === '' || dir.startsWith('-')) {
+    console.error('[pack-hub-extension] ERROR: --output requires a non-empty directory argument');
+    process.exit(2);
+  }
+
+  const abs = resolve(process.cwd(), dir.trim());
+
+  // L1-02, L1-06: reject filesystem root and system directories.
+  if (isSystemPath(abs)) {
+    console.error(
+      `[pack-hub-extension] ERROR: --output "${abs}" is a system path. ` +
+      'Choose a user-writable directory.'
+    );
+    process.exit(2);
+  }
+
+  return abs;
+}
+
+/**
+ * Return the default output directory.
+ * When invoked from inside node_modules (npm-global install), default to
+ * process.cwd() so we don't pollute the package installation directory (L3-07).
+ * @returns {string}
+ */
+function defaultOutputDir() {
+  return __dirname.includes('node_modules')
+    ? process.cwd()
+    : join(INSTALLER_DIR, 'dist');
+}
+
+const _explicitOutput = parseOutputArg(process.argv.slice(2));
+const DIST_DIR = _explicitOutput !== null ? _explicitOutput : defaultOutputDir();
+
+// L3-07: always announce where output will land so the caller knows.
+console.log(
+  `[pack-hub-extension] NOTE: writing artifacts to ${resolve(DIST_DIR)}` +
+  (_explicitOutput === null ? '. Use --output <dir> to redirect.' : '.')
+);
+
+// ---------------------------------------------------------------------------
+// Safe write helper — wraps writeFileSync with a clean error UX (L2-09)
+// ---------------------------------------------------------------------------
+
+/**
+ * Write `content` to `filePath`, exiting with a clean error message on failure.
+ * @param {string} filePath
+ * @param {Buffer|string} content
+ * @param {string} [encoding]
+ */
+function safeWrite(filePath, content, encoding) {
+  try {
+    if (encoding !== undefined) {
+      writeFileSync(filePath, content, encoding);
+    } else {
+      writeFileSync(filePath, content);
+    }
+  } catch (err) {
+    console.error(`[pack-hub-extension] ERROR: cannot write to ${filePath}: ${err.message}`);
+    process.exit(1);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Read version from package.json
@@ -162,6 +272,9 @@ if (existsSync(assetsDir)) {
         zipPath: `assets/${name}`,
         content: readFileSync(full),
       });
+    } else if (statSync(full).isDirectory()) {
+      // L2-08: future-proof warning; current placeholder SVG is single-file.
+      console.warn(`[pack-hub-extension] WARNING: assets subdir ignored: ${name}/`);
     }
   }
 }
@@ -300,7 +413,7 @@ mkdirSync(DIST_DIR, { recursive: true });
 
 const ZIP_NAME = `ijfw-${VERSION}.zip`;
 const ZIP_PATH = join(DIST_DIR, ZIP_NAME);
-writeFileSync(ZIP_PATH, zipBuffer);
+safeWrite(ZIP_PATH, zipBuffer);
 
 const zipSize = zipBuffer.length;
 console.log(`[pack-hub-extension] zip: ${ZIP_PATH} (${zipSize} bytes)`);
@@ -313,7 +426,7 @@ const hashHex = createHash('sha512').update(zipBuffer).digest('hex');
 const sri = `sha512-${Buffer.from(hashHex, 'hex').toString('base64')}`;
 
 const SHA_PATH = join(DIST_DIR, `ijfw-${VERSION}.sha512`);
-writeFileSync(SHA_PATH, sri, 'utf8');
+safeWrite(SHA_PATH, sri, 'utf8');
 console.log(`[pack-hub-extension] sha512: ${SHA_PATH}`);
 console.log(`[pack-hub-extension] SRI: ${sri}`);
 
@@ -346,7 +459,7 @@ const hubIndexSnippet = {
 };
 
 const SNIPPET_PATH = join(DIST_DIR, 'hub-index-snippet.json');
-writeFileSync(SNIPPET_PATH, JSON.stringify(hubIndexSnippet, null, 2) + '\n', 'utf8');
+safeWrite(SNIPPET_PATH, JSON.stringify(hubIndexSnippet, null, 2) + '\n', 'utf8');
 console.log(`[pack-hub-extension] hub index snippet: ${SNIPPET_PATH}`);
 
 // ---------------------------------------------------------------------------
