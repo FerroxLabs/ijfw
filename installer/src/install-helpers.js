@@ -743,9 +743,9 @@ const EXTENSION_PLATFORM_SKILL_DIRS = Object.freeze([
 ]);
 
 /**
- * Return the platform skill-dir enumeration. Exported so override-resolver and
- * other consumers can drop their hard-coded copies later (TODO in
- * override-resolver.js line 54).
+ * Return the platform skill-dir enumeration. Single source of truth for
+ * override-resolver and other consumers; replaces what used to be hard-coded
+ * copies scattered across modules.
  */
 export function getExtensionPlatformSkillDirs() {
   return EXTENSION_PLATFORM_SKILL_DIRS.map((p) => ({ ...p }));

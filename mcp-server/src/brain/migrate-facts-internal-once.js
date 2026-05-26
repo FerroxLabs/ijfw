@@ -2,8 +2,9 @@
 // the internal hidden-paths location (Plan A audit F5).
 //
 // Plan A's lazy MEMORY_DIR refactor (Task 5) intentionally kept FACTS_FILE
-// + FACTS_DB_FILE at <contentDir>/memory/ with a TODO comment, because moving
-// them required a data migration outside Task 5's scope. F5 does that move:
+// + FACTS_DB_FILE at <contentDir>/memory/ with a deferral comment, because
+// moving them required a data migration outside Task 5's scope. This file
+// IS the F5 migration that closes that deferral:
 //
 //   .ijfw/memory/facts.jsonl  -> .ijfw/facts.jsonl
 //   .ijfw/memory/facts.db     -> .ijfw/index/memory.db

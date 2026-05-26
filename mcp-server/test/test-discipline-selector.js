@@ -122,17 +122,20 @@ test('selectDisciplineTemplate: "research" returns non-empty string when templat
   assert.ok(typeof result === 'string' && result.length > 0);
 });
 
-test(
-  'selectDisciplineTemplate: throws Error when typed template file is absent',
-  { todo: 'requires dependency-injection refactor to mock TEMPLATES_DIR in ESM' },
-  () => {
-    // The Error-throw path at discipline-selector.js fires when a TYPED_CODES
-    // value resolves to a path under TEMPLATES_DIR that does not exist. We
-    // ship all 5 templates in-tree so this path is not reachable from a
-    // standard test setup. Marked todo until selectDisciplineTemplate accepts
-    // an opts.templatesDir injection point.
-  },
-);
+test('selectDisciplineTemplate: throws Error when typed template file is absent', () => {
+  // W3 D1 / L2-04 closeout: selectDisciplineTemplate now accepts an
+  // opts.templatesDir injection point so this test can exercise the
+  // missing-file Error path. Point templatesDir at an empty temp dir; a
+  // typed (TYPED_CODES) projectType then reaches the existsSync check and
+  // throws Error -- the documented contract.
+  const emptyTemplatesDir = makeTmpDir('empty-templates');
+  assert.throws(
+    () => selectDisciplineTemplate('code', { templatesDir: emptyTemplatesDir }),
+    (err) => err instanceof Error
+      && !(err instanceof TypeError)
+      && /template file missing/i.test(err.message),
+  );
+});
 
 test('selectDisciplineTemplate: throws TypeError on non-string projectType', () => {
   assert.throws(() => selectDisciplineTemplate(42), TypeError);

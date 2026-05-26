@@ -63,13 +63,20 @@ const EMPTY_BODY_CODES = new Set(['unknown', 'mixed']);
  *
  * @param {string} projectType  one of: code | narrative | business | design |
  *                              research | unknown | mixed
+ * @param {object} [opts]
+ * @param {string} [opts.templatesDir]  Override the templates directory. Used
+ *                                      by tests to exercise the missing-file
+ *                                      Error path against a directory that
+ *                                      contains no `discipline-*.md` files
+ *                                      (W3 D1 / L2-04 follow-up). Default:
+ *                                      shipped TEMPLATES_DIR.
  * @returns {string}  template body (utf-8). For unknown/mixed (and any
  *                    unrecognized string), returns an HTML-comment hint
  *                    body documenting how the user activates a domain.
  * @throws {TypeError}  when projectType is null, undefined, or non-string.
  * @throws {Error}      when the template file is absent for a typed project.
  */
-export function selectDisciplineTemplate(projectType) {
+export function selectDisciplineTemplate(projectType, opts = {}) {
   if (projectType === null || projectType === undefined) {
     throw new TypeError(
       'selectDisciplineTemplate: projectType must be a string (got null/undefined)',
@@ -105,7 +112,10 @@ export function selectDisciplineTemplate(projectType) {
     return emptyBodyHint('unknown');
   }
 
-  const templatePath = join(TEMPLATES_DIR, `discipline-${type}.md`);
+  const templatesDir = (opts && typeof opts.templatesDir === 'string')
+    ? opts.templatesDir
+    : TEMPLATES_DIR;
+  const templatePath = join(templatesDir, `discipline-${type}.md`);
   if (!existsSync(templatePath)) {
     throw new Error(
       `selectDisciplineTemplate: template file missing for type "${type}" at ${templatePath}`,

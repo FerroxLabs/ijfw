@@ -223,9 +223,9 @@ export async function installClaude(ctx) {
   ctx.log.note(`.claudeignore template at ${ctx.repoRoot}/claude/.claudeignore`);
   ctx.log.note('  Copy to your project root for instant context savings.');
 
-  // TODO(v1.3.x): port pgrep -x claude detection to a cross-platform
-  // process-list check (see install.sh:1132). For now the user manually
-  // restarts Claude Code if it was running.
+  // Deferred: port pgrep -x claude detection to a cross-platform process-list
+  // check (see install.sh:1132). For now the user manually restarts Claude
+  // Code if it was running. Tracked for v1.6.0 cross-platform completeness.
   return { status: 'ok', restart: false };
 }
 

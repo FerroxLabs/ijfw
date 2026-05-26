@@ -37,10 +37,11 @@
 //                                     stale_visible_with_flag: bool }
 //                                   sanity proof the warm filter still gates.
 //
-// What this harness does NOT do (yet -- on the v1.5.0 backlog):
+// What this harness does NOT do (yet -- folded into the v1.6.0 IJFW Brain
+// workstream alongside the cold-tier vector index):
 //   - cross-tier promotion timing (hot->warm happens at first search; warm
-//     never promotes to cold without a model). Future T23+ work owns the
-//     bi-temporal + decay-on-retrieval axes.
+//     never promotes to cold without a model). The v1.6.0 Brain work owns
+//     the bi-temporal + decay-on-retrieval axes.
 //   - multi-writer throughput. Single-writer is the published norm because
 //     SQLite's BEGIN IMMEDIATE queue dominates; that's already covered by
 //     test-memory-fts5.js's concurrent-writers test.
