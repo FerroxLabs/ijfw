@@ -129,7 +129,7 @@ function buildExtractionPrompt(chunk) {
   ].join('\n');
 }
 
-export async function defaultExtractFacts({ file, text, chunks, env, guard, callTieredFn }) {
+export async function defaultExtractFacts({ file: _file, text, chunks, env, guard, callTieredFn }) {
   // No LLM configured -> graceful no-op (preserves prior behavior).
   if (!llmReachable(env)) return [];
   if (!text || typeof text !== 'string') return [];

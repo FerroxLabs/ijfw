@@ -297,7 +297,7 @@ function verbConflictResolve(db, repoRoot, args) {
   return { ok: true, resolved: true, winnerId: args.winnerId, supersededIds, validTo: chosenValidTo };
 }
 
-export async function handleIjfwBrain({ verb, args = {}, db, repoRoot, env, opts = {} } = {}) {
+export async function handleIjfwBrain({ verb, args = {}, db, repoRoot, env: _env, opts = {} } = {}) {
   if (!verb || typeof verb !== 'string') return { ok: false, error: 'missing-verb' };
   switch (verb) {
     case 'think':              return verbThink(db, repoRoot, args, opts);

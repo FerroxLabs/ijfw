@@ -351,7 +351,7 @@ const __isServerEntryPoint = (() => {
 })();
 // Back-compat values for the line-2349 re-export. New code MUST use paths().memoryDir / paths().sessionsDir.
 const MEMORY_DIR = join(IJFW_DIR, 'memory');
-const SESSIONS_DIR = join(IJFW_DIR, 'sessions');
+// SESSIONS_DIR removed -- replaced by paths().sessionsDir via brainPaths() helper.
 const GLOBAL_DIR = join(homedir(), '.ijfw', 'memory');
 // Legacy single-file location (pre-Phase 2). Still read for backward compat
 // but new writes go to the faceted structure.
