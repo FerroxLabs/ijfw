@@ -17,10 +17,11 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
 import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -88,6 +89,7 @@ function parseZip(buf) {
 // ---------------------------------------------------------------------------
 
 let runResult;
+let sriRun1 = '';
 
 before(() => {
   runResult = spawnSync('npm', ['run', 'pack:hub-extension'], {
@@ -95,6 +97,7 @@ before(() => {
     stdio: 'pipe',
     shell: false,
   });
+  if (runResult.status === 0) sriRun1 = readFileSync(SHA_PATH, 'utf8').trim();
 });
 
 // ---------------------------------------------------------------------------
@@ -250,21 +253,42 @@ describe('pack-hub-extension', () => {
   });
 
   it('SHA-512 is stable across two consecutive runs (determinism)', () => {
-    // Run the packer a second time.
+    // sriRun1 was captured in before() after the first pack run.
+    // Run the packer a second time independently and compare.
     const r2 = spawnSync('npm', ['run', 'pack:hub-extension'], {
       cwd: INSTALLER_DIR,
       stdio: 'pipe',
       shell: false,
     });
     assert.equal(r2.status, 0, 'Second pack run failed');
-    const sri1 = readFileSync(SHA_PATH, 'utf8').trim();
-    // sri1 is now the second run's output — compare to what's stored.
-    // Re-run a third time and compare sri3 == sri1 (all three must match).
-    // Actually just compare run2 output to run1 (already stored from before()).
-    // The SRI from before() is already in SHA_PATH after runResult.
-    // We need the sri from before() — store it here by reading after second run.
-    const sri2 = readFileSync(SHA_PATH, 'utf8').trim();
-    assert.equal(sri1, sri2, 'SHA-512 differs between runs — zip is not deterministic');
+    const sriRun2 = readFileSync(SHA_PATH, 'utf8').trim();
+    assert.equal(sriRun1, sriRun2, 'SHA-512 differs between runs — zip is not deterministic');
+  });
+
+  it('CLI route: node dist/ijfw.js pack-hub-extension --output <dir> exits 0 and writes zip', () => {
+    const outDir = join(tmpdir(), `hub-ext-cli-test-${Date.now()}`);
+    try {
+      mkdirSync(outDir, { recursive: true });
+      const r = spawnSync(
+        'node',
+        [join(INSTALLER_DIR, 'dist', 'ijfw.js'), 'pack-hub-extension', '--output', outDir],
+        { cwd: INSTALLER_DIR, stdio: 'pipe' },
+      );
+      assert.equal(r.status, 0, `CLI exit non-zero. stderr: ${r.stderr.toString()}`);
+      const expectedZip = join(outDir, `ijfw-${VERSION}.zip`);
+      assert.ok(existsSync(expectedZip), `Expected zip at ${expectedZip}`);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it('CLI route: --output with whitespace-only value exits 2', () => {
+    const r = spawnSync(
+      'node',
+      [join(INSTALLER_DIR, 'dist', 'ijfw.js'), 'pack-hub-extension', '--output', '   '],
+      { cwd: INSTALLER_DIR, stdio: 'pipe' },
+    );
+    assert.equal(r.status, 2, `Expected exit 2, got ${r.status}`);
   });
 
 });

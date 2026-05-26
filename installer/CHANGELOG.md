@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.5.4] -- 2026-05-26
+
+**Wayland Hub Extension pack pipeline.** Adds `pack-hub-extension` -- a new CLI subcommand that produces the three distributable artifacts Wayland's prebuild sync script needs to bundle IJFW as a native Hub Extension without committing binaries to the Wayland repo.
+
+### Added
+
+- `ijfw pack-hub-extension [--output <dir>]` produces three artifacts in one shot:
+  - `ijfw-<version>.zip` -- the installable Hub Extension bundle (manifest + lifecycle hooks + assets)
+  - `ijfw-<version>.sha512` -- SHA-512 SRI checksum for Wayland's integrity verifier
+  - `hub-index-snippet.json` -- drop-in entry for Wayland's Hub Index, ready to merge at build time
+- `--output <dir>` flag lets callers stage artifacts anywhere (defaults to `dist/`); the flag is forwarded verbatim to `scripts/pack-hub-extension.js`.
+- `scripts/pack-hub-extension.js` + `scripts/hub-extension/**` now ship inside the npm tarball, so Wayland's prebuild script can invoke the packer directly via `npx -y @ijfw/install@<version> pack-hub-extension --output <stage-dir>` with no local clone required.
+- Hub Extension bundle includes `scripts/install.js` (runs `npx -y @ijfw/install@latest` non-interactively) and `scripts/uninstall.js` with split timeouts -- 100s for install, 30s for uninstall -- so Wayland's sandboxed fork never hangs the boot sequence.
+- Manifest template (`aion-extension.json.tmpl`) declares all 15 `acpAdapters` so Wayland's existing verifier checks every supported CLI on PATH post-install. If any are missing, install fails with a clear error rather than silently succeeding.
+- Wayland integration: their `scripts/sync-hub-extensions.ts` prebuild step invokes `pack-hub-extension` at every build so each Wayland release snapshots the latest published IJFW without storing binaries in the repo.
+
+### Internal
+
+- `@ijfw/memory-server@1.5.4` republishes alongside with no functional changes vs 1.5.3 -- preserves the version-lockstep invariant between the two packages.
+- Test coverage: `installer/test/test-pack-hub-extension.js` verifies artifact production, SHA-512 stability across runs on identical content, and manifest shape conformance.
+
 ## [1.3.2] -- 2026-05-15
 
 **Project-agnostic swarm orchestration + live visual workflow + richer Codex native surface.** Adds first-class Team Assembly, blackboard coordination, swarm task lifecycle, conservative git worktrees, recovery checkpoints, Superpowers-style live design previews, and Claude-parity Codex command aliases.
