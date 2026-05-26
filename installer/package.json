@@ -20,8 +20,10 @@
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node --test test.js",
+    "test:hub-extension": "node --test test/test-pack-hub-extension.js",
     "preflight": "node dist/ijfw.js preflight",
     "pack:check": "npm pack --dry-run",
+    "pack:hub-extension": "node scripts/pack-hub-extension.js",
     "prepublishOnly": "npm run build && npm run preflight"
   },
   "devDependencies": {
