@@ -59,6 +59,27 @@ function loadPopulateBlackboardBlock() {
   return _populateBlackboardBlockPromise;
 }
 
+// Wave 5B wiring (post-cross-audit W1 fix): same lazy-Promise-singleton
+// pattern as populateBlackboardBlock above. populateDisciplineBlock is
+// idempotent (no-op short-circuit when content unchanged), so firing on
+// every wave checkpoint is free and guarantees the DISCIPLINE marker block
+// in AGENTS.md actually gets populated during a real workflow — closes the
+// "ships as dead code" wiring gap the cross-audit caught.
+let _populateDisciplineBlockPromise = null;
+function loadPopulateDisciplineBlock() {
+  if (_populateDisciplineBlockPromise === null) {
+    _populateDisciplineBlockPromise = (async () => {
+      try {
+        const mod = await import('./agents-md-blackboard.js');
+        return mod.populateDisciplineBlock ?? null;
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return _populateDisciplineBlockPromise;
+}
+
 /**
  * Test-only helper: reset the populateBlackboardBlock promise singleton so a
  * test can simulate "first call after process start" semantics. Internal.
@@ -67,6 +88,14 @@ function loadPopulateBlackboardBlock() {
  */
 export function _resetPopulateBlackboardBlockSingleton() {
   _populateBlackboardBlockPromise = null;
+}
+
+/**
+ * Test-only helper: reset the populateDisciplineBlock promise singleton.
+ * @internal
+ */
+export function _resetPopulateDisciplineBlockSingleton() {
+  _populateDisciplineBlockPromise = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +587,15 @@ export async function checkpointWave(waveId, projectRoot) {
   const populateBlackboardBlock = await loadPopulateBlackboardBlock();
   if (populateBlackboardBlock) {
     try { await populateBlackboardBlock(waveId, projectRoot); } catch { /* advisory */ }
+  }
+
+  // Wave 5B wiring (cross-audit W1 fix): populate the DISCIPLINE block too.
+  // Same advisory-failure semantics as the BLACKBOARD call above. Auto-detects
+  // project type from .ijfw/memory/brief.md frontmatter or repo signals — no
+  // explicit projectType passed, the detector handles it.
+  const populateDisciplineBlock = await loadPopulateDisciplineBlock();
+  if (populateDisciplineBlock) {
+    try { await populateDisciplineBlock(projectRoot, undefined, { waveId }); } catch { /* advisory */ }
   }
 
   return next;

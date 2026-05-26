@@ -229,3 +229,68 @@ test('populateDisciplineBlock accepts waveId option', async () => {
   const result = await populateDisciplineBlock(tmpRepo, 'code', { waveId: 'w42' });
   assert.equal(result.ok, true, 'waveId option must be accepted and call must succeed');
 });
+
+// ---------------------------------------------------------------------------
+// W1 wiring regression guard — populateDisciplineBlock must be invoked from
+// production code, not just from tests. The cross-audit's W1 lens caught this
+// as a real BLOCKER: the function shipped as dead code because the only
+// "calling path" was prose in ijfw-workflow/SKILL.md.
+//
+// This test asserts the wiring exists by source-inspecting wave-state.js for
+// the load + invocation pattern. If a future change removes the wiring, this
+// test fails — keeping the no-half-shipping invariant explicit.
+// ---------------------------------------------------------------------------
+
+test('wave-state.js::checkpointWave invokes populateDisciplineBlock (wiring guard)', async () => {
+  const waveStatePath = join(
+    new URL('.', import.meta.url).pathname,
+    '..',
+    '..',
+    'src',
+    'orchestrator',
+    'wave-state.js',
+  );
+  const src = readFileSync(waveStatePath, 'utf8');
+
+  assert.match(
+    src,
+    /loadPopulateDisciplineBlock\s*\(/,
+    'wave-state.js must define loadPopulateDisciplineBlock lazy loader',
+  );
+  assert.match(
+    src,
+    /mod\.populateDisciplineBlock/,
+    'wave-state.js must import the populateDisciplineBlock symbol from agents-md-blackboard',
+  );
+  assert.match(
+    src,
+    /await populateDisciplineBlock\s*\(\s*projectRoot/,
+    'wave-state.js::checkpointWave must call populateDisciplineBlock(projectRoot, ...)',
+  );
+});
+
+test('wave-state.js wires DISCIPLINE invocation INSIDE checkpointWave (not orphan)', async () => {
+  // Stronger guard: the populateDisciplineBlock call must appear within the
+  // checkpointWave function body, not in some unreachable helper. We slice
+  // from `export async function checkpointWave` to the next top-level
+  // `export` and require the wiring to live inside that slice.
+  const waveStatePath = join(
+    new URL('.', import.meta.url).pathname,
+    '..',
+    '..',
+    'src',
+    'orchestrator',
+    'wave-state.js',
+  );
+  const src = readFileSync(waveStatePath, 'utf8');
+
+  const fnStart = src.indexOf('export async function checkpointWave');
+  assert.notEqual(fnStart, -1, 'checkpointWave must be exported');
+  const nextExport = src.indexOf('\nexport ', fnStart + 1);
+  const fnBody = nextExport === -1 ? src.slice(fnStart) : src.slice(fnStart, nextExport);
+
+  assert.ok(
+    /await populateDisciplineBlock\s*\(/.test(fnBody),
+    'populateDisciplineBlock must be called INSIDE checkpointWave body, not in a sibling helper',
+  );
+});
