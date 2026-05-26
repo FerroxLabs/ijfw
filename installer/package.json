@@ -13,6 +13,8 @@
     "src/install.ps1",
     "docs/GUIDE.md",
     "docs/guide/assets",
+    "scripts/pack-hub-extension.js",
+    "scripts/hub-extension/**",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

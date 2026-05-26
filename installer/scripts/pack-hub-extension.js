@@ -39,7 +39,28 @@ const INSTALLER_DIR = resolve(__dirname, '..');
 const PKG_PATH = join(INSTALLER_DIR, 'package.json');
 const TMPL_PATH = join(__dirname, 'hub-extension', 'aion-extension.json.tmpl');
 const HUB_EXT_DIR = join(__dirname, 'hub-extension');
-const DIST_DIR = join(INSTALLER_DIR, 'dist');
+
+// Output directory: defaults to installer/dist/. Override via `--output <dir>`
+// so consumers like Wayland's prebuild sync script can stage artifacts directly
+// into their own resources/hub/ dir without an intermediate copy step.
+//
+// The CLI flag is parsed at the script-arg level so all three invocations work:
+//   node scripts/pack-hub-extension.js                       (default dist/)
+//   node scripts/pack-hub-extension.js --output /tmp/stage    (custom dir)
+//   npx -y @ijfw/install --pack-hub-extension --output /tmp   (via ijfw CLI)
+function parseOutputArg(argv) {
+  const idx = argv.indexOf('--output');
+  if (idx !== -1 && idx + 1 < argv.length) {
+    const dir = argv[idx + 1];
+    if (!dir || dir.startsWith('-')) {
+      console.error('[pack-hub-extension] --output requires a directory argument');
+      process.exit(2);
+    }
+    return resolve(process.cwd(), dir);
+  }
+  return join(INSTALLER_DIR, 'dist');
+}
+const DIST_DIR = parseOutputArg(process.argv.slice(2));
 
 // ---------------------------------------------------------------------------
 // Read version from package.json

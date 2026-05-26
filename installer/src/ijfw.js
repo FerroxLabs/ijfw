@@ -196,6 +196,20 @@ async function main() {
       process.exit(r.status ?? 1);
       break;
     }
+    case 'pack-hub-extension': {
+      // v1.5.4: build the Wayland Hub Extension artifact (zip + SHA-512 SRI +
+      // hub-index snippet) on demand. Wayland's `scripts/sync-hub-extensions.ts`
+      // calls this via `npx -y @ijfw/install@latest --pack-hub-extension
+      // --output <stage-dir>` at build time so every Wayland build snapshots
+      // the latest published IJFW without committing binaries to the repo.
+      //
+      // All args after `pack-hub-extension` (including --output <dir>) pass
+      // through to scripts/pack-hub-extension.js unchanged.
+      const packScript = resolve(__dirname, '..', 'scripts', 'pack-hub-extension.js');
+      const r = spawnSync('node', [packScript, ...argv.slice(3)], { stdio: 'inherit' });
+      process.exit(r.status ?? 1);
+      break;
+    }
     case 'uninstall': {
       const uninstallBin = resolve(__dirname, '..', 'dist', 'uninstall.js');
       const r = spawnSync('node', [uninstallBin, ...argv.slice(3)], { stdio: 'inherit' });
