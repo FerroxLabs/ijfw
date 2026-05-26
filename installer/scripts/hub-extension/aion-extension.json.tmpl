@@ -1,0 +1,156 @@
+{
+  "name": "ijfw",
+  "displayName": "IJFW — AI Efficiency Layer",
+  "version": "{{VERSION}}",
+  "description": "One install, every AI coding agent, zero config. Unifies 15 CLIs under a shared MCP memory layer so context follows you across Claude, Codex, Gemini, Cursor, Windsurf, and 10 more.",
+  "author": "Sean Donahoe",
+  "icon": "assets/ijfw-logo.svg",
+  "engines": {
+    "wayland": ">=0.6.0"
+  },
+  "hubs": ["acpAdapters", "mcpServers"],
+  "lifecycle": {
+    "onInstall": "scripts/install.js",
+    "onUninstall": "scripts/uninstall.js"
+  },
+  "contributes": {
+    "acpAdapters": [
+      {
+        "id": "claude",
+        "name": "Claude Code",
+        "description": "Anthropic's Claude Code agentic coding CLI with IJFW memory + plugin layer",
+        "connectionType": "cli",
+        "cliCommand": "claude",
+        "defaultCliPath": "npx @anthropic-ai/claude-code",
+        "supportsStreaming": true
+      },
+      {
+        "id": "codex",
+        "name": "OpenAI Codex CLI",
+        "description": "OpenAI Codex CLI with IJFW MCP memory, hooks, skills, and command aliases",
+        "connectionType": "cli",
+        "cliCommand": "codex",
+        "defaultCliPath": "npx @openai/codex",
+        "supportsStreaming": true
+      },
+      {
+        "id": "gemini",
+        "name": "Gemini CLI",
+        "description": "Google Gemini CLI with IJFW MCP memory, extension bundle, and hooks",
+        "connectionType": "cli",
+        "cliCommand": "gemini",
+        "defaultCliPath": "npx @google/gemini-cli",
+        "supportsStreaming": true
+      },
+      {
+        "id": "cursor",
+        "name": "Cursor",
+        "description": "Cursor AI editor with IJFW MCP memory and project rules",
+        "connectionType": "cli",
+        "cliCommand": "cursor",
+        "defaultCliPath": "cursor",
+        "supportsStreaming": false
+      },
+      {
+        "id": "windsurf",
+        "name": "Windsurf",
+        "description": "Windsurf AI editor with IJFW MCP memory and project rules",
+        "connectionType": "cli",
+        "cliCommand": "windsurf",
+        "defaultCliPath": "windsurf",
+        "supportsStreaming": false
+      },
+      {
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "description": "GitHub Copilot (VS Code) with IJFW MCP memory and copilot-instructions",
+        "connectionType": "cli",
+        "cliCommand": "code",
+        "defaultCliPath": "code",
+        "supportsStreaming": false
+      },
+      {
+        "id": "hermes",
+        "name": "Hermes CLI",
+        "description": "Hermes CLI with IJFW MCP memory, skills, plugin, and tier-2 hook",
+        "connectionType": "cli",
+        "cliCommand": "hermes",
+        "defaultCliPath": "npx @hermes-ai/cli",
+        "supportsStreaming": true
+      },
+      {
+        "id": "wayland",
+        "name": "Wayland CLI",
+        "description": "Wayland CLI with IJFW MCP memory, skills, plugin, and tier-2 hook",
+        "connectionType": "cli",
+        "cliCommand": "wayland",
+        "defaultCliPath": "npx @wayland-ai/cli",
+        "supportsStreaming": true
+      },
+      {
+        "id": "aider",
+        "name": "Aider",
+        "description": "Aider AI pair programmer with IJFW rules (aider.conf.yml + CONVENTIONS.md)",
+        "connectionType": "cli",
+        "cliCommand": "aider",
+        "defaultCliPath": "npx aider-chat",
+        "supportsStreaming": false
+      },
+      {
+        "id": "opencode",
+        "name": "OpenCode",
+        "description": "OpenCode CLI with IJFW MCP memory (opencode mcp.local schema)",
+        "connectionType": "cli",
+        "cliCommand": "opencode",
+        "defaultCliPath": "npx opencode-ai",
+        "supportsStreaming": true
+      },
+      {
+        "id": "qwencode",
+        "name": "Qwen Code",
+        "description": "Alibaba Qwen Code CLI with IJFW MCP memory",
+        "connectionType": "cli",
+        "cliCommand": "qwen",
+        "defaultCliPath": "npx @qwen-ai/qwen-code",
+        "supportsStreaming": true
+      },
+      {
+        "id": "cline",
+        "name": "Cline",
+        "description": "Cline VS Code extension with IJFW MCP memory (globalStorage schema)",
+        "connectionType": "cli",
+        "cliCommand": "cline",
+        "defaultCliPath": "cline",
+        "supportsStreaming": false
+      },
+      {
+        "id": "kimicode",
+        "name": "Kimi Code",
+        "description": "Moonshot Kimi Code CLI with IJFW MCP memory",
+        "connectionType": "cli",
+        "cliCommand": "kimi",
+        "defaultCliPath": "npx @moonshot-ai/kimi-code",
+        "supportsStreaming": true
+      },
+      {
+        "id": "openclaw",
+        "name": "OpenClaw",
+        "description": "OpenClaw CLI with IJFW MCP memory (mcp.servers schema)",
+        "connectionType": "cli",
+        "cliCommand": "openclaw",
+        "defaultCliPath": "npx @openclaw-ai/cli",
+        "supportsStreaming": true
+      },
+      {
+        "id": "antigravity",
+        "name": "Antigravity",
+        "description": "Antigravity AI IDE (ex-Windsurf team) with IJFW MCP memory (IDE + CLI paths)",
+        "connectionType": "cli",
+        "cliCommand": "agy",
+        "defaultCliPath": "npx @antigravity-ai/cli",
+        "supportsStreaming": true
+      }
+    ],
+    "mcpServers": ["ijfw-memory"]
+  }
+}
