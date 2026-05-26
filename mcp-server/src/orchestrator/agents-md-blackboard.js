@@ -46,7 +46,7 @@
  * AGENTS.md hiccup — see `wave-state.js#checkpointWave`).
  */
 
-import { join } from 'node:path';
+import { join, resolve as pathResolve, dirname as pathDirname } from 'node:path';
 
 import { withFsLock, lockPathFor } from '../fs-lock.js';
 import { readWaveState } from './wave-state.js';
@@ -97,6 +97,17 @@ function renderBlackboardPayload(waveId, state) {
 export async function populateBlackboardBlock(waveId, projectRoot) {
   const state = await readWaveState(waveId, projectRoot);
   if (!state) return { ok: false, reason: 'no-state' };
+
+  // Defense-in-depth: refuse to operate at a filesystem root (e.g. '/' on
+  // POSIX, 'C:\\' on Windows). validateSafeRepoPath alone accepts these
+  // because '/AGENTS.md' is technically "inside" '/'; OS permissions would
+  // then catch the actual write, but the failure mode would be 'merge-error'
+  // not 'unsafe-path'. We want a clean structured rejection upstream of any
+  // I/O attempt. Test at integration/test-discipline-integration.js:189.
+  const resolvedRoot = pathResolve(projectRoot || '.');
+  if (resolvedRoot === pathDirname(resolvedRoot)) {
+    return { ok: false, reason: 'unsafe-path', error: 'projectRoot is a filesystem root' };
+  }
 
   const payload = renderBlackboardPayload(waveId, state);
   const agentsMdPath = join(projectRoot, 'AGENTS.md');
@@ -193,6 +204,12 @@ export async function populateDisciplineBlock(projectRoot, projectType, opts = {
       reason: 'template-missing',
       error: String(err.message || err),
     };
+  }
+
+  // Defense-in-depth: same filesystem-root rejection as populateBlackboardBlock.
+  const resolvedRoot = pathResolve(projectRoot || '.');
+  if (resolvedRoot === pathDirname(resolvedRoot)) {
+    return { ok: false, reason: 'unsafe-path', error: 'projectRoot is a filesystem root' };
   }
 
   const agentsMdPath = join(projectRoot, 'AGENTS.md');
