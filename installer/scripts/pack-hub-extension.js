@@ -3,14 +3,15 @@
 //
 // Packs the IJFW Wayland Hub Extension into a distributable zip artifact.
 //
-// Outputs (all under installer/dist/):
+// Outputs (all under installer/dist/ by default, or --output <dir>):
 //   ijfw-<version>.zip         — archive containing manifest + scripts dir + assets
 //   ijfw-<version>.sha512      — SRI integrity string: "sha512-<base64>"
 //   hub-index-snippet.json     — IHubExtension-shaped JSON for Wayland's Hub Index
 //
 // Usage:
-//   node scripts/pack-hub-extension.js
+//   node scripts/pack-hub-extension.js [--output <dir>]
 //   npm run pack:hub-extension
+//   node scripts/pack-hub-extension.js --help
 //
 // Requirements: Node.js >=18. Uses only Node builtins — no external deps.
 // Deterministic: all zip entries use fixed epoch timestamp (1980-01-01 00:00:00)
@@ -30,6 +31,29 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------------------
+// --help / -h short-circuit (L3-06)
+// Must happen before any side-effectful code runs.
+// ---------------------------------------------------------------------------
+
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(`
+Usage: node scripts/pack-hub-extension.js [--output <dir>]
+
+Options:
+  --output <dir>   Write zip, sha512, and snippet into <dir> instead of the
+                   default installer/dist/ (or process.cwd() when invoked from
+                   inside node_modules).
+  --help, -h       Print this help and exit.
+
+Outputs written:
+  ijfw-<version>.zip          Distributable extension archive
+  ijfw-<version>.sha512       SRI integrity string (sha512-<base64>)
+  hub-index-snippet.json      IHubExtension entry for Wayland's Hub Index
+`.trim());
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -108,13 +132,23 @@ entries.push({
   content: Buffer.from(manifest + '\n', 'utf8'),
 });
 
-// scripts/
+// scripts/ — render .tmpl files with {{VERSION}} substitution at pack time so
+// the bundled hooks reference the exact pinned version rather than @latest.
+// Backward-compat: if no .tmpl exists but the plain .js does, zip it as-is.
 for (const name of ['install.js', 'uninstall.js']) {
-  const src = join(HUB_EXT_DIR, name);
-  entries.push({
-    zipPath: `scripts/${name}`,
-    content: readFileSync(src),
-  });
+  const tmplSrc = join(HUB_EXT_DIR, `${name}.tmpl`);
+  const jsSrc = join(HUB_EXT_DIR, name);
+  let content;
+  if (existsSync(tmplSrc)) {
+    const raw = readFileSync(tmplSrc, 'utf8');
+    content = Buffer.from(raw.replaceAll('{{VERSION}}', VERSION), 'utf8');
+  } else if (existsSync(jsSrc)) {
+    content = readFileSync(jsSrc);
+  } else {
+    console.error(`[pack-hub-extension] ERROR: neither ${name}.tmpl nor ${name} found in hub-extension/scripts`);
+    process.exit(1);
+  }
+  entries.push({ zipPath: `scripts/${name}`, content });
 }
 
 // assets/ (walk directory, sorted)

@@ -1,0 +1,42 @@
+// IJFW Hub Extension — onUninstall lifecycle hook.
+// Runs in a sandboxed forked process via require() (NOT ESM).
+// Wayland forks this script with a 120s timeout; we set our own inner
+// timeouts split across two phases so we surface a clean error before
+// Wayland's hard kill.
+//
+// Phase 1 (pre-fetch): 60s — network round-trip to npm registry.
+// Phase 2 (execute):   40s — local uninstall from cached tarball.
+
+'use strict';
+
+const { spawnSync } = require('child_process');
+
+// Phase 1: pre-fetch (network) — pull package into npm cache.
+const fetchResult = spawnSync(
+  'npm',
+  ['pack', '@ijfw/install@{{VERSION}}', '--silent', '--prefer-offline', '--pack-destination', '/tmp'],
+  { stdio: 'pipe', timeout: 60_000 },
+);
+if (fetchResult.status !== 0) {
+  console.error('[ijfw] pre-fetch failed');
+  process.exit(1);
+}
+
+// Phase 2: execute uninstall (local) — positional subcommand, no '--' prefix.
+// '--uninstall' routes to "Unknown subcommand" (exit 1); 'uninstall' is correct.
+const result = spawnSync(
+  'npx',
+  ['-y', '--prefer-offline', '@ijfw/install@{{VERSION}}', 'uninstall'],
+  {
+    stdio: 'inherit',
+    timeout: 40_000,
+    env: { ...process.env, IJFW_NONINTERACTIVE: '1' },
+  },
+);
+
+if (result.status !== 0) {
+  console.error(`[ijfw] uninstall failed (exit ${result.status})`);
+  process.exit(result.status || 1);
+}
+
+console.log('[ijfw] IJFW uninstalled');
