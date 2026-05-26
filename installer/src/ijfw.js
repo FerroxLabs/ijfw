@@ -1,5 +1,5 @@
 // ijfw -- single entry point with subcommand dispatch.
-// Subcommands: install, uninstall, preflight, dashboard (v1.1D), doctor, design, blackboard, team, swarm, recover, help
+// Subcommands: install, uninstall, preflight, dashboard (v1.1D), doctor, design, blackboard, team, swarm, recover, pack-hub-extension, help
 
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -199,9 +199,10 @@ async function main() {
     case 'pack-hub-extension': {
       // v1.5.4: build the Wayland Hub Extension artifact (zip + SHA-512 SRI +
       // hub-index snippet) on demand. Wayland's `scripts/sync-hub-extensions.ts`
-      // calls this via `npx -y @ijfw/install@latest --pack-hub-extension
-      // --output <stage-dir>` at build time so every Wayland build snapshots
-      // the latest published IJFW without committing binaries to the repo.
+      // calls this via `npx -y @ijfw/install@latest pack-hub-extension
+      // --output <stage-dir>` at build time (positional subcommand — NO leading
+      // `--`) so every Wayland build snapshots the latest published IJFW
+      // without committing binaries to the repo.
       //
       // All args after `pack-hub-extension` (including --output <dir>) pass
       // through to scripts/pack-hub-extension.js unchanged.

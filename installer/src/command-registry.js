@@ -125,6 +125,16 @@ export const COMMAND_REGISTRY = Object.freeze([
 
   // ---------- TIER 2: COORDINATION (shown in `ijfw commands`) ----------
   {
+    name: 'pack-hub-extension',
+    tier: 'coordination',
+    owner: 'installer-direct',
+    description: 'Pack the Wayland Hub Extension (zip + SHA-512 + manifest snippet). Used by Wayland\'s prebuild sync.',
+    aliases: [],
+    since: '1.5.4',
+    status: 'active',
+    helpGroup: 'BUILD',
+  },
+  {
     name: 'status',
     tier: 'coordination',
     owner: 'orchestrator',
