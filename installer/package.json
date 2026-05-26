@@ -26,7 +26,8 @@
     "preflight": "node dist/ijfw.js preflight",
     "pack:check": "npm pack --dry-run",
     "pack:hub-extension": "node scripts/pack-hub-extension.js",
-    "prepublishOnly": "npm run build && npm run preflight"
+    "prepack": "node -e \"const fs=require('fs'),path=require('path');const d='dist';if(fs.existsSync(d)){for(const f of fs.readdirSync(d)){if(/^ijfw-\\d+\\.\\d+\\.\\d+\\.(zip|sha512)$/.test(f)){fs.rmSync(path.join(d,f))}}}\"",
+    "prepublishOnly": "npm run build && npm run preflight && npm run pack:check"
   },
   "devDependencies": {
     "esbuild": "^0.28.0",
