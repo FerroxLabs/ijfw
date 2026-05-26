@@ -197,6 +197,29 @@ function safeWrite(filePath, content, encoding) {
 }
 
 // ---------------------------------------------------------------------------
+// L2-06: verify hub-extension/ source tree exists before any read/zip work.
+// Without this guard, a malformed install (e.g., scripts/hub-extension/ pruned
+// from a custom build) produces a raw Node ENOENT stack trace mid-banner with
+// no [pack-hub-extension] prefix — confusing for Wayland's sync script
+// consumers. Fail-fast with a clean, actionable error instead.
+// ---------------------------------------------------------------------------
+
+if (!existsSync(HUB_EXT_DIR)) {
+  console.error(
+    `[pack-hub-extension] ERROR: hub-extension source dir missing: ${HUB_EXT_DIR}\n` +
+    '[pack-hub-extension] Ensure scripts/hub-extension/ ships alongside this script.\n' +
+    '[pack-hub-extension] If invoked via npx, your @ijfw/install tarball may be incomplete.'
+  );
+  process.exit(1);
+}
+if (!existsSync(TMPL_PATH)) {
+  console.error(
+    `[pack-hub-extension] ERROR: hub-extension manifest template missing: ${TMPL_PATH}`
+  );
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
 // Read version from package.json
 // ---------------------------------------------------------------------------
 
