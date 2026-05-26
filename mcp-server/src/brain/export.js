@@ -18,7 +18,12 @@ import { resolveBrainPaths } from './paths.js';
 import { validateSafeRepoPath } from './path-guard.js';
 
 const WIKI_TYPES = ['concepts', 'entities', 'decisions', 'milestones'];
-const WIKILINK_RE = /\[\[([^\]\n|]+)(?:\|[^\]\n]*)?\]\]/g;
+// Match the entire bracket-pair content as a single negated character class.
+// The slug (left of optional `|`) is extracted in JS after the regex match
+// instead of via a nested optional group -- safe-regex flagged the original
+// pattern (`[^\]\n|]+(?:\|[^\]\n]*)?`) as potentially unsafe even though it
+// can't backtrack catastrophically. This single-class form is provably linear.
+const WIKILINK_RE = /\[\[([^\]\n]+)\]\]/g;
 
 function findPage(wikiDir, slug) {
   for (const t of WIKI_TYPES) {
@@ -32,7 +37,11 @@ function parseWikilinks(md) {
   if (!md) return [];
   const out = new Set();
   for (const m of md.matchAll(WIKILINK_RE)) {
-    const target = m[1].trim();
+    // The capture group now includes the optional `|alias` suffix; the slug
+    // is the substring before the first `|` (matches the original semantics).
+    const inner = m[1];
+    const pipeIdx = inner.indexOf('|');
+    const target = (pipeIdx === -1 ? inner : inner.slice(0, pipeIdx)).trim();
     if (target) out.add(target);
   }
   return [...out];

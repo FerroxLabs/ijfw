@@ -28,7 +28,7 @@ import { migrateFactsInternalOnce } from './brain/migrate-facts-internal-once.js
 // importing server.js.
 import { runLayoutMigrations } from './memory/layout-migrations/index.js';
 import { homedir } from 'os';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { fileURLToPath } from 'url';
 import { createHash, randomBytes } from 'crypto';
 
 // Read version dynamically from package.json so bumps don't require a code change.

@@ -150,23 +150,6 @@ function extractTypeFromFrontmatter(raw) {
 }
 
 /**
- * Return true if any direct child entry name of `dir` satisfies `predicate`.
- * Best-effort: returns false on any readdir error.
- *
- * @param {string} dir
- * @param {(name: string) => boolean} predicate
- * @returns {boolean}
- */
-function hasDirEntryMatching(dir, predicate) {
-  try {
-    const entries = readdirSync(dir);
-    return entries.some(predicate);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Return true if `name` is a direct child of `repoRoot` that is a directory
  * AND contains at least one `.md` file. Avoids false-positive on plain files
  * named `chapters` or `manuscript`.
