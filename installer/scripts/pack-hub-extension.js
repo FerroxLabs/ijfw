@@ -24,9 +24,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir as osTmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -90,12 +92,32 @@ const WINDOWS_SYSTEM_DIRS = [
 /**
  * Returns true if the resolved path is the filesystem root or a known system
  * directory (or a child of one).
+ *
+ * Whitelist exception: paths inside the OS temp dir (os.tmpdir()) are always
+ * allowed even when they fall under a blocked system prefix. This matters on
+ * macOS where os.tmpdir() returns `/var/folders/.../T/` — a legitimate
+ * user-writable temp space whose parent `/var` is in the blocklist. Without
+ * this exception, every Wayland prebuild that stages into a temp dir on
+ * macOS would be rejected, breaking the documented sync pipeline.
+ *
  * @param {string} absPath  Already-resolved absolute path.
  * @returns {boolean}
  */
 function isSystemPath(absPath) {
   // Reject bare filesystem roots: '/', 'C:\', 'D:\', etc.
   if (/^[A-Za-z]:\\?$/.test(absPath) || absPath === '/') return true;
+
+  // OS temp-dir whitelist — overrides the system-prefix blocklist.
+  // Resolve both sides so macOS /var → /private/var symlinks compare cleanly.
+  try {
+    const tmp = osTmpdir();
+    const tmpReal = realpathSync(tmp);
+    const absReal = (() => { try { return realpathSync(absPath); } catch { return absPath; } })();
+    if (absReal === tmpReal || absReal.startsWith(tmpReal + '/') || absReal.startsWith(tmpReal + '\\')
+        || absPath === tmp || absPath.startsWith(tmp + '/') || absPath.startsWith(tmp + '\\')) {
+      return false;
+    }
+  } catch { /* fall through to blocklist */ }
 
   const lc = absPath.toLowerCase();
   const allBlocked = [...POSIX_SYSTEM_DIRS, ...WINDOWS_SYSTEM_DIRS];
