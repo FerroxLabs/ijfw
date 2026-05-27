@@ -2,7 +2,7 @@
 // Flow: preflight → resolve target → clone/pull → scripts/install.sh → merge marketplace → summary.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, rmSync, mkdirSync, realpathSync, renameSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, realpathSync, renameSync, readdirSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -40,14 +40,25 @@ function latestTagFromGithub() {
 
 // Pinning to latest tag is the default (audit R2); --branch escape hatch
 // stays available for bleeding-edge users and CI. Any lookup failure
-// (network down, no tags yet, ls-remote rate-limited) falls back silently
-// to the branch/DEFAULT_BRANCH rather than exploding the install.
-export function resolveBranchOrTag({ branch, branchExplicit, _tagLookup } = {}) {
+// (network down, no tags yet, ls-remote rate-limited) falls back to the
+// branch/DEFAULT_BRANCH rather than exploding the install — but the
+// fallback is now VISIBLE so users don't think they're on a pinned tag.
+// (V155-032)
+export function resolveBranchOrTag({ branch, branchExplicit, _tagLookup, _logger } = {}) {
   if (branchExplicit) return branch;
   const lookup = _tagLookup || latestTagFromGithub;
   let tag = null;
   try { tag = lookup(); } catch { tag = null; }
-  return tag || branch || DEFAULT_BRANCH;
+  if (!tag) {
+    const log = _logger || console.warn;
+    const eff = branch || DEFAULT_BRANCH;
+    log(
+      `  note: could not resolve latest tag from upstream (network or rate-limit?). ` +
+      `Using branch "${eff}" instead. Pin a specific version with --branch vX.Y.Z if needed.`,
+    );
+    return eff;
+  }
+  return tag;
 }
 
 function printHelp() {
@@ -188,20 +199,56 @@ function cloneOrPull(dir, branch) {
   }
 
   // Broken repo or no origin: backup user data, re-clone, restore.
+  // V155-013: the restore allowlist must cover every user-data directory the
+  // installer has accumulated since v1.4.x — previously only 4 items were
+  // copied back and the rest (state/, ijfw/ brain, .ijfw/, cache/, run/,
+  // logs/) were silently deleted along with the .bak tree. We also DO NOT
+  // delete the .bak directory until after restore succeeds, so a restore
+  // failure leaves the operator with a recoverable snapshot.
+  const RESTORE_ALLOWLIST = [
+    'memory',
+    'sessions',
+    'install.log',
+    '.session-counter',
+    // v1.5.x additions:
+    'ijfw',          // visible brain layer (wiki + facts)
+    'state',         // state.json, deploy-failures.jsonl, .dream-state-v2.json
+    'cache',         // npm-view-cache and friends
+    'logs',          // post-tool-use logs, jsonl observations
+    'run',           // runtime lock files / pid markers
+    '.ijfw',         // internal — recall counter, indexes, layout version
+  ];
   const backupDir = dir + '.bak.' + Date.now();
   renameSync(dir, backupDir);
   try {
     const r = spawnSync('git', ['clone', '--depth', '1', '--branch', branch, DEFAULT_REPO, dir], { stdio: 'inherit' });
     if (r.status !== 0) throw new Error(`IJFW repo fetch did not complete (exit ${r.status}) -- check network access and retry.`);
-    for (const item of ['memory', 'sessions', 'install.log', '.session-counter']) {
+    let restoredCount = 0;
+    for (const item of RESTORE_ALLOWLIST) {
       const src = join(backupDir, item);
       if (existsSync(src)) {
         const dst = join(dir, item);
         if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
         renameSync(src, dst);
+        restoredCount++;
       }
     }
-    rmSync(backupDir, { recursive: true, force: true });
+    // Only delete the backup AFTER restore has completed.
+    // Leave .bak directory in place if anything still exists inside it — that's
+    // user data we don't know about; tell the operator where to find it.
+    let backupResidual = [];
+    try {
+      backupResidual = readdirSync(backupDir);
+    } catch { /* missing or already-empty — fall through */ }
+    if (backupResidual.length === 0) {
+      rmSync(backupDir, { recursive: true, force: true });
+    } else {
+      console.warn(
+        `  [!] restored ${restoredCount} known dirs; backup retained at ${backupDir} ` +
+        `(contains: ${backupResidual.slice(0, 8).join(', ')}${backupResidual.length > 8 ? ', ...' : ''}). ` +
+        `Remove manually after verifying.`,
+      );
+    }
     return 'updated';
   } catch (err) {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
@@ -240,7 +287,19 @@ async function main() {
 
   const sigint = () => {
     if (createdThisRun && existsSync(target)) {
-      try { rmSync(target, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try {
+        rmSync(target, { recursive: true, force: true });
+      } catch (err) {
+        // V155-053: surface the cleanup failure so the user knows they
+        // need to manually rm the partial install before retrying. Common
+        // on Windows when AV scanners still hold a handle on the freshly
+        // written file (EBUSY/EPERM).
+        const msg = err && err.message ? err.message : String(err);
+        console.warn(
+          `\n  [!] partial install at ${target} could not be cleaned (${msg}) — ` +
+          `run \`rm -rf "${target}"\` (or Remove-Item -Recurse -Force on Windows) before retrying.`,
+        );
+      }
     }
     process.exit(130);
   };

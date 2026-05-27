@@ -94,10 +94,25 @@ function Invoke-CloneOrPull($target, $branch) {
     if ($LASTEXITCODE -eq 0) {
       # Self-heal stale origin URLs across host migrations (1.2.9 parity with install.js).
       # Without this, Windows users on the pre-GitLab origin still 404 on every upgrade.
+      # V155-012: only rewrite ORIGINS THAT MATCH KNOWN STALE PATTERNS. Previously
+      # this clobbered SSH remotes, forks, and any user-customized origin — anyone
+      # working on the IJFW source itself ended up silently retargeted to upstream.
+      # Port the install.js STALE_PATTERNS allowlist verbatim (case-insensitive).
       $currentOrigin = ($currentOriginRaw | Out-String).Trim()
-      if ($currentOrigin -and $currentOrigin -ne $DEFAULT_REPO) {
+      $stalePatterns = @(
+        '^https://github\.com/seandonahoe/ijfw(\.git)?/?$',
+        '^https://github\.com/therealseandonahoe/ijfw(\.git)?/?$'
+      )
+      $isStale = $false
+      foreach ($pat in $stalePatterns) {
+        if ($currentOrigin -imatch $pat) { $isStale = $true; break }
+      }
+      if ($currentOrigin -and $isStale) {
         Write-Host "  origin migration: $currentOrigin -> $DEFAULT_REPO"
         & git -C $target remote set-url origin $DEFAULT_REPO
+        if ($LASTEXITCODE -ne 0) {
+          Write-Warning "  origin migration failed -- could not repoint $currentOrigin to $DEFAULT_REPO"
+        }
       }
       # fetch + hard checkout avoids ff-only failures from local divergence.
       & git -C $target fetch --depth 1 origin $branch
@@ -118,7 +133,13 @@ function Invoke-CloneOrPull($target, $branch) {
   try {
     & git clone --depth 1 --branch $branch $DEFAULT_REPO $target
     if ($LASTEXITCODE -ne 0) { throw "Could not reach the IJFW repo (exit $LASTEXITCODE). Check your network connection and retry." }
-    foreach ($item in @('memory', 'sessions', 'install.log', '.session-counter')) {
+    # V155-013: expanded restore allowlist + retain backup if residual content remains
+    # so the operator can recover anything the allowlist doesn't know about.
+    $restoreAllowlist = @(
+      'memory', 'sessions', 'install.log', '.session-counter',
+      'ijfw', 'state', 'cache', 'logs', 'run', '.ijfw'
+    )
+    foreach ($item in $restoreAllowlist) {
       $src = Join-Path $backupDir $item
       if (Test-Path $src) {
         $dst = Join-Path $target $item
@@ -126,7 +147,13 @@ function Invoke-CloneOrPull($target, $branch) {
         Move-Item -LiteralPath $src -Destination $dst -Force
       }
     }
-    Remove-Item -Recurse -Force -LiteralPath $backupDir
+    $residual = Get-ChildItem -LiteralPath $backupDir -Force -ErrorAction SilentlyContinue
+    if (-not $residual -or $residual.Count -eq 0) {
+      Remove-Item -Recurse -Force -LiteralPath $backupDir -ErrorAction SilentlyContinue
+    } else {
+      $sample = ($residual | Select-Object -First 8 | ForEach-Object { $_.Name }) -join ', '
+      Write-Warning "  restored known dirs; backup retained at $backupDir (contains: $sample). Remove manually after verifying."
+    }
     return "updated"
   } catch {
     if (Test-Path $target) { Remove-Item -Recurse -Force -LiteralPath $target }
