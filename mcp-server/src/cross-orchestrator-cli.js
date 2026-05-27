@@ -3414,7 +3414,18 @@ function cmdSwarm(sub) {
     const taskId = args[0];
     const owner = optionValue(args.slice(1), ['--owner', '-o']);
     const message = optionValue(args.slice(1), ['--message', '-m']) || positionalMessage(args.slice(1), ['--owner', '-o']);
-    const result = completeSwarmTask(process.cwd(), taskId, { owner, message });
+    const commitSha = optionValue(args.slice(1), ['--commit', '--sha']);
+    const filesChanged = Number(optionValue(args.slice(1), ['--files-changed']));
+    const skipEvidence = args.includes('--skip-evidence');
+    // V155-006: caller must produce a filesystem witness (sha OR diffStats) OR
+    // explicitly opt out via --skip-evidence (admin overrides, dry-run flows).
+    // The planner records `task.completed-no-evidence` for downstream audit.
+    const evidence = commitSha
+      ? { commitSha }
+      : Number.isFinite(filesChanged) && filesChanged >= 1
+        ? { diffStats: { filesChanged } }
+        : undefined;
+    const result = completeSwarmTask(process.cwd(), taskId, { owner, message, evidence, skipEvidence });
     if (!result.ok) {
       console.log(`Swarm complete halted: ${result.error}`);
       process.exit(1);

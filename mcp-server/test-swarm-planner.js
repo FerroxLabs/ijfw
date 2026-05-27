@@ -184,7 +184,10 @@ test('swarm task lifecycle starts, completes, and releases claims', () => {
     assert.equal(started.task.status, 'in_progress');
     assert.equal(started.claims[0].artifact_id, 'runtime-module');
 
-    const completed = completeSwarmTask(dir, taskId, { message: 'tests passed' });
+    const completed = completeSwarmTask(dir, taskId, {
+      message: 'tests passed',
+      evidence: { commitSha: 'deadbeefcafe1234' },
+    });
     assert.equal(completed.ok, true);
     assert.equal(completed.task.status, 'done');
     assert.equal(completed.releases[0].released, 1);
@@ -208,7 +211,12 @@ test('startSwarmTask requires dependencies to be done', () => {
     assert.equal(blocked.error, 'dependency-not-done');
 
     assert.equal(startSwarmTask(dir, 'swarm:w1:campaign-brief').ok, true);
-    assert.equal(completeSwarmTask(dir, 'swarm:w1:campaign-brief').ok, true);
+    assert.equal(
+      completeSwarmTask(dir, 'swarm:w1:campaign-brief', {
+        evidence: { commitSha: 'beadcafe7654321' },
+      }).ok,
+      true,
+    );
     assert.equal(startSwarmTask(dir, 'swarm:w2:article-draft').ok, true);
   } finally {
     cleanup(dir);

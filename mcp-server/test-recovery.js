@@ -53,7 +53,9 @@ test('recoveryStatus recommends next action from task state', () => {
     status = recoveryStatus(dir);
     assert.match(status.next, /Continue task: swarm:w1:runtime-module/);
 
-    completeSwarmTask(dir, 'swarm:w1:runtime-module');
+    completeSwarmTask(dir, 'swarm:w1:runtime-module', {
+      evidence: { commitSha: 'feedface1234567' },
+    });
     status = recoveryStatus(dir);
     assert.match(status.next, /Start task: swarm:w2:regression-tests/);
   } finally {

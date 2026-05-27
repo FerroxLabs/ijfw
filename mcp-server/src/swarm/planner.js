@@ -177,11 +177,55 @@ export function startSwarmTask(projectRoot, taskId, options = {}) {
   return { ok: updated.ok, task: updated.task, claims: claimResults, error: updated.error };
 }
 
+// V155-006 (HIGH) — completeSwarmTask used to advance status:'done' with
+// nothing but the caller's word. That's the v1.5.1 hallucination signature
+// encoded into the state layer: a subagent claims DONE, blackboard records
+// DONE, but there is no filesystem witness (no commit, no diff). Recovery
+// then trusts the false-positive and the build silently drifts.
+//
+// Fix: require an `evidence` envelope with at least one concrete artifact:
+//   - evidence.commitSha    — 7-40 hex chars (short or full SHA)
+//   - evidence.diffStats    — { filesChanged: >=1, ... }
+//
+// Callers that genuinely cannot produce evidence (e.g., admin overrides,
+// task-tracking-only flows) MUST set `options.skipEvidence: true` AND a
+// reason; the completion still writes status:'done' but the blackboard
+// event is tagged `task.completed-no-evidence` so audits can spot it.
+function isValidEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object') return false;
+  const { commitSha, diffStats } = evidence;
+  if (typeof commitSha === 'string' && /^[a-f0-9]{7,40}$/.test(commitSha)) {
+    return true;
+  }
+  if (
+    diffStats &&
+    typeof diffStats === 'object' &&
+    typeof diffStats.filesChanged === 'number' &&
+    diffStats.filesChanged >= 1
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function completeSwarmTask(projectRoot, taskId, options = {}) {
   const task = findTask(projectRoot, taskId);
   if (!task.ok) return task;
   if (!['in_progress', 'review'].includes(task.task.status)) {
     return { ok: false, error: 'task-not-in-progress', task: task.task };
+  }
+  // V155-006 evidence gate. `skipEvidence:true` is the explicit escape
+  // hatch — callers that intentionally complete without filesystem witness
+  // (admin overrides, dry-run completion) opt in by name, and the event
+  // log records the bypass for downstream audits.
+  const evidenceOk = isValidEvidence(options.evidence);
+  if (!evidenceOk && options.skipEvidence !== true) {
+    return {
+      ok: false,
+      error: 'missing-evidence',
+      message: 'completeSwarmTask requires evidence.commitSha or evidence.diffStats (or set skipEvidence:true)',
+      task: task.task,
+    };
   }
   const owner = options.owner || task.task.active_owner || task.task.owner;
   const releases = [];
@@ -195,11 +239,12 @@ export function completeSwarmTask(projectRoot, taskId, options = {}) {
   });
   if (updated.ok) {
     appendBlackboardEvent(projectRoot, {
-      type: 'task.completed',
+      type: evidenceOk ? 'task.completed' : 'task.completed-no-evidence',
       actor: owner,
       task_id: taskId,
       artifact_ids: task.task.artifact_ids || [],
       message: options.message || `Completed ${taskId}`,
+      evidence: evidenceOk ? options.evidence : undefined,
     });
   }
   return { ok: updated.ok, task: updated.task, releases, error: updated.error };
