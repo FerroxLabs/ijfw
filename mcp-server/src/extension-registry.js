@@ -43,7 +43,11 @@ MCowBQYDK2VwAyEAL2lCdti0bYiFTGUo/hffy+NiBUBXdbDcdaDmjJS27i0=
 -----END PUBLIC KEY-----`;
 
 const DEFAULT_REGISTRY_URL = 'https://registry.ijfw.dev/publishers/v1.json';
-const FALLBACK_REGISTRY_URL = 'https://therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json';
+// Secondary fallback. The trust anchor is the embedded IJFW_REGISTRY_META_KEY_PEM
+// (below), NOT the URL — so swapping hosts is safe. GitHub Pages publishes
+// registry/publishers/v1.json from the FerroxLabs/ijfw main branch; the pages
+// job is not yet wired (Phase B), so this URL 404s until the repo is populated.
+const FALLBACK_REGISTRY_URL = 'https://ferroxlabs.github.io/ijfw/registry/publishers/v1.json';
 const MAX_REGISTRY_BYTES = 1024 * 1024; // 1 MiB cap
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h (back-compat alias)
 const PUBLISHER_TTL_MS = 24 * 60 * 60 * 1000; // 24 h — B17 publisher half

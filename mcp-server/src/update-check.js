@@ -14,7 +14,7 @@ import { npmView, compareSemver } from './lib/npm-view.js';
 import { issueToken, writePendingSentinel, readPendingSentinel } from './lib/token.js';
 
 const PKG = '@ijfw/install';
-const REPO = 'therealseandonahoe/ijfw';
+const REPO = 'FerroxLabs/ijfw';
 
 function ijfwHome() {
   return process.env.IJFW_HOME || join(homedir(), '.ijfw');
@@ -90,7 +90,11 @@ export async function ijfwUpdateCheck(args = {}) {
     latest,
     available,
     reachable: true,
-    changelog_url: `https://gitlab.com/${REPO}/-/releases/v${latest}`,
+    // GitHub uses `releases/tag/` (not `releases/v`). Until v1.5.5
+    // is published as a GitHub Release on FerroxLabs/ijfw the URL 404s;
+    // acceptable, since users on prior releases only see this URL after
+    // upgrading past v1.5.5.
+    changelog_url: `https://github.com/${REPO}/releases/tag/v${latest}`,
   };
 
   if (available) {
