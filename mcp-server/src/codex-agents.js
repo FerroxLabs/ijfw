@@ -1,5 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import {
+  existsSync, mkdirSync, readFileSync, realpathSync,
+  readdirSync, unlinkSync,
+} from 'node:fs';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { writeAtomic } from './lib/atomic-io.js';
 
 // F-FUN-7 (audit-MED-teams-#8): role-type → Codex tool allowlist. Honors
@@ -102,12 +105,32 @@ export function syncCodexAgents(projectRoot = process.cwd(), options = {}) {
     agentFiles.push(agentPath);
   }
 
+  // V155-063 (v1.5.5): garbage-collect TOML files for roles that no longer
+  // exist in the current charter. Without this sweep, charter A (role X+Y)
+  // → charter B (role X only) leaves `<safeAgentsDir>/y.toml` on disk and
+  // Codex continues to pick up the phantom agent. We compare the dir
+  // listing against the set of just-written agentFiles and unlink any
+  // `.toml` whose basename isn't claimed.
+  const removed = [];
+  const expected = new Set(agentFiles.map((p) => basename(p)));
+  let entries = [];
+  try { entries = readdirSync(safeAgentsDir); } catch { /* best-effort */ }
+  for (const name of entries) {
+    if (!name.endsWith('.toml')) continue;
+    if (expected.has(name)) continue;
+    const p = join(safeAgentsDir, name);
+    try { unlinkSync(p); removed.push(p); } catch { /* best-effort */ }
+  }
+
   return {
     ok: true,
     agentsDir: safeAgentsDir,
     agentFiles,
     count: agentFiles.length,
     skipped,
+    // Only surface `removed` when something was GCed so the common path stays
+    // terse.
+    ...(removed.length > 0 ? { removed } : {}),
   };
 }
 

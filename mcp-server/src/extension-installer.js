@@ -737,6 +737,53 @@ export function extensionAuditBrief(manifest, skillBodies) {
 // --- install ----------------------------------------------------------------
 
 /**
+ * V155-061 (v1.5.5): byte-for-byte equality check for two directory trees.
+ * Returns true only when every file in `a` is present in `b` with identical
+ * bytes (and vice versa). Bails on the first divergence for efficiency.
+ * Used by the installer's staged-flip path to short-circuit re-installing
+ * the same version (avoids rewriting `installed_at` for no behavior change).
+ */
+async function dirsAreByteIdentical(a, b) {
+  let entriesA;
+  let entriesB;
+  try { entriesA = await readdir(a, { withFileTypes: true }); }
+  catch { return false; }
+  try { entriesB = await readdir(b, { withFileTypes: true }); }
+  catch { return false; }
+  const namesA = entriesA.map((e) => e.name).sort();
+  const namesB = entriesB.map((e) => e.name).sort();
+  if (namesA.length !== namesB.length) return false;
+  for (let i = 0; i < namesA.length; i += 1) {
+    if (namesA[i] !== namesB[i]) return false;
+  }
+  const byNameA = new Map(entriesA.map((e) => [e.name, e]));
+  const byNameB = new Map(entriesB.map((e) => [e.name, e]));
+  for (const name of namesA) {
+    const ea = byNameA.get(name);
+    const eb = byNameB.get(name);
+    const aPath = join(a, name);
+    const bPath = join(b, name);
+    if (ea.isDirectory() !== eb.isDirectory()) return false;
+    if (ea.isDirectory()) {
+      if (!(await dirsAreByteIdentical(aPath, bPath))) return false;
+      continue;
+    }
+    // Treat anything that isn't a regular file as "not identical" — symlinks,
+    // sockets etc. don't survive npm-publish round-trips, so this is rare.
+    if (!ea.isFile() || !eb.isFile()) return false;
+    let bufA;
+    let bufB;
+    try {
+      bufA = await readFile(aPath);
+      bufB = await readFile(bPath);
+    } catch { return false; }
+    if (bufA.length !== bufB.length) return false;
+    if (!bufA.equals(bufB)) return false;
+  }
+  return true;
+}
+
+/**
  * Install an extension from npm, local path, or https git URL.
  *
  * @param {string} source
@@ -747,7 +794,7 @@ export function extensionAuditBrief(manifest, skillBodies) {
  *   accept_degraded_trident?: boolean,
  *   tridentExecutor?: Function,  // test seam — forwarded as runTrident({executor})
  * }} opts
- * @returns {Promise<{ok: boolean, name?: string, version?: string, scope?: string, gate_result_block?: string, errors?: string[]}>}
+ * @returns {Promise<{ok: boolean, name?: string, version?: string, scope?: string, gate_result_block?: string, errors?: string[], unchanged?: boolean}>}
  */
 export async function installExtension(source, opts = {}) {
   if (!opts || typeof opts !== 'object') {
@@ -1013,6 +1060,29 @@ export async function installExtension(source, opts = {}) {
         const dst = join(skillsRoot, s.file);
         await mkdir(dirname(dst), { recursive: true });
         await cp(s.absPath, dst, { force: true });
+      }
+
+      // V155-061 (v1.5.5): byte-identical short-circuit. Re-installing the
+      // same version was unconditional rm+rename → registry rewrite with a
+      // fresh installed_at timestamp. That defeats staleness audits and
+      // makes downstream watchers + hot-reloaders churn for nothing. If the
+      // staged tmpScopeDir is byte-identical to the existing scopeDir, skip
+      // both the swap AND the registry update so installed_at stays pinned
+      // to the original install. Mirrors `syncCodexAgents`'s `existing ===
+      // rendered` pattern. We still need the staged dir cleaned up if we
+      // bail out.
+      const identical = await dirsAreByteIdentical(tmpScopeDir, scopeDir);
+      if (identical) {
+        await rm(tmpScopeDir, { recursive: true, force: true }).catch(() => {});
+        return {
+          ok: true,
+          name: manifest.name,
+          version: manifest.version,
+          scope: opts.scope,
+          gate_result_block: gateResultBlock,
+          // Diagnostic so callers can tell a no-op install from a fresh one.
+          unchanged: true,
+        };
       }
 
       // Atomic flip: drop old scopeDir, rename tmp -> scope. fs.rename is

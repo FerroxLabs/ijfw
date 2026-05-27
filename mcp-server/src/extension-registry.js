@@ -831,7 +831,12 @@ export async function withSourceCache(source, mutator) {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy single-source cache helpers (kept for v1.4.1 back-compat tests).
+// Single-source cache helpers — used by the production trust-store refresh
+// path (`refreshTrustFromRegistry`, ~line 1350) AND by the offline fallback
+// in `dispatch/extension.js:416`. NOT v1.4.1 back-compat scaffolding —
+// V155-058 (v1.5.5) corrects the prior misleading comment that called this
+// "kept for v1.4.1 back-compat tests"; deleting it would silently break the
+// offline trust path on next federated-registry refresh failure.
 // ---------------------------------------------------------------------------
 
 export async function readCachedRegistry() {
@@ -859,8 +864,10 @@ export async function writeCachedRegistry(registry) {
 }
 
 // ---------------------------------------------------------------------------
-// applyRegistry — merge publishers + process revocations
-// (single-source path, retained for v1.4.1 callers + tests)
+// applyRegistry — merge publishers + process revocations.
+// Production callers: `refreshTrustFromRegistry` (this file, ~line 1376) and
+// the offline-fallback path in `dispatch/extension.js:416`. V155-058 (v1.5.5)
+// corrects an earlier "retained for v1.4.1 callers + tests" comment.
 // ---------------------------------------------------------------------------
 
 /**

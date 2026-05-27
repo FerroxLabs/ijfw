@@ -441,10 +441,19 @@ function patchPluginMcpJson({ ijfwHome, repoRoot, nodeBin, serverJs }) {
   d.mcpServers['ijfw-memory'].command = nodeBin;
   d.mcpServers['ijfw-memory'].args = [serverJs];
   const envSep = process.platform === 'win32' ? ';' : ':';
-  const commonPaths =
-    process.platform === 'win32'
-      ? [nodeDir, 'C:\\Windows\\System32']
-      : [nodeDir, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'];
+  // V155-060 (v1.5.5): scope `/opt/homebrew/bin` to macOS only. The legacy
+  // POSIX branch prepended it on every non-Windows platform; on Linux with
+  // an NFS-mounted `/opt/homebrew/bin/foo` from a Mac, exec failed
+  // confusingly with an arch64 mismatch. Linux PATH now omits the macOS
+  // homebrew prefix; macOS keeps the original chain.
+  let commonPaths;
+  if (process.platform === 'win32') {
+    commonPaths = [nodeDir, 'C:\\Windows\\System32'];
+  } else if (process.platform === 'darwin') {
+    commonPaths = [nodeDir, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'];
+  } else {
+    commonPaths = [nodeDir, '/usr/local/bin', '/usr/bin', '/bin'];
+  }
   const dedup = [...new Set(commonPaths.filter((x) => x && fs.existsSync(x)))];
   d.mcpServers['ijfw-memory'].env = { PATH: dedup.join(envSep) };
 
