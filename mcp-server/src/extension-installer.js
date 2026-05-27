@@ -1129,14 +1129,24 @@ export async function installExtension(source, opts = {}) {
       }
     }
 
+    // V155-003: when a project-scope install only partially deploys to platforms
+    // (e.g. some skill writes failed), the registry has already been updated but
+    // the user's editor world is incomplete. Surface this honestly via ok:'partial'
+    // rather than the previous ok:true with a buried deploy_partial sub-field.
+    // Top-level scopes (user/system) skip platform deploy entirely so this only
+    // engages for the project path.
+    const partialFailed = opts.scope === 'project' && deployPartial === true;
     return {
-      ok: true,
+      ok: partialFailed ? 'partial' : true,
       name: manifest.name,
       version: manifest.version,
       scope: opts.scope,
       gate_result_block: gateResultBlock,
       deploy: deployInfo,
       deploy_partial: deployPartial,
+      ...(partialFailed
+        ? { error: 'deploy-partial', partial_failures: partialDeployFailures }
+        : {}),
     };
   } catch (err) {
     return {
