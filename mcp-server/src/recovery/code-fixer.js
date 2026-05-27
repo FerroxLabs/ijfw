@@ -223,13 +223,28 @@ export function triage(finding) {
 /* ────────────────────────────── tier 1 — re-read ────────────────────────── */
 
 /**
- * verifyTier1(filePath, newString) — confirm the edit actually landed.
+ * verifyTier1(filePath, newString, intent) — confirm the edit actually landed.
  * Returns { ok: boolean, evidence: string }.
+ *
+ * V155-025: previously `newString === ''` short-circuited to ok:true regardless
+ * of intent — empty-string was always "contained" in any file. Deletion intents
+ * legitimately produce an empty newString (the substring being removed), so
+ * the gate is parameterised by intent: only `'delete'` permits the empty path.
+ * Any other intent supplying an empty newString is treated as unverifiable.
  */
-export async function verifyTier1(filePath, newString) {
+export async function verifyTier1(filePath, newString, intent = 'edit') {
   try {
     const content = await readFile(filePath, 'utf8');
-    if (newString === '' || content.includes(newString)) {
+    if (newString === '') {
+      if (intent === 'delete') {
+        return { ok: true, evidence: 'tier-1: empty newString accepted for delete intent' };
+      }
+      return {
+        ok: false,
+        evidence: 'tier-1: empty newString supplied for non-delete intent — cannot verify',
+      };
+    }
+    if (content.includes(newString)) {
       return { ok: true, evidence: '' };
     }
     return {
@@ -358,10 +373,35 @@ export async function verifyTier3(projectRoot, verifyCmdOverride) {
   // verbatim. Timeout is generous (5 min) because real test suites can be slow.
   return new Promise((resolve) => {
     execFile('sh', ['-c', cmd], { cwd: projectRoot, timeout: 5 * 60_000 }, (err, stdout, stderr) => {
-      if (!err) return resolve({ ok: true, skipped: false });
-      const blob = String(stderr || stdout || err.message || '');
-      const evidence = blob.split('\n').slice(0, 20).join('\n');
-      resolve({ ok: false, evidence: `tier-3 (${cmd}): ${evidence}` });
+      const combined = `${String(stdout || '')}\n${String(stderr || '')}`;
+      if (err) {
+        const evidence = combined.split('\n').slice(0, 20).join('\n');
+        return resolve({ ok: false, evidence: `tier-3 (${cmd}): ${evidence}` });
+      }
+      // V155-029: exit 0 alone is NOT proof of healthy. `npm test --silent`,
+      // `: # noop`, a custom `test` script that just exits 0 — all return 0
+      // without running anything. Require positive evidence: either explicit
+      // pass markers in the output OR non-empty output WITHOUT failure markers.
+      const FAIL_MARKERS = /\b(failing|failed|FAIL|error|✘|✗|fatal)\b/i;
+      const PASS_MARKERS = /\b(pass|passing|passed|ok|✓|✔)\b/i;
+      if (FAIL_MARKERS.test(combined)) {
+        const evidence = combined.split('\n').filter((l) => FAIL_MARKERS.test(l)).slice(0, 20).join('\n');
+        return resolve({ ok: false, evidence: `tier-3 (${cmd}) exit 0 but failure markers present: ${evidence}` });
+      }
+      const trimmed = combined.trim();
+      if (trimmed.length === 0) {
+        return resolve({
+          ok: false,
+          evidence: `tier-3 (${cmd}): exited 0 with no output — silent-success suspected, cannot prove project healthy`,
+        });
+      }
+      if (!PASS_MARKERS.test(combined)) {
+        return resolve({
+          ok: false,
+          evidence: `tier-3 (${cmd}): exited 0 but no pass markers in output — cannot prove tests ran`,
+        });
+      }
+      resolve({ ok: true, skipped: false });
     });
   });
 }
@@ -579,9 +619,14 @@ export async function fixFinding({
   const expectedNewString = typeof fix === 'object' ? fix.new_string : null;
 
   // 4. tier 1 — re-read
+  // V155-025: empty new_string only legitimate when intent is delete (old_string
+  // is being removed). Derive intent from fix shape so the gate can distinguish
+  // honest deletions from "no change supplied → unverifiable".
+  const fixIntent = (typeof fix === 'object' && fix.new_string === '') ? 'delete' : 'edit';
   const t1 = await verifyTier1(
     filePath,
     expectedNewString !== null && expectedNewString !== undefined ? expectedNewString : '',
+    fixIntent,
   );
   if (!t1.ok) {
     await rollback(filePath, originalContent);

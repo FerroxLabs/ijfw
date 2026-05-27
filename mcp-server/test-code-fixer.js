@@ -242,12 +242,54 @@ test('verifyTier3: no package.json + no Makefile → skipped', async () => {
   } finally { cleanup(dir); }
 });
 
-test('verifyTier3: explicit override echo true → ok', async () => {
+test('verifyTier3: override that emits a pass marker → ok', async () => {
+  const dir = freshTmp();
+  try {
+    // V155-029: `true` no longer counts — emits no output, indistinguishable
+    // from a silent-success stub. A real test runner emits PASS/ok markers;
+    // we require them here.
+    const r = await verifyTier3(dir, 'echo "1 passing"');
+    assert.equal(r.ok, true);
+    assert.equal(r.skipped, false);
+  } finally { cleanup(dir); }
+});
+
+test('V155-029: verifyTier3 rejects silent exit-0 (true)', async () => {
   const dir = freshTmp();
   try {
     const r = await verifyTier3(dir, 'true');
+    assert.equal(r.ok, false, 'silent exit 0 must NOT count as healthy');
+    assert.match(r.evidence, /silent-success|no output|no pass markers/);
+  } finally { cleanup(dir); }
+});
+
+test('V155-029: verifyTier3 rejects exit-0 with failure markers in output', async () => {
+  const dir = freshTmp();
+  try {
+    const r = await verifyTier3(dir, 'echo "1 failing test"');
+    assert.equal(r.ok, false);
+    assert.match(r.evidence, /failure markers/);
+  } finally { cleanup(dir); }
+});
+
+test('V155-025: verifyTier1 rejects empty newString for non-delete intent', async () => {
+  const dir = freshTmp();
+  try {
+    const f = join(dir, 'a.txt');
+    writeFileSync(f, 'hello world');
+    const r = await verifyTier1(f, '', 'edit');
+    assert.equal(r.ok, false);
+    assert.match(r.evidence, /empty newString/);
+  } finally { cleanup(dir); }
+});
+
+test('V155-025: verifyTier1 accepts empty newString for delete intent', async () => {
+  const dir = freshTmp();
+  try {
+    const f = join(dir, 'a.txt');
+    writeFileSync(f, 'hello world');
+    const r = await verifyTier1(f, '', 'delete');
     assert.equal(r.ok, true);
-    assert.equal(r.skipped, false);
   } finally { cleanup(dir); }
 });
 
