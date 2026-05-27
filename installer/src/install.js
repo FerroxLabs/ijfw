@@ -26,7 +26,22 @@ function parseArgs(argv) {
   return out;
 }
 
+// IJFW_SKIP_NETWORK=1 is the contract the upgrade-smoke preflight gate sets
+// when it spawns this installer inside a hermetic tmpdir. Honoring it is
+// what lets the gate actually verify the install (the gate spawns the
+// binary against a fake $HOME, expects it to complete or fail-clearly, and
+// then asserts on settings.json). Before this wiring the env var was a
+// no-op — `cloneOrPull` did `git clone --depth 1` unconditionally, so the
+// gate either silently passed without writing settings.json (the original
+// false-pass we were trying to retire) or silently failed on offline CI.
+// TR-001 fix: surface "skip network" as an early-return that aborts with a
+// clear reason rather than attempting and failing the network call.
+function skipNetwork() {
+  return process.env.IJFW_SKIP_NETWORK === '1';
+}
+
 function latestTagFromGithub() {
+  if (skipNetwork()) return null;
   try {
     const res = spawnSync('git', ['ls-remote', '--tags', '--refs', '--sort=-v:refname', DEFAULT_REPO], {
       encoding: 'utf8', timeout: 10_000,
@@ -153,6 +168,26 @@ function runCheck(cmd, args, opts) {
 }
 
 function cloneOrPull(dir, branch) {
+  // TR-001: honor IJFW_SKIP_NETWORK=1. The upgrade-smoke preflight gate
+  // spawns this installer with that env var set, expecting the network
+  // calls below (git clone, git fetch, ls-remote) to be inert so the gate
+  // can verify the marketplace merge hermetically. Contract:
+  //   * if dir already exists AND looks like a usable seed (we don't try
+  //     to verify a checkout — the caller is responsible for pre-seeding),
+  //     report 'skipped-network' and let runInstallScript proceed.
+  //   * if dir is missing or empty, network would be required to populate
+  //     it — refuse loudly rather than silently no-op (the silent shape
+  //     was the original false-pass we're trying to retire).
+  if (skipNetwork()) {
+    if (existsSync(dir)) {
+      return 'skipped-network';
+    }
+    throw new Error(
+      'IJFW_SKIP_NETWORK=1 set but cloneOrPull needs network: ' +
+      `target directory ${dir} does not exist. ` +
+      'Pre-seed the directory before setting IJFW_SKIP_NETWORK, or unset the env var.',
+    );
+  }
   if (!existsSync(dir)) {
     // Fresh install.
     mkdirSync(dir, { recursive: true });

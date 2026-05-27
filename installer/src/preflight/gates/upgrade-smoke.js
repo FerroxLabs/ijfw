@@ -2,9 +2,20 @@
 // Build HEAD tarball, install it, verify the Claude settings.json plugin key is 'ijfw' (not 'ijfw-core').
 // Uses a fake isolated HOME so user state is never touched.
 // Catches the plugin-key mismatch bug from v1.0.x.
+//
+// TR-001 (v1.5.5 Trident reliability): the gate now sets up the install
+// target as a pre-seeded mock tree so the installer can run hermetically
+// without `git clone` or `git fetch`. It then spawns the installer with
+// IJFW_SKIP_NETWORK=1 (honored by install.js as of v1.5.5 — see
+// `skipNetwork()` there) and ASSERTS that ~/.claude/settings.json was
+// actually written. Previously the gate set the env var but install.js
+// ignored it; the gate would either fail offline (cloneOrPull tried
+// network) or silently pass on hosted CI because the settings.json check
+// was gated by `if (existsSync(settingsPath))` — file missing = silently
+// PASS. Both shapes are now closed.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -117,12 +128,32 @@ export async function run(ctx) {
       };
     }
 
-    // V155-007: actually SPAWN the installer binary against the isolated HOME.
-    // Previously the gate found `installerBin` but never executed it; the
-    // settings.json existence check below then always returned false, leaving
-    // the gate effectively a no-op static linter. Now we run the installer
-    // and require it to either complete or fail clearly. The installer binary
-    // is `node <path>` style on POSIX and `node <path>.cmd`-aware on Windows.
+    // V155-007 / TR-001: actually SPAWN the installer binary against the
+    // isolated HOME — hermetically. The previous shape (pre-TR-001) set
+    // IJFW_SKIP_NETWORK=1 but install.js ignored it, so the gate either
+    // failed offline (cloneOrPull tried network) or silently passed when
+    // the installer exited 0 without writing settings.json. The fix pairs:
+    //   (a) install.js now honors IJFW_SKIP_NETWORK and throws fail-fast
+    //       from cloneOrPull when set,
+    //   (b) we pre-seed `targetIjfwHome` with the in-tree contents so
+    //       cloneOrPull's directory-exists branch is taken and the network
+    //       throw doesn't fire,
+    //   (c) we ASSERT that settings.json was written (post-condition).
+    const targetIjfwHome = join(fakeHome, '.ijfw');
+    mkdirSync(targetIjfwHome, { recursive: true });
+    // Seed the install target with the in-tree claude/ payload so the
+    // installer's runInstallScript step finds the source files it needs
+    // to copy into platform homes. The marketplace merge then writes the
+    // real settings.json under fakeHome/.claude/.
+    const claudePayloadSrc = join(ctx.repoRoot, 'claude');
+    if (existsSync(claudePayloadSrc)) {
+      cpSync(claudePayloadSrc, join(targetIjfwHome, 'claude'), { recursive: true });
+    }
+    // cloneOrPull (in install.js) sees `existsSync(targetIjfwHome)` is true
+    // AND IJFW_SKIP_NETWORK=1 and returns 'skipped-network' without trying
+    // `git remote get-url`, `git fetch`, or the no-origin reclone branch.
+    // The marketplace merge then runs against the seeded tree and writes
+    // settings.json under fakeHome/.claude/ — which we assert below.
     const runInstaller = spawnSync(installerBin, ['--yes'], {
       encoding: 'utf8',
       cwd: installDir,
@@ -131,8 +162,11 @@ export async function run(ctx) {
         ...cleanEnv,
         HOME: fakeHome,
         USERPROFILE: fakeHome,
-        IJFW_HOME: join(fakeHome, '.ijfw'),
-        // Suppress interactive prompts / network calls where possible.
+        IJFW_HOME: targetIjfwHome,
+        // Hermetic: install.js refuses any network attempt under this flag
+        // (TR-001). The gate's contract is "the installer either completes
+        // without network or fails clearly". The marketplace merge step
+        // (which is what we actually want to verify) does NOT need network.
         CI: '1',
         IJFW_SKIP_NETWORK: '1',
       },
@@ -150,33 +184,48 @@ export async function run(ctx) {
       };
     }
 
-    // 5. Assert: if settings.json was written, the plugin key must be 'ijfw' not 'ijfw-core'
+    // 5. Post-condition: settings.json MUST have been written. Previously
+    // this check was wrapped in `if (existsSync(settingsPath))` which
+    // silently passed when the file was missing — the same false-pass
+    // shape the gate was supposed to retire. TR-001 asserts presence.
     const settingsPath = join(claudeDir, 'settings.json');
-    if (existsSync(settingsPath)) {
-      let settings;
-      try {
-        settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      } catch (e) {
-        return {
-          name: 'upgrade-smoke',
-          status: 'FAIL',
-          message: 'upgrade-smoke: settings.json is not valid JSON',
-          details: [e.message],
-          durationMs: Date.now() - t0,
-        };
-      }
+    if (!existsSync(settingsPath)) {
+      return {
+        name: 'upgrade-smoke',
+        status: 'FAIL',
+        message: 'upgrade-smoke: installer did not write ~/.claude/settings.json',
+        details: [
+          `expected: ${settingsPath}`,
+          'The installer ran (exit 0) but the marketplace merge never produced settings.json.',
+          'This is the false-pass shape TR-001 retired — the gate must observe the write.',
+          ...((runInstaller.stdout || '') + (runInstaller.stderr || '')).split('\n').filter(Boolean).slice(0, 8),
+        ],
+        durationMs: Date.now() - t0,
+      };
+    }
+    let settings;
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    } catch (e) {
+      return {
+        name: 'upgrade-smoke',
+        status: 'FAIL',
+        message: 'upgrade-smoke: settings.json is not valid JSON',
+        details: [e.message],
+        durationMs: Date.now() - t0,
+      };
+    }
 
-      const hasWrongKey = JSON.stringify(settings).includes('ijfw-core');
+    const hasWrongKey = JSON.stringify(settings).includes('ijfw-core');
 
-      if (hasWrongKey) {
-        return {
-          name: 'upgrade-smoke',
-          status: 'FAIL',
-          message: 'upgrade-smoke: settings.json still uses deprecated "ijfw-core" key',
-          details: [`Found "ijfw-core" in: ${settingsPath}`],
-          durationMs: Date.now() - t0,
-        };
-      }
+    if (hasWrongKey) {
+      return {
+        name: 'upgrade-smoke',
+        status: 'FAIL',
+        message: 'upgrade-smoke: settings.json still uses deprecated "ijfw-core" key',
+        details: [`Found "ijfw-core" in: ${settingsPath}`],
+        durationMs: Date.now() - t0,
+      };
     }
 
     // 6. Validate the marketplace.js source: the active registration key must be 'ijfw@ijfw',
