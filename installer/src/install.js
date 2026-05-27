@@ -9,7 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { mergeMarketplace, claudeSettingsPath } from './marketplace.js';
 import { triggerColdScan } from './post-install/cold-scan.js';
 
-const DEFAULT_REPO = 'https://gitlab.com/therealseandonahoe/ijfw.git';
+// V155 rebrand: canonical source moved from GitLab to GitHub under the
+// Ferrox Labs org. Until the FerroxLabs/ijfw repo is populated with the
+// v1.5.5 tag (Phase B), `--branch v1.5.5` installs will 404 against the
+// new URL -- intentional: any other behavior would silently keep users
+// pinned to the old canonical home.
+const DEFAULT_REPO = 'https://github.com/FerroxLabs/ijfw.git';
 const DEFAULT_BRANCH = 'main';
 
 function parseArgs(argv) {
@@ -214,6 +219,10 @@ function cloneOrPull(dir, branch) {
       const STALE_PATTERNS = [
         /^https:\/\/github\.com\/seandonahoe\/ijfw(\.git)?\/?$/i,
         /^https:\/\/github\.com\/therealseandonahoe\/ijfw(\.git)?\/?$/i,
+        // V155 rebrand: GitLab was the canonical source through v1.5.4;
+        // users who installed from gitlab.com need their origin migrated
+        // forward to FerroxLabs/ijfw on GitHub on next `ijfw-install`.
+        /^https:\/\/gitlab\.com\/therealseandonahoe\/ijfw(\.git)?\/?$/i,
       ];
       const currentOrigin = (stdout || '').trim();
       if (STALE_PATTERNS.some((re) => re.test(currentOrigin))) {
