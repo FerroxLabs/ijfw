@@ -89,10 +89,27 @@ export function validateSafeRepoPath(repoRoot, targetPath) {
   // fine — writers either overwrite or 'wx'-fail on their own. The residual
   // TOCTOU window between this check and the writer's open is microseconds
   // and requires a same-uid attacker; documented threat model.
+  //
+  // V155-055 (v1.5.5): hardlink hardening. isSymbolicLink() returns false for
+  // hardlinks, so a same-uid attacker can pre-create
+  // `<repoRoot>/.ijfw/wiki/concepts/foo.md` as a hardlink to
+  // `~/.ssh/authorized_keys`. writeAtomic via rename severs the hardlink
+  // (safe), but appendFileSync callers (budget-guard, dream-pipeline) write
+  // through the hardlink. We refuse any target file with nlink > 1 — under
+  // the brain's content tree, every file should be IJFW-owned and have nlink
+  // exactly 1.
   try {
     const st = lstatSync(resolved);
     if (st.isSymbolicLink()) {
       return { ok: false, error: 'outFile-is-symlink', resolved };
+    }
+    if (st.isFile() && typeof st.nlink === 'number' && st.nlink > 1) {
+      return {
+        ok: false,
+        error: 'outFile-is-hardlink',
+        resolved,
+        nlink: st.nlink,
+      };
     }
   } catch {
     // ENOENT — target doesn't exist yet; the most common case. OK to proceed.

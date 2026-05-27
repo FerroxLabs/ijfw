@@ -181,20 +181,77 @@ function sleepSync(ms) {
 
 // Log rotation -- caller of writeAtomic for log files invokes this first.
 // Each log capped at 1MB; rotate to <name>.log.1, delete <name>.log.2.
+//
+// V155-052 (v1.5.5): the original implementation was destructive-then-might-
+// fail: unlink rot2 (oldest history), then rename rot1→rot2, then rename
+// logPath→rot1. If the third rename failed (Windows AV scanner holds an open
+// handle, e.g.) we'd already have thrown away the oldest history for no
+// benefit while reporting `return true` (rotated). New shape:
+//   1. Pre-check that logPath rename will succeed (renameSync is the most
+//      likely failure point on Windows). Do this by renaming through a tmp
+//      probe inside the same directory — atomic same-FS rename is the only
+//      reliable test short of actually doing the rotation.
+//   2. Only then proceed with the destructive cleanup.
+//   3. Return `{rotated, error?}` so callers can log a structured warning
+//      when rotation fails. Boolean-true legacy path preserved via
+//      `result.rotated`.
 export function rotateLogIfNeeded(logPath, maxBytes = 1024 * 1024) {
-  try {
-    if (!existsSync(logPath)) return false;
-    const st = statSync(logPath);
-    if (st.size < maxBytes) return false;
-    const rot1 = `${logPath}.1`;
-    const rot2 = `${logPath}.2`;
-    try { if (existsSync(rot2)) unlinkSync(rot2); } catch { /* */ }
-    try { if (existsSync(rot1)) renameSync(rot1, rot2); } catch { /* */ }
-    try { renameSync(logPath, rot1); } catch { /* */ }
-    return true;
-  } catch {
-    return false;
+  if (!existsSync(logPath)) return false;
+  let st;
+  try { st = statSync(logPath); }
+  catch (e) { return { rotated: false, error: `stat-failed: ${e?.message || e}` }; }
+  if (st.size < maxBytes) return false;
+  const rot1 = `${logPath}.1`;
+  const rot2 = `${logPath}.2`;
+
+  // V155-052 step 1: try to rename logPath → rot1 directly. On POSIX this is
+  // atomic; on Windows it fails with EBUSY when the file is held. We DON'T
+  // touch rot1 or rot2 yet, so the existing rotation history stays intact
+  // until we know the live-log handoff is going to succeed. We need rot1 to
+  // be free first — but the prior rot1 contents are valuable, so we move
+  // them to rot2 BEFORE the live rename, and only after that succeeds do we
+  // remove the previous rot2.
+  //
+  // Sequence (loud on failure):
+  //   (a) if rot2 exists: keep it for now (we still have a copy until step c)
+  //   (b) rename rot1 → rot2_new (a unique temp name) — preserves both old
+  //       generations while we attempt the live rename
+  //   (c) rename logPath → rot1
+  //   (d) on success: unlink the previous rot2 (which was preserved through
+  //       step b under its temp name); rename rot2_new → rot2
+  //   (e) on failure of (c): roll back step b
+  //
+  // The cost is one extra rename; the benefit is we never destroy oldest
+  // history except after the new history has landed.
+  const rot2Tmp = `${rot2}.tmp.${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const hadRot1 = existsSync(rot1);
+  const hadRot2 = existsSync(rot2);
+
+  if (hadRot1) {
+    try { renameSync(rot1, rot2Tmp); }
+    catch (e) {
+      return { rotated: false, error: `pre-rotate move rot1→rot2.tmp failed: ${e?.message || e}` };
+    }
   }
+  try { renameSync(logPath, rot1); }
+  catch (e) {
+    // Roll back step (b) so the prior rot1 is preserved.
+    if (hadRot1) {
+      try { renameSync(rot2Tmp, rot1); } catch { /* best-effort rollback */ }
+    }
+    return { rotated: false, error: `rotate logPath→rot1 failed: ${e?.message || e}` };
+  }
+  // Live rename succeeded. Now retire the previous rot2 and commit rot2Tmp
+  // as the new rot2. Both steps are best-effort: if they fail we still have
+  // a successful live rotation plus an over-N tmp file that can be cleaned
+  // out next run.
+  if (hadRot2) {
+    try { unlinkSync(rot2); } catch { /* best-effort */ }
+  }
+  if (hadRot1) {
+    try { renameSync(rot2Tmp, rot2); } catch { /* best-effort */ }
+  }
+  return true;
 }
 
 // URL redactor -- strip query strings before logging per v3 sec 15

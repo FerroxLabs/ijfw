@@ -79,8 +79,25 @@ export function isProcessed(processedDir, fileName) {
   return existsSync(manifestPath(processedDir, fileName));
 }
 
+// V155-068 (v1.5.5): tolerate manifest corruption. External tampering of
+// `.ijfw/dump/processed/*.manifest.json` previously produced a hard crash in
+// the dream cycle. Now returns `{ok:false, code:'enoent'|'parse-fail', ...}`
+// or `{ok:true, data}` so callers can treat parse-fail as "needs reprocess"
+// rather than aborting the whole cycle. The legacy "throw on missing"
+// signal is preserved via the absence-tag (callers can branch on .code).
 export function readManifest(processedDir, fileName) {
-  return JSON.parse(readFileSync(manifestPath(processedDir, fileName), 'utf8'));
+  const p = manifestPath(processedDir, fileName);
+  if (!existsSync(p)) return { ok: false, code: 'enoent' };
+  let raw;
+  try { raw = readFileSync(p, 'utf8'); }
+  catch (e) {
+    return { ok: false, code: 'unreadable', message: e?.message || String(e) };
+  }
+  try {
+    return { ok: true, data: JSON.parse(raw) };
+  } catch (e) {
+    return { ok: false, code: 'parse-fail', message: e?.message || String(e), path: p };
+  }
 }
 
 function manifestPath(processedDir, fileName) {
