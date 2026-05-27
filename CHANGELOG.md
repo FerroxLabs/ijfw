@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.5.5] — 2026-05-27 — Cross-platform reliability and Ferrox Labs release
+
+First release under the **Ferrox Labs** organisation. IJFW is Ferrox Labs' shared development infrastructure for AI coding agents — open-sourced because the discipline travels with the tool.
+
+### Strengthened — update flow integrity
+- **`ijfw update` now verifies post-install version on disk.** The CLI re-reads `installer/package.json` (npm-global, git-clone, and manual installs each verified at their canonical location) before writing state. If filesystem and announced version disagree, the state write is refused with a clear actionable error. Operators no longer get `state.json` reporting one version while the actual binaries report another.
+- **`spawnSync('bash', ...)` paths gain proper Windows handling.** Install scripts now resolve via `shell: true` on Windows with quoted paths, eliminating ENOENT failures and `cmd.exe` tokenisation edge cases on paths containing spaces or special characters.
+
+### Strengthened — multi-AI cross-audit framework
+- **Trident lens converge logic hardened.** Cross-audits now emit distinct result shapes for clean-pass, intentional-bypass, and gate-execution-fail outcomes. Downstream callers can route on the new `error` discriminator without losing the advisory verdict contract that the F-phase introduced. The `task.completed-no-evidence` event tag surfaces explicit skip-evidence bypasses for audit visibility.
+- **Swarm task completion now requires evidence.** `completeSwarmTask` requires either `evidence.commitSha` (matching `[a-f0-9]{7,40}`) or `evidence.diffStats.filesChanged >= 1`. An explicit `skipEvidence: true` opt-out keeps admin-override flows working and tags the event for downstream audit. Closes the silent claim-DONE failure mode that earlier swarm flows could hit.
+
+### Strengthened — install bootstrap on broken-repo paths
+- **`cloneOrPull` broken-repo restore now uses `cpSync` + `rmSync` instead of `renameSync`.** Cross-filesystem restores (Docker volumes, NFS mounts, separate `/tmp`) used to throw EXDEV after the destination was already cleared. The new path preserves the backup intact on any failure and prints the backup directory so operators can recover manually.
+- **Restore allowlist expanded** to cover the full v1.5.2+ brain content tree (`ijfw/`, `state/`, `cache/`, `logs/`, `.ijfw/` internals) alongside the legacy `memory`, `sessions`, `install.log`, and `.session-counter` paths. Operator data on the broken-repo recovery branch is now preserved end-to-end.
+- **`install.ps1` origin migration** now honours the same `STALE_PATTERNS` allowlist the POSIX path uses, preventing SSH remotes, forks, or user-customised origins from being silently clobbered.
+
+### Strengthened — Windows + cross-platform parity
+- **`process.env.HOME || ''` fallbacks paired with `USERPROFILE`** across post-tool-use hooks and supporting scripts. Diagnostic logs now resolve to the correct user home on Windows instead of drive-root EPERM.
+- **`startsWith('/')` absolute-path heuristic replaced with `path.isAbsolute()`** at every site flagged by the platform sweep (post-done verifier, UI-spec drift, UI review runner, image intake). Windows subagent verdicts now flip correctly.
+- **`installer/scripts/pack-hub-extension.js`** realpath behaviour aligned with macOS `/var → /private/var` symlink resolution, eliminating false-positive system-path blocks under `os.tmpdir()`.
+
+### Strengthened — preflight gate
+- **`upgrade-smoke` gate is now hermetic.** Honours `IJFW_SKIP_NETWORK=1` by short-circuiting `latestTagFromGithub` and `cloneOrPull`, actually spawns the installer binary, and asserts `settings.json` as an unconditional post-condition. The gate now fails loudly on broken installs instead of silently passing.
+
+### Strengthened — extension installer truthfulness
+- **`extension-installer` returns strict-bool `ok` plus tri-state `status`** (`success` / `partial` / `failed`). Legacy `if (r.ok)` consumers no longer treat partial-skill-deploy failures as success. Callers wanting the tri-state read `status` directly.
+
+### Strengthened — release notes + registry fetchers
+- **`shasum-verify` ported to GitHub Releases API.** Second-factor publisher-shasum verification now reads `data.body` from `https://api.github.com/repos/FerroxLabs/ijfw/releases/tags/v<version>` with `Accept: application/vnd.github+json`. Back-compat aliases for `DEFAULT_GITLAB_PROJECT` and `fetchGitlabReleaseBody` are preserved.
+- **`update-check` changelog URL** updated to the GitHub `releases/tag/v<version>` form. MCP verb output now points users at the canonical release page.
+- **Extension registry fallback URL** moved to `https://ferroxlabs.github.io/ijfw/registry/publishers/v1.json` (the trust anchor remains the embedded meta-key PEM).
+
+### Strengthened — input validation surface
+- **`wave.advance` payload merge** recursively rejects polluting keys (`__proto__`, `constructor`, `prototype`) at any depth. Adversarial frontmatter cannot reach the merge sink.
+- **`ijfw_cross_audit_converge` `commitRange`** validated against a strict shape regex before reaching git. Option-injection inputs (`--upload-pack=…`) refused at the boundary.
+- **`appendStructuredToKnowledge`** gains content-hash dedup matching the existing `appendKnowledge` shape. Identical payloads written twice produce one block, not two.
+
+### Strengthened — locking and replay semantics
+- **`state.replay` body-restore** acquires per-snapshot-target locks instead of relying on a single-tier journal lock. Concurrent non-SDK writers can no longer race the restore path.
+- **Wave-state body write** folded into the SDK's journaled critical section. Crash-between-writes can no longer leave un-replayable partial state.
+- **Wiki-compiler and layout-sentinel** lock primitives delegate to the canonical `withFsLock` mechanism, picking up its heartbeat-refreshed stale recovery and ending the previous "isolated `openSync('wx')` per writer" pattern.
+
+### Retired
+- **`ijfw_update_apply` MCP tool retired.** The streamlined update flow has `ijfw_update_check` issue the confirmation token and write the sentinel in one step; the intermediate `ijfw_update_apply` step has been redundant since v1.5.0. MCP server now exposes 13 tools (well within the ≤14 cap).
+
+### Rebranded
+- Source moved to **`github.com/FerroxLabs/ijfw`**. Package author flipped to `Ferrox Labs` across `@ijfw/install`, `@ijfw/memory-server`, and all plugin manifests. `homepage`, `repository`, and `bugs` URLs follow.
+
+### Tests
+- mcp-server full suite: **2764 pass / 1 skipped (Windows-only) / 0 fail.**
+- Installer preflight: **11/11 PASS.**
+- Hub-extension integration: **13/13 PASS.**
+
+
 ## [1.5.2.1] — 2026-05-25 (audit fixes)
 
 Adversarial cross-audit of the v1.5.2 ship-candidate surfaced eight defects
