@@ -17,16 +17,15 @@
  * representation. `blockers_open` carries the blocker **id** array (machine-
  * consumed); a separate `blockers_open_summary` carries human-readable text.
  *
- * KNOWN SDK GAP (T7-followup-1): the SDK's `wave.advance` verb does NOT
- * accept a `body` field — its handler always preserves the existing body.
- * Until a body-write SDK verb lands, `writeWaveState` does a follow-up raw
- * atomic write to update the body. The body-write itself is still
- * tmp+rename+lock-protected and the SDK frontmatter write already committed
- * via the intent journal — so the worst-case partial state (frontmatter
- * advanced, body stale) is bounded and self-healing on next checkpoint.
+ * SDK GAP CLOSED (v1.5.5 — V155-014): the SDK's `wave.advance` verb now
+ * accepts an optional `body` field — frontmatter + body land inside ONE
+ * journaled critical section (intent-journal #1 + waves.json #3 + per-wave
+ * STATE.md #4). The prior two-write shape (SDK frontmatter, release all
+ * locks, re-acquire only #4 to write the body) is gone — `state.replay`
+ * can now roll back partial body writes via the same begin/commit pair.
  */
 
-import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
+import { mkdir, readFile, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withFsLock } from '../fs-lock.js';
 import { readBlackboard } from '../blackboard.js';
@@ -282,40 +281,20 @@ export async function writeWaveState(waveId, state, projectRoot) {
   // pass the full requested frontmatter so unrelated keys are overwritten
   // intentionally (writeWaveState semantics: caller supplies the full
   // frontmatter shape they want persisted).
-  await query(
-    'wave.advance',
-    { waveId, status, frontmatter: { ...fm } },
-    { projectRoot },
-  );
-
-  // Body follow-up: SDK-gap T7-followup-1 — wave.advance preserves existing
-  // body and there is no body-write SDK verb yet. Until one lands, do an
-  // atomic in-place body update. Held under the same wave-STATE lock used by
-  // every wave-state writer, so concurrent checkpoints serialise.
+  //
+  // V155-014 (HIGH): body is now passed THROUGH the SDK call so frontmatter +
+  // body land inside ONE journaled critical section holding all three SDK
+  // locks (intent-journal #1, waves.json #3, per-wave STATE.md #4). The prior
+  // shape — call wave.advance for frontmatter, release SDK locks, re-acquire
+  // ONLY the STATE.md lock to write the body — gave a #4-only second
+  // critical section with no #1 journal record, so `state.replay` could not
+  // roll back a body-write partial. The two writes are now atomic and
+  // replay-safe.
+  const sdkPayload = { waveId, status, frontmatter: { ...fm } };
   if (state.body !== undefined && state.body !== null) {
-    const { dir, state: statePath, lock, tmp } = wavePaths(waveId, projectRoot);
-    await withFsLock(lock, async () => {
-      await mkdir(dir, { recursive: true });
-      let frontmatterRaw;
-      try {
-        const raw = await readFile(statePath, 'utf8');
-        const secondDelim = raw.indexOf('\n---', 3);
-        // Defensive: if the SDK-written STATE.md is somehow malformed, fall
-        // back to re-emitting frontmatter from the in-memory shape rather
-        // than refusing the body write.
-        if (raw.startsWith('---') && secondDelim !== -1) {
-          frontmatterRaw = raw.slice(0, secondDelim + 4); // '---\n…\n---\n'
-        } else {
-          frontmatterRaw = `---\n${emitYaml(fm)}\n---\n`;
-        }
-      } catch {
-        frontmatterRaw = `---\n${emitYaml(fm)}\n---\n`;
-      }
-      const payload = `${frontmatterRaw}\n${state.body}`;
-      await writeFile(tmp, payload, 'utf8');
-      await rename(tmp, statePath);
-    });
+    sdkPayload.body = state.body;
   }
+  await query('wave.advance', sdkPayload, { projectRoot });
 }
 
 /**

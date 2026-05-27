@@ -969,7 +969,18 @@ const handlers = {
       // Persist the hard-gate declaration on the wave's frontmatter so
       // subsequent advance calls honor it without re-passing `hardGate`.
       if (payload?.hardGate === true) fm.hard_gate = true;
-      const wave = writeWaveStateFile(root, waveId, fm, existing?.body ?? '');
+      // V155-014 (HIGH): when the caller supplies `payload.body`, write the
+      // body INSIDE this same `_withLocks` critical section (intent-journal +
+      // waves.json + per-wave STATE.md). The prior pattern had wave-state.js
+      // call `wave.advance` to write the frontmatter (journaled), release ALL
+      // SDK locks, then re-acquire ONLY the per-wave STATE.md lock to write
+      // the body — a #4-only lock with no #1 journal record, leaving replay
+      // unable to roll back a body-write partial. Accepting body here folds
+      // the two writes into one journaled, fully-locked atomic operation.
+      const bodyPayload = (typeof payload?.body === 'string')
+        ? payload.body
+        : (existing?.body ?? '');
+      const wave = writeWaveStateFile(root, waveId, fm, bodyPayload);
       const result = { ok: true, wave };
       if (hardGate && GATE_BYPASS) {
         result.advisory = true;
