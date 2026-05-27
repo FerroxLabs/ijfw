@@ -36,6 +36,7 @@ import {
   copyFileSync,
   cpSync,
   chmodSync,
+  rmSync,
 } from 'node:fs';
 import { join, dirname, isAbsolute } from 'node:path';
 import { platform } from 'node:os';
@@ -554,7 +555,29 @@ export async function installWayland(ctx) {
     const pluginDst = join(ctx.home, '.wayland', 'plugins', 'ijfw');
     ensureDir(pluginDst);
     let entries;
-    try { entries = readdirSync(pluginSrc); } catch { entries = []; }
+    let readdirErr = null;
+    try { entries = readdirSync(pluginSrc); } catch (err) { entries = []; readdirErr = err; }
+    if (readdirErr) {
+      // V155-031: previously silent — readdir failure degraded to a no-op
+      // "install" while printOk still fired. Surface as a warning so the
+      // operator can see the bundle is incomplete.
+      ctx.log.warn(`Wayland plugin tree readdir failed: ${readdirErr.message || readdirErr}`);
+    }
+    // V155-031: mirror semantics. Remove dst entries that are no longer in
+    // src (excluding the always-skipped __pycache__) BEFORE copying. POSIX
+    // and Windows alike accumulated stale files across upgrades.
+    const srcNames = new Set(entries.filter((n) => n !== '__pycache__'));
+    let dstEntries = [];
+    try { dstEntries = readdirSync(pluginDst); } catch { /* fresh dir */ }
+    for (const name of dstEntries) {
+      if (name === '__pycache__') continue;
+      if (!srcNames.has(name)) {
+        try { rmSync(join(pluginDst, name), { recursive: true, force: true }); }
+        catch (err) {
+          ctx.log.warn(`Wayland plugin: could not remove stale ${name}: ${err.message || err}`);
+        }
+      }
+    }
     for (const name of entries) {
       if (name === '__pycache__') continue;
       const src = join(pluginSrc, name);
@@ -627,7 +650,24 @@ export async function installHermes(ctx) {
     const pluginDst = join(ctx.home, '.hermes', 'plugins', 'ijfw');
     ensureDir(pluginDst);
     let entries;
-    try { entries = readdirSync(pluginSrc); } catch { entries = []; }
+    let readdirErr = null;
+    try { entries = readdirSync(pluginSrc); } catch (err) { entries = []; readdirErr = err; }
+    if (readdirErr) {
+      ctx.log.warn(`Hermes plugin tree readdir failed: ${readdirErr.message || readdirErr}`);
+    }
+    // V155-031: mirror semantics — remove dst-only files before copy.
+    const srcNames = new Set(entries.filter((n) => n !== '__pycache__'));
+    let dstEntries = [];
+    try { dstEntries = readdirSync(pluginDst); } catch { /* fresh dir */ }
+    for (const name of dstEntries) {
+      if (name === '__pycache__') continue;
+      if (!srcNames.has(name)) {
+        try { rmSync(join(pluginDst, name), { recursive: true, force: true }); }
+        catch (err) {
+          ctx.log.warn(`Hermes plugin: could not remove stale ${name}: ${err.message || err}`);
+        }
+      }
+    }
     for (const name of entries) {
       if (name === '__pycache__') continue;
       const src = join(pluginSrc, name);

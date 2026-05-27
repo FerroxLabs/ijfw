@@ -168,7 +168,21 @@ function linkPlugin({ repoRoot, ijfwHome, ts }) {
           /* ignore */
         }
       } else if (st.isDirectory()) {
-        // Mirror tree contents into existing directory (cp -r SRC/. DST/).
+        // V155-030: rm-then-cpSync to MIRROR rather than MERGE. The previous
+        // form added/overwrote src→dst but left dst-only files in place,
+        // so retired-skill leftovers from v1.4.x persisted indefinitely on
+        // every Windows upgrade. POSIX path uses symlink-replace so it's
+        // unaffected.
+        try {
+          fs.rmSync(pluginDst, { recursive: true, force: true });
+        } catch (err) {
+          // If rm fails (file locked etc.), fall back to merge — partial is
+          // better than crash; surface the failure for the user.
+          process.stderr.write(
+            `[ijfw] linkPlugin: could not clear ${pluginDst} for mirror ` +
+            `(${err && err.message ? err.message : err}); falling back to merge.\n`,
+          );
+        }
         fs.cpSync(pluginSrc, pluginDst, { recursive: true });
         printOk(`Plugin tree mirrored to ${pluginDst}`);
         return;
@@ -267,14 +281,28 @@ function seedState({ ijfwHome, repoRoot, nodeBin: _nodeBin }) {
     /* ignore */
   }
 
-  // Read installed version from installer/package.json.
-  let installedVer = '0.0.0';
+  // V155-004: Read installed version from installer/package.json. This is the
+  // source of truth for the version-comparison logic in update-check. If we
+  // silently fall back to '0.0.0' here, every subsequent update-check thinks
+  // the user is on v0.0.0 and tries to "upgrade" them. Refuse to seed state
+  // unless we can read a real version.
+  const pkgPath = path.join(repoRoot, 'installer', 'package.json');
+  let installedVer;
   try {
-    const pkgPath = path.join(repoRoot, 'installer', 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-    installedVer = pkg.version || '0.0.0';
-  } catch {
-    /* keep 0.0.0 */
+    installedVer = pkg.version;
+  } catch (err) {
+    throw new Error(
+      `Preflight: installer/package.json missing or unreadable at ${pkgPath} ` +
+      `(${err && err.message ? err.message : err}). ` +
+      `Repo tree incomplete; rerun bootstrap from a clean clone.`,
+    );
+  }
+  if (!installedVer || typeof installedVer !== 'string') {
+    throw new Error(
+      `Preflight: installer/package.json at ${pkgPath} has no usable "version" field. ` +
+      `Rerun bootstrap from a clean clone.`,
+    );
   }
 
   const nowTs = Math.floor(Date.now() / 1000);
