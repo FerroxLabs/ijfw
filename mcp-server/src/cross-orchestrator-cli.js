@@ -1636,16 +1636,27 @@ function writeStateFields(updates) {
 // `test-v155-update-flow.js` can drive the function directly without spawning
 // the full CLI. Behavior unchanged.
 export function verifyInstallSucceeded({ method, repoRoot, expectedVersion }) {
-  // Candidate package.json locations, ordered by install method. We probe
-  // multiple so the helper survives across method-mislabel edge cases
-  // (e.g., manual install on a machine that also has the git clone).
-  const candidates = [];
-  if (method === 'git-clone' && repoRoot) {
-    candidates.push(join(repoRoot, 'installer', 'package.json'));
+  // TR-006: type-validate `expectedVersion` at function entry. Without this,
+  // a stray trailing newline (from sloppy `npmViewVersion` parse) makes the
+  // strict `pkg.version === expectedVersion` check fail for the wrong reason
+  // and surfaces operator-hostile mismatch messages like
+  // "expected v1.5.5\n got v1.5.5". Normalize + validate before any probe.
+  expectedVersion = String(expectedVersion || '').trim();
+  if (!isVersionStringValid(expectedVersion)) {
+    return {
+      ok: false,
+      actualVersion: null,
+      reason: `expectedVersion not a valid semver string (got: ${JSON.stringify(expectedVersion)})`,
+    };
   }
-  // npm-global root resolution via `npm root -g`. Shell-true on Windows
-  // so npm.cmd resolves. The lookup is read-only; pkg name is hardcoded.
-  if (method === 'npm-global' || method === 'manual') {
+  // TR-002: probe candidates are now method-strict. The previous shape
+  // silently fell back to `repoRoot/installer/package.json` for ALL methods,
+  // so a stale git clone at the expected version would mask an npm-global
+  // install that never happened. Each method now declares its own source of
+  // truth; `manual` keeps the multi-candidate fallback because dev-mode
+  // installs legitimately ride on either npm-global or a sibling git clone.
+  const candidates = [];
+  const probeNpmGlobal = () => {
     try {
       const r = spawnSync('npm', ['root', '-g'], {
         encoding: 'utf8',
@@ -1658,14 +1669,35 @@ export function verifyInstallSucceeded({ method, repoRoot, expectedVersion }) {
           candidates.push(join(globalRoot, '@ijfw', 'install', 'package.json'));
         }
       }
-    } catch { /* ignore — fall through to other candidates */ }
+    } catch { /* ignore — surfaces as no-candidates */ }
+  };
+  if (method === 'npm-global') {
+    // npm-global verification MUST read the npm-global package.json
+    // exclusively. A sibling repo tree at the expected version is a category
+    // error here — it would mean we record "npm-global install succeeded"
+    // when the only thing on disk at that version is an unrelated git clone.
+    probeNpmGlobal();
+  } else if (method === 'git-clone' && repoRoot) {
+    candidates.push(join(repoRoot, 'installer', 'package.json'));
+  } else if (method === 'manual') {
+    // Dev-mode: try npm-global first, then the repo tree. Either is a
+    // legitimate source of truth for a manually-driven install.
+    probeNpmGlobal();
+    if (repoRoot) {
+      const fallback = join(repoRoot, 'installer', 'package.json');
+      if (!candidates.includes(fallback)) candidates.push(fallback);
+    }
   }
-  // Always include repoRoot/installer/package.json as a final fallback —
-  // covers dev-mode installs and dotfiles-managed trees where the npm root
-  // doesn't carry @ijfw/install (e.g., asdf shims, nix).
-  if (repoRoot) {
-    const fallback = join(repoRoot, 'installer', 'package.json');
-    if (!candidates.includes(fallback)) candidates.push(fallback);
+
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      actualVersion: null,
+      reason:
+        method === 'npm-global'
+          ? 'npm-global package.json not readable (npm root -g failed)'
+          : `no package.json candidates for method=${method}`,
+    };
   }
 
   const seen = [];
@@ -1683,7 +1715,7 @@ export function verifyInstallSucceeded({ method, repoRoot, expectedVersion }) {
   return {
     ok: false,
     actualVersion: null,
-    reason: `no package.json reported version v${expectedVersion}. Probed: ${seen.join(', ') || '(no candidates)'}`,
+    reason: `no package.json reported version v${expectedVersion}. Probed: ${seen.join(', ')}`,
   };
 }
 
@@ -2031,8 +2063,17 @@ function cmdUpdateInteractive(opts = {}) {
     // is `sh.exe` (Git-Bash) or absent. Use shell:true on Windows so the
     // .sh extension dispatches via the registered shebang handler; POSIX
     // keeps the explicit `bash` binary for portability across distros.
+    //
+    // TS-001 (v1.5.5 Trident security): with shell:true on Windows, the
+    // first argument is interpreted by cmd.exe and tokenized on whitespace,
+    // `&`, `(`, `)`, `;`, `%`, etc. Paths containing those characters are
+    // common on Windows (e.g. `C:\Users\Bob & Alice\...` or
+    // `C:\Program Files (x86)\ijfw\...`) — without quotes cmd will execute
+    // an unrelated binary or fail confusingly. Same-uid attacker could plant
+    // `C:\Users\Bob.exe` and have it picked up first. Quote the path so
+    // cmd.exe treats it as a single token.
     installRes = process.platform === 'win32'
-      ? spawnSync(installSh, [], { stdio: 'inherit', shell: true })
+      ? spawnSync(`"${installSh}"`, [], { stdio: 'inherit', shell: true })
       : spawnSync('bash', [installSh], { stdio: 'inherit' });
   } else {
     console.log('  Manual install detected -- run: npx @ijfw/install');
