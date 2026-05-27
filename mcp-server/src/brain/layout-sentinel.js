@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, openSync, closeSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { withFsLock, lockPathFor } from '../fs-lock.js';
 
 export function readLayoutVersion(repoRoot) {
   const p = join(repoRoot, '.ijfw', '.layout-version');
@@ -12,18 +13,22 @@ export function writeLayoutVersion(repoRoot, version) {
   writeFileSync(join(repoRoot, '.ijfw', '.layout-version'), `${version}\n`);
 }
 
+// V155-016 (HIGH): replace the bespoke `openSync('wx')` mutex with the
+// canonical `withFsLock` primitive. The prior implementation had no stale
+// recovery — on SIGKILL between `openSync` and the `finally` unlink, the
+// lockfile orphaned forever; next server startup would throw after 5s and
+// the operator had to manually `rm .ijfw/.migrate.lock`. `withFsLock`
+// inherits canonical heartbeat-refreshed stale recovery (live processes
+// always renew before staleMs fires; crashed holders age out cleanly).
+// The .migrate.lock path sorts to LOCK_TIERS' tier-99 fallback (unknown
+// path → tail of canonical order) so it cannot deadlock against numbered
+// §3 locks. `timeoutMs` is preserved as `acquireTimeoutMs` so the documented
+// startup-timeout behaviour is unchanged.
 export async function withLayoutLock(repoRoot, fn, { timeoutMs = 5000 } = {}) {
-  const lockPath = join(repoRoot, '.ijfw', '.migrate.lock');
-  const start = Date.now();
-  let fd = null;
-  while (true) {
-    try { fd = openSync(lockPath, 'wx'); break; }
-    catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      if (Date.now() - start > timeoutMs) throw new Error(`layout-sentinel: locked > ${timeoutMs}ms`);
-      await new Promise(r => setTimeout(r, 25));
-    }
-  }
-  try { return await fn(); }
-  finally { try { closeSync(fd); } catch {} try { unlinkSync(lockPath); } catch {} }
+  const lockTarget = join(repoRoot, '.ijfw', '.migrate.lock');
+  return withFsLock(lockPathFor(lockTarget), fn, {
+    staleMs: 60_000,
+    heartbeatMs: 2_000,
+    acquireTimeoutMs: timeoutMs,
+  });
 }

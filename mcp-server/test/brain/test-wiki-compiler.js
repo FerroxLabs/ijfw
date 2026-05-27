@@ -29,13 +29,13 @@ test('slugify: lowercases + non-alphanum -> dash + trims', () => {
   assert.equal(slugify(null), 'untitled');
 });
 
-test('compileWikiPage: happy path writes page atomically with cites resolved', () => {
+test('compileWikiPage: happy path writes page atomically with cites resolved', async () => {
   const db = freshDb();
   db.prepare('INSERT INTO memory_entries (id, body, path, kind) VALUES (?,?,?,?)').run(5, 'sean is founder', '/notes/a.md', 'markdown');
   db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, memory_id) VALUES (?,?,?,?,?,?)').run(11, 'sean', 'role', 'founder', '2024-01-01T00:00:00Z', 5);
   const root = freshRoot();
   try {
-    const result = compileWikiPage(db, { repoRoot: root, type: 'entity', subject: 'sean' });
+    const result = await compileWikiPage(db, { repoRoot: root, type: 'entity', subject: 'sean' });
     assert.equal(result.ok, true);
     assert.equal(result.factsCount, 1);
     const pagePath = join(root, 'ijfw', 'wiki', 'entities', 'sean.md');
@@ -51,13 +51,13 @@ test('compileWikiPage: happy path writes page atomically with cites resolved', (
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
 });
 
-test('compileWikiPage: rejects when citation unresolved (no file written)', () => {
+test('compileWikiPage: rejects when citation unresolved (no file written)', async () => {
   const db = freshDb();
   // Insert fact 11 but DO NOT insert the linked memory id 99 -> [mem:99] dangles
   db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, memory_id) VALUES (?,?,?,?,?,?)').run(11, 'ghost', 'role', 'x', '2024-01-01T00:00:00Z', 99);
   const root = freshRoot();
   try {
-    const result = compileWikiPage(db, { repoRoot: root, type: 'entity', subject: 'ghost' });
+    const result = await compileWikiPage(db, { repoRoot: root, type: 'entity', subject: 'ghost' });
     assert.equal(result.ok, false);
     assert.equal(result.error, 'unresolved-citations');
     assert.ok(result.unresolved.length > 0);
@@ -66,7 +66,7 @@ test('compileWikiPage: rejects when citation unresolved (no file written)', () =
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
 });
 
-test('compileWikiPage: preserves NOTES outside auto regions', () => {
+test('compileWikiPage: preserves NOTES outside auto regions', async () => {
   const db = freshDb();
   db.prepare('INSERT INTO memory_entries (id, body, path, kind) VALUES (?,?,?,?)').run(5, 'x', '/p.md', 'markdown');
   db.prepare('INSERT INTO facts (id, subject, predicate, object, valid_from, memory_id) VALUES (?,?,?,?,?,?)').run(11, 'alice', 'role', 'r', '2024-01-01T00:00:00Z', 5);
@@ -76,18 +76,18 @@ test('compileWikiPage: preserves NOTES outside auto regions', () => {
     mkdirSync(pageDir, { recursive: true });
     const pagePath = join(pageDir, 'alice.md');
     writeFileSync(pagePath, '# alice\n\n## Operator notes\nhand-written context [important].\n');
-    const result = compileWikiPage(db, { repoRoot: root, type: 'entity', subject: 'alice' });
+    const result = await compileWikiPage(db, { repoRoot: root, type: 'entity', subject: 'alice' });
     assert.equal(result.ok, true);
     const content = readFileSync(pagePath, 'utf8');
     assert.ok(content.includes('hand-written context [important]'), 'NOTES preserved');
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
 });
 
-test('compileWikiPage: missing subject -> ok:false', () => {
+test('compileWikiPage: missing subject -> ok:false', async () => {
   const db = freshDb();
   const root = freshRoot();
   try {
-    const result = compileWikiPage(db, { repoRoot: root, type: 'entity' });
+    const result = await compileWikiPage(db, { repoRoot: root, type: 'entity' });
     assert.equal(result.ok, false);
     assert.equal(result.error, 'missing-subject');
   } finally { rmSync(root, { recursive: true, force: true }); db.close(); }

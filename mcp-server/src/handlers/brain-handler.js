@@ -162,9 +162,12 @@ function verbWikiGet(db, repoRoot, args) {
   return { ok: true, slug, path: found.path, type: found.type, markdown: readFileSync(found.path, 'utf8') };
 }
 
-function verbWikiCompile(db, repoRoot, args) {
+async function verbWikiCompile(db, repoRoot, args) {
   if (!args.subject) return { ok: false, error: 'missing-subject' };
-  return compileWikiPage(db, { repoRoot, type: args.type || 'entity', subject: args.subject });
+  // V155-015: compileWikiPage is now async (withFsLock is async). Awaited
+  // here so the outer handler's switch returns the resolved verdict, not
+  // a Promise — matching every other verb in this dispatcher.
+  return await compileWikiPage(db, { repoRoot, type: args.type || 'entity', subject: args.subject });
 }
 
 function verbWikiPromote(db, repoRoot, args) {

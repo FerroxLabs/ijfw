@@ -9,15 +9,20 @@
 // Wiki path: <ijfw|.ijfw>/wiki/<type>s/<slug>.md per the layout sentinel.
 // Slug is the subject lowercased + non-alphanum -> '-'.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-const STALE_LOCK_MS = 60_000; // 60s — locks older than this are assumed dead-process orphans
+// V155-054 (LOW): a poisoned wiki page on disk could blow up memory during
+// compile via the existing-page readFileSync. Refuse compile if the prior
+// page is larger than this cap.
+const WIKI_PAGE_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+
 import { resolveBrainPaths } from './paths.js';
 import { applyTemplate } from './wiki-templates.js';
 import { resolveCitations } from './citation-resolver.js';
 import { getHistoryWindow } from '../memory/temporal.js';
 import { validateSafeRepoPath } from './path-guard.js';
+import { withFsLock, lockPathFor } from '../fs-lock.js';
 
 export function slugify(s) {
   return String(s || '').toLowerCase().trim()
@@ -68,7 +73,7 @@ function querySources(db, subject) {
   } catch { return []; }
 }
 
-export function compileWikiPage(db, { repoRoot, type, subject } = {}) {
+export async function compileWikiPage(db, { repoRoot, type, subject } = {}) {
   if (!subject) return { ok: false, error: 'missing-subject' };
   const paths = resolveBrainPaths(repoRoot);
   const slug = slugify(subject);
@@ -83,42 +88,36 @@ export function compileWikiPage(db, { repoRoot, type, subject } = {}) {
   const guard = validateSafeRepoPath(repoRoot, pagePath);
   if (!guard.ok) return guard;
 
-  // F8: per-page advisory lock prevents two concurrent compiles for the
-  // same subject from interleaving (both read existing → both render →
-  // both rename → operator NOTES from the intermediate state could be
-  // lost). EEXIST-based exclusive open is portable + atomic.
   mkdirSync(pageDir, { recursive: true });
-  const lockPath = pagePath + '.lock';
-  let lockFd;
-  try {
-    lockFd = openSync(lockPath, 'wx');
-  } catch (e) {
-    if (e.code === 'EEXIST') {
-      // FLAG-8: stale-lock recovery. If a prior compile process was SIGKILL'd
-      // between acquire and finally, the lockfile orphans and every subsequent
-      // compile fails. Check the lockfile's age; if older than STALE_LOCK_MS,
-      // assume it's a dead-process orphan and reclaim.
-      let stale = false;
-      try {
-        const age = Date.now() - statSync(lockPath).mtimeMs;
-        if (age > STALE_LOCK_MS) stale = true;
-      } catch { /* lockfile vanished while we checked — race won by us */ stale = true; }
-      if (stale) {
-        try { unlinkSync(lockPath); } catch {}
-        try { lockFd = openSync(lockPath, 'wx'); }
-        catch (e2) { return { ok: false, error: 'page-locked-by-concurrent-compile', pagePath, staleReclaimFailed: e2.code }; }
-      } else {
-        return { ok: false, error: 'page-locked-by-concurrent-compile', pagePath };
-      }
-    } else {
-      throw e;
-    }
-  }
 
-  try {
+  // V155-015 (HIGH): per-page advisory lock now uses the canonical
+  // `withFsLock` primitive instead of an isolated openSync('wx') + manual
+  // stale recovery. The prior pattern had a stale-reclaim race — process A
+  // holds lock, B reads mtime >60s, B unlinks A's lockfile, B opens its own
+  // lock, BOTH then rename their .tmp into pagePath. `withFsLock` inherits
+  // heartbeat-refresh (`heartbeatMs` < `staleMs`) so a live A always renews
+  // before B's stale check fires; a crashed A's lock still ages out cleanly.
+  // The wiki-page lock sorts to LOCK_TIERS' tier-99 fallback (unknown path
+  // → tail of canonical order), so it never deadlocks against §3 locks.
+  return withFsLock(lockPathFor(pagePath), async () => {
     // Read existing AFTER acquiring the lock so we see the freshest committed
     // state (no race with another compile that just landed its rename).
-    const existing = existsSync(pagePath) ? readFileSync(pagePath, 'utf8') : '';
+    let existing = '';
+    if (existsSync(pagePath)) {
+      // V155-054 (LOW): cap the existing-page size to defend against a
+      // poisoned wiki page that would otherwise blow up memory + LLM budget
+      // during compile. 2 MB is generous — real wiki pages are <100 KB.
+      try {
+        const st = statSync(pagePath);
+        if (st.size > WIKI_PAGE_MAX_BYTES) {
+          return {
+            ok: false, error: 'page-too-large', pagePath,
+            sizeBytes: st.size, maxBytes: WIKI_PAGE_MAX_BYTES,
+          };
+        }
+      } catch { /* statSync race — proceed with read */ }
+      existing = readFileSync(pagePath, 'utf8');
+    }
     const facts = queryFacts(db, subject);
     const history = getHistoryWindow(db, subject, null, { limit: 50 });
     const backlinks = queryBacklinks(db, slug);
@@ -137,8 +136,5 @@ export function compileWikiPage(db, { repoRoot, type, subject } = {}) {
     renameSync(tmp, pagePath);
 
     return { ok: true, pagePath, factsCount: facts.length, historyRows: history.rows.length };
-  } finally {
-    try { closeSync(lockFd); } catch {}
-    try { unlinkSync(lockPath); } catch {}
-  }
+  });
 }

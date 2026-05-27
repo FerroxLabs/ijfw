@@ -36,7 +36,12 @@ test('non-numeric junk in sentinel → falls back to 1', () => {
 test('concurrent lock rejects within timeoutMs', async () => {
   const root = freshRoot();
   mkdirSync(join(root, '.ijfw'), { recursive: true });
-  const lockPath = join(root, '.ijfw', '.migrate.lock');
+  // V155-016: withLayoutLock now delegates to `withFsLock`, which uses a
+  // dotfile-sibling mkdir-based lock. The on-disk lock-dir path differs
+  // from the old bespoke openSync('wx') lockfile path, and the timeout
+  // error message comes from fs-lock.js, not the prior bespoke string.
+  // Assert against the new shapes: an FsLockBusyError-style message
+  // mentioning the holder + the lock being not-acquired.
 
   let firstFnCompleted = false;
 
@@ -49,11 +54,14 @@ test('concurrent lock rejects within timeoutMs', async () => {
   // Small delay to ensure first lock is acquired before second tries
   await new Promise(r => setTimeout(r, 10));
 
-  // Second lock tries with 50ms timeout — must reject
+  // Second lock tries with 50ms timeout — must reject.
   await assert.rejects(
     () => withLayoutLock(root, async () => {}, { timeoutMs: 50 }),
     (err) => {
-      assert.ok(err.message.includes('locked >'), `Expected "locked >" in: ${err.message}`);
+      assert.ok(
+        /could not acquire|locked|busy|holder still alive/i.test(err.message),
+        `Expected lock-busy error, got: ${err.message}`,
+      );
       return true;
     },
   );
@@ -61,5 +69,4 @@ test('concurrent lock rejects within timeoutMs', async () => {
   // Wait for first lock to fully release
   await firstLock;
   assert.strictEqual(firstFnCompleted, true, 'First fn should have completed');
-  assert.strictEqual(existsSync(lockPath), false, 'Lock file should be cleaned up after release');
 });

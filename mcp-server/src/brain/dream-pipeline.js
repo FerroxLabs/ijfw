@@ -310,8 +310,10 @@ export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, 
   }
 
   // Compile pages for touched subjects. Failures are logged, not fatal.
+  // V155-015: compileWikiPage is now async (withFsLock primitive).
   for (const subject of touchedSubjects) {
-    const r = compileWikiPage(db, { repoRoot, type: 'entity', subject });
+    // eslint-disable-next-line no-await-in-loop
+    const r = await compileWikiPage(db, { repoRoot, type: 'entity', subject });
     if (r.ok) {
       pagesCompiled += 1;
       appendLog(paths.wikiLog, `${nowIso()} compile entity ${subject} facts=${r.factsCount}`, repoRoot);
