@@ -54,6 +54,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { reviewTask } from './review.js';
 import { checkVerificationGate, recordViolation } from './verification-gate.js';
@@ -110,8 +111,12 @@ function extractClaimedCommits(reportText) {
 export function runSelfCheck(reportText, projectRoot) {
   const claimedPaths = extractClaimedPaths(reportText);
   const claimedCommits = extractClaimedCommits(reportText);
+  // V155-019: use isAbsolute() so Windows absolute paths (C:\Users\…) aren't
+  // misclassified as relative. Previously `p.startsWith('/')` returned false
+  // for Windows absolutes → they were joined to projectRoot → existsSync
+  // false → real subagent work was flagged as missing files.
   const filesPresent = claimedPaths.filter((p) =>
-    existsSync(p.startsWith('/') ? p : `${projectRoot}/${p}`),
+    existsSync(isAbsolute(p) ? p : join(projectRoot, p)),
   );
   let commitsPresent = [];
   try {

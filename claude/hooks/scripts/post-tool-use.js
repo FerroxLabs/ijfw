@@ -15,6 +15,14 @@
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
+
+// V155-018: consult USERPROFILE / os.homedir() as fallback so Windows hooks
+// don't drop log files at root-relative `/.ijfw/logs` (which then EPERMs on
+// every tool call). On POSIX HOME is always set and these are no-ops.
+function ijfwHome() {
+  return process.env.HOME || process.env.USERPROFILE || homedir() || '';
+}
 
 // --- 1) Read stdin payload (cap 1MB to prevent memory exhaustion) ---
 let INPUT;
@@ -32,7 +40,7 @@ try {
   // diagnosable from ~/.ijfw/logs/. Previously the bare catch swallowed
   // every read failure and turned the hook into a no-op forever.
   try {
-    const dir = join(process.env.HOME || '', '.ijfw', 'logs');
+    const dir = join(ijfwHome(), '.ijfw', 'logs');
     fs.mkdirSync(dir, { recursive: true });
     fs.appendFileSync(join(dir, 'post-tool-use.log'),
       `${new Date().toISOString()} stdin-read ${(e.message || String(e)).slice(0, 200)}\n`);
@@ -61,7 +69,7 @@ try {
   // 1.2.9: payload-shape change or malformed JSON should leave a diagnostic
   // trail rather than silently turning the hook into a no-op forever.
   try {
-    const dir = join(process.env.HOME || '', '.ijfw', 'logs');
+    const dir = join(ijfwHome(), '.ijfw', 'logs');
     fs.mkdirSync(dir, { recursive: true });
     fs.appendFileSync(join(dir, 'post-tool-use.log'),
       `${new Date().toISOString()} parse-fail ${(e.message || String(e)).slice(0, 200)}\n`);
@@ -166,10 +174,9 @@ if (filtered.length > 500) {
 const obsScript = process.argv[2];
 if (obsScript && fs.existsSync(obsScript)) {
   try {
-    const HOME = process.env.HOME || '';
-    const logDir = HOME + '/.ijfw/logs';
+    const logDir = join(ijfwHome(), '.ijfw', 'logs');
     fs.mkdirSync(logDir, { recursive: true });
-    const logFd = fs.openSync(logDir + '/obs-capture.log', 'a');
+    const logFd = fs.openSync(join(logDir, 'obs-capture.log'), 'a');
     const child = spawn(process.execPath, [obsScript], {
       stdio: ['pipe', logFd, logFd],
       detached: true

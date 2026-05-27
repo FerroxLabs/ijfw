@@ -37,7 +37,7 @@
 // `advisory` strings rather than throwing.
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { resolve as pathResolve, extname } from 'node:path';
+import { resolve as pathResolve, extname, isAbsolute } from 'node:path';
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -54,7 +54,10 @@ export function fromImage(imagePath, opts = {}) {
   if (typeof imagePath !== 'string' || imagePath.length === 0) {
     return { ok: false, stub: null, error: 'no-path' };
   }
-  const abs = imagePath.startsWith('/')
+  // V155-045: isAbsolute() for portable Windows handling; pathResolve()
+  // happens to be lenient with absolute Windows paths but the explicit check
+  // documents the contract and lets static analysis catch regressions.
+  const abs = isAbsolute(imagePath)
     ? imagePath
     : pathResolve(opts.projectRoot || process.cwd(), imagePath);
 

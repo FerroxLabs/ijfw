@@ -13,7 +13,7 @@
 // Pure-stdlib.  Graceful-degrade on every error path.  No external network.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, extname } from 'node:path';
+import { join, extname, isAbsolute } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // UI-SPEC parser
@@ -103,7 +103,10 @@ export function measureBundleSize(opts = {}) {
         break;
       }
     }
-  } else if (!opts.dir.startsWith('/')) {
+  } else if (!isAbsolute(opts.dir)) {
+    // V155-043: isAbsolute() so Windows absolute paths (C:\…) aren't mistakenly
+    // joined to projectRoot, which produces a garbage mid-string path and a
+    // false "build-dir-missing" verdict.
     dir = join(projectRoot, opts.dir);
   }
 
@@ -195,7 +198,9 @@ export function scanCodeForTailwind(scope, opts = {}) {
   let files = 0;
 
   for (const d of dirs) {
-    const abs = d.startsWith('/') ? d : join(projectRoot, d);
+    // V155-043: isAbsolute() handles Windows C:\… paths correctly; the prior
+    // POSIX-only check silently skipped them.
+    const abs = isAbsolute(d) ? d : join(projectRoot, d);
     if (!existsSync(abs)) continue;
 
     const stack = [abs];

@@ -26,7 +26,7 @@
 // `peerInputs` and adapts them through the evaluator libs.
 
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname, extname } from 'node:path';
+import { join, dirname, extname, isAbsolute } from 'node:path';
 import {
   parseUISpec,
   scanCodeForTailwind,
@@ -80,7 +80,10 @@ function walkSourceFiles(scopes, projectRoot, opts = {}) {
   const maxFiles = typeof opts.maxFiles === 'number' ? opts.maxFiles : 2000;
   const out = [];
   for (const scope of scopes) {
-    const abs = scope.startsWith('/') ? scope : join(projectRoot, scope);
+    // V155-044: isAbsolute() so Windows C:\… scopes aren't joined as relative,
+// which previously yielded a non-existent path and a vacuous "everything
+// passes" review verdict.
+const abs = isAbsolute(scope) ? scope : join(projectRoot, scope);
     if (!existsSync(abs)) continue;
     const stack = [abs];
     while (stack.length > 0 && out.length < maxFiles) {
