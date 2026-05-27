@@ -90,6 +90,8 @@ const DEFAULT_TEMPLATE = pathResolve(
  *   - 'ERR_BAD_BLOCK'        — block name not in RESERVED_BLOCKS (sh: exit 2)
  *   - 'ERR_TEMPLATE_MISSING' — target absent + no template available (sh: 3)
  *   - 'ERR_BAD_PAYLOAD'      — pairs argument malformed (sh: 2)
+ *   - 'ERR_BACKUP_REQUIRED'  — existing target's backup failed; refusing to
+ *                              overwrite without rollback (V155-010)
  */
 export class MergeBlockAwareError extends Error {
   constructor(code, message) {
@@ -203,48 +205,64 @@ export function backupDirFor(targetAbsPath, opts = {}) {
  * Take a millisecond-timestamped backup of `targetAbsPath` into the canonical
  * backup directory, then prune older entries past `retain` (newest-first).
  *
- * Mirrors the shell script's `cp` + `node -e '…sort by mtime…'` block. Best-
- * effort: any IO failure is swallowed so a backup hiccup never blocks the
- * merge (the shell script does `2>/dev/null || true`).
+ * V155-010: distinguish 'absent' (no prior file to back up) from 'io-error'
+ * (prior file exists but copy/mkdir/stat failed). Caller (`mergeFile`) needs
+ * to refuse the merge when an existing target had its backup fail, so the
+ * write isn't silently destructive. Returned shapes:
+ *   - { taken: false, reason: 'absent', pruned: 0 }     — no prior file
+ *   - { taken: false, reason: 'empty', pruned: 0 }      — prior file is 0 bytes
+ *   - { taken: false, reason: 'io-error', error, pruned: 0 } — copy/mkdir/stat threw
+ *   - { taken: true, path, pruned }                     — backup succeeded
+ *
+ * Mirrors the shell script's `cp` + `node -e '…sort by mtime…'` block.
+ * Retention errors remain best-effort (the backup itself is what mergeFile
+ * cares about).
  *
  * @param {string} targetAbsPath  absolute path of the target being merged
  * @param {{homeDir?: string, retain?: number, now?: () => number}} [opts]
- * @returns {{taken: boolean, path?: string, pruned: number}}
+ * @returns {{taken: boolean, path?: string, pruned: number, reason?: string, error?: string}}
  */
 export function rotateBackups(targetAbsPath, opts = {}) {
   const retain = typeof opts.retain === 'number' ? opts.retain : BACKUP_RETAIN;
   const now = typeof opts.now === 'function' ? opts.now : Date.now;
-  try {
-    if (!existsSync(targetAbsPath)) return { taken: false, pruned: 0 };
-    const st = statSync(targetAbsPath);
-    if (!st || !st.size) return { taken: false, pruned: 0 };
-    const dir = backupDirFor(targetAbsPath, opts);
-    try { mkdirSync(dir, { recursive: true }); } catch { /* best-effort */ }
-    const backupName = `AGENTS.md.bak.${String(now())}`;
-    const backupPath = join(dir, backupName);
-    try { copyFileSync(targetAbsPath, backupPath); } catch { return { taken: false, pruned: 0 }; }
-
-    // Retention — keep newest `retain`, unlink the rest. mtime-sorted to
-    // match the shell node payload's `sort((a,b) => b.mt - a.mt)`.
-    let pruned = 0;
-    try {
-      const entries = readdirSync(dir)
-        .filter((n) => n.startsWith('AGENTS.md.bak.'))
-        .map((n) => {
-          try { return { n, mt: statSync(join(dir, n)).mtimeMs }; }
-          catch { return null; }
-        })
-        .filter(Boolean)
-        .sort((a, b) => b.mt - a.mt);
-      for (const e of entries.slice(retain)) {
-        try { unlinkSync(join(dir, e.n)); pruned += 1; } catch { /* best-effort */ }
-      }
-    } catch { /* best-effort */ }
-
-    return { taken: true, path: backupPath, pruned };
-  } catch {
-    return { taken: false, pruned: 0 };
+  if (!existsSync(targetAbsPath)) return { taken: false, reason: 'absent', pruned: 0 };
+  let st;
+  try { st = statSync(targetAbsPath); }
+  catch (e) {
+    return { taken: false, reason: 'io-error', error: e?.message || String(e), pruned: 0 };
   }
+  if (!st || !st.size) return { taken: false, reason: 'empty', pruned: 0 };
+  const dir = backupDirFor(targetAbsPath, opts);
+  try { mkdirSync(dir, { recursive: true }); }
+  catch (e) {
+    return { taken: false, reason: 'io-error', error: e?.message || String(e), pruned: 0 };
+  }
+  const backupName = `AGENTS.md.bak.${String(now())}`;
+  const backupPath = join(dir, backupName);
+  try { copyFileSync(targetAbsPath, backupPath); }
+  catch (e) {
+    return { taken: false, reason: 'io-error', error: e?.message || String(e), pruned: 0 };
+  }
+
+  // Retention — keep newest `retain`, unlink the rest. mtime-sorted to
+  // match the shell node payload's `sort((a,b) => b.mt - a.mt)`. Retention
+  // errors stay best-effort because the backup itself already succeeded.
+  let pruned = 0;
+  try {
+    const entries = readdirSync(dir)
+      .filter((n) => n.startsWith('AGENTS.md.bak.'))
+      .map((n) => {
+        try { return { n, mt: statSync(join(dir, n)).mtimeMs }; }
+        catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mt - a.mt);
+    for (const e of entries.slice(retain)) {
+      try { unlinkSync(join(dir, e.n)); pruned += 1; } catch { /* best-effort */ }
+    }
+  } catch { /* best-effort */ }
+
+  return { taken: true, path: backupPath, pruned };
 }
 
 // ---------------------------------------------------------------------------
@@ -322,12 +340,23 @@ export function mergeFile(targetAbsPath, pairs, opts = {}) {
     };
   }
 
-  // Backup + retention (best-effort, defaults on). `opts.backups === false`
-  // suppresses (used by some tests to keep tmp clean).
+  // Backup + retention. V155-010: when `opts.backups !== false` AND the target
+  // already exists on disk, a backup IO error MUST abort the merge — the only
+  // alternative is to overwrite real bytes with no rollback path. Callers that
+  // accept the risk (cleanup tooling, fresh installs) opt out via
+  // `opts.backups === false`. `reason === 'absent' | 'empty'` are non-errors:
+  // the target either didn't exist (seed path) or was a zero-byte placeholder.
   let backup;
   if (opts.backups !== false) {
     const rot = rotateBackups(abs, opts);
-    if (rot.taken && rot.path) backup = rot.path;
+    if (rot.taken && rot.path) {
+      backup = rot.path;
+    } else if (rot.reason === 'io-error') {
+      throw new MergeBlockAwareError(
+        'ERR_BACKUP_REQUIRED',
+        `mergeFile: refusing to write ${abs} — backup failed on existing target (${rot.error || 'unknown'}). Retry, or pass {backups:false} to override.`,
+      );
+    }
   }
 
   const res = writeAtomic(abs, next, { mode: 0o644, ensureDir: true });
