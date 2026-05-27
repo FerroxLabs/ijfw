@@ -2,7 +2,7 @@
 // Flow: preflight → resolve target → clone/pull → scripts/install.sh → merge marketplace → summary.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, rmSync, mkdirSync, realpathSync, renameSync, readdirSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, realpathSync, renameSync, readdirSync, cpSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -263,9 +263,31 @@ function cloneOrPull(dir, branch) {
       const src = join(backupDir, item);
       if (existsSync(src)) {
         const dst = join(dir, item);
+        // TR-005 (v1.5.5 Trident): the prior shape was `rmSync(dst); renameSync(src, dst)`.
+        // renameSync across filesystems throws EXDEV; on that throw the dst is
+        // ALREADY gone AND src is still under .bak — net data loss for the
+        // operator, and (because the outer catch then rmSync's `dir`) any
+        // already-restored allowlist entries are gone too. Switch to
+        // cpSync (copy semantics — works across filesystems) followed by an
+        // explicit rmSync of the .bak source AFTER copy succeeds. If cpSync
+        // throws, the backup tree is fully intact and recoverable: we surface
+        // the path on the way up to the outer catch (line below) so the
+        // operator sees where their data still lives.
         if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
-        renameSync(src, dst);
-        restoredCount++;
+        try {
+          cpSync(src, dst, { recursive: true, dereference: false });
+          rmSync(src, { recursive: true, force: true });
+          restoredCount++;
+        } catch (cpErr) {
+          // Surface the backup location verbatim so the operator can recover.
+          // Throw upward; the outer try/catch handles overall restoration.
+          const msg = cpErr && cpErr.message ? cpErr.message : String(cpErr);
+          throw new Error(
+            `IJFW restore: cpSync failed for "${item}" (${msg}). ` +
+            `Your data is still intact under: ${backupDir}. ` +
+            `Move it back into ${dir} manually after diagnosing the copy failure.`,
+          );
+        }
       }
     }
     // Only delete the backup AFTER restore has completed.

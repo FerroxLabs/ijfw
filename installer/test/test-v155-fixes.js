@@ -226,6 +226,33 @@ describe('V155-013: cloneOrPull restore allowlist covers v1.5+ user data', () =>
     assert.match(src, /backup retained at/, 'install.js must warn when backup is retained');
   });
 
+  it('TR-005: restore loop uses cpSync (EXDEV-safe) not renameSync', async () => {
+    // TR-005 (v1.5.5 Trident): `rmSync(dst); renameSync(.bak, dst)` is unsafe
+    // across filesystems — renameSync throws EXDEV after dst is gone, losing
+    // user data. The fix replaces it with `cpSync` + post-copy rmSync so
+    // backup is intact during the copy and only deleted on success.
+    const fs = await import('node:fs');
+    const here = import.meta.dirname || '.';
+    const src = fs.readFileSync(join(here, '..', 'src', 'install.js'), 'utf8');
+    // cpSync must be imported.
+    assert.match(src, /cpSync/, 'install.js must import cpSync for cross-filesystem restore');
+    // TR-005 reference comment must be present.
+    assert.match(src, /TR-005/, 'install.js must reference TR-005 in restore-loop comments');
+    // The restore loop must invoke cpSync with recursive:true and
+    // dereference:false (no symlink-follow-into-target attacks).
+    assert.match(
+      src,
+      /cpSync\(src,\s*dst,\s*\{\s*recursive:\s*true,\s*dereference:\s*false\s*\}\)/,
+      'install.js restore loop must call cpSync(src, dst, {recursive:true, dereference:false})',
+    );
+    // The error path must surface the backup directory verbatim.
+    assert.match(
+      src,
+      /Your data is still intact under:/,
+      'install.js cpSync failure must surface the backup path so operator can recover',
+    );
+  });
+
   it('install.ps1 source mentions ijfw, state, cache, logs in restore allowlist', async () => {
     const fs = await import('node:fs');
     const here = import.meta.dirname || '.';
