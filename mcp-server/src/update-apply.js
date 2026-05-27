@@ -1,28 +1,33 @@
-// MCP tool: ijfw_update_apply
+// Internal helper: ijfwUpdateApply (sentinel writer).
 //
-// @deprecated since v1.5.0; will be removed in v1.6.0 (F-FUN-3 / v1.5.0 audit-MED-M7).
-// `ijfw_update_check` already issues a confirmation token whose instruction tells
-// the user to type `ijfw update --confirm <token>` in their terminal directly.
-// The intermediate `ijfw_update_apply` step writes a pending sentinel, but the
-// terminal CLI does not require the sentinel to confirm — the token itself is
-// authoritative. The tool is retained for v1.5.0 back-compat (older skills that
-// still call it work unchanged) and slated for retirement in v1.6.0 to free the
-// MCP-tool slot (see CLAUDE.md "MCP server: ≤14 tools" cap).
+// V155-017 (v1.5.5): formerly exposed as the `ijfw_update_apply` MCP tool.
+// The MCP registration was retired in v1.5.5 because `ijfw_update_check`
+// already issues a confirmation token whose instruction tells the user to
+// type `ijfw update --confirm <token>` in their terminal directly. The
+// intermediate `ijfw_update_apply` MCP verb wrote a pending sentinel, but
+// the terminal CLI does not require the sentinel to confirm — the token
+// itself is authoritative.
+//
+// The function is kept INTERNAL-ONLY: still called from sentinel-write tests
+// (test-1.1.6.js) which exercise validateToken + writePendingSentinel +
+// target-mismatch semantics. It is NOT registered as an MCP tool and NOT
+// referenced from user-facing CLI strings. If you find yourself wanting to
+// re-expose it via MCP, check the ≤14 tool cap (mcp-server/TOOLS.md) and
+// pick a tool to retire first.
 //
 // Does NOT execute the update. Validates the token, writes (or overwrites)
-// the pending sentinel, returns instruction telling the user to run the
-// terminal-side confirm command. Idempotent against a matching sentinel
-// already written by ijfw_update_check -- the sentinel + token are the
-// same artifact, so re-writing with the same values is a no-op.
-// Air-gaps the MCP path from actual code execution -- per v3 sec 16 blocker fix.
+// the pending sentinel. Idempotent against a matching sentinel already
+// written by ijfw_update_check.
 
 import { validateToken, writePendingSentinel } from './lib/token.js';
 import { isVersionStringValid } from './lib/npm-view.js';
 
 /**
- * @deprecated since v1.5.0; scheduled for removal in v1.6.0. Callers should
- * skip straight from `ijfw_update_check` to the terminal-side confirm command;
- * the intermediate sentinel write is redundant given the token contract.
+ * V155-017: internal sentinel-write helper. Was the `ijfw_update_apply`
+ * MCP tool through v1.5.4; retired from MCP surface in v1.5.5. Retained
+ * as in-process callable for the sentinel-write test surface and for any
+ * future flow that wants to write a sentinel without going through
+ * `ijfw_update_check` (no current production caller).
  */
 export function ijfwUpdateApply(args = {}) {
   const { target_version, confirmation_token } = args || {};
@@ -75,21 +80,8 @@ export function ijfwUpdateApply(args = {}) {
   };
 }
 
-export const TOOL_DEF = {
-  name: 'ijfw_update_apply',
-  description:
-    '[DEPRECATED v1.5.0; removal in v1.6.0] Stage an IJFW update behind out-of-band terminal ' +
-    'confirmation. Writes a pending sentinel; actual update only runs when the user types ' +
-    "'ijfw update --confirm <token>' in their terminal. This MCP tool NEVER executes the " +
-    'update directly. Prefer calling ijfw_update_check and forwarding the returned ' +
-    "'ijfw update --confirm <token>' instruction directly to the user.",
-  inputSchema: {
-    type: 'object',
-    required: ['target_version', 'confirmation_token'],
-    properties: {
-      target_version: { type: 'string', description: 'Target semver to install' },
-      confirmation_token: { type: 'string', description: 'Token from ijfw_update_check' },
-      session_id: { type: 'string', description: 'Session ID for token scoping (optional)' },
-    },
-  },
-};
+// V155-017: TOOL_DEF removed in v1.5.5 — `ijfw_update_apply` is no longer
+// an MCP tool. The streamlined update flow is `ijfw_update_check` → terminal
+// `ijfw update --confirm <token>`. See server.js TOOLS array for the v1.5.5
+// MCP tool surface; do not re-add this without retiring another tool first
+// (≤14 tool cap, mcp-server/TOOLS.md).

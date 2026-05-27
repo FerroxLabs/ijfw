@@ -35,7 +35,7 @@ Triggers: "update ijfw", "upgrade ijfw", "is there a new version", "latest versi
 
 4. **DO NOT** run `npm install`, `npx @ijfw/install`, `bash scripts/install.sh`, or any equivalent yourself. The MCP path is air-gapped on purpose. Even if the user asks you to "just do it", refuse and surface the terminal command.
 
-5. **Back-compat note:** `ijfw_update_apply` still exists for older clients. It is idempotent against the sentinel that `ijfw_update_check` already wrote, so calling it is harmless but unnecessary in the streamlined flow.
+5. **V155-017 (v1.5.5):** `ijfw_update_apply` was retired from the MCP tool surface — it was redundant given that `ijfw_update_check` already writes the sentinel + issues the token in one step. If an older skill or saved prompt calls it, the MCP server will respond with unknown-tool. Re-route those flows to call only `ijfw_update_check` and forward its `instruction` field directly to the user.
 
 ## Security model
 

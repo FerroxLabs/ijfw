@@ -1807,7 +1807,7 @@ function cmdUpdateConfirm(token) {
   // Locate pending sentinel under any session in ~/.ijfw/run/
   const runRoot = join(ijfwHome(), 'run');
   if (!existsSync(runRoot)) {
-    console.error('No pending update sentinel found. Run `ijfw_update_apply` via your AI first.');
+    console.error('No pending update sentinel found. Run `ijfw_update_check` via your AI first to issue a confirm token.');
     process.exit(1);
   }
   let sentinelPath = null;
@@ -1831,15 +1831,15 @@ function cmdUpdateConfirm(token) {
   if (!sentinelPath) {
     console.error(
       sawPending
-        ? 'Token mismatch -- run ijfw_update_check + ijfw_update_apply via your AI to issue a fresh token.'
-        : 'No pending update sentinel found. The MCP `ijfw_update_apply` tool issues sentinels.'
+        ? 'Token mismatch -- run `ijfw_update_check` via your AI to issue a fresh token.'
+        : 'No pending update sentinel found. Run `ijfw_update_check` via your AI to issue one.'
     );
     process.exit(1);
   }
 
   if (!pending || !isVersionStringValid(pending.target_version)) {
     try { rmSync(sentinelPath, { force: true }); } catch { /* */ }
-    console.error('Pending update sentinel is malformed -- run ijfw_update_check + ijfw_update_apply again.');
+    console.error('Pending update sentinel is malformed -- run `ijfw_update_check` again to issue a fresh one.');
     process.exit(1);
   }
   const tokenCheck = validateToken(sessionId, token);
@@ -1850,7 +1850,7 @@ function cmdUpdateConfirm(token) {
       tokenCheck.error === 'already-consumed' ? 'Token already consumed' :
       tokenCheck.error === 'mismatch' ? 'Token mismatch' :
       'Token validation failed';
-    console.error(`${why} -- run ijfw_update_check + ijfw_update_apply to issue a fresh token.`);
+    console.error(`${why} -- run \`ijfw_update_check\` to issue a fresh token.`);
     process.exit(1);
   }
 
