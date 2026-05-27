@@ -162,8 +162,18 @@ function verbWikiGet(db, repoRoot, args) {
   return { ok: true, slug, path: found.path, type: found.type, markdown: readFileSync(found.path, 'utf8') };
 }
 
+// V155-049: wiki.compile `type` allowlist. Without this, an attacker-supplied
+// `type = '../../etc'` would still pass downstream guards (slugify, path-guard
+// containment) but produces confusing error messages because `pluralType()`
+// silently appends 's'. Reject anything not in the documented set up front.
+const WIKI_COMPILE_TYPES = new Set(['entity', 'concept', 'decision', 'milestone']);
+
 async function verbWikiCompile(db, repoRoot, args) {
   if (!args.subject) return { ok: false, error: 'missing-subject' };
+  // V155-049: type allowlist — defense in depth before path-guard.
+  if (args.type !== undefined && args.type !== null && !WIKI_COMPILE_TYPES.has(args.type)) {
+    return { ok: false, error: 'invalid-type', type: args.type, allowed: [...WIKI_COMPILE_TYPES] };
+  }
   // V155-015: compileWikiPage is now async (withFsLock is async). Awaited
   // here so the outer handler's switch returns the resolved verdict, not
   // a Promise — matching every other verb in this dispatcher.
@@ -176,12 +186,23 @@ function verbWikiPromote(db, repoRoot, args) {
   const slug = slugify(args.slug);
   const found = findPage(paths.wikiDir, slug);
   if (!found) return { ok: false, error: 'page-not-found', slug };
-  const globalDir = join(homedir(), 'IJFW', 'wiki', found.type);
+  const globalRoot = join(homedir(), 'IJFW');
+  const globalDir = join(globalRoot, 'wiki', found.type);
   mkdirSync(globalDir, { recursive: true });
   const dst = join(globalDir, `${slug}.md`);
+  // V155-033: defense-in-depth containment. Today slugify() blocks `..`
+  // traversal in the slug; a future slugify relaxation would re-open the
+  // hole. Reuse the same validator wiki.export uses, anchored at ~/IJFW.
+  const guard = validateSafeRepoPath(globalRoot, dst);
+  if (!guard.ok) return guard;
+  // V155-024/V155-040: capture pre-existence BEFORE the copy. The previous
+  // `existsSync(dst)` after copy was tautological — destination always exists
+  // post-copy — so `overwrote` always equalled `args.force === true`. The
+  // honest semantic is "did this call clobber a pre-existing file?".
+  const dstExistedBefore = existsSync(dst);
   // FLAG-2: refuse to overwrite an existing global page unless force=true.
   // Operator may have hand-curated content there; silent clobber is data loss.
-  if (existsSync(dst) && args.force !== true) {
+  if (dstExistedBefore && args.force !== true) {
     return { ok: false, error: 'global-page-exists', dst, hint: 'pass force:true to overwrite' };
   }
   try {
@@ -192,7 +213,14 @@ function verbWikiPromote(db, repoRoot, args) {
     }
     return { ok: false, error: 'copy-failed', message: e.message };
   }
-  return { ok: true, slug, type: found.type, src: found.path, dst, overwrote: args.force === true && existsSync(dst) };
+  return {
+    ok: true,
+    slug,
+    type: found.type,
+    src: found.path,
+    dst,
+    overwrote: dstExistedBefore && args.force === true,
+  };
 }
 
 function verbWikiExport(db, repoRoot, args) {
@@ -215,6 +243,14 @@ function verbWikiShareReadme(db, repoRoot) {
 function verbConflictResolve(db, repoRoot, args) {
   if (!args.subject || !args.predicate || args.winnerId == null) {
     return { ok: false, error: 'missing-args' };
+  }
+  // V155-065: typecheck winnerId. better-sqlite3 throws when given an array
+  // or object (`{winnerId:[1,2,3]}` → "SQLite3 can only bind numbers, strings,
+  // bigints, buffers, and null"). Previously that throw propagated through
+  // the outer catch as `{ok:false, error:'db-error', message:<stack>}`,
+  // leaking internal contract details. Reject at the boundary instead.
+  if (!Number.isInteger(args.winnerId) && typeof args.winnerId !== 'string') {
+    return { ok: false, error: 'winnerId-must-be-number-or-string', winnerId: args.winnerId };
   }
   const supersede = args.supersede !== false; // default true
   if (!supersede) {

@@ -1614,6 +1614,75 @@ function writeStateFields(updates) {
   });
 }
 
+// V155-001 (BLOCKER) — `ijfw update` was writing `installed_version` /
+// `last_applied_version` based on the install subprocess returning exit 0
+// across all 3 install methods (npm-global, git-clone, manual). Exit 0 from
+// `npm install -g @ijfw/install@X` is "npm did not crash" — NOT "@ijfw/install
+// on disk is now version X". On registry blips, npm-cache poisoning, or a
+// no-op install (already-installed, lockfile pin), `state.json` would advance
+// to a version that does not exist on the filesystem. Every subsequent
+// `ijfw update --check` then saw "we're up to date" and refused to retry.
+//
+// Fix: AFTER the install subprocess returns 0, re-read the *actual*
+// installed package.json (preferring npm-global root for the npm-global path,
+// repo-tree installer/package.json for git-clone, and either for manual)
+// and confirm `pkg.version === expectedVersion` before writing state.json.
+// If they disagree, refuse the state write and surface the discrepancy.
+//
+// Returns { ok: true, actualVersion } on success, { ok: false, actualVersion,
+// reason } on mismatch / unreadable.
+function verifyInstallSucceeded({ method, repoRoot, expectedVersion }) {
+  // Candidate package.json locations, ordered by install method. We probe
+  // multiple so the helper survives across method-mislabel edge cases
+  // (e.g., manual install on a machine that also has the git clone).
+  const candidates = [];
+  if (method === 'git-clone' && repoRoot) {
+    candidates.push(join(repoRoot, 'installer', 'package.json'));
+  }
+  // npm-global root resolution via `npm root -g`. Shell-true on Windows
+  // so npm.cmd resolves. The lookup is read-only; pkg name is hardcoded.
+  if (method === 'npm-global' || method === 'manual') {
+    try {
+      const r = spawnSync('npm', ['root', '-g'], {
+        encoding: 'utf8',
+        timeout: 5_000,
+        shell: process.platform === 'win32',
+      });
+      if (r.status === 0) {
+        const globalRoot = (r.stdout || '').trim();
+        if (globalRoot) {
+          candidates.push(join(globalRoot, '@ijfw', 'install', 'package.json'));
+        }
+      }
+    } catch { /* ignore — fall through to other candidates */ }
+  }
+  // Always include repoRoot/installer/package.json as a final fallback —
+  // covers dev-mode installs and dotfiles-managed trees where the npm root
+  // doesn't carry @ijfw/install (e.g., asdf shims, nix).
+  if (repoRoot) {
+    const fallback = join(repoRoot, 'installer', 'package.json');
+    if (!candidates.includes(fallback)) candidates.push(fallback);
+  }
+
+  const seen = [];
+  for (const p of candidates) {
+    const pkg = readJsonSafe(p);
+    if (!pkg) {
+      seen.push(`${p} (unreadable)`);
+      continue;
+    }
+    seen.push(`${p} (v${pkg.version || 'unknown'})`);
+    if (pkg.version === expectedVersion) {
+      return { ok: true, actualVersion: pkg.version, source: p };
+    }
+  }
+  return {
+    ok: false,
+    actualVersion: null,
+    reason: `no package.json reported version v${expectedVersion}. Probed: ${seen.join(', ') || '(no candidates)'}`,
+  };
+}
+
 function cmdUpdateCheck() {
   const state = readState();
   const current = state.installed_version || '0.0.0';
@@ -1954,10 +2023,19 @@ function cmdUpdateInteractive(opts = {}) {
       console.error(`npm install did not complete (exit ${npmInstall.status}). Run \`npm install --omit=dev --ignore-scripts\` in ${repoRoot} manually.`);
       return 1;
     }
-    installRes = spawnSync('bash', [installSh], { stdio: 'inherit' });
+    // V155-001 (H-002): hardcoded `bash` ENOENTs on Windows where the runtime
+    // is `sh.exe` (Git-Bash) or absent. Use shell:true on Windows so the
+    // .sh extension dispatches via the registered shebang handler; POSIX
+    // keeps the explicit `bash` binary for portability across distros.
+    installRes = process.platform === 'win32'
+      ? spawnSync(installSh, [], { stdio: 'inherit', shell: true })
+      : spawnSync('bash', [installSh], { stdio: 'inherit' });
   } else {
     console.log('  Manual install detected -- run: npx @ijfw/install');
-    installRes = spawnSync('npx', ['-y', `@ijfw/install@${r.version}`], { stdio: 'inherit' });
+    installRes = spawnSync('npx', ['-y', `@ijfw/install@${r.version}`], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
   }
   if (!installRes) {
     console.error('Update did not complete (install command could not be spawned)');
@@ -1969,6 +2047,23 @@ function cmdUpdateInteractive(opts = {}) {
   }
   if (installRes.status !== 0) {
     console.error(`Update did not complete (exit ${installRes.status}). State not written.`);
+    return 1;
+  }
+  // V155-001 (A-001 + C-001 + C-002): subprocess exit 0 is "the command did
+  // not crash" — NOT "@ijfw/install on disk is now version r.version".
+  // Re-verify by reading the installed package.json BEFORE writing state.json.
+  // If the filesystem disagrees with what we asked for, refuse the state
+  // write and surface a clear actionable error.
+  const repoRoot = method === 'git-clone' ? repoRootFromCli() : null;
+  const verify = verifyInstallSucceeded({
+    method,
+    repoRoot: repoRoot || repoRootFromCli(),
+    expectedVersion: r.version,
+  });
+  if (!verify.ok) {
+    console.error(`Update did NOT complete: install subprocess exited 0 but filesystem still reports v${verify.actualVersion || 'unknown'} (expected v${r.version}).`);
+    console.error(`  Details: ${verify.reason}`);
+    console.error('  State not written. Inspect with `ijfw status`; rerun `ijfw update` after diagnosing.');
     return 1;
   }
   // Persist both fields atomically -- single write avoids concurrent-reader inconsistency.
