@@ -117,6 +117,39 @@ export async function run(ctx) {
       };
     }
 
+    // V155-007: actually SPAWN the installer binary against the isolated HOME.
+    // Previously the gate found `installerBin` but never executed it; the
+    // settings.json existence check below then always returned false, leaving
+    // the gate effectively a no-op static linter. Now we run the installer
+    // and require it to either complete or fail clearly. The installer binary
+    // is `node <path>` style on POSIX and `node <path>.cmd`-aware on Windows.
+    const runInstaller = spawnSync(installerBin, ['--yes'], {
+      encoding: 'utf8',
+      cwd: installDir,
+      timeout: 120_000,
+      env: {
+        ...cleanEnv,
+        HOME: fakeHome,
+        USERPROFILE: fakeHome,
+        IJFW_HOME: join(fakeHome, '.ijfw'),
+        // Suppress interactive prompts / network calls where possible.
+        CI: '1',
+        IJFW_SKIP_NETWORK: '1',
+      },
+      shell: process.platform === 'win32',
+    });
+
+    if (runInstaller.status !== 0) {
+      return {
+        name: 'upgrade-smoke',
+        status: 'FAIL',
+        message: `upgrade-smoke: installer binary exited ${runInstaller.status}`,
+        details: ((runInstaller.stdout || '') + (runInstaller.stderr || ''))
+          .split('\n').filter(Boolean).slice(0, 15),
+        durationMs: Date.now() - t0,
+      };
+    }
+
     // 5. Assert: if settings.json was written, the plugin key must be 'ijfw' not 'ijfw-core'
     const settingsPath = join(claudeDir, 'settings.json');
     if (existsSync(settingsPath)) {
