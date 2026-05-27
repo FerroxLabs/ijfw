@@ -72,3 +72,31 @@ test('runStages skips invalid stage definitions', async () => {
     assert.ok(res.failed.every((f) => f.reason === 'invalid_stage_definition'));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// TP-003 (v1.5.5 Trident): V155-005's `status:'completed_with_error'` and
+// `'skipped'` are written to .dream-state-v2.json, but operators don't read
+// JSON unless something already feels wrong. Surface those shapes on stderr
+// at run time so the operator discovers the truth proactively.
+test('TP-003: completed_with_error stage emits a stderr discoverability line', async () => {
+  const root = makeRoot();
+  const captured = [];
+  const origWrite = process.stderr.write.bind(process.stderr);
+  // eslint-disable-next-line no-param-reassign
+  process.stderr.write = (chunk, ...rest) => {
+    captured.push(typeof chunk === 'string' ? chunk : chunk.toString());
+    return origWrite(chunk, ...rest);
+  };
+  try {
+    await runStages(root, [
+      { name: 'compress', run: async () => ({ error: 'index rebuild failed' }) },
+      { name: 'decay',    run: async () => ({ skipped: 'no rows to decay' }) },
+    ]);
+  } finally {
+    // eslint-disable-next-line no-param-reassign
+    process.stderr.write = origWrite;
+    rmSync(root, { recursive: true, force: true });
+  }
+  const joined = captured.join('');
+  assert.match(joined, /\[dream\] stage compress completed with error: index rebuild failed/);
+  assert.match(joined, /\[dream\] stage decay skipped: no rows to decay/);
+});

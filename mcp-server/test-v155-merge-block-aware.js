@@ -101,48 +101,70 @@ describe('V155-010: mergeFile aborts when existing-target backup fails', () => {
   });
 
   it('mergeFile throws ERR_BACKUP_REQUIRED when rotateBackups reports io-error', () => {
-    // We monkey-patch rotateBackups indirectly by supplying a custom homeDir
-    // that we then chmod 0o500 between the target-exists check and the
-    // backup attempt. Easier: stub via direct injection — but the public
-    // surface doesn't allow it, so we use FS permissions on POSIX.
-    if (platform() === 'win32') return;
+    // TR-004 (v1.5.5 Trident): the prior shape relied on chmod 0o500 to
+    // provoke an io-error from rotateBackups. On root-as-CI runners
+    // (filesystem ignores POSIX mode for uid 0) the chmod is silently
+    // ignored, the backup succeeds, and the BLOCKER refusal path is NEVER
+    // exercised — the test passed vacuously on the very environments the
+    // BLOCKER was reported against.
+    //
+    // The fix routes through `opts._rotateBackups` — an internal DI seam
+    // added to mergeFile in v1.5.5 — to inject a stub that returns the
+    // io-error structured response directly. Now the throw is asserted
+    // unconditionally on every host, including root, including Windows.
     const tmp = mkdtempSync(join(tmpdir(), 'v155-010-refuse-'));
     try {
-      // Seed AGENTS.md with real content under a writable area.
       const target = join(tmp, 'AGENTS.md');
       writeFileSync(target, '<!-- IJFW-MEMORY-START -->\n<!-- IJFW-MEMORY-END -->\noriginal\n');
-      // Read original bytes so we can assert "did not get overwritten" on
-      // abort. (atomic-rename means partial writes can't occur, but if the
-      // backup gate were missing, the new content would still land.)
       const before = readFileSync(target, 'utf8');
 
-      // Make the homedir-backed backup directory unwritable.
-      const roHome = join(tmp, 'ro-home');
-      mkdirSync(roHome);
-      try { chmodSync(roHome, 0o500); } catch {}
+      // DI stub — guarantees the io-error code path runs.
+      const stubRotator = (_abs, _opts) => ({
+        taken: false,
+        reason: 'io-error',
+        error: 'simulated injection: backup unwritable',
+      });
 
       let threw = false;
       try {
         mergeFile(
           target,
           [{ block: 'MEMORY', content: 'replaced' }],
-          { homeDir: roHome },
+          { homeDir: tmp, _rotateBackups: stubRotator },
         );
       } catch (e) {
         threw = true;
         assert.ok(e instanceof MergeBlockAwareError);
         assert.equal(e.code, 'ERR_BACKUP_REQUIRED');
+        assert.match(e.message, /backup failed on existing target/);
+        assert.match(e.message, /simulated injection/);
       }
-      if (threw) {
-        // Refused path → original file bytes unchanged.
-        assert.equal(readFileSync(target, 'utf8'), before);
-      }
-      // If host filesystem ignored chmod 0o500 (e.g., CI as root), the test
-      // would silently fall through; in that case the backup actually
-      // succeeded and the merge proceeded, which is the legitimate non-io-error
-      // codepath. We don't assert in that case.
+      assert.ok(threw, 'TR-004: mergeFile MUST throw ERR_BACKUP_REQUIRED when rotator reports io-error');
+      // Refused path → original file bytes unchanged (no partial write).
+      assert.equal(readFileSync(target, 'utf8'), before);
     } finally {
-      try { chmodSync(join(tmp, 'ro-home'), 0o700); } catch {}
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('TR-004: DI seam preserves real-rotator default — control case still backs up correctly', () => {
+    // Counterpart sanity test: when no _rotateBackups is supplied, the
+    // production rotateBackups is invoked (no silent fallback to a
+    // no-op). Belt-and-braces: confirms the DI seam doesn't accidentally
+    // disable backups by default.
+    const tmp = mkdtempSync(join(tmpdir(), 'v155-010-control-'));
+    try {
+      const target = join(tmp, 'AGENTS.md');
+      writeFileSync(target, '<!-- IJFW-MEMORY-START -->\n<!-- IJFW-MEMORY-END -->\noriginal\n');
+      const res = mergeFile(
+        target,
+        [{ block: 'MEMORY', content: 'replaced' }],
+        { homeDir: tmp },
+      );
+      assert.equal(res.ok, true);
+      assert.ok(res.backup, 'backup path returned when production rotator runs');
+      assert.ok(existsSync(res.backup), 'backup file exists on disk');
+    } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });

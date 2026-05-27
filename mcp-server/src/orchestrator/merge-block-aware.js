@@ -348,7 +348,16 @@ export function mergeFile(targetAbsPath, pairs, opts = {}) {
   // the target either didn't exist (seed path) or was a zero-byte placeholder.
   let backup;
   if (opts.backups !== false) {
-    const rot = rotateBackups(abs, opts);
+    // TR-004 (v1.5.5 Trident): `opts._rotateBackups` is an internal
+    // dependency-injection seam — test-only. The default (`rotateBackups`
+    // imported above) is what production callers always hit. Tests inject
+    // a stub returning `{taken:false, reason:'io-error', error:'simulated'}`
+    // to exercise the BLOCKER refusal path deterministically, since
+    // chmod-0o500 doesn't reliably provoke an io-error on root-as-CI
+    // runners (FS layer ignores POSIX mode for uid 0).
+    const rotator = (typeof opts._rotateBackups === 'function')
+      ? opts._rotateBackups : rotateBackups;
+    const rot = rotator(abs, opts);
     if (rot.taken && rot.path) {
       backup = rot.path;
     } else if (rot.reason === 'io-error') {
