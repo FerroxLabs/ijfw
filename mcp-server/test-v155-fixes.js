@@ -97,13 +97,35 @@ describe('V155-045: uispec-intake uses isAbsolute()', () => {
   });
 });
 
-describe('V155-003: extension-installer surfaces partial deploy as ok:"partial"', () => {
-  it('extension-installer source defines a partial-deploy ok-shape', () => {
+describe('V155-003 / TP-002 (v1.5.5 Trident): extension-installer ok is strictly boolean on partial deploy', () => {
+  it('extension-installer source uses ok:!partialFailed (strict boolean) + status:"partial"', () => {
     const src = readFileSync(new URL('./src/extension-installer.js', import.meta.url), 'utf8');
-    // The fix introduces `partialFailed` + `ok: partialFailed ? 'partial' : true`.
+    // The fix introduces `partialFailed` + a strict-boolean `ok` field.
     assert.match(src, /partialFailed/, 'extension-installer.js must distinguish partial-failed');
-    assert.match(src, /ok:\s*partialFailed\s*\?\s*['"]partial['"]/,
-      'extension-installer.js must return ok:"partial" on project-scope deploy failure');
+    // TP-002: ok must be strict boolean (false on partial), not the prior truthy string.
+    assert.match(
+      src,
+      /ok:\s*!partialFailed/,
+      'extension-installer.js must return ok:!partialFailed (strict boolean)',
+    );
+    // status carries the tri-state.
+    assert.match(
+      src,
+      /status:\s*partialFailed\s*\?\s*['"]partial['"]\s*:\s*['"]success['"]/,
+      'extension-installer.js must set status to tri-state "partial"|"success"',
+    );
+    // Catch branch also carries status:'failed' so callers can branch cleanly.
+    assert.match(
+      src,
+      /status:\s*['"]failed['"]/,
+      'extension-installer.js catch path must set status:"failed"',
+    );
+    // The prior shape MUST NOT be present.
+    assert.doesNotMatch(
+      src,
+      /ok:\s*partialFailed\s*\?\s*['"]partial['"]/,
+      'TP-002: legacy ok:"partial" string (truthy under if(r.ok)) must be removed',
+    );
   });
 });
 

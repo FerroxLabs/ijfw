@@ -1199,15 +1199,23 @@ export async function installExtension(source, opts = {}) {
       }
     }
 
-    // V155-003: when a project-scope install only partially deploys to platforms
-    // (e.g. some skill writes failed), the registry has already been updated but
-    // the user's editor world is incomplete. Surface this honestly via ok:'partial'
-    // rather than the previous ok:true with a buried deploy_partial sub-field.
-    // Top-level scopes (user/system) skip platform deploy entirely so this only
-    // engages for the project path.
+    // V155-003 / TP-002 (v1.5.5 Trident): when a project-scope install only
+    // partially deploys to platforms (e.g. some skill writes failed), the
+    // registry has already been updated but the user's editor world is
+    // incomplete. The prior shape returned `ok: 'partial'` — a string —
+    // which is TRUTHY under JS-idiomatic `if (r.ok)` checks, so legacy
+    // callers still saw the partial deploy as success. That's the very bug
+    // class V155-003 was meant to retire.
+    //
+    // TP-002 closes the loop: `ok` is now STRICTLY BOOLEAN (false on
+    // partial), and a new `status` field carries the tri-state for callers
+    // that want to differentiate full success vs partial vs failure.
+    // Legacy `if (r.ok) succeed()` consumers now correctly refuse on
+    // partial; new callers can branch on `r.status === 'partial'`.
     const partialFailed = opts.scope === 'project' && deployPartial === true;
     return {
-      ok: partialFailed ? 'partial' : true,
+      ok: !partialFailed,
+      status: partialFailed ? 'partial' : 'success',
       name: manifest.name,
       version: manifest.version,
       scope: opts.scope,
@@ -1221,6 +1229,7 @@ export async function installExtension(source, opts = {}) {
   } catch (err) {
     return {
       ok: false,
+      status: 'failed',
       errors: [err && err.message ? err.message : String(err)],
       gate_result_block: gateResultBlock,
     };
