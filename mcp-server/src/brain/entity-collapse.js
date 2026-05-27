@@ -2,8 +2,8 @@
 //
 // canonicalize(s): lowercase + collapsed-whitespace + trim. findCandidateMerges(db)
 // surfaces groups of distinct stored subject strings that normalize to the same
-// form (e.g. "Sean Donahoe" / "sean donahoe" / " Sean  Donahoe " all collapse
-// to "sean donahoe"). Promotion (actual merge) is operator-confirmed -- this
+// form (e.g. "Jane Doe" / "jane doe" / " Jane  Doe " all collapse
+// to "jane doe"). Promotion (actual merge) is operator-confirmed -- this
 // module only surfaces candidates.
 
 export function canonicalize(s) {

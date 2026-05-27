@@ -2,7 +2,7 @@
 
 /**
  * IJFW Memory Server -- Cross-platform MCP memory for AI coding agents
- * By Sean Donahoe | "It Just Fucking Works"
+ * By Ferrox Labs | "It Just Fucking Works"
  *
  * 4 tools: recall, store, search, status
  * Storage: append-only markdown (hot layer, zero dependencies)
