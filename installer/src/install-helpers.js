@@ -111,20 +111,78 @@ export function writeAtomic(path, contents, opts = {}) {
 
 /**
  * backup -- if `path` exists as a file, copy to `${path}.bak.${ts}`.
- * Returns the backup path (or null if nothing to back up). Mirrors
+ * Returns the backup path string, or null if nothing to back up. Mirrors
  * install.sh:585-590.
+ *
+ * V155-009: prior versions silently swallowed both "no file to back up"
+ * and "backup write failed" into a single null return. Callers had no
+ * way to distinguish the two. We now expose `requireBackup()` for callers
+ * that REFUSE to merge into an existing file without a backup. The bare
+ * `backup()` is kept as the legacy lossy API (still safe for fresh-install
+ * call sites where the destination doesn't yet exist).
  */
 export function backup(path, ts) {
+  const res = backupDetailed(path, ts);
+  return res.ok && res.path ? res.path : null;
+}
+
+/**
+ * backupDetailed -- new structured return:
+ *   { ok:true, path:'<file>.bak.<ts>' }     existing file backed up
+ *   { ok:true, path:null, reason:'absent' } no source file present (fresh install)
+ *   { ok:false, reason:string, error:Error|null }  io-error (file existed but
+ *                                          copy failed)
+ *
+ * V155-009.
+ */
+export function backupDetailed(path, ts) {
+  let st;
   try {
-    const st = statSync(path);
-    if (!st.isFile()) return null;
-  } catch { return null; }
+    st = statSync(path);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { ok: true, path: null, reason: 'absent' };
+    // Permission or other error: we can't tell if the file exists; treat as
+    // io-error so the caller errs on the side of refusing to overwrite.
+    return { ok: false, reason: 'stat-failed', error: err };
+  }
+  if (!st.isFile()) {
+    // dir / symlink / other -- nothing to back up at this slot.
+    return { ok: true, path: null, reason: 'not-a-file' };
+  }
   const dst = `${path}.bak.${ts}`;
   try {
     copyFileSync(path, dst);
     printInfo(`backup: ${basename(path)}.bak.${ts}`);
-    return dst;
-  } catch { return null; }
+    return { ok: true, path: dst };
+  } catch (err) {
+    return { ok: false, reason: 'copy-failed', error: err };
+  }
+}
+
+/**
+ * requireBackup -- caller-side guard that REFUSES to proceed when a backup
+ * of an existing file could not be created. Throws on backup failure.
+ *
+ * V155-009: configured at all merge-into-existing-config call sites.
+ * Operators who genuinely want to merge without a backup must pass
+ * IJFW_FORCE_NO_BACKUP=1.
+ */
+export function requireBackup(path, ts) {
+  if (!ts) return null;
+  const res = backupDetailed(path, ts);
+  if (res.ok) return res.path;
+  if (process.env.IJFW_FORCE_NO_BACKUP === '1') {
+    const why = res.error && res.error.message ? res.error.message : res.reason;
+    printInfo(`backup: forced past failure for ${basename(path)} (${why})`);
+    return null;
+  }
+  const why = res.error && res.error.message ? res.error.message : res.reason;
+  const err = new Error(
+    `Refusing to merge into existing config without backup: ${path} (${why}). ` +
+    `Re-run with IJFW_FORCE_NO_BACKUP=1 to proceed.`,
+  );
+  err.code = 'BACKUP_REQUIRED';
+  throw err;
 }
 
 // ============================================================================
@@ -349,7 +407,8 @@ function readJsonOrEmpty(path) {
  */
 export function mergeJson(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
-  if (ts) backup(dst, ts);
+  // V155-009: refuse to overwrite an existing config without a verified backup.
+  requireBackup(dst, ts);
 
   const doc = readJsonOrEmpty(dst);
   if (!doc.mcpServers || typeof doc.mcpServers !== 'object') doc.mcpServers = {};
@@ -390,7 +449,8 @@ export function mergeJson(dst, serverJs, ts) {
  */
 export function mergeToml(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
-  if (ts) backup(dst, ts);
+  // V155-009: refuse to overwrite an existing config without a verified backup.
+  requireBackup(dst, ts);
 
   let text = '';
   try { text = existsSync(dst) ? readFileSync(dst, 'utf8') : ''; }

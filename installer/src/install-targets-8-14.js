@@ -212,22 +212,35 @@ export function installOpenclaw(ctx) {
   const dst = path.join(ctx.home, '.openclaw', 'openclaw.json');
   const serverJs = ctx.serverJsNative || ctx.serverJs;
 
+  // V155-011: always belt-and-braces — invoke the CLI when present, but ALSO
+  // always run the file-write merge so we have an on-disk witness. Previously
+  // a no-op `openclaw` stub (exit 0, no daemon write) would satisfy this
+  // branch and leave registration unverifiable. The fallback merge is cheap
+  // and idempotent so we run it unconditionally now.
+  let cliRegistered = false;
   if (commandExists('openclaw')) {
     try {
       const payload = JSON.stringify({ command: 'node', args: [serverJs] });
       // execFileSync (no shell) keeps Windows + POSIX safe -- args go to argv,
-      // not through cmd.exe / sh.
-      execFileSync('openclaw', ['mcp', 'set', 'ijfw-memory', payload], { stdio: 'ignore' });
-      printOk(`Registered ijfw-memory via 'openclaw mcp set' (${dst})`);
-      return { status: 'ok' };
-    } catch {
-      // Fall through to direct file write.
+      // not through cmd.exe / sh. Capture stderr so we can surface daemon errors.
+      execFileSync('openclaw', ['mcp', 'set', 'ijfw-memory', payload], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+      });
+      cliRegistered = true;
+    } catch (err) {
+      const msg = err && err.stderr ? String(err.stderr).trim() : (err && err.message) || String(err);
+      printInfo(`openclaw CLI registration failed (${msg}); falling back to file-write merge.`);
     }
   }
 
   ensureDir(path.dirname(dst));
   openclawMerge(dst, serverJs);
-  printOk(`Merged MCP into ${dst} (openclaw mcp.servers schema)`);
+  if (cliRegistered) {
+    printOk(`Registered ijfw-memory via 'openclaw mcp set' AND file-write merge (${dst})`);
+  } else {
+    printOk(`Merged MCP into ${dst} (openclaw mcp.servers schema)`);
+  }
   return { status: 'ok' };
 }
 
