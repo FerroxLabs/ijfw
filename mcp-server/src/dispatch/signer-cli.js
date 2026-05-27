@@ -276,22 +276,27 @@ async function keygenHandler(args, ctx = {}) {
 }
 
 /**
- * keygen-fido2 handler — deferred stub.
+ * keygen-fido2 handler — unimplemented.
  *
- * Native libfido2 bindings would be IJFW's first native prod dep; that's
- * a v1.5.0+ architecture decision. For v1.4.3, FIDO2-backed signing is
- * available transitively via ssh-agent (modern YubiKey/Solokey speak
- * SSH agent natively).
+ * V155-057: previously returned `ok:true, deferred:true` — JSON consumers
+ * (CI scripts, automated install flows) reading `r.ok` saw success and
+ * proceeded as if a key had been minted. That's truthfulness-of-state
+ * violation: nothing was minted, no key exists, but state recorded ok.
  *
- * @returns {Promise<{ ok: true, deferred: true, message: string }>}
+ * Now returns `ok:false, error:'unimplemented'` so callers fail closed.
+ * The transitive ssh-agent path (modern YubiKey/Solokey speak SSH agent
+ * natively) remains the recommended route; the hint stays the same but
+ * the verdict is honest.
+ *
+ * @returns {Promise<{ ok: false, error: 'unimplemented', message: string }>}
  */
 async function keygenFido2Handler(_args, ctx = {}) {
-  const msg = 'FIDO2/libfido2 path deferred to v1.5.0; use --backend ssh-agent or default software backend';
+  const msg = 'FIDO2/libfido2 native backend is unimplemented — use `keygen <author> --backend ssh-agent` (modern YubiKey/Solokey work transitively via ssh-agent)';
   // Write to stderr for CLI visibility without disturbing JSON-stdout
   // consumers. Optionally inject a writer via ctx for tests.
   const stderr = ctx.stderr || process.stderr;
   try { stderr.write(`${msg}\n`); } catch { /* ignore */ }
-  return { ok: true, deferred: true, message: msg };
+  return { ok: false, error: 'unimplemented', message: msg };
 }
 
 export const handlers = Object.freeze({
@@ -301,7 +306,7 @@ export const handlers = Object.freeze({
 
 export const subcommandHelp = Object.freeze({
   keygen: 'keygen <author> [--backend software|ssh-agent] [--ssh-key-comment <c>] — generate or enrol a publisher signing key',
-  'keygen-fido2': 'keygen-fido2 <author> — deferred to v1.5.0; use --backend ssh-agent instead',
+  'keygen-fido2': 'keygen-fido2 <author> — UNIMPLEMENTED (no native libfido2 backend); use `keygen <author> --backend ssh-agent` instead',
 });
 
 // Test-only exports.

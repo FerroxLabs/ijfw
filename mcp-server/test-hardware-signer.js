@@ -512,13 +512,16 @@ test('signer-cli: handlers + subcommandHelp shape is frozen', () => {
   assert.ok(Object.isFrozen(subcommandHelp), 'subcommandHelp frozen');
 });
 
-test('signer-cli: keygen-fido2 emits deferred message + exits ok', async () => {
+test('signer-cli: keygen-fido2 fails closed as unimplemented (V155-057)', async () => {
   const captured = [];
   const stderr = { write: (s) => { captured.push(String(s)); return true; } };
   const r = await handlers['keygen-fido2']('alice', { stderr });
-  assert.equal(r.ok, true);
-  assert.equal(r.deferred, true);
-  assert.ok(/deferred to v1\.5\.0/.test(captured.join('')), 'stderr message present');
+  // V155-057: was ok:true,deferred:true — JSON consumers misread it as
+  // success and proceeded as if a key had been minted. Now fails closed.
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'unimplemented');
+  assert.ok(/unimplemented/i.test(captured.join('')), 'stderr message present');
+  assert.ok(/ssh-agent/.test(captured.join('')), 'recommends ssh-agent path');
 });
 
 test('signer-cli: keygen --backend ssh-agent enrolls a key', { skip: process.platform === 'win32' }, async () => {
