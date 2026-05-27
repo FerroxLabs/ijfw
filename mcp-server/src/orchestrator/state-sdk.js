@@ -44,6 +44,7 @@ import { homedir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { writeAtomic, readSafe } from '../lib/atomic-io.js';
 import { rotateJsonlIfNeeded } from '../lib/jsonl-rotation.js';
@@ -287,8 +288,26 @@ async function _withLocks(lockTargets, fn, env) {
  * @param {() => Promise<void>} fn  the restore-or-delete loop body
  * @returns {Promise<void>}
  */
+// TS-002 (v1.5.5 Trident): `withFsLock` is non-re-entrant. If a future code
+// path (e.g. a gate hook firing from inside a restored body) recursively
+// triggers `state.replay`, the nested `_replayRestoreWithLocks` would silently
+// deadlock against itself instead of failing fast. The AsyncLocalStorage
+// sentinel below detects nested entry and throws `state-sdk: replay re-entry
+// detected` rather than hanging — preserves a useful error surface for the
+// next maintainer. Not exploitable today (no such recursion exists); this is
+// the documented latent-defect rail Trident TS-002 asked for.
+const _replayReentryGuard = new AsyncLocalStorage();
+
 async function _replayRestoreWithLocks(targets, fn) {
-  if (!Array.isArray(targets) || targets.length === 0) return fn();
+  if (_replayReentryGuard.getStore() === true) {
+    throw new Error(
+      'state-sdk: replay re-entry detected — _replayRestoreWithLocks must not be '
+      + 'called recursively (withFsLock is non-re-entrant; nested entry would deadlock).',
+    );
+  }
+  if (!Array.isArray(targets) || targets.length === 0) {
+    return _replayReentryGuard.run(true, () => fn());
+  }
   const acquireFrom = async (index) => {
     if (index >= targets.length) return fn();
     return withFsLock(
@@ -297,7 +316,7 @@ async function _replayRestoreWithLocks(targets, fn) {
       LOCK_OPTS,
     );
   };
-  return acquireFrom(0);
+  return _replayReentryGuard.run(true, () => acquireFrom(0));
 }
 
 /**
@@ -662,6 +681,34 @@ function isPollutingKey(k) {
   return typeof k !== 'string' || POLLUTING_KEYS.has(k);
 }
 
+// TS-003 (v1.5.5 Trident): the top-level `isPollutingKey` filter at the two
+// declared sinks (parseFrontmatter + wave.advance merge) catches only top-level
+// keys. A nested payload like `{foo: {__proto__: {hard_gate: true}}}` would
+// slip past the shallow scan. Today `emitFrontmatter` happens to throw on
+// nested objects so the attack fails at I/O — but that's safety by coincidence,
+// not by design. `containsPollutingKey` walks objects + arrays + the chain and
+// returns true if ANY depth contains a polluting key. Callers reject the whole
+// payload (rather than silently scrubbing) so a malicious shape never reaches
+// disk and the operator gets a clear refusal.
+function containsPollutingKey(value, depth = 0) {
+  if (depth > 16) return false; // bounded walk; cycle-or-bomb defense
+  if (value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (containsPollutingKey(item, depth + 1)) return true;
+    }
+    return false;
+  }
+  // Object.getOwnPropertyNames + getPrototypeOf check catches a payload
+  // built with `Object.create({hard_gate: true})` even though the chain
+  // doesn't enumerate `for..in` in our shape — defense in depth.
+  for (const k of Object.getOwnPropertyNames(value)) {
+    if (POLLUTING_KEYS.has(k)) return true;
+    if (containsPollutingKey(value[k], depth + 1)) return true;
+  }
+  return false;
+}
+
 function parseFrontmatter(raw) {
   if (!raw.startsWith('---')) {
     throw new Error('state-sdk: STATE.md missing YAML frontmatter');
@@ -961,6 +1008,20 @@ const handlers = {
         // an attacker payload of `{ __proto__: { hard_gate: true } }` would
         // otherwise mutate the [[Prototype]] of `fm` and grant a hard-gate
         // verdict via the prototype chain on subsequent reads.
+        //
+        // TS-003 (v1.5.5 Trident): top-level isPollutingKey() filter alone is
+        // shallow — a nested value like `{foo: {__proto__: ...}}` would slip
+        // past. `containsPollutingKey` walks the value tree; we refuse the
+        // ENTIRE payload merge if any depth carries a polluting key. Hard
+        // refusal beats silent scrub: the operator gets feedback and the
+        // contract stays simple (no half-merge state).
+        if (containsPollutingKey(payload.frontmatter)) {
+          return {
+            ok: false, refused: true, gate: 'wave-advance-proto-pollution',
+            reason: 'wave.advance payload.frontmatter contains a polluting key '
+              + '(__proto__ / constructor / prototype) at some depth; refusing merge.',
+          };
+        }
         for (const [k, v] of Object.entries(payload.frontmatter)) {
           if (isPollutingKey(k)) continue;
           fm[k] = v;
@@ -1793,7 +1854,7 @@ const handlers = {
     const root = requireRoot(ctx);
     const journal = paths.intentJournal(root);
     if (!existsSync(journal)) {
-      return { ok: true, replayed: [], skipped: [], rolledBack: [] };
+      return { ok: true, replayed: [], skipped: [], rolledBack: [], sealed: [], conflicts: [] };
     }
     // The replay walk + any rollback restores happen under the intent-journal
     // lock so a concurrent mutating verb cannot interleave with recovery.
@@ -1830,6 +1891,7 @@ const handlers = {
       const skipped = [];
       const rolledBack = [];
       const sealed = [];
+      const conflicts = [];
       for (const [verbId, beginRec] of begins) {
         if (commits.has(verbId)) {
           // begin + commit → durably applied. Re-issuing it would be a no-op,
@@ -1860,6 +1922,62 @@ const handlers = {
               .map((t) => (t && typeof t.absPath === 'string') ? t.absPath : null)
               .filter((p) => p !== null && p !== journal),
           );
+          // TR-003 (v1.5.5 Trident): before overwriting BODY-BEARING targets
+          // (STATE.md files — the per-wave/per-phase markdown that V155-014
+          // folded into the journaled critical section), compare current
+          // on-disk content against the snapshot's EXPECTED pre-write content.
+          //
+          // Scope is INTENTIONALLY narrow: only STATE.md-shaped paths. Other
+          // snapshot targets (workflow.json, waves.json, AGENTS.md, etc.) are
+          // SDK-managed atomic files — operator/third-party edits to them are
+          // not a supported workflow and replay must still roll them back to
+          // honor §4 atomicity. STATE.md is the file V155-014 promoted to a
+          // body-bearing journaled target, and is the one a future migration
+          // script (or human operator) might reasonably touch between begin
+          // and replay. The fix is narrow on purpose — it protects the new
+          // body-write path V155-014 introduced without weakening the
+          // existing atomic-rollback contract for canonical SDK state files.
+          //
+          // Three observable shapes at replay time for STATE.md targets:
+          //   1. Live == snap.content   → safe restore (no-op write).
+          //   2. Live missing           → restore to snap.content. Safe.
+          //   3. Live != snap.content   → external edit possible. REFUSE,
+          //      surface conflict, leave live content alone, leave the
+          //      sidecar in place so a future replay (after manual triage)
+          //      can still attempt the rollback.
+          const conflictedTargets = [];
+          for (const t of snap.targets) {
+            if (!t || typeof t.absPath !== 'string') continue;
+            if (!t.existed) continue; // pre-write didn't exist; partial created it (handled below)
+            // Narrow scope: only body-bearing STATE.md files. basename match
+            // is the canonical V155-014-introduced surface.
+            if (basename(t.absPath) !== 'STATE.md') continue;
+            try {
+              if (!existsSync(t.absPath)) continue;
+              const live = readFileSync(t.absPath, 'utf8');
+              const expected = t.content ?? '';
+              if (live !== expected) {
+                conflictedTargets.push({ absPath: t.absPath, reason: 'third-party-edit' });
+              }
+            } catch {
+              // unreadable -> let the restore-or-delete handle it best-effort
+            }
+          }
+          if (conflictedTargets.length > 0) {
+            conflicts.push({ verbId, targets: conflictedTargets });
+            process.stderr.write(
+              `[state-sdk] state.replay REFUSING to roll back ${verbId}: `
+              + `${conflictedTargets.length} STATE.md target(s) have on-disk content that differs `
+              + `from the pre-begin snapshot — possible third-party edit. `
+              + `Paths: ${conflictedTargets.map((c) => c.absPath).join(', ')}. `
+              + `Compact the intent-journal after manually resolving, or re-emit the verb.\n`,
+            );
+            // Skip rollback for THIS partial, leave the sidecar in place so a
+            // future operator can inspect it, and continue with the rest of
+            // the journal walk. We do NOT seal the partial — re-running replay
+            // after manual resolution should still attempt the rollback.
+            continue;
+          }
           // eslint-disable-next-line no-await-in-loop
           await _replayRestoreWithLocks(restoreTargets, async () => {
             for (const t of snap.targets) {
@@ -1896,7 +2014,7 @@ const handlers = {
         else rolledBack.push(verbId);
       }
       return {
-        ok: true, replayed: [], skipped, rolledBack, sealed,
+        ok: true, replayed: [], skipped, rolledBack, sealed, conflicts,
       };
     }, LOCK_OPTS);
   },
