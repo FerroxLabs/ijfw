@@ -103,25 +103,72 @@ const WINDOWS_SYSTEM_DIRS = [
  * @param {string} absPath  Already-resolved absolute path.
  * @returns {boolean}
  */
+/**
+ * canonicalizeAtomic — resolve a path through realpath even when the leaf
+ * does not yet exist. Walks up to the deepest existing ancestor, realpaths
+ * that, then reattaches the remaining suffix. Handles the macOS
+ * /var ↔ /private/var symlink AND the "not-yet-created subdir" case in one
+ * pass. Mirrors the same helper in path-guard.js. (V155-036 / L1-02 recur)
+ */
+function canonicalizeAtomic(p) {
+  try { return realpathSync(p); } catch { /* fall through */ }
+  const parts = p.split(/[/\\]/);
+  const sep = p.includes('\\') && !p.includes('/') ? '\\' : '/';
+  let suffix = [];
+  while (parts.length > 0) {
+    suffix.unshift(parts.pop());
+    const head = parts.join(sep) || sep;
+    try {
+      const real = realpathSync(head);
+      return suffix.length > 0 ? `${real}${sep}${suffix.join(sep)}` : real;
+    } catch { /* keep walking up */ }
+  }
+  return p; // give up; return the input
+}
+
 function isSystemPath(absPath) {
   // Reject bare filesystem roots: '/', 'C:\', 'D:\', etc.
   if (/^[A-Za-z]:\\?$/.test(absPath) || absPath === '/') return true;
 
-  // OS temp-dir whitelist — overrides the system-prefix blocklist.
-  // Resolve both sides so macOS /var → /private/var symlinks compare cleanly.
-  try {
-    const tmp = osTmpdir();
-    const tmpReal = realpathSync(tmp);
-    const absReal = (() => { try { return realpathSync(absPath); } catch { return absPath; } })();
-    if (absReal === tmpReal || absReal.startsWith(tmpReal + '/') || absReal.startsWith(tmpReal + '\\')
-        || absPath === tmp || absPath.startsWith(tmp + '/') || absPath.startsWith(tmp + '\\')) {
-      return false;
-    }
-  } catch { /* fall through to blocklist */ }
+  // V155-036: pre-canonicalize BOTH sides via the deepest-existing-ancestor
+  // walk so the macOS /var → /private/var symlink doesn't slip through when
+  // the requested output dir doesn't exist yet (the prior realpathSync on
+  // absPath silently kept the unresolved form, which then matched the
+  // /private prefix in the blocklist).
+  const tmp = osTmpdir();
+  const tmpReal = canonicalizeAtomic(tmp);
+  const absReal = canonicalizeAtomic(absPath);
 
-  const lc = absPath.toLowerCase();
-  const allBlocked = [...POSIX_SYSTEM_DIRS, ...WINDOWS_SYSTEM_DIRS];
-  for (const blocked of allBlocked) {
+  // OS temp-dir whitelist — overrides the system-prefix blocklist.
+  if (
+    absReal === tmpReal ||
+    absReal.startsWith(tmpReal + '/') ||
+    absReal.startsWith(tmpReal + '\\') ||
+    absPath === tmp ||
+    absPath.startsWith(tmp + '/') ||
+    absPath.startsWith(tmp + '\\')
+  ) {
+    return false;
+  }
+
+  // V155-059: gate the system-prefix lists by platform so cross-platform
+  // false positives go away. macOS users packing under /Library/MyProjects
+  // shouldn't trip the Windows blocklist, and Windows users shouldn't trip
+  // the POSIX blocklist. Prefer runtime-derived Windows prefixes when set.
+  const isWin = process.platform === 'win32';
+  const dynamicWinDirs = isWin
+    ? [
+        process.env.windir,
+        process.env.ProgramFiles,
+        process.env['ProgramFiles(x86)'],
+      ].filter((s) => typeof s === 'string' && s.length > 0)
+    : [];
+  const blockedForPlatform = isWin
+    ? [...WINDOWS_SYSTEM_DIRS, ...dynamicWinDirs]
+    : [...POSIX_SYSTEM_DIRS];
+
+  const lc = absReal.toLowerCase();
+  for (const blocked of blockedForPlatform) {
     const bl = blocked.toLowerCase();
     if (lc === bl || lc.startsWith(bl + '/') || lc.startsWith(bl + '\\')) {
       return true;

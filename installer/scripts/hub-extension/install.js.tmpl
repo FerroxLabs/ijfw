@@ -10,11 +10,16 @@
 'use strict';
 
 const { spawnSync } = require('child_process');
+const os = require('os');
+
+// V155-066: use os.tmpdir() instead of hardcoded /tmp so the hook works on
+// Windows (where /tmp does not exist) and on hosts whose /tmp is read-only.
+const packDest = os.tmpdir();
 
 // Phase 1: pre-fetch (network) — pull package into npm cache.
 const fetchResult = spawnSync(
   'npm',
-  ['pack', '@ijfw/install@{{VERSION}}', '--silent', '--prefer-offline', '--pack-destination', '/tmp'],
+  ['pack', '@ijfw/install@{{VERSION}}', '--silent', '--prefer-offline', '--pack-destination', packDest],
   { stdio: 'pipe', timeout: 60_000 },
 );
 if (fetchResult.status !== 0) {
