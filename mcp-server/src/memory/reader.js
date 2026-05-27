@@ -53,23 +53,47 @@ function walkMd(dir, base, depth = 0) {
   return results;
 }
 
-/** Build a file entry from a path + tier label. */
+/**
+ * Build a file entry from a path + tier label.
+ *
+ * V155-026 (v1.5.5): instead of swallowing failures as `null` (which the
+ * caller `.filter(Boolean)`-ed away), now returns a tagged shape:
+ *   - `{ ok: true, entry }`          when parsing succeeded
+ *   - `{ ok: false, error: {...} }`  when readFile / stat / parseFrontmatter
+ *                                    threw
+ * Dashboard `/api/memory/list` + MCP `ijfw_memory_*` consumers can now warn
+ * the operator that N files were on disk but M failed to read — silent drop
+ * was previously masking corruption + permission issues.
+ */
 function buildEntry(full, rel, tier) {
-  try {
-    const st  = statSync(full);
-    const raw = readFileSync(full, 'utf8');
-    const fm  = parseFrontmatter(raw);
+  let st;
+  try { st = statSync(full); }
+  catch (e) {
+    return { ok: false, error: { path: full, relpath: rel, tier, reason: 'stat-fail', message: e?.message || String(e) } };
+  }
+  let raw;
+  try { raw = readFileSync(full, 'utf8'); }
+  catch (e) {
+    return { ok: false, error: { path: full, relpath: rel, tier, reason: 'unreadable', message: e?.message || String(e) } };
+  }
+  let fm;
+  try { fm = parseFrontmatter(raw); }
+  catch (e) {
+    return { ok: false, error: { path: full, relpath: rel, tier, reason: 'parse-fail', message: e?.message || String(e) } };
+  }
 
-    let title = fm.title;
-    if (!title) {
-      const hm = raw.match(/^#\s+(.+)/m);
-      title = hm ? hm[1].trim() : basename(full, '.md');
-    }
+  let title = fm.title;
+  if (!title) {
+    const hm = raw.match(/^#\s+(.+)/m);
+    title = hm ? hm[1].trim() : basename(full, '.md');
+  }
 
-    const body    = raw.replace(/^---[\s\S]*?---\r?\n/, '').trimStart();
-    const preview = body.slice(0, PREVIEW_CHARS).replace(/\s+/g, ' ').trim();
+  const body    = raw.replace(/^---[\s\S]*?---\r?\n/, '').trimStart();
+  const preview = body.slice(0, PREVIEW_CHARS).replace(/\s+/g, ' ').trim();
 
-    return {
+  return {
+    ok: true,
+    entry: {
       path: full,
       relpath: rel,
       title,
@@ -79,10 +103,24 @@ function buildEntry(full, rel, tier) {
       last_modified: st.mtimeMs,
       size: st.size,
       tier,
-    };
-  } catch {
-    return null;
+    },
+  };
+}
+
+/**
+ * Helper: partition the `walkMd` output into `{entries[], errors[]}` using the
+ * new tagged `buildEntry` shape. Pulled into one place so each Tier reader
+ * stays terse.
+ */
+function partitionEntries(items, tier) {
+  const entries = [];
+  const errors = [];
+  for (const { full, rel } of items) {
+    const r = buildEntry(full, rel, tier);
+    if (r && r.ok) entries.push(r.entry);
+    else if (r && r.ok === false) errors.push(r.error);
   }
+  return { entries, errors };
 }
 
 /** Map a project dir path to its Claude project slug. */
@@ -117,15 +155,14 @@ function findClaudeSlug(repoRoot) {
 
 /**
  * Tier 1: Claude auto-memory files for the current project.
+ * Returns `{entries, errors}` so the caller can surface unreadable files.
  */
 function readTier1(repoRoot) {
   const slug = findClaudeSlug(repoRoot);
-  if (!slug) return [];
+  if (!slug) return { entries: [], errors: [] };
   const memDir = join(CLAUDE_PROJS, slug, 'memory');
-  if (!existsSync(memDir)) return [];
-  return walkMd(memDir, memDir)
-    .map(({ full, rel }) => buildEntry(full, rel, 'Auto-memory'))
-    .filter(Boolean);
+  if (!existsSync(memDir)) return { entries: [], errors: [] };
+  return partitionEntries(walkMd(memDir, memDir), 'Auto-memory');
 }
 
 /**
@@ -139,29 +176,29 @@ function readTier2(repoRoot) {
   if (existsSync(globalMem)) dirs.push(globalMem);
 
   const files = [];
+  const errors = [];
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
-    const entries = walkMd(dir, dir)
-      .map(({ full, rel }) => buildEntry(full, rel, 'Project'))
-      .filter(Boolean);
+    const { entries, errors: errs } = partitionEntries(walkMd(dir, dir), 'Project');
     // Deduplicate by path
     for (const e of entries) {
-      if (!files.find(f => f.path === e.path)) files.push(e);
+      if (!files.find((f) => f.path === e.path)) files.push(e);
+    }
+    for (const er of errs) {
+      if (!errors.find((x) => x.path === er.path)) errors.push(er);
     }
   }
-  return files;
+  return { entries: files, errors };
 }
 
 /**
  * Tier 3: Session records -- .md files in <repoRoot>/.ijfw/sessions/.
  */
 function readTier3(repoRoot) {
-  if (!repoRoot) return [];
+  if (!repoRoot) return { entries: [], errors: [] };
   const sessDir = join(repoRoot, '.ijfw', 'sessions');
-  if (!existsSync(sessDir)) return [];
-  return walkMd(sessDir, sessDir)
-    .map(({ full, rel }) => buildEntry(full, rel, 'Sessions'))
-    .filter(Boolean);
+  if (!existsSync(sessDir)) return { entries: [], errors: [] };
+  return partitionEntries(walkMd(sessDir, sessDir), 'Sessions');
 }
 
 /**
@@ -170,11 +207,11 @@ function readTier3(repoRoot) {
  */
 function readTier4() {
   const obsPath = join(IJFW_DIR, 'observations.jsonl');
-  if (!existsSync(obsPath)) return [];
+  if (!existsSync(obsPath)) return { entries: [], errors: [] };
   try {
     const lines = readFileSync(obsPath, 'utf8').split('\n').filter(Boolean);
     const total = lines.length;
-    if (!total) return [];
+    if (!total) return { entries: [], errors: [] };
     const st = statSync(obsPath);
     // Count by platform for recall counts
     const platformCounts = {};
@@ -188,20 +225,26 @@ function readTier4() {
     const platformSummary = Object.entries(platformCounts)
       .map(([p, c]) => `${p}: ${c}`)
       .join(', ');
-    return [{
-      path: obsPath,
-      relpath: 'observations.jsonl',
-      title: `Global observations (${total} events)`,
-      description: platformSummary || null,
-      type: 'observations',
-      preview: `${total} observation events across ${Object.keys(platformCounts).length} platforms. ${platformSummary}`,
-      last_modified: st.mtimeMs,
-      size: st.size,
-      tier: 'Global',
-      count: total,
-    }];
-  } catch {
-    return [];
+    return {
+      entries: [{
+        path: obsPath,
+        relpath: 'observations.jsonl',
+        title: `Global observations (${total} events)`,
+        description: platformSummary || null,
+        type: 'observations',
+        preview: `${total} observation events across ${Object.keys(platformCounts).length} platforms. ${platformSummary}`,
+        last_modified: st.mtimeMs,
+        size: st.size,
+        tier: 'Global',
+        count: total,
+      }],
+      errors: [],
+    };
+  } catch (e) {
+    return {
+      entries: [],
+      errors: [{ path: obsPath, relpath: 'observations.jsonl', tier: 'Global', reason: 'unreadable', message: e?.message || String(e) }],
+    };
   }
 }
 
@@ -210,16 +253,23 @@ function readTier4() {
  */
 function readTier5() {
   const handoffPath = join(IJFW_DIR, 'HANDOFF.md');
-  if (!existsSync(handoffPath)) return [];
-  const entry = buildEntry(handoffPath, 'HANDOFF.md', 'Handoff');
-  return entry ? [entry] : [];
+  if (!existsSync(handoffPath)) return { entries: [], errors: [] };
+  const r = buildEntry(handoffPath, 'HANDOFF.md', 'Handoff');
+  if (r && r.ok) return { entries: [r.entry], errors: [] };
+  if (r && r.ok === false) return { entries: [], errors: [r.error] };
+  return { entries: [], errors: [] };
 }
 
 /**
  * List all memory files across all 5 tiers.
+ *
+ * V155-026 (v1.5.5): adds `errors` field to the return so dashboard +
+ * MCP consumers can surface unreadable / corrupt-frontmatter files
+ * instead of silently dropping them via `.filter(Boolean)`.
+ *
  * @param {string|null} repoRoot
  * @param {string|null} tierFilter - filter to one tier label (optional)
- * @returns {{ files: Array, total: number, root: string|null, tiers: Object }}
+ * @returns {{ files: Array, errors: Array, total: number, root: string|null, tiers: Object }}
  */
 export function listMemoryFiles(repoRoot, tierFilter = null) {
   const t1 = readTier1(repoRoot);
@@ -228,20 +278,23 @@ export function listMemoryFiles(repoRoot, tierFilter = null) {
   const t4 = readTier4();
   const t5 = readTier5();
 
-  const all = [...t1, ...t2, ...t3, ...t4, ...t5];
+  const all = [...t1.entries, ...t2.entries, ...t3.entries, ...t4.entries, ...t5.entries];
+  const allErrors = [...t1.errors, ...t2.errors, ...t3.errors, ...t4.errors, ...t5.errors];
 
   // Compute per-tier counts before filtering
   const tiers = {
-    'Auto-memory': t1.length,
-    'Project':     t2.length,
-    'Sessions':    t3.length,
-    'Global':      t4.length,
-    'Handoff':     t5.length,
+    'Auto-memory': t1.entries.length,
+    'Project':     t2.entries.length,
+    'Sessions':    t3.entries.length,
+    'Global':      t4.entries.length,
+    'Handoff':     t5.entries.length,
   };
 
   let files = all;
+  let errors = allErrors;
   if (tierFilter) {
     files = all.filter(f => f.tier === tierFilter);
+    errors = allErrors.filter(e => e.tier === tierFilter);
   }
 
   // Sort by most recently modified within each tier grouping
@@ -250,7 +303,7 @@ export function listMemoryFiles(repoRoot, tierFilter = null) {
   // Use the first non-null path as the security root for /api/memory/file
   const root = repoRoot || IJFW_DIR;
 
-  return { files, total: files.length, root, tiers };
+  return { files, errors, total: files.length, root, tiers };
 }
 
 /** List all known projects by scanning ~/.claude/projects/. */

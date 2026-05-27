@@ -151,14 +151,30 @@ async function cmdAudit({ projectRoot }) {
       const paths = resolveOverridePaths(skill, projectRoot);
       let sections = 0;
       let extendsChain = [];
+      const errors = [];
       for (const p of paths) {
-        const file = await loadOverrideFile(p).catch(() => null);
+        // V155-028 (v1.5.5): previously `.catch(() => null)` silently treated
+        // schema-invalid / unreadable overrides as 'not present'. The audit
+        // command exists precisely to surface override health, so swallowing
+        // these errors hid the exact failure mode operators care about.
+        let file;
+        try { file = await loadOverrideFile(p); }
+        catch (err) {
+          errors.push({ path: p, reason: 'load-fail', message: err?.message || String(err) });
+          continue;
+        }
         if (!file) continue;
         if (Array.isArray(file.manifest?.extends)) extendsChain = file.manifest.extends;
         const matches = file.body?.match(/<!--\s*ijfw-override:/g);
         sections += matches ? matches.length : 0;
       }
-      items.push({ preset: entry.preset, scope: entry.scope, skill, sections, extends: extendsChain });
+      items.push({
+        preset: entry.preset, scope: entry.scope, skill, sections,
+        extends: extendsChain,
+        // Only include `errors` when there is something to report — avoids
+        // every clean item carrying a noisy empty array.
+        ...(errors.length > 0 ? { errors } : {}),
+      });
     }
   }
   return { ok: true, command: 'audit', result: { items } };

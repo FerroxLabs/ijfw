@@ -78,8 +78,23 @@ export function recoveryStatus(projectRoot = process.cwd()) {
 
 export function latestCheckpoint(projectRoot = process.cwd()) {
   const paths = checkpointPaths(projectRoot);
-  const latest = readLatest(paths.latest);
-  if (!latest) return { ok: false, error: 'no-checkpoint' };
+  const r = readLatest(paths.latest);
+  if (!r || r.code === 'enoent') {
+    return { ok: false, error: 'no-checkpoint' };
+  }
+  if (r.code === 'parse-fail') {
+    // V155-027 (v1.5.5): distinguish "no checkpoint" from "corrupt checkpoint".
+    // Previously both returned ok:false error:'no-checkpoint'; in-progress
+    // recovery work was silently abandoned on partial-write corruption.
+    return {
+      ok: false,
+      error: 'checkpoint-corrupt',
+      message: r.message,
+      path: paths.latest,
+      hint: `inspect ${paths.dir} for numbered checkpoints to recover from`,
+    };
+  }
+  const latest = r.data;
   let markdown = '';
   try { markdown = readFileSync(latest.mdPath, 'utf8'); } catch { /* optional */ }
   return { ok: true, ...latest, markdown };
@@ -229,12 +244,21 @@ function recommendedNext(team, plan, tasks) {
   return 'Verify completed work or prepare next wave';
 }
 
+/**
+ * V155-027 (v1.5.5): tagged return so callers can distinguish "missing" from
+ * "corrupt". Three shapes:
+ *   - { code: 'enoent' }                — file does not exist
+ *   - { code: 'parse-fail', message }   — file exists but JSON.parse threw
+ *   - { code: 'ok', data }              — clean read
+ * `null` is no longer returned. The legacy caller checked `!latest` against
+ * the prior null — `latestCheckpoint` now switches on `.code`.
+ */
 function readLatest(path) {
+  if (!existsSync(path)) return { code: 'enoent' };
   try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    return null;
+    return { code: 'ok', data: JSON.parse(readFileSync(path, 'utf8')) };
+  } catch (e) {
+    return { code: 'parse-fail', message: e?.message || String(e) };
   }
 }
 

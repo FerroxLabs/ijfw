@@ -736,10 +736,15 @@ export async function startServer(options = {}) {
       try {
         const tierFilter = url.searchParams.get('tier') || null;
         const result = ttlCache(`memory:list:${tierFilter}`, COST_CACHE_TTL, memoryDirsMtimeKey, () => {
-          const { files, total, root, tiers } = listMemoryFiles(REPO_ROOT, tierFilter);
+          // V155-026 (v1.5.5): surface unreadable / corrupt-frontmatter files
+          // so the dashboard can warn the operator. Previously silently dropped.
+          const { files, errors, total, root, tiers } = listMemoryFiles(REPO_ROOT, tierFilter);
           const { counts, weekCounts, totalThisWeek } = buildRecallCounts(ledgerPath);
           const enriched = mergeRecallCounts(files, counts, weekCounts);
-          return { files: enriched, total, root, tiers, totalRecallsThisWeek: totalThisWeek };
+          return {
+            files: enriched, errors: errors || [], total, root, tiers,
+            totalRecallsThisWeek: totalThisWeek,
+          };
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
