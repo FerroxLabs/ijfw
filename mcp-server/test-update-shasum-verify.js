@@ -1,15 +1,21 @@
 // F-SEC-7 (v1.5.0 audit-H2.2): update-apply shasum cross-verify.
 //
 // docs/SECURITY.md claims the update flow cross-verifies the npm tarball
-// shasum against the GitLab release asset shasum. Before this commit the
-// claim was documentation-only -- no code did the comparison. These tests
-// pin the new shasum-verify module's contract via pure dependency
+// shasum against the GitHub release asset shasum. Before the v1.5.0 ship
+// the claim was documentation-only -- no code did the comparison. These
+// tests pin the shasum-verify module's contract via pure dependency
 // injection (no real npm / network calls).
+//
+// V155 rebrand: ported from GitLab Releases API (`data.description`) to
+// GitHub Releases API (`data.body`). The new default deps key is
+// `fetchGithubReleaseBody`; tests still using the old `fetchGitlabReleaseBody`
+// key are honored via back-compat aliasing in shasum-verify.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   verifyShasumCrossSource,
   extractShasumFromText,
+  DEFAULT_GITHUB_REPO,
 } from './src/lib/shasum-verify.js';
 
 const FAKE_SHA = 'a'.repeat(40); // valid-looking sha1
@@ -18,7 +24,7 @@ const OTHER_SHA = 'b'.repeat(40);
 function makeDeps({ npm, release }) {
   return {
     fetchNpmShasum: () => npm,
-    fetchGitlabReleaseBody: () => release,
+    fetchGithubReleaseBody: () => release,
   };
 }
 
@@ -137,28 +143,81 @@ test('verifyShasumCrossSource: sha256-length match works', () => {
   assert.equal(r.mode, 'mismatch');
 });
 
-// ----- Case 10: package + project options pass through -----
-test('verifyShasumCrossSource: forwards pkg + project to deps', () => {
+// ----- Case 10: package + repo options pass through -----
+test('verifyShasumCrossSource: forwards pkg + repo to deps', () => {
   let capturedPkg = null;
-  let capturedProject = null;
+  let capturedRepo = null;
   const deps = {
     fetchNpmShasum: (pkg, version) => {
       capturedPkg = pkg;
       assert.equal(version, '9.9.9');
       return { ok: true, shasum: FAKE_SHA };
     },
-    fetchGitlabReleaseBody: (project, version) => {
-      capturedProject = project;
+    fetchGithubReleaseBody: (repo, version) => {
+      capturedRepo = repo;
       assert.equal(version, '9.9.9');
       return { ok: true, body: `shasum: ${FAKE_SHA}` };
     },
   };
   const r = verifyShasumCrossSource(
     '9.9.9',
-    { pkg: '@scope/pkg', project: 'org%2Fproj' },
+    { pkg: '@scope/pkg', repo: 'OrgName/proj' },
     deps,
   );
   assert.equal(r.ok, true);
   assert.equal(capturedPkg, '@scope/pkg');
-  assert.equal(capturedProject, 'org%2Fproj');
+  assert.equal(capturedRepo, 'OrgName/proj');
+});
+
+// ----- Case 11: GitHub release body shape (`body` field) parses correctly -----
+// This is the load-bearing rebrand test. GitLab's API returned the release
+// notes under `description`; GitHub returns them under `body`. Verifies the
+// shape change landed end-to-end through the verify pipeline.
+test('GitHub release body: { body: "shasum: <hex>" } parses to verified', () => {
+  const githubLikeResponse = {
+    ok: true,
+    body: `## Release notes\n\n- security fix\n- shasum: ${FAKE_SHA}\n`,
+  };
+  const deps = {
+    fetchNpmShasum: () => ({ ok: true, shasum: FAKE_SHA }),
+    fetchGithubReleaseBody: () => githubLikeResponse,
+  };
+  const r = verifyShasumCrossSource('1.5.5', {}, deps);
+  assert.equal(r.ok, true);
+  assert.equal(r.mode, 'verified');
+  assert.equal(r.releaseShasum, FAKE_SHA);
+});
+
+// ----- Case 12: GitHub empty/malformed body -> advisory (not verified) -----
+test('GitHub release body: empty body returns advisory', () => {
+  const deps = {
+    fetchNpmShasum: () => ({ ok: true, shasum: FAKE_SHA }),
+    fetchGithubReleaseBody: () => ({ ok: true, body: '' }),
+  };
+  const r = verifyShasumCrossSource('1.5.5', {}, deps);
+  assert.equal(r.ok, true);
+  assert.equal(r.mode, 'advisory');
+  assert.equal(r.requiresConfirmation, true);
+});
+
+test('GitHub release body: malformed (no shasum mention) returns advisory', () => {
+  const deps = {
+    fetchNpmShasum: () => ({ ok: true, shasum: FAKE_SHA }),
+    fetchGithubReleaseBody: () => ({
+      ok: true,
+      body: 'Just narrative release notes -- no hash anywhere in this paragraph.',
+    }),
+  };
+  const r = verifyShasumCrossSource('1.5.5', {}, deps);
+  assert.equal(r.ok, true);
+  assert.equal(r.mode, 'advisory');
+  assert.equal(r.requiresConfirmation, true);
+  assert.match(r.message, /does not list a shasum|GitHub release/i);
+});
+
+// ----- Case 13: DEFAULT_GITHUB_REPO is owner/repo, NOT URL-encoded -----
+test('DEFAULT_GITHUB_REPO is non-URL-encoded owner/name', () => {
+  assert.equal(DEFAULT_GITHUB_REPO, 'FerroxLabs/ijfw');
+  // Sanity: no percent-encoding (GitLab used %2F)
+  assert.ok(!DEFAULT_GITHUB_REPO.includes('%'));
 });

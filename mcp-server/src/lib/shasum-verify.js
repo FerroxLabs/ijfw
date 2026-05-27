@@ -1,20 +1,20 @@
-// shasum-verify.js -- cross-verify a target npm release against the GitLab
+// shasum-verify.js -- cross-verify a target npm release against the GitHub
 // release asset shasum. Second-factor integrity check on top of
 // `npm audit signatures` (F-SEC-7, v1.5.0 audit-H2.2).
 //
 // THREAT MODEL
 //   `npm audit signatures` proves the tarball was signed by the package's
 //   npm registry signing keys. This module independently fetches the
-//   shasum the publisher recorded on the GitLab release page and compares
+//   shasum the publisher recorded on the GitHub release page and compares
 //   it against the npm-reported tarball shasum. A divergence means either
-//   the npm registry is serving a tampered tarball, OR the GitLab release
+//   the npm registry is serving a tampered tarball, OR the GitHub release
 //   was tampered with, OR the publisher made an inconsistent release.
 //   In all cases: refuse to install.
 //
 // MODES
-//   verified -- npm and GitLab shasums both available and match.
+//   verified -- npm and GitHub shasums both available and match.
 //   mismatch -- both available but DIFFER. Fail closed.
-//   advisory -- GitLab side missing (older release, no shasum published,
+//   advisory -- GitHub side missing (older release, no shasum published,
 //               or transient fetch failure). Caller decides whether to
 //               proceed: interactive prompts for confirmation, non-
 //               interactive must abort.
@@ -30,8 +30,15 @@
 
 import { spawnSync } from 'node:child_process';
 
-// Default GitLab project path. Kept here so tests can override.
-export const DEFAULT_GITLAB_PROJECT = 'therealseandonahoe%2Fijfw';
+// Default GitHub repo (owner/name). Kept here so tests can override.
+// NOTE: GitHub Releases API uses an owner/repo path -- NOT URL-encoded
+// like the GitLab equivalent. Old name kept as an alias for backwards
+// compatibility with any external callers that still pass a `project` opt.
+export const DEFAULT_GITHUB_REPO = 'FerroxLabs/ijfw';
+// Back-compat alias: callers passing `project` still resolve via the same
+// option key path; the value semantics changed from URL-encoded
+// "therealseandonahoe%2Fijfw" to "FerroxLabs/ijfw".
+export const DEFAULT_GITLAB_PROJECT = DEFAULT_GITHUB_REPO;
 
 // Hex shasum extractor. Accepts standalone hex lines (sha1=40 hex, sha256=64
 // hex) or the common labelled forms used in release notes:
@@ -81,13 +88,24 @@ const DEFAULT_DEPS = Object.freeze({
     }
     return { ok: true, shasum: raw.toLowerCase() };
   },
-  // (project, version) -> { ok, body, message }
-  fetchGitlabReleaseBody(project, version) {
-    const url = `https://gitlab.com/api/v4/projects/${project}/releases/v${version}`;
-    const r = spawnSync('curl', ['-fsSL', '-H', 'User-Agent: ijfw', url], {
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
+  // (repo, version) -> { ok, body, message }
+  fetchGithubReleaseBody(repo, version) {
+    const url = `https://api.github.com/repos/${repo}/releases/tags/v${version}`;
+    const r = spawnSync(
+      'curl',
+      [
+        '-fsSL',
+        '-H',
+        'User-Agent: ijfw',
+        '-H',
+        'Accept: application/vnd.github+json',
+        url,
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 10_000,
+      },
+    );
     if (r.error) return { ok: false, message: `spawn-${r.error.code || 'unknown'}` };
     if (r.signal) return { ok: false, message: `killed by ${r.signal}` };
     if (r.status !== 0) {
@@ -95,7 +113,8 @@ const DEFAULT_DEPS = Object.freeze({
     }
     try {
       const data = JSON.parse(r.stdout || '{}');
-      return { ok: true, body: data.description || '' };
+      // GitHub release schema uses `body` (GitLab used `description`).
+      return { ok: true, body: data.body || '' };
     } catch {
       return { ok: false, message: 'release JSON parse failed' };
     }
@@ -103,13 +122,18 @@ const DEFAULT_DEPS = Object.freeze({
 });
 
 // version: semver string (validated by caller)
-// opts: { pkg = '@ijfw/install', project = DEFAULT_GITLAB_PROJECT }
-// deps: optional mock injection
+// opts: { pkg = '@ijfw/install', repo = DEFAULT_GITHUB_REPO }
+//   `project` is honored as a back-compat alias for `repo`.
+// deps: optional mock injection. Accepts either `fetchGithubReleaseBody`
+//   (preferred) or the legacy `fetchGitlabReleaseBody` key.
 export function verifyShasumCrossSource(version, opts = {}, deps = DEFAULT_DEPS) {
   const pkg = opts.pkg || '@ijfw/install';
-  const project = opts.project || DEFAULT_GITLAB_PROJECT;
+  const repo = opts.repo || opts.project || DEFAULT_GITHUB_REPO;
   const fetchNpm = deps.fetchNpmShasum || DEFAULT_DEPS.fetchNpmShasum;
-  const fetchRelease = deps.fetchGitlabReleaseBody || DEFAULT_DEPS.fetchGitlabReleaseBody;
+  const fetchRelease =
+    deps.fetchGithubReleaseBody ||
+    deps.fetchGitlabReleaseBody || // back-compat: tests written against the old key still work
+    DEFAULT_DEPS.fetchGithubReleaseBody;
 
   const npmRes = fetchNpm(pkg, version);
   if (!npmRes.ok) {
@@ -123,7 +147,7 @@ export function verifyShasumCrossSource(version, opts = {}, deps = DEFAULT_DEPS)
   }
   const npmShasum = String(npmRes.shasum || '').toLowerCase();
 
-  const releaseRes = fetchRelease(project, version);
+  const releaseRes = fetchRelease(repo, version);
   if (!releaseRes.ok) {
     return {
       ok: true,
@@ -142,7 +166,7 @@ export function verifyShasumCrossSource(version, opts = {}, deps = DEFAULT_DEPS)
       requiresConfirmation: true,
       npmShasum,
       releaseShasum: null,
-      message: 'GitLab release does not list a shasum for this version; proceed only with explicit confirmation',
+      message: 'GitHub release does not list a shasum for this version; proceed only with explicit confirmation',
     };
   }
   if (releaseShasum.toLowerCase() !== npmShasum) {
@@ -159,6 +183,6 @@ export function verifyShasumCrossSource(version, opts = {}, deps = DEFAULT_DEPS)
     mode: 'verified',
     npmShasum,
     releaseShasum: releaseShasum.toLowerCase(),
-    message: 'shasum cross-verified (npm dist.shasum matches GitLab release asset)',
+    message: 'shasum cross-verified (npm dist.shasum matches GitHub release asset)',
   };
 }
