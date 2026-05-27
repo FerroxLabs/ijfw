@@ -62,7 +62,7 @@ SETTINGS_PATH="$SETTINGS" node -e '
   s.extraKnownMarketplaces = s.extraKnownMarketplaces || {};
   // The broken state: github source instead of directory source.
   s.extraKnownMarketplaces["ijfw"] = {
-    source: { source: "github", repo: "therealseandonahoe/ijfw" }
+    source: { source: "github", repo: "FerroxLabs/ijfw" }
   };
   fs.writeFileSync(p + ".tmp", JSON.stringify(s, null, 2) + "\n");
   fs.renameSync(p + ".tmp", p);

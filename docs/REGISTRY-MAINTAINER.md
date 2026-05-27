@@ -2,7 +2,7 @@
 
 This document covers the admin workflow for the hosted publisher key registry
 (`docs/registry/publishers/v1.json`). Normal users do not need this — it is
-for the IJFW project maintainer (Sean Donahoe) only.
+for the IJFW project maintainer (Ferrox Labs) only.
 
 ---
 
@@ -12,11 +12,11 @@ for the IJFW project maintainer (Sean Donahoe) only.
 
 **Deployed URL (primary):** `https://registry.ijfw.dev/publishers/v1.json`
 
-**Deployed URL (fallback):** `https://therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json`
+**Deployed URL (fallback):** `https://ferroxlabs.github.io/ijfw/registry/publishers/v1.json`
 
-The fallback URL is served by GitLab Pages via the `pages:` CI job. It deploys
-automatically on every push to `main` that includes a change to
-`docs/registry/publishers/v1.json`.
+The fallback URL is served by GitHub Pages via the `.github/workflows/pages.yml`
+workflow. It deploys automatically on every push to `main` that includes a
+change to `docs/registry/publishers/v1.json`.
 
 ---
 
@@ -28,7 +28,7 @@ All commands run via the IJFW MCP `extension` tool or the CLI shim:
 cd mcp-server
 node --input-type=module <<'EOF'
 import { extensionDispatch } from './src/dispatch/extension.js';
-const r = await extensionDispatch({ command: 'keygen-meta', args: 'Sean Donahoe' });
+const r = await extensionDispatch({ command: 'keygen-meta', args: 'Ferrox Labs' });
 console.log(JSON.stringify(r, null, 2));
 EOF
 ```
@@ -102,7 +102,6 @@ ijfw extension registry-status
       "verified_at": "2026-05-17T00:00:00.000Z",
       "metadata": {
         "homepage": "https://example.com",
-        "gitlab": "https://gitlab.com/handle",
         "github": "https://github.com/handle"
       }
     }
@@ -209,13 +208,14 @@ versions.
 
 ## Deployment
 
-The `pages:` CI job in `.gitlab-ci.yml` copies the registry JSON to the Pages
-public tree on every push to `main`. No manual deploy step is required.
+The `.github/workflows/pages.yml` workflow copies the registry JSON to the
+GitHub Pages public tree on every push to `main`. No manual deploy step is
+required.
 
 Verify deployment after pushing:
 
 ```bash
-curl https://therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json | jq .signature
+curl https://ferroxlabs.github.io/ijfw/registry/publishers/v1.json | jq .signature
 ```
 
 ---
@@ -240,7 +240,7 @@ v1.4.1 shipped a single hosted publisher registry. v1.4.3 generalizes this into 
     },
     {
       "name": "public",
-      "url": "https://therealseandonahoe.gitlab.io/ijfw/registry/publishers/v1.json",
+      "url": "https://ferroxlabs.github.io/ijfw/registry/publishers/v1.json",
       "meta_key_pem": "<embedded>",
       "priority": 1,
       "publisher_ttl_ms": 86400000,

@@ -97,4 +97,4 @@ The Qwen contribution from [@carrmjw](https://github.com/carrmjw) (PR #11) is th
 
 ## Questions
 
-If the playbook doesn't cover your case, [open an issue](https://gitlab.com/therealseandonahoe/ijfw/-/issues/new?issuable_template=auditor-proposal.yml) before writing code. The proposal template is short and helps avoid wasted PRs.
+If the playbook doesn't cover your case, [open an issue](https://github.com/FerroxLabs/ijfw/issues/new?template=auditor-proposal.yml) before writing code. The proposal template is short and helps avoid wasted PRs.

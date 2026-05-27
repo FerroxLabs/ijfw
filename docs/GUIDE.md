@@ -502,7 +502,7 @@ cat ~/.ijfw/dashboard.port
 
 ### Still stuck
 
-Every install writes a log to `~/.ijfw/install.log`. Every session writes observations to `~/.ijfw/observations.jsonl`. Open an issue at [gitlab.com/therealseandonahoe/ijfw/-/issues](https://gitlab.com/therealseandonahoe/ijfw/-/issues) with both files redacted and attached.
+Every install writes a log to `~/.ijfw/install.log`. Every session writes observations to `~/.ijfw/observations.jsonl`. Open an issue at [github.com/FerroxLabs/ijfw/issues](https://github.com/FerroxLabs/ijfw/issues) with both files redacted and attached.
 
 ---
 
@@ -545,7 +545,7 @@ Yes. `.ijfw/team/` is git-committed by default. Decisions, patterns, and stack c
 </p>
 
 <p align="center">
-<a href="https://gitlab.com/therealseandonahoe/ijfw">gitlab.com/therealseandonahoe/ijfw</a>
+<a href="https://github.com/FerroxLabs/ijfw">github.com/FerroxLabs/ijfw</a>
 &nbsp;|&nbsp;
 <a href="https://www.npmjs.com/package/@ijfw/install">npm</a>
 &nbsp;|&nbsp;

@@ -363,7 +363,7 @@ check_picker_resources "wayland (installed)" "$ISO_HOME/.wayland/skills/ijfw-des
 # ---- Issue #6 regression gate ----
 # Verify the installed cross-orchestrator-cli.js ships the resolveTarget fix.
 # Bug: bare path was sent to auditors; fix reads file contents when target is
-# a regular file. See https://gitlab.com/therealseandonahoe/ijfw/-/issues/6
+# a regular file. See https://github.com/FerroxLabs/ijfw/issues/6
 CLI_JS="$ISO_HOME/.ijfw/mcp-server/src/cross-orchestrator-cli.js"
 if [ -f "$CLI_JS" ] \
    && grep -q "export function resolveTarget" "$CLI_JS" \
@@ -614,8 +614,8 @@ fi
 # 8) NEITHER package.json declares publishConfig.provenance.
 # Policy (v1.5.0, see mcp-server/test-ci-publish-config.js): provenance is
 # enabled via the `npm publish --provenance --access public` CLI flag in
-# .gitlab-ci.yml -- NOT via publishConfig.provenance:true in package.json.
-# The CLI flag is the canonical npmjs+GitLab trusted-publisher pattern;
+# .github/workflows/publish.yml -- NOT via publishConfig.provenance:true in package.json.
+# The CLI flag is the canonical npmjs+GitHub Actions trusted-publisher pattern;
 # the package.json field is the legacy/alternate path that the project
 # explicitly does not use. Gate 7 above already asserts the CLI flag is
 # present in CI -- this gate asserts the absence-in-package.json half of

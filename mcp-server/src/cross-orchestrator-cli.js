@@ -1736,7 +1736,7 @@ function cmdUpdateCheck() {
   // rely on exit codes. Previously exited 3 which broke POSIX if-statements.
   console.log(`update-available: ${r.version}`);
   console.log(`Update available: v${current} -> v${r.version}`);
-  console.log(`  Release notes: https://gitlab.com/therealseandonahoe/ijfw/-/releases/v${r.version}`);
+  console.log(`  Release notes: https://github.com/FerroxLabs/ijfw/releases/tag/v${r.version}`);
   console.log(`  Run: ijfw update`);
   process.exit(0);
 }
@@ -1788,17 +1788,24 @@ function cmdUpdateChangelog() {
     console.error(`could not fetch latest version: ${r.message}`);
     process.exit(1);
   }
-  const url = `https://gitlab.com/api/v4/projects/therealseandonahoe%2Fijfw/releases/v${r.version}`;
-  const fetchRes = spawnSync('curl', ['-fsSL', '-H', 'User-Agent: ijfw', url], { encoding: 'utf8', timeout: 10_000 });
+  // V155 rebrand: ported from GitLab API (releases/v<ver>, data.description)
+  // to GitHub API (releases/tags/v<ver>, data.body). GitHub's repo path is
+  // NOT URL-encoded, unlike GitLab's %2F-separated project id.
+  const url = `https://api.github.com/repos/FerroxLabs/ijfw/releases/tags/v${r.version}`;
+  const fetchRes = spawnSync(
+    'curl',
+    ['-fsSL', '-H', 'User-Agent: ijfw', '-H', 'Accept: application/vnd.github+json', url],
+    { encoding: 'utf8', timeout: 10_000 },
+  );
   if (fetchRes.status !== 0) {
     console.log(`No release notes available for v${r.version}.`);
-    console.log(`Visit: https://gitlab.com/therealseandonahoe/ijfw/-/releases/v${r.version}`);
+    console.log(`Visit: https://github.com/FerroxLabs/ijfw/releases/tag/v${r.version}`);
     process.exit(0);
   }
   let body = '';
   try {
     const data = JSON.parse(fetchRes.stdout || '{}');
-    body = data.description || '(no body)';
+    body = data.body || '(no body)';
   } catch { body = '(could not parse release JSON)'; }
   // ANSI strip + cap 4KB. Control-char regex is intentional -- defangs
   // CHANGELOG bytes fetched over HTTPS so paste into the terminal can't
@@ -1812,7 +1819,7 @@ function cmdUpdateChangelog() {
   console.log(`Changelog for v${r.version}`);
   console.log('');
   console.log(stripped);
-  if (body.length > 4096) console.log(`\n... (truncated; full notes at https://gitlab.com/therealseandonahoe/ijfw/-/releases/v${r.version})`);
+  if (body.length > 4096) console.log(`\n... (truncated; full notes at https://github.com/FerroxLabs/ijfw/releases/tag/v${r.version})`);
   process.exit(0);
 }
 
@@ -1954,7 +1961,7 @@ function cmdUpdateInteractive(opts = {}) {
     }
   }
   // Shasum cross-verify (F-SEC-7): independent second factor on top of
-  // npm-side signatures. Fetches the GitLab release asset shasum and
+  // npm-side signatures. Fetches the GitHub release asset shasum and
   // compares it against npm's dist.shasum for the same version. Mismatch
   // means we refuse to install; advisory (release shasum unavailable)
   // requires explicit --yes to proceed.
@@ -1965,7 +1972,7 @@ function cmdUpdateInteractive(opts = {}) {
     console.error('  Shasum: MISMATCH -- refusing install.');
     console.error(`    npm     : ${shasum.npmShasum}`);
     console.error(`    release : ${shasum.releaseShasum}`);
-    console.error('  The npm tarball does NOT match the GitLab release asset.');
+    console.error('  The npm tarball does NOT match the GitHub release asset.');
     console.error('  This could indicate a compromised registry or release. Aborting.');
     return 1;
   } else if (shasum.mode === 'error') {
@@ -2332,7 +2339,7 @@ function statuslineRecompute() {
 function cmdConfig(sub) {
   if (sub === 'audit') {
     console.log('ijfw config --audit -- this feature is queued for a later release.');
-    console.log('Track progress: https://gitlab.com/therealseandonahoe/ijfw/issues');
+    console.log('Track progress: https://github.com/FerroxLabs/ijfw/issues');
     return;
   }
   console.log('Usage: ijfw config --audit');
@@ -2411,7 +2418,7 @@ async function handleGuide(useBrowser) {
   ];
   const guidePath = candidates.find(p => existsSync(p));
   if (!guidePath) {
-    console.error('[ijfw] Guide not found. Visit https://gitlab.com/therealseandonahoe/ijfw/-/blob/main/docs/GUIDE.md');
+    console.error('[ijfw] Guide not found. Visit https://github.com/FerroxLabs/ijfw/blob/main/docs/GUIDE.md');
     process.exit(1);
   }
   const md = readFileSync(guidePath, 'utf8');

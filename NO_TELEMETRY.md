@@ -24,7 +24,7 @@ nothing is on.
 
 | Action | Why | Your control |
 |--------|-----|--------------|
-| `npx @ijfw/install` clones from `gitlab.com/therealseandonahoe/ijfw` | You asked it to install | Don't run the installer |
+| `npx @ijfw/install` clones from `github.com/FerroxLabs/ijfw` | You asked it to install | Don't run the installer |
 | `git ls-remote --tags` during install to resolve latest release | Pins to a tagged version instead of moving `main` | `--branch main` bypasses |
 | `@xenova/transformers` downloads `all-MiniLM-L6-v2` (~23 MB) first time vectors run (Wave 3) | Enable semantic recall | `IJFW_VECTORS=off` skips it entirely |
 | Auto-memorize LLM synthesizer (Wave 3) | Structured session lessons via a chat model | `IJFW_AUTOMEM_MODEL=off` disables; defaults to local if a local model is configured |
