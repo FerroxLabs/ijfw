@@ -16,8 +16,10 @@
 // Budget: every LLM call goes through BudgetGuard. budgetExhausted=true
 // signals the cycle stopped voluntarily (not crashed).
 
-import { mkdirSync, appendFileSync, lstatSync } from 'node:fs';
-import { dirname } from 'node:path';
+import {
+  mkdirSync, existsSync, openSync, writeSync, closeSync, constants as fsConstants,
+} from 'node:fs';
+import { join, dirname } from 'node:path';
 import { resolveBrainPaths } from './paths.js';
 import { scanInbox, writeManifest, commitProcessed, isProcessed } from './dump-ingest.js';
 import { extractFile } from './extractors/index.js';
@@ -25,6 +27,7 @@ import { BudgetGuard } from './budget-guard.js';
 import { compileWikiPage } from './wiki-compiler.js';
 import { callTiered } from './tiered-llm.js';
 import { validateSafeRepoPath } from './path-guard.js';
+import { withFsLock, lockPathFor } from '../fs-lock.js';
 
 function ensureFactsTable(db) {
   // Idempotent: matches the schema downstream consumers expect.
@@ -41,18 +44,33 @@ function ensureFactsTable(db) {
 function appendLog(wikiLogPath, line, repoRoot) {
   try {
     // F-LENS2-05/11: refuse to follow a symlinked log path out of the repo.
-    // lstat (NOT stat) so we see the symlink itself; if the path is a
-    // symlink, drop the append rather than write through it.
     if (repoRoot) {
       const guard = validateSafeRepoPath(repoRoot, wikiLogPath);
       if (!guard.ok) return;
     }
-    try {
-      const lst = lstatSync(wikiLogPath);
-      if (lst.isSymbolicLink()) return; // F-LENS2-11: refuse symlink follow
-    } catch { /* file doesn't exist yet — ok to create */ }
     mkdirSync(dirname(wikiLogPath), { recursive: true });
-    appendFileSync(wikiLogPath, line + '\n');
+    // V155-039 (MED): the prior `lstatSync` → `appendFileSync` sequence had
+    // a TOCTOU window — an attacker could swap a regular file for a symlink
+    // between the two syscalls so the write follows the new symlink (e.g.
+    // to /etc/passwd). `O_NOFOLLOW` makes `openSync` fail atomically if the
+    // FINAL path component is a symlink, closing the race with a single
+    // syscall. `O_APPEND` keeps append semantics; `O_CREAT` creates on
+    // first write. Mode 0o600 keeps log private.
+    let fd;
+    try {
+      // eslint-disable-next-line no-bitwise
+      fd = openSync(
+        wikiLogPath,
+        fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW,
+        0o600,
+      );
+    } catch {
+      // ELOOP / EACCES → refuse to write. No fallback path — logging is
+      // best-effort and a symlinked log path is a refusal, not a degrade.
+      return;
+    }
+    try { writeSync(fd, line + '\n'); }
+    finally { try { closeSync(fd); } catch { /* best-effort */ } }
   } catch { /* logging is best-effort */ }
 }
 
@@ -179,6 +197,23 @@ export async function defaultExtractFacts({ file: _file, text, chunks, env, guar
 
 function nowIso() { return new Date().toISOString(); }
 
+// V155-020 (HIGH): facts-table source check. `isProcessed(processed, name)`
+// only inspects the manifest file — `rm -rf <processed>/` looks like a
+// clean slate to the gate, so re-ingest doubles every triple (cycle 2 = 2x,
+// cycle 3 = 3x, …). Cross-check the facts table: if ANY fact already
+// references this file as its `source`, treat it as processed regardless
+// of manifest presence. Cleaner than adding a UNIQUE constraint (no
+// migration required); the source column already stores file.name.
+function isProcessedDouble(db, processedDir, fileName) {
+  if (isProcessed(processedDir, fileName)) return true;
+  try {
+    const row = db.prepare(
+      'SELECT 1 FROM facts WHERE source = ? LIMIT 1'
+    ).get(fileName);
+    return !!row;
+  } catch { return false; }
+}
+
 export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, extractFacts } = {}) {
   if (!db) throw new Error('dream-pipeline: db required');
   if (!repoRoot) throw new Error('dream-pipeline: repoRoot required');
@@ -195,6 +230,32 @@ export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, 
   const guard = BudgetGuard(guardOpts);
   const extractor = extractFacts || defaultExtractFacts;
 
+  // V155-064 (LOW): gate the mkdirSyncs on existsSync so the syscalls don't
+  // fire on every cycle (cheap-and-correct today, but if a future watcher
+  // layers fs-events on those dirs the mkdir wakeups become hot-path noise).
+  // `mkdir … recursive:true` is idempotent at the kernel layer; this is a
+  // userspace short-circuit.
+  if (!existsSync(paths.dumpInbox)) mkdirSync(paths.dumpInbox, { recursive: true });
+  if (!existsSync(paths.dumpProcessed)) mkdirSync(paths.dumpProcessed, { recursive: true });
+
+  // V155-038 (MED): project-scope lock around the entire run. Two
+  // simultaneous `ijfw_brain dream` triggers (manual + chokidar; or two
+  // operators on the same repo) would otherwise BOTH scan the same inbox,
+  // BOTH call the (paid) LLM extractor, and BOTH run the rename race for
+  // `commitProcessed` — the loser silently catches ENOENT but its facts
+  // already landed (no UNIQUE constraint on facts). Net: double-extract
+  // cost + duplicate facts + single committed file. The lock makes a
+  // concurrent invocation wait for the first to finish; the second then
+  // sees the manifests (and V155-020 facts-table cross-check) and exits
+  // with zero candidates.
+  const lockTarget = join(repoRoot, '.ijfw', 'state', '.dream-cycle.lock');
+  if (!existsSync(dirname(lockTarget))) mkdirSync(dirname(lockTarget), { recursive: true });
+  return withFsLock(lockPathFor(lockTarget), async () => runDreamCycleLocked({
+    db, repoRoot, env, paths, cid, guard, extractor,
+  }));
+}
+
+async function runDreamCycleLocked({ db, repoRoot, env, paths, cid, guard, extractor }) {
   let processed = 0;
   let factsInserted = 0;
   let pagesCompiled = 0;
@@ -202,11 +263,11 @@ export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, 
   const touchedSubjects = new Set();
   const errors = [];
 
-  mkdirSync(paths.dumpInbox, { recursive: true });
-  mkdirSync(paths.dumpProcessed, { recursive: true });
-
+  // V155-020: cross-check the facts table so a `rm -rf <processed>/` cannot
+  // trigger re-ingest doubling. The manifest gate stays as the cheap first
+  // check; only filename-collision survivors get the DB query.
   const candidates = scanInbox(paths.dumpInbox).filter(
-    (f) => !isProcessed(paths.dumpProcessed, f.name)
+    (f) => !isProcessedDouble(db, paths.dumpProcessed, f.name)
   );
 
   for (const file of candidates) {

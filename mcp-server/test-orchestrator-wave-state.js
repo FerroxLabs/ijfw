@@ -434,7 +434,7 @@ test('S5: status transition appends SUMMARY.md delta', async () => {
   assert.match(summary, /\*\*surprises:\*\* status: pending → blocked/);
 });
 
-test('S5 perf: checkpointWave with 1000 tasks runs under 500ms', async () => {
+test('S5 perf: checkpointWave with 1000 tasks runs under 1500ms', async () => {
   const root = makeTmp();
   initBlackboard(root);
   // Seed 1000 tasks (rollup doesn't read tasks directly, but the path is hot).
@@ -454,7 +454,13 @@ test('S5 perf: checkpointWave with 1000 tasks runs under 500ms', async () => {
   const start = Date.now();
   await checkpointWave('W11-X', root);
   const elapsed = Date.now() - start;
-  assert.ok(elapsed < 500, `checkpointWave took ${elapsed}ms (expected <500ms)`);
+  // V155-014 (v1.5.5): threshold bumped from 500ms → 1500ms because the
+  // body write now lands inside the SDK's `_withLocks` critical section
+  // (intent-journal + waves.json + per-wave STATE.md), so checkpointWave
+  // pays the journaling overhead on every call. This is the conscious
+  // correctness-for-perf trade — `state.replay` can now roll back a
+  // partial body write, which the prior #4-only re-acquisition could not.
+  assert.ok(elapsed < 1500, `checkpointWave took ${elapsed}ms (expected <1500ms)`);
 });
 
 // ---------------------------------------------------------------------------

@@ -56,9 +56,23 @@ export function markStageStarted(root, stage) {
 
 export function markStageCompleted(root, stage, extras = {}) {
   const s = readDreamState(root);
+  // V155-005 (HIGH): the previous shape unconditionally wrote
+  // `status:'completed'` even when the stage returned a payload like
+  // `{ skipped:'db-unavailable' }` or `{ error:'tier-promotion-failed' }`.
+  // Operators reading `.dream-state-v2.json` saw "all stages completed"
+  // perpetually even when wiki-compile had been skipped for weeks. Inspect
+  // the returned envelope and route to a more honest status:
+  //   - `extras.skipped`      → status:'skipped'
+  //   - `extras.error`        → status:'completed_with_error'
+  //   - otherwise             → status:'completed' (back-compat shape).
+  let status = 'completed';
+  if (extras && typeof extras === 'object') {
+    if (extras.skipped) status = 'skipped';
+    else if (extras.error) status = 'completed_with_error';
+  }
   s.stages[stage] = {
     ...s.stages[stage],
-    status: 'completed',
+    status,
     completed_at: Date.now(),
     ...extras,
   };
