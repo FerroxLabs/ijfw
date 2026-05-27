@@ -19,7 +19,7 @@ import { tmpdir, platform } from 'node:os';
 import { rotateLogIfNeeded } from './src/lib/atomic-io.js';
 import { validateSafeRepoPath } from './src/brain/path-guard.js';
 import { extractMarkdown } from './src/brain/extractors/markdown.js';
-import { readManifest } from './src/brain/dump-ingest.js';
+import { readManifestSafe } from './src/brain/dump-ingest.js';
 
 describe('V155-052: rotateLogIfNeeded preserves history on failure', () => {
   it('rotates a >maxBytes log successfully and leaves rot1+rot2 populated', () => {
@@ -144,11 +144,11 @@ describe('V155-067: extractMarkdown caps file size', () => {
   });
 });
 
-describe('V155-068: readManifest tolerates parse failure', () => {
+describe('V155-068: readManifestSafe tolerates parse failure (legacy readManifest preserved)', () => {
   it('returns ok:false code:"enoent" when manifest absent', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'v155-068-none-'));
     try {
-      const r = readManifest(tmp, 'missing.md');
+      const r = readManifestSafe(tmp, 'missing.md');
       assert.equal(r.ok, false);
       assert.equal(r.code, 'enoent');
     } finally {
@@ -160,7 +160,7 @@ describe('V155-068: readManifest tolerates parse failure', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'v155-068-bad-'));
     try {
       writeFileSync(join(tmp, 'foo.md.manifest.json'), '{ not-json');
-      const r = readManifest(tmp, 'foo.md');
+      const r = readManifestSafe(tmp, 'foo.md');
       assert.equal(r.ok, false);
       assert.equal(r.code, 'parse-fail');
       assert.equal(typeof r.message, 'string');
@@ -173,7 +173,7 @@ describe('V155-068: readManifest tolerates parse failure', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'v155-068-ok-'));
     try {
       writeFileSync(join(tmp, 'foo.md.manifest.json'), '{"source":"foo.md","facts":42}');
-      const r = readManifest(tmp, 'foo.md');
+      const r = readManifestSafe(tmp, 'foo.md');
       assert.equal(r.ok, true);
       assert.equal(r.data.source, 'foo.md');
       assert.equal(r.data.facts, 42);

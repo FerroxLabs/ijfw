@@ -546,11 +546,10 @@ test('D4 -- MCP tool count remains 12 (no D4 tools registered; v1.5.0-major full
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const resp = await waitForResponse(2);
     assert.ok(resp.result && Array.isArray(resp.result.tools), 'tools list returned');
-    // v1.5.2.1: cap raised 13 -> 14 in v1.5.2 (ijfw_brain added). D4 itself
-    // adds zero MCP tools — cascading-staleness is a compute-tier behaviour,
-    // not a new MCP surface — so the post-D4 count must equal the post-v1.5.2
-    // cap (14).
-    assert.equal(resp.result.tools.length, 14, `tool count is 14 (got ${resp.result.tools.length})`);
+    // V155-017 (v1.5.5): cap drops from 14 → 13 after `ijfw_update_apply`
+    // retirement. D4 itself adds zero MCP tools. Cap is still ≤14;
+    // mcp-server/TOOLS.md is canonical.
+    assert.equal(resp.result.tools.length, 13, `tool count is 13 (got ${resp.result.tools.length})`);
   } finally {
     try { child.kill('SIGTERM'); } catch { /* nothing */ }
   }

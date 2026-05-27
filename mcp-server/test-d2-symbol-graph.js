@@ -487,7 +487,9 @@ test('D2 -- MCP tool count remains 12 (no graph:* tools registered; v1.5.0-major
     // v1.5.2.1: cap raised 13 -> 14 in v1.5.2 (ijfw_brain added). D2 itself
     // adds zero MCP tools — graph:* is a CLI verb, not an MCP tool — so the
     // post-D2 count must equal the post-v1.5.2 cap (14).
-    assert.equal(resp.result.tools.length, 14, `tool count is 14 (got ${resp.result.tools.length})`);
+    // V155-017 (v1.5.5): cap drops from 14 → 13 after `ijfw_update_apply`
+    // retirement. Cap is still ≤14; mcp-server/TOOLS.md is canonical.
+    assert.equal(resp.result.tools.length, 13, `tool count is 13 (got ${resp.result.tools.length})`);
   } finally {
     try { child.kill('SIGTERM'); } catch { /* nothing */ }
   }

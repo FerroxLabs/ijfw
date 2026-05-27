@@ -79,13 +79,28 @@ export function isProcessed(processedDir, fileName) {
   return existsSync(manifestPath(processedDir, fileName));
 }
 
-// V155-068 (v1.5.5): tolerate manifest corruption. External tampering of
-// `.ijfw/dump/processed/*.manifest.json` previously produced a hard crash in
-// the dream cycle. Now returns `{ok:false, code:'enoent'|'parse-fail', ...}`
-// or `{ok:true, data}` so callers can treat parse-fail as "needs reprocess"
-// rather than aborting the whole cycle. The legacy "throw on missing"
-// signal is preserved via the absence-tag (callers can branch on .code).
+// readManifest: legacy behaviour — returns the parsed JSON payload directly,
+// throws on missing/unreadable/parse-fail. Callers in tests + E2E paths rely
+// on the direct round-trip shape; do NOT break the contract.
+//
+// V155-068 (v1.5.5): added `readManifestSafe` (below) for callers — like the
+// dream cycle's manifest-reprocess logic — that need to treat
+// corrupt/absent as a graceful "needs reprocess" signal rather than letting
+// JSON.parse abort the whole cycle.
 export function readManifest(processedDir, fileName) {
+  return JSON.parse(readFileSync(manifestPath(processedDir, fileName), 'utf8'));
+}
+
+/**
+ * Tolerant variant of readManifest for callers that need to distinguish:
+ *   - { ok: true,  data }                       — clean read
+ *   - { ok: false, code: 'enoent' }             — manifest absent
+ *   - { ok: false, code: 'unreadable', message } — readFile threw
+ *   - { ok: false, code: 'parse-fail', message, path } — JSON.parse threw
+ *
+ * V155-068 (v1.5.5): closes the dream-cycle crash on tampered manifests.
+ */
+export function readManifestSafe(processedDir, fileName) {
   const p = manifestPath(processedDir, fileName);
   if (!existsSync(p)) return { ok: false, code: 'enoent' };
   let raw;
