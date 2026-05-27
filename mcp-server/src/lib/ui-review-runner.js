@@ -81,9 +81,11 @@ function walkSourceFiles(scopes, projectRoot, opts = {}) {
   const out = [];
   for (const scope of scopes) {
     // V155-044: isAbsolute() so Windows C:\… scopes aren't joined as relative,
-// which previously yielded a non-existent path and a vacuous "everything
-// passes" review verdict.
-const abs = isAbsolute(scope) ? scope : join(projectRoot, scope);
+    // which previously yielded a non-existent path and a vacuous "everything
+    // passes" review verdict.
+    // TP-004 (v1.5.5 Trident): re-indented the comment + statement to match
+    // the enclosing for-body scope. Visual-only fix; the file already parsed.
+    const abs = isAbsolute(scope) ? scope : join(projectRoot, scope);
     if (!existsSync(abs)) continue;
     const stack = [abs];
     while (stack.length > 0 && out.length < maxFiles) {

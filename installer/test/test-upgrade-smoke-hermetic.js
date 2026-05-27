@@ -128,3 +128,26 @@ test('TR-001 IJFW_SKIP_NETWORK is opt-in (not on by default)', () => {
     'IJFW_SKIP_NETWORK leaked into the test environment — fix the harness',
   );
 });
+
+// TP-001 (v1.5.5 Trident): upgrade-smoke failure message must categorize
+// killed-by-signal / timed-out (137/124) / exited-N distinctly, and surface
+// the last stderr line in the message field so the operator doesn't have to
+// scan details[] to find the cause.
+test('TP-001 upgrade-smoke FAIL message categorizes failure shapes', () => {
+  const gatePath = join(installerRoot, 'src', 'preflight', 'gates', 'upgrade-smoke.js');
+  const src = readFileSync(gatePath, 'utf8');
+  // signal branch
+  assert.match(src, /killed by/, 'must phrase signal-kill distinctly');
+  assert.match(src, /runInstaller\.signal/, 'must inspect runInstaller.signal');
+  // 137 / 124 timeout branch
+  assert.match(src, /137|124/, 'must recognize SIGKILL / busybox-timeout exit codes');
+  assert.match(src, /timed out/, 'timeout shape must say "timed out"');
+  // last stderr line surfaced
+  assert.match(
+    src,
+    /Last stderr line:/,
+    'failure message must include the last stderr line for fast diagnosis',
+  );
+  // TP-001 reference must be present so future maintainers can trace it
+  assert.match(src, /TP-001/);
+});

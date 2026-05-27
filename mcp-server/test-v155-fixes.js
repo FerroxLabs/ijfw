@@ -88,6 +88,33 @@ describe('V155-044: ui-review-runner uses isAbsolute()', () => {
     const src = readFileSync(new URL('./src/lib/ui-review-runner.js', import.meta.url), 'utf8');
     assert.match(src, /isAbsolute\(scope\)/, 'ui-review-runner.js must use isAbsolute(scope)');
   });
+
+  it('TP-004: V155-044 block is properly indented inside the for-loop body', () => {
+    // TP-004 (v1.5.5 Trident): the V155-044 comment + statement were
+    // dedented to column 0 inside an indented for-loop body. Visual-only
+    // but breaks the next-maintainer's reading flow. The fix re-indents
+    // to 4-space (`    `) to match the enclosing scope.
+    const src = readFileSync(new URL('./src/lib/ui-review-runner.js', import.meta.url), 'utf8');
+    // Look for the `const abs = isAbsolute(scope) ?` line; it must NOT be
+    // at column 0 — must have leading whitespace matching the for-body.
+    const lines = src.split('\n');
+    let found = false;
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      if (/^\s+const abs = isAbsolute\(scope\)/.test(ln)) {
+        found = true;
+        // The line MUST be indented (leading whitespace present).
+        const leading = ln.match(/^(\s*)/)[1];
+        assert.ok(leading.length >= 4,
+          `ui-review-runner.js line ${i + 1}: const abs = ... must be indented (got ${leading.length} leading spaces)`);
+      }
+      // Must NOT have the column-0 form.
+      if (/^const abs = isAbsolute\(scope\)/.test(ln)) {
+        assert.fail(`ui-review-runner.js line ${i + 1}: const abs = ... is at column 0 (TP-004 indent regression)`);
+      }
+    }
+    assert.ok(found, 'TP-004: the const abs = isAbsolute(scope) ... line must still exist (under the for-loop body)');
+  });
 });
 
 describe('V155-045: uispec-intake uses isAbsolute()', () => {

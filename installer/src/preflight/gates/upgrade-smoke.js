@@ -173,11 +173,30 @@ export async function run(ctx) {
       shell: process.platform === 'win32',
     });
 
-    if (runInstaller.status !== 0) {
+    if (runInstaller.status !== 0 || runInstaller.signal) {
+      // TP-001 (v1.5.5 Trident): categorize the failure shape so the operator
+      // doesn't have to mentally diff "killed by SIGKILL" vs "real exit 1"
+      // vs "timed out". Each shape gets a distinct phrase + (where useful)
+      // the last stderr line so the cause is visible in the message field
+      // before the 15-line details[] gets scanned.
+      const stderrLines = (runInstaller.stderr || '').split('\n').filter(Boolean);
+      const lastStderrLine = stderrLines.length > 0
+        ? stderrLines[stderrLines.length - 1].slice(0, 200)
+        : '(no stderr)';
+      let cat;
+      if (runInstaller.signal) {
+        cat = `killed by ${runInstaller.signal}`;
+      } else if (runInstaller.status === 137 || runInstaller.status === 124) {
+        cat = `timed out (exit ${runInstaller.status})`;
+      } else if (runInstaller.status === null) {
+        cat = 'timed out (status null)';
+      } else {
+        cat = `exited ${runInstaller.status}`;
+      }
       return {
         name: 'upgrade-smoke',
         status: 'FAIL',
-        message: `upgrade-smoke: installer binary exited ${runInstaller.status}`,
+        message: `upgrade-smoke: installer ${cat}. Last stderr line: ${lastStderrLine}`,
         details: ((runInstaller.stdout || '') + (runInstaller.stderr || ''))
           .split('\n').filter(Boolean).slice(0, 15),
         durationMs: Date.now() - t0,
