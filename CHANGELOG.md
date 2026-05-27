@@ -2,7 +2,7 @@
 
 ## [1.5.5] — 2026-05-27 — Cross-platform reliability and Ferrox Labs release
 
-First release under the **Ferrox Labs** organisation. IJFW is Ferrox Labs' shared development infrastructure for AI coding agents — open-sourced because the discipline travels with the tool.
+First release under the **Ferrox Labs** organisation. IJFW was created by Sean Donahoe and is now co-developed and maintained by the Ferrox Labs engineering team. Same principles, more hands on the wheel. Open-sourced because the discipline travels with the tool.
 
 ### Strengthened — update flow integrity
 - **`ijfw update` now verifies post-install version on disk.** The CLI re-reads `installer/package.json` (npm-global, git-clone, and manual installs each verified at their canonical location) before writing state. If filesystem and announced version disagree, the state write is refused with a clear actionable error. Operators no longer get `state.json` reporting one version while the actual binaries report another.

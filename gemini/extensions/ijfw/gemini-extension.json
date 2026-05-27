@@ -16,7 +16,8 @@
   },
   "excludeTools": [],
   "marketplace": {
-    "author": "Ferrox Labs",
+    "author": "Sean Donahoe",
+    "contributors": ["Ferrox Labs (https://ferroxlabs.com)"],
     "homepage": "https://github.com/FerroxLabs/ijfw",
     "license": "MIT",
     "category": "productivity",

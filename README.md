@@ -620,9 +620,13 @@ I'm Sean Donahoe. Two decades in product, AI, and trading systems. I built IJFW 
 
 The big AI labs are not going to fix this. Continuity, discipline, and second opinions are the only things they have to lose. So I built it locally. Markdown, bash, one MCP server. No vendor can take it from you.
 
+IJFW is now co-developed and maintained at **Ferrox Labs** by the engineering team. The discipline I started shipping in v1.0 is now production infrastructure across every project we touch. Same principles, more hands on the wheel.
+
 If you ship code with AI, you need this. If you write with AI, run a business with AI, plan a launch with AI, you need this. If your team works with AI, you really need this.
 
 * * *
+
+Created by [Sean Donahoe](https://github.com/TheRealSeanDonahoe). Co-developed and maintained by the [Ferrox Labs](https://ferroxlabs.com) engineering team.
 
 [github.com/FerroxLabs/ijfw](https://github.com/FerroxLabs/ijfw) | [MIT License](LICENSE) | [Changelog](CHANGELOG.md) | Local-only. No telemetry, no account, no cloud. One install, thirteen platforms, six engines, three AI families, zero apologies.
 

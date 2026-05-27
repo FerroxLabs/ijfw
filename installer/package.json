@@ -50,7 +50,13 @@
     "installer"
   ],
   "license": "MIT",
-  "author": "Ferrox Labs",
+  "author": "Sean Donahoe",
+  "contributors": [
+    {
+      "name": "Ferrox Labs",
+      "url": "https://ferroxlabs.com"
+    }
+  ],
   "homepage": "https://github.com/FerroxLabs/ijfw",
   "bugs": {
     "url": "https://github.com/FerroxLabs/ijfw/issues"

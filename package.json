@@ -4,7 +4,13 @@
   "private": true,
   "type": "module",
   "description": "IJFW monorepo workspace. The published npm package lives at installer/ (@ijfw/install).",
-  "author": "Ferrox Labs",
+  "author": "Sean Donahoe",
+  "contributors": [
+    {
+      "name": "Ferrox Labs",
+      "url": "https://ferroxlabs.com"
+    }
+  ],
   "license": "MIT",
   "homepage": "https://github.com/FerroxLabs/ijfw",
   "repository": {
