@@ -10,7 +10,7 @@ import { createServer } from 'node:http';
 import { existsSync, readFileSync, watch, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
+import { join, dirname, resolve, relative, isAbsolute, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildCostReport, buildBreakdown, buildDailySeries, buildBlockUsage, getSavingsMethodology } from './cost/aggregator.js';
@@ -1259,7 +1259,33 @@ export async function startServer(options = {}) {
       const contentDir = join(homedir(), '.ijfw', 'design-companion', 'content');
       mkdirSync(contentDir, { recursive: true });
       const name = url.pathname.split('/').pop();
+      // V155-037 (v1.5.5): the route regex `[^/]+\.html$` only forbids forward
+      // slashes — Windows `path.join` treats backslashes as separators, so
+      // `GET /design/files/..\..\..\windows\system32\hosts.html` previously
+      // escaped contentDir at join time. Reject any name that contains a
+      // backslash or a dot-segment, or starts with a dot, or doesn't survive
+      // a basename() round-trip. Belt-and-braces: also verify the joined
+      // filePath resolves under contentDir.
+      const isUnsafeName = (
+        name.includes('\\')
+        || name.includes('/')
+        || name.startsWith('.')
+        || name.includes('..')
+        || /\0/.test(name)
+        || basename(name) !== name
+      );
       const filePath = join(contentDir, name);
+      const filePathResolved = resolve(filePath);
+      const contentDirResolved = resolve(contentDir);
+      const isContained = (
+        filePathResolved === contentDirResolved
+        || filePathResolved.startsWith(contentDirResolved + sep)
+      );
+      if (isUnsafeName || !isContained) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('404 Not Found');
+        return;
+      }
       let html = null;
       try {
         if (existsSync(filePath)) html = readFileSync(filePath, 'utf8');
