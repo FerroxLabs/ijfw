@@ -166,35 +166,9 @@ function parseYaml(block) {
   return result;
 }
 
-/**
- * Emit a YAML frontmatter block for flat string/number/boolean/string[] values.
- * @param {object} obj
- * @returns {string}  (no leading/trailing `---`)
- */
-function emitYaml(obj) {
-  const lines = [];
-  for (const [key, val] of Object.entries(obj)) {
-    if (val === null || val === undefined) {
-      lines.push(`${key}: null`);
-    } else if (Array.isArray(val)) {
-      if (val.length === 0) {
-        lines.push(`${key}: []`);
-      } else {
-        lines.push(`${key}:`);
-        for (const item of val) lines.push(`  - ${item}`);
-      }
-    } else if (typeof val === 'boolean') {
-      lines.push(`${key}: ${val}`);
-    } else if (typeof val === 'number') {
-      lines.push(`${key}: ${val}`);
-    } else if (typeof val === 'object') {
-      throw new Error(`wave-state: nested YAML objects are not supported (key: "${key}")`);
-    } else {
-      lines.push(`${key}: ${val}`);
-    }
-  }
-  return lines.join('\n');
-}
+// V155-014 (TR-003): emitYaml was previously used to render the wave-state
+// body inline. After folding body writes into the SDK's journaled critical
+// section (state-sdk now owns emit), the helper is unused. Removed.
 
 // ---------------------------------------------------------------------------
 // Path helpers

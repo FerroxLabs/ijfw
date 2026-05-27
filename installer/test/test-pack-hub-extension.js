@@ -61,7 +61,7 @@ function parseZip(buf) {
 
     const method = buf.readUInt16LE(pos + 8);
     const compSize = buf.readUInt32LE(pos + 18);
-    const uncompSize = buf.readUInt32LE(pos + 22);
+    // pos+22 is uncompressedSize; not needed for current assertions.
     const nameLen = buf.readUInt16LE(pos + 26);
     const extraLen = buf.readUInt16LE(pos + 28);
     const name = buf.subarray(pos + 30, pos + 30 + nameLen).toString('utf8');

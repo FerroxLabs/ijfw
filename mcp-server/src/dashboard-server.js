@@ -1271,7 +1271,9 @@ export async function startServer(options = {}) {
         || name.includes('/')
         || name.startsWith('.')
         || name.includes('..')
-        || /\0/.test(name)
+        // Null-byte truncates path strings on POSIX syscalls that honour
+        // C-string null-terminators. Reject any path containing one.
+        || name.includes('\u0000')
         || basename(name) !== name
       );
       const filePath = join(contentDir, name);

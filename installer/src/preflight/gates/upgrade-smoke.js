@@ -141,13 +141,24 @@ export async function run(ctx) {
     //   (c) we ASSERT that settings.json was written (post-condition).
     const targetIjfwHome = join(fakeHome, '.ijfw');
     mkdirSync(targetIjfwHome, { recursive: true });
-    // Seed the install target with the in-tree claude/ payload so the
-    // installer's runInstallScript step finds the source files it needs
-    // to copy into platform homes. The marketplace merge then writes the
-    // real settings.json under fakeHome/.claude/.
-    const claudePayloadSrc = join(ctx.repoRoot, 'claude');
-    if (existsSync(claudePayloadSrc)) {
-      cpSync(claudePayloadSrc, join(targetIjfwHome, 'claude'), { recursive: true });
+    // Seed the install target with the in-tree claude/ + mcp-server/
+    // payloads so the installer's runInstallScript step finds every
+    // source tree it needs to copy into platform homes. install-flow's
+    // preflight asserts mcp-server/src/server.js exists; the marketplace
+    // merge then writes the real settings.json under fakeHome/.claude/.
+    for (const sub of ['claude', 'mcp-server']) {
+      const src = join(ctx.repoRoot, sub);
+      if (existsSync(src)) {
+        cpSync(src, join(targetIjfwHome, sub), { recursive: true });
+      }
+    }
+    // installer/package.json is also probed by install-flow when it tries
+    // to read the bundled installer version; seed just the manifest, not
+    // the whole installer tree, to keep the seed small + hermetic.
+    const installerPkgSrc = join(ctx.repoRoot, 'installer', 'package.json');
+    if (existsSync(installerPkgSrc)) {
+      mkdirSync(join(targetIjfwHome, 'installer'), { recursive: true });
+      cpSync(installerPkgSrc, join(targetIjfwHome, 'installer', 'package.json'));
     }
     // cloneOrPull (in install.js) sees `existsSync(targetIjfwHome)` is true
     // AND IJFW_SKIP_NETWORK=1 and returns 'skipped-network' without trying
