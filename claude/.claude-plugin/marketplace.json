@@ -1,18 +1,18 @@
 {
   "name": "ijfw",
   "owner": {
-    "name": "Sean Donahoe",
-    "url": "https://gitlab.com/therealseandonahoe"
+    "name": "Ferrox Labs",
+    "url": "https://github.com/FerroxLabs"
   },
   "plugins": [
     {
       "name": "ijfw",
       "source": "./",
       "description": "AI efficiency framework. Smarter output, intelligent routing, persistent memory, context discipline, project workflows. One install. Zero config. It just fucking works.",
-      "version": "1.5.1",
-      "author": { "name": "Sean Donahoe", "url": "https://gitlab.com/therealseandonahoe" },
+      "version": "1.5.5",
+      "author": { "name": "Ferrox Labs", "url": "https://github.com/FerroxLabs" },
       "license": "MIT",
-      "homepage": "https://gitlab.com/therealseandonahoe/ijfw",
+      "homepage": "https://github.com/FerroxLabs/ijfw",
       "keywords": ["efficiency", "memory", "routing", "workflow", "terse", "optimization"]
     }
   ]

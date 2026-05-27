@@ -50,14 +50,14 @@
     "installer"
   ],
   "license": "MIT",
-  "author": "Sean Donahoe",
-  "homepage": "https://gitlab.com/therealseandonahoe/ijfw",
+  "author": "Ferrox Labs",
+  "homepage": "https://github.com/FerroxLabs/ijfw",
   "bugs": {
-    "url": "https://gitlab.com/therealseandonahoe/ijfw/-/issues"
+    "url": "https://github.com/FerroxLabs/ijfw/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitlab.com/therealseandonahoe/ijfw.git"
+    "url": "git+https://github.com/FerroxLabs/ijfw.git"
   },
   "publishConfig": {
     "access": "public"
