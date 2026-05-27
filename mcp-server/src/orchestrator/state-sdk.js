@@ -271,6 +271,36 @@ async function _withLocks(lockTargets, fn, env) {
 }
 
 /**
+ * V155-002 — `state.replay` recovery-side lock-nest helper.
+ *
+ * Recursive nest of `withFsLock` matching `_withLocks`'s acquire-order shape,
+ * BUT lock-only: no journal-begin write, no snapshot capture. Replay is a
+ * recovery path, not a new mutating verb — generating a write-ahead begin
+ * record here would corrupt the journal.
+ *
+ * `targets` MUST be pre-canonicalised by `canonicalLockOrder` AND MUST NOT
+ * include the intent-journal path (already held by the outer
+ * `withFsLock(lockPathFor(journal), …)` in `state.replay`; re-acquiring it
+ * would deadlock against the outer scope — `withFsLock` is non-re-entrant).
+ *
+ * @param {string[]} targets  canonical-sorted, journal-excluded restore paths
+ * @param {() => Promise<void>} fn  the restore-or-delete loop body
+ * @returns {Promise<void>}
+ */
+async function _replayRestoreWithLocks(targets, fn) {
+  if (!Array.isArray(targets) || targets.length === 0) return fn();
+  const acquireFrom = async (index) => {
+    if (index >= targets.length) return fn();
+    return withFsLock(
+      lockPathFor(targets[index]),
+      async () => acquireFrom(index + 1),
+      LOCK_OPTS,
+    );
+  };
+  return acquireFrom(0);
+}
+
+/**
  * Relative-path form for a journal `targets[]` entry. Project-scope files are
  * rendered relative to `projectRoot` (the §4 example shape — e.g.
  * `.ijfw/wave-W12-A/STATE.md`). The homedir active-extension file lives on a
@@ -622,6 +652,16 @@ export function payloadDigest(payload) {
 // is a facade: this matches wave-state.js's on-disk format exactly so a wave
 // written by either surface round-trips through the other.
 
+// V155-023: prototype-pollution defense. Frontmatter is parsed from operator-
+// supplied YAML (and from `wave.advance` payload merges below) — any key whose
+// name is `__proto__`, `constructor`, or `prototype` would mutate the resulting
+// plain-object's [[Prototype]] chain. Refuse those names everywhere keys are
+// assigned from untrusted input.
+const POLLUTING_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function isPollutingKey(k) {
+  return typeof k !== 'string' || POLLUTING_KEYS.has(k);
+}
+
 function parseFrontmatter(raw) {
   if (!raw.startsWith('---')) {
     throw new Error('state-sdk: STATE.md missing YAML frontmatter');
@@ -630,7 +670,9 @@ function parseFrontmatter(raw) {
   if (end === -1) throw new Error('state-sdk: STATE.md has unclosed frontmatter');
   const block = raw.slice(4, end);
   const body = raw.slice(end + 4).replace(/^\n+/, '');
-  const fm = {};
+  // Object.create(null) — strip the Object.prototype chain so even a key that
+  // sneaks past `isPollutingKey` cannot reach the global prototype.
+  const fm = Object.create(null);
   const lines = block.split('\n');
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -640,6 +682,8 @@ function parseFrontmatter(raw) {
     const key = line.slice(0, c).trim();
     const rest = line.slice(c + 1).trim();
     if (!key) continue;
+    // V155-023: refuse prototype-pollution keys regardless of value shape.
+    if (isPollutingKey(key)) continue;
     if (rest === '') {
       // block sequence ("  - item" lines) or empty
       const seq = [];
@@ -913,7 +957,14 @@ const handlers = {
         updated_at: nowIso(),
       };
       if (payload.frontmatter && typeof payload.frontmatter === 'object') {
-        for (const [k, v] of Object.entries(payload.frontmatter)) fm[k] = v;
+        // V155-023: refuse `__proto__` / `constructor` / `prototype` keys —
+        // an attacker payload of `{ __proto__: { hard_gate: true } }` would
+        // otherwise mutate the [[Prototype]] of `fm` and grant a hard-gate
+        // verdict via the prototype chain on subsequent reads.
+        for (const [k, v] of Object.entries(payload.frontmatter)) {
+          if (isPollutingKey(k)) continue;
+          fm[k] = v;
+        }
       }
       // Persist the hard-gate declaration on the wave's frontmatter so
       // subsequent advance calls honor it without re-passing `hardGate`.
@@ -999,8 +1050,23 @@ const handlers = {
     try {
       result = _gateFns.validatePlan(planText, { strict: true });
     } catch (e) {
+      // V155-008 (HIGH) — partial fix: contract §4 Model 4 reserves
+      // execution-fail for the ADVISORY verdict (the verb proceeds; the gate
+      // crash never freezes the workflow — see test-verification-gate-strict
+      // T15 phase.plan-check). The audit's concern (an adversary crashing the
+      // gate to disable enforcement) is mitigated here by adding a DISTINCT
+      // `error:'gate-execution-fail'` discriminator alongside `advisory:true`
+      // so downstream dispatchers/audit telemetry can DIFFERENTIATE a clean
+      // pass (`advisory:undefined`) from a bypass (`reason:'IJFW_STATE_GATE_BYPASS=1'`)
+      // from a crash (`error:'gate-execution-fail'`) — three distinct shapes,
+      // same ok-verdict by contract. Future contract revision can promote
+      // this to `ok:false` without re-finding the issue (the error field is
+      // already there to dispatch on).
       process.stderr.write(`[state-sdk] WARN phase.plan-check gate execution-fail: ${e.message}\n`);
-      return { ok: true, advisory: true, gate: 'plan-check', reason: e.message, findings: [] };
+      return {
+        ok: true, advisory: true, gate: 'plan-check',
+        error: 'gate-execution-fail', reason: e.message, findings: [],
+      };
     }
     // v1.5.0 T17 (W1 plan-check hard-BLOCK): structurally REFUSE on any
     // HIGH-tier finding (severity in {BLOCK, HIGH} per `isHighFinding`).
@@ -1271,8 +1337,14 @@ const handlers = {
     try {
       selfCheck = _gateFns.runSelfCheck(reportText, projectRoot);
     } catch (e) {
+      // V155-008 (HIGH) — partial fix: see phase.plan-check above. Contract
+      // §4 keeps the verdict advisory; we add a DISTINCT `error` field so
+      // downstream callers can tell crash from bypass from clean pass.
       process.stderr.write(`[state-sdk] WARN subagent.post-done gate execution-fail: ${e.message}\n`);
-      return { ok: true, advisory: true, gate: 'post-done-self-check', reason: e.message };
+      return {
+        ok: true, advisory: true, gate: 'post-done-self-check',
+        error: 'gate-execution-fail', reason: e.message,
+      };
     }
     // v1.5.1 cleanup C1 — T20 truncation classification. When the caller hands
     // us the subagent's `events` stream and/or intent `journal` on the payload,
@@ -1714,6 +1786,21 @@ const handlers = {
     }
     // The replay walk + any rollback restores happen under the intent-journal
     // lock so a concurrent mutating verb cannot interleave with recovery.
+    //
+    // V155-002 (BLOCKER): the recovery path MUST acquire the SAME §3 locks as
+    // the writers it is rolling back/forward. A snapshot's targets can span
+    // multiple §3 tiers (#2 workflow, #3 waves, #4 STATE.md, #8 AGENTS.md,
+    // #11 active-extension, …). Holding only the intent-journal lock (#1)
+    // while restoring those targets meant a concurrent `wave.advance` could
+    // interleave its mutation with `state.replay`'s restore on the SAME
+    // target — torn write. Fix: per-partial, nest acquisitions of every
+    // target's lock in canonicalLockOrder underneath the already-held #1
+    // journal lock before touching the filesystem.
+    //
+    // `_replayRestoreWithLocks` is a local re-implementation of `_withLocks`'s
+    // recursive nest — we cannot call `_withLocks` directly here because it
+    // also runs `_journalBegin` (recovery is NOT a new mutating verb) and we
+    // are ALREADY holding the journal lock so re-acquiring it would deadlock.
     return withFsLock(lockPathFor(journal), async () => {
       const records = readJsonl(journal);
       const sinceVerbId = payload?.sinceVerbId;
@@ -1751,17 +1838,29 @@ const handlers = {
         const isAppend = beginRec.kind === 'append'
           || (beginRec.kind === undefined && snap === null);
         if (!isAppend && snap && Array.isArray(snap.targets)) {
-          // Overwrite verb: restore every target from the snapshot sidecar —
-          // restore-or-delete per its pre-begin existence.
-          for (const t of snap.targets) {
-            try {
-              if (t.existed) {
-                writeAtomic(t.absPath, t.content ?? '');
-              } else if (existsSync(t.absPath)) {
-                unlinkSync(t.absPath); // the partial created it — undo by delete
-              }
-            } catch { /* a single target restore failing must not abort the walk */ }
-          }
+          // Overwrite verb: restore every target from the snapshot sidecar
+          // under the SAME §3 locks the original writer held. Skip the
+          // intent-journal (already held by the outer withFsLock) — only the
+          // real targets need additional locks. Canonicalise so two replay
+          // invocations targeting overlapping snapshots can never deadlock
+          // (matches `_withLocks` ordering exactly).
+          const restoreTargets = canonicalLockOrder(
+            snap.targets
+              .map((t) => (t && typeof t.absPath === 'string') ? t.absPath : null)
+              .filter((p) => p !== null && p !== journal),
+          );
+          // eslint-disable-next-line no-await-in-loop
+          await _replayRestoreWithLocks(restoreTargets, async () => {
+            for (const t of snap.targets) {
+              try {
+                if (t.existed) {
+                  writeAtomic(t.absPath, t.content ?? '');
+                } else if (existsSync(t.absPath)) {
+                  unlinkSync(t.absPath); // the partial created it — undo by delete
+                }
+              } catch { /* a single target restore failing must not abort the walk */ }
+            }
+          });
         }
         // Discard any snapshot sidecar (overwrite verbs only — append verbs
         // never wrote one) and seal the verbId with a synthetic `commit` so a
