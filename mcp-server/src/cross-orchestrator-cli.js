@@ -1631,7 +1631,11 @@ function writeStateFields(updates) {
 //
 // Returns { ok: true, actualVersion } on success, { ok: false, actualVersion,
 // reason } on mismatch / unreadable.
-function verifyInstallSucceeded({ method, repoRoot, expectedVersion }) {
+//
+// Exported (v1.5.5 V155-001 follow-up) so the regression test
+// `test-v155-update-flow.js` can drive the function directly without spawning
+// the full CLI. Behavior unchanged.
+export function verifyInstallSucceeded({ method, repoRoot, expectedVersion }) {
   // Candidate package.json locations, ordered by install method. We probe
   // multiple so the helper survives across method-mislabel edge cases
   // (e.g., manual install on a machine that also has the git clone).
