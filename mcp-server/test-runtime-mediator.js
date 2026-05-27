@@ -210,9 +210,10 @@ test('toolNameToActionTarget: maps known tool names correctly', () => {
   assert.deepEqual(toolNameToActionTarget('ijfw_update_check', {}), {
     action: 'read', target: 'update:check',
   });
-  assert.deepEqual(toolNameToActionTarget('ijfw_update_apply', {}), {
-    action: 'write', target: 'update:apply',
-  });
+  // V155-017 (v1.5.5): ijfw_update_apply is retired; the mediator returns
+  // null for unknown tool names — runtime guard handles those uniformly via
+  // the default-deny path applied to non-mapped tools.
+  assert.equal(toolNameToActionTarget('ijfw_update_apply', {}), null);
   assert.deepEqual(toolNameToActionTarget('ijfw_prompt_check', {}), {
     action: 'read', target: 'prompt:check',
   });

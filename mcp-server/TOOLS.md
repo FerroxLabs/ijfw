@@ -1,11 +1,11 @@
 # IJFW MCP Tool Manifest
 
-**Cap:** ≤14 tools. Combine before raise.
-**Last updated:** 2026-05-25 (v1.5.2.1 — added count-lint).
+**Cap:** ≤14 tools. Combine before raise. (Active: 13/14 as of v1.5.5.)
+**Last updated:** 2026-05-27 (v1.5.5 — V155-017 retired `ijfw_update_apply`).
 
 This file is the **source of truth** for the IJFW MCP server's tool surface. CLAUDE.md links here. `scripts/check-mcp.sh` is a launch health probe (initialize + ping handshake); `scripts/check-mcp-count.sh` reconciles the count claim below against `mcp-server/src/server.js`'s TOOLS array length, counting both inline `name: 'ijfw_*'` entries AND `UPPER_SNAKE_TOOL` named-import references. CI invokes both on every release.
 
-## Active tools (14/14)
+## Active tools (13/14)
 
 | Slot | Name | Since | Verbs / shape | Description | Retirement blocker |
 |------|------|-------|---------------|-------------|--------------------|
@@ -14,8 +14,8 @@ This file is the **source of truth** for the IJFW MCP server's tool surface. CLA
 | 3  | `ijfw_memory_search`          | v1.3.0 | `format` optional          | FTS5 keyword search; v1.5.2 added `format:'structured'` for B/C consumers. | Combined-tool target for verbs in v1.6+ if surface grows. |
 | 4  | `ijfw_memory_store`           | v1.3.0 | — (single shape)           | Persist a memory entry; M1/M2 indexing runs write-time. | Write path; combining with prelude/recall would break the read/write separation. |
 | 5  | `ijfw_prompt_check`           | v1.4.0 | — (single shape)           | Pre-prompt redaction + dedup gate for Codex/Cursor/Windsurf/Copilot/Gemini (no native pre-prompt hook there). | Cannot retire without degrading non-Claude platforms. |
-| 6  | `ijfw_update_check`           | v1.4.1 | — (single shape)           | Air-gapped first half of the update flow: check available + emit one-time token. | Air-gapped two-step trust model documented in README. |
-| 7  | `ijfw_update_apply`           | v1.4.1 | — (single shape)           | Air-gapped second half: verify token + apply update. | Two-step token flow can't compress to one call without losing the prompt-injection defense. |
+| 6  | `ijfw_update_check`           | v1.4.1 | — (single shape)           | Air-gapped first half of the update flow: check available + emit one-time token. CLI `ijfw update` is the supported apply path. | Air-gapped two-step trust model documented in README. |
+| ~~7~~ | ~~`ijfw_update_apply`~~     | ~~v1.4.1~~ | retired (V155-017, v1.5.5) | Retired — see CLI flow in cross-orchestrator-cli.js. | n/a |
 | 8  | `ijfw_cross_project_search`   | v1.4.1 | — (single shape)           | Cross-project BM25 search over registry'd projects. | Scope semantics differ from `ijfw_memory_search` (registry-bounded vs project-local). |
 | 9  | `ijfw_metrics`                | v1.4.4 | — (single shape)           | Session-level cost + skill telemetry summary for the dashboard. | Read-only meta tool; separation from memory verbs is intentional. |
 | 10 | `ijfw_run`                    | v1.4.4 | — (single shape)           | Single-shot command runner: spec → executor → report. | Wraps a different lifecycle (single-task) than the workflow tools. |
@@ -48,3 +48,4 @@ This file is the **source of truth** for the IJFW MCP server's tool surface. CLA
 | v1.5.0  | 12  | Major raise: + `ijfw_state` (absorbed retired `ijfw_subagent_post_done`) + `ijfw_cross_audit_converge`. |
 | v1.5.0  | 13  | Memory-moat amendment: + `ijfw_memory_facts`. |
 | v1.5.2  | 14  | Brain milestone: + `ijfw_brain` (combined; would have been 4 standalone). |
+| v1.5.5  | 13  | V155-017: retired `ijfw_update_apply` (deprecation since v1.5.0). CLI `ijfw update` flow is the supported apply path. Cap unchanged at 14 — frees a slot for v1.6.0 growth. |

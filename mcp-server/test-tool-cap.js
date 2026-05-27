@@ -37,7 +37,8 @@ const EXPECTED_TOOLS = [
   'ijfw_metrics',
   'ijfw_cross_project_search',
   'ijfw_update_check',
-  'ijfw_update_apply',
+  // V155-017 (v1.5.5): 'ijfw_update_apply' retired — see
+  // cross-orchestrator-cli.js for the supported `ijfw update` flow.
   'ijfw_run',
   // v1.5.0 T13: ijfw_state — single MCP face for the state-SDK verb facade.
   // Absorbed the legacy single-purpose subagent-post-done tool (post-done IS a
@@ -59,8 +60,11 @@ const EXPECTED_TOOLS = [
 ];
 // v1.5.0 T13: ijfw_subagent_post_done was retired (absorbed into ijfw_state as
 // the `subagent.post-done` verb). The tool MUST NOT appear in tools/list.
-const RETIRED_TOOLS = ['ijfw_subagent_post_done'];
-const EXPECTED_COUNT = 14;
+// V155-017 (v1.5.5): ijfw_update_apply retired — the CLI flow via
+// cross-orchestrator-cli.js is the supported `ijfw update` path. Frees a
+// slot for v1.6.0 brain growth (cap drops from 14 → 13).
+const RETIRED_TOOLS = ['ijfw_subagent_post_done', 'ijfw_update_apply'];
+const EXPECTED_COUNT = 13;
 
 function send(child, msg) {
   child.stdin.write(JSON.stringify(msg) + '\n');

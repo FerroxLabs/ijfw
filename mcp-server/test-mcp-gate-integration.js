@@ -114,7 +114,7 @@ test('mcp-gate (a) backcompat: no state file -> all representative tools allowed
       'ijfw_memory_prelude',
       'ijfw_metrics',
       'ijfw_update_check',
-      'ijfw_update_apply',
+      // V155-017 (v1.5.5): ijfw_update_apply retired from MCP.
       'ijfw_prompt_check',
       'ijfw_run',
     ];

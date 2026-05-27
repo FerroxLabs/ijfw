@@ -72,7 +72,10 @@ import {
 // 1.1.6: update tools (cap 8 -> 10) -- token-issuance + OOB terminal confirm.
 // Per CLAUDE.md policy: future growth triggers retirement review, not raise.
 import { ijfwUpdateCheck, TOOL_DEF as UPDATE_CHECK_TOOL } from './update-check.js';
-import { ijfwUpdateApply, TOOL_DEF as UPDATE_APPLY_TOOL } from './update-apply.js';
+// V155-017 (v1.5.5): ijfw_update_apply retired — the verb has been @deprecated
+// since v1.5.0 and was contradicted by live runtime. The CLI `ijfw update`
+// path (cross-orchestrator-cli.js) is the supported flow. Frees one slot from
+// the 14-tool cap for v1.6.0 brain growth.
 // ijfw_run: sandbox large command output to disk, return terse summary to context.
 import { runCommand, detectDomain, summarize, writeToSandbox, readFromSandbox, purgeSandboxOld, stripAnsi } from './sandbox.js';
 // W1B (1.3.0-alpha) -- colon-syntax dispatcher. Extends ijfw_run + ijfw_memory_search
@@ -518,18 +521,30 @@ function appendToJournal(entry) {
 // Structured append for decisions/patterns -- produces a richer frontmatter block
 // similar to Claude's native auto-memory format: YAML frontmatter plus a body with
 // Why / How-to-apply sections. This is the format users retrieve well from.
+//
+// V155-021 (v1.5.5): content-hash dedup — sibling `appendKnowledge` in
+// importers/cli.js uses `<!-- hash:{sha12(content)} -->` so re-stores of
+// identical content are silently deduplicated regardless of caller-side
+// semantic-dedup config. The MCP `memory_store` writer was the lone
+// exception. Same pattern adopted here for parity. Returns
+// `{ok:true, deduped:true}` so callers can distinguish skipped writes
+// from new appends without breaking the existing `ok:true` contract.
 function appendStructuredToKnowledge({ type, summary, content, why, howToApply, tags }) {
   const filepath = join(paths().memoryDir, 'knowledge.md');
   const ts = new Date().toISOString();
   const tagLine = tags && tags.length ? tags.join(', ') : '';
+  const hash = createHash('sha256').update(String(content || '')).digest('hex').slice(0, 12);
+  const hashSentinel = `<!-- hash:${hash} -->`;
   const block = [
     '',
     '---',
     `type: ${type}`,
     `summary: ${summary}`,
     `stored: ${ts}`,
+    `hash: ${hash}`,
     tagLine ? `tags: [${tagLine}]` : '',
     '---',
+    hashSentinel,
     content,
     why ? `\n**Why:** ${why}` : '',
     howToApply ? `\n**How to apply:** ${howToApply}` : '',
@@ -542,6 +557,16 @@ function appendStructuredToKnowledge({ type, summary, content, why, howToApply, 
       return atomicWrite(filepath, seed);
     }
     try { ensureSchemaHeader(filepath); } catch { /* best-effort */ }
+    // V155-021: hash-precheck — skip append if an identical content block
+    // already exists. Bounded by knowledge.md size which is itself rotated
+    // elsewhere; for the typical <1 MB file this is a single fs read +
+    // substring scan.
+    try {
+      const existing = readFileSync(filepath, 'utf8');
+      if (existing.includes(hashSentinel)) {
+        return { ok: true, deduped: true };
+      }
+    } catch { /* fall through to append; missing-read is non-fatal */ }
     appendFileSync(filepath, block);
     return { ok: true };
   } catch (err) {
@@ -1115,7 +1140,8 @@ const TOOLS = [
     }
   },
   UPDATE_CHECK_TOOL,
-  UPDATE_APPLY_TOOL,
+  // V155-017 (v1.5.5): UPDATE_APPLY_TOOL retired. See cross-orchestrator-cli.js
+  // for the supported `ijfw update` flow.
   {
     name: 'ijfw_run',
     description: 'Run a shell command. For commands likely to produce large output (builds, test suites, grep -r, log tails), use this instead of Bash -- full output is sandboxed to disk and a smart summary is returned to context. For git/nav/quick ops, use Bash directly. Also accepts colon-namespaced commands instead of a shell line: "compute:python", "compute:js", "index:<source>", "detect:project_type".',
@@ -2146,16 +2172,39 @@ function handleMessage(msg) {
             }
             break;
           }
-          case 'ijfw_update_apply': {
-            const r = ijfwUpdateApply(args || {});
-            result = { text: JSON.stringify(r, null, 2), isError: r && r.status === 'error' };
-            break;
-          }
+          // V155-017 (v1.5.5): 'ijfw_update_apply' case retired — handled by
+          // the CLI flow via cross-orchestrator-cli.js. The MCP tool slot is
+          // no longer advertised. Unknown-tool requests fall through to the
+          // default branch below (handled identically to any other unsupported
+          // verb name).
           case 'ijfw_cross_audit_converge': {
             // v1.5.0-major W12-C N03: Trident-as-a-service.
             const a = args || {};
             if (!a.commitRange || typeof a.commitRange !== 'string') {
               result = { text: JSON.stringify({ error: 'commitRange (string) is required' }), isError: true };
+              break;
+            }
+            // V155-022 (v1.5.5): strict shape validation. `commitRange` is
+            // passed downstream to `git rev-list` via execFile (no shell), but
+            // git itself interprets `--upload-pack=cmd`, `--config=core.fsmonitor=cmd`
+            // and similar option-style argv as command execution. Reject any
+            // value that starts with `-`, contains shell metas (` ; | $ \` `),
+            // whitespace, or wanders outside the SHA / SHA..SHA / SHA...SHA /
+            // ref-name vocabulary. Cap at 200 chars to defang
+            // resource-exhaustion via gigantic argv.
+            const cr = a.commitRange;
+            if (
+              cr.length > 200
+              || cr.startsWith('-')
+              || /[\s;|`$\\]/.test(cr)
+              || !/^[A-Za-z0-9_./@^~:-]+$/.test(cr)
+            ) {
+              result = {
+                text: JSON.stringify({
+                  error: 'commitRange has invalid shape — expected SHA, SHA..SHA, SHA...SHA, or branch/tag ref',
+                }),
+                isError: true,
+              };
               break;
             }
             const { runPhaseEConverge, defaultConvergeDispatch } = await import('./cross-orchestrator.js');

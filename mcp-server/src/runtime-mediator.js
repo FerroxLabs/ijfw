@@ -231,8 +231,8 @@ export function toolNameToActionTarget(toolName, args) {
       return { action: 'read', target: 'metrics:read' };
     case 'ijfw_update_check':
       return { action: 'read', target: 'update:check' };
-    case 'ijfw_update_apply':
-      return { action: 'write', target: 'update:apply' };
+    // V155-017 (v1.5.5): 'ijfw_update_apply' retired from MCP — see
+    // cross-orchestrator-cli.js for the supported `ijfw update` flow.
     case 'ijfw_prompt_check':
       return { action: 'read', target: 'prompt:check' };
     case 'ijfw_run': {

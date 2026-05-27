@@ -98,16 +98,16 @@ async function runTest() {
     console.log('\nTools:');
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     resp = await waitForResponse(2);
-    // updated 2026-05-25 v1.5.2.1 (cap raised to 14 in v1.5.2 for ijfw_brain):
-    // slot 11 = ijfw_run (subagent dispatch),
+    // updated 2026-05-27 v1.5.5 (V155-017 — ijfw_update_apply retired):
+    // cap drops 14 → 13. Slot 11 = ijfw_run (subagent dispatch),
     // slot 12 = ijfw_brain (v1.5.2 — visible-layer + dream-cycle + wiki MCP face),
-    // slot 13 = ijfw_state (state-SDK verb facade; absorbs retired ijfw_subagent_post_done),
-    // slot 14 = ijfw_cross_audit_converge (N03 Trident-as-a-service).
-    // CLAUDE.md fixes the cap at 14. mcp-server/TOOLS.md is the canonical
+    // slot 13 = ijfw_state (state-SDK verb facade; absorbs retired ijfw_subagent_post_done).
+    // ijfw_cross_audit_converge stays at the tail (N03 Trident-as-a-service).
+    // CLAUDE.md fixes the cap at 14; mcp-server/TOOLS.md is the canonical
     // manifest; scripts/check-mcp-count.sh enforces TOOLS array ↔ TOOLS.md
-    // coherence at preflight. If a 15th appears, this assertion forces an
+    // coherence at preflight. If a tool reappears, this assertion forces an
     // explicit, intentional update rather than silent drift.
-    const CANONICAL_TOOLS_V152 = [
+    const CANONICAL_TOOLS_V155 = [
       'ijfw_memory_recall',
       'ijfw_memory_store',
       'ijfw_memory_search',
@@ -117,18 +117,21 @@ async function runTest() {
       'ijfw_metrics',
       'ijfw_cross_project_search',
       'ijfw_update_check',
-      'ijfw_update_apply',
+      // V155-017: 'ijfw_update_apply' retired
       'ijfw_run',
       'ijfw_brain',
       'ijfw_state',
       'ijfw_cross_audit_converge',
     ];
-    assert(resp.result?.tools?.length === CANONICAL_TOOLS_V152.length,
-      `Lists exactly ${CANONICAL_TOOLS_V152.length} tools (v1.5.2 cap; got ${resp.result?.tools?.length})`);
+    assert(resp.result?.tools?.length === CANONICAL_TOOLS_V155.length,
+      `Lists exactly ${CANONICAL_TOOLS_V155.length} tools (v1.5.5 cap; got ${resp.result?.tools?.length})`);
     const toolNames = resp.result?.tools?.map(t => t.name) || [];
-    for (const name of CANONICAL_TOOLS_V152) {
+    for (const name of CANONICAL_TOOLS_V155) {
       assert(toolNames.includes(name), `Has ${name} tool`);
     }
+    // V155-017: confirm the retired tool no longer appears.
+    assert(!toolNames.includes('ijfw_update_apply'),
+      `ijfw_update_apply must not appear in tools/list (V155-017 retirement)`);
 
     // --- Test 4: Resources list (empty, but shouldn't error) ---
     console.log('\nProtocol compliance:');
