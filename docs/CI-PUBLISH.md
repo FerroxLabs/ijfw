@@ -1,6 +1,8 @@
 # CI Publish via OIDC + Provenance (v1.5.0 S8)
 
-**Status:** Live as of v1.5.0. First IJFW release that ships without local 2FA at the operator's terminal.
+> **Legacy doc — kept for historical reference.** This describes the GitLab CI publish flow that IJFW used through v1.5.4. As of v1.5.5 the canonical home moved to `github.com/FerroxLabs/ijfw` and the publish pipeline is GitHub Actions (`.github/workflows/publish.yml`). `.gitlab-ci.yml` has been removed. A current GitHub-Actions publish runbook will replace this doc in a future minor; the security model (OIDC + provenance, no long-lived secrets) carries over unchanged.
+
+**Status:** Legacy. Active publish flow: GitHub Actions. See `.github/workflows/publish.yml`.
 
 ## How it works
 

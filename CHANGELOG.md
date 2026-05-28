@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.5.6] — 2026-05-28 — Windows installer fix and Pi platform support
+
+A focused patch release closing the one regression that escaped the v1.5.5 sweep and adding a new platform.
+
+### Fixed — Windows installer
+- **`installer/src/install.ps1` now clones from `github.com/FerroxLabs/ijfw`.** v1.5.5 migrated the Node installer to the new home but the PowerShell installer was missed — Windows users were still cloning from `gitlab.com/therealseandonahoe/ijfw` via `$DEFAULT_REPO`. v1.5.6 lands the same migration on the PS path: DEFAULT_REPO updated, the `iwr` one-liner header updated, and the stale-origin allowlist now includes the gitlab URL so existing Windows installs self-heal their origin on next upgrade. Mirrors the Node installer's `STALE_PATTERNS` parity.
+- **`ijfw guide` fallback URL** now points at the GitHub blob path instead of GitLab.
+
+### Added — Pi platform support
+- **Pi (earendil-works/pi) joins the platform roster as rules-only tier #16.** Pi loads `AGENTS.md` from `~/.pi/agent/`, parent dirs, and cwd — IJFW now deploys `pi/AGENTS.md` to that path on install. No MCP wiring yet because Pi has no native MCP client (extension bridge required for the memory layer). New `installPi` target in `installer/src/install-targets-8-14.js`, registered in `install-flow.js` CANONICAL_ORDER + TARGET_FNS.
+
+### Updated — documentation
+- **`docs/SECURITY.md`** shasum cross-check description now references GitHub release bodies (matching the v1.5.5 code change in `shasum-verify.js`). Closes the doc-vs-code drift.
+- **`docs/CI-PUBLISH.md`** flagged as legacy GitLab CI documentation. `.gitlab-ci.yml` was removed in v1.5.5; the active publish pipeline is `.github/workflows/publish.yml`. A current runbook replaces this doc in a future minor.
+- **`claude/agents/ijfw-release-eng.md`** CI publish-watch step updated to reference GitHub Actions.
+
+### Repo move (informational)
+- **Canonical home is `github.com/FerroxLabs/ijfw`** as of v1.5.5. The previous personal repository `github.com/TheRealSeanDonahoe/ijfw` was transferred to FerroxLabs to consolidate stars + watchers + 30 tags of history under one canonical org. Old URLs continue to resolve via GitHub's automatic redirect.
+
 ## [1.5.5] — 2026-05-27 — Cross-platform reliability and Ferrox Labs release
 
 First release under the **Ferrox Labs** organisation. IJFW was created by Sean Donahoe and is now co-developed and maintained by the Ferrox Labs engineering team. Same principles, more hands on the wheel. Open-sourced because the discipline travels with the tool.

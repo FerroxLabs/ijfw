@@ -348,7 +348,7 @@ async function main() {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- candidates is a static 3-element list of internal install paths; not user-controllable.
       const guidePath = candidates.find(p => existsSync(p));
       if (!guidePath) {
-        console.error('[ijfw] Guide not found. Run `ijfw install` to fetch the full guide, or visit https://gitlab.com/therealseandonahoe/ijfw/-/blob/main/docs/GUIDE.md');
+        console.error('[ijfw] Guide not found. Run `ijfw install` to fetch the full guide, or visit https://github.com/FerroxLabs/ijfw/blob/main/docs/GUIDE.md');
         process.exit(1);
       }
 

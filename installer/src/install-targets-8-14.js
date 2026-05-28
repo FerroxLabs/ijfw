@@ -320,3 +320,29 @@ export function installAntigravity(ctx) {
   printOk(`Merged MCP into ${ideDst} + ${cliDst} (Antigravity IDE + CLI)`);
   return { status: 'ok' };
 }
+
+// ---------------------------------------------------------------------------
+// 16. Pi (earendil-works/pi) -- v1.5.6 addition
+// ---------------------------------------------------------------------------
+//
+// Pi loads AGENTS.md from `~/.pi/agent/`, parent directories, and cwd. Rules-
+// only tier: no native MCP, so we deploy `pi/AGENTS.md` -> `~/.pi/agent/AGENTS.md`
+// and leave Pi's runtime config untouched. When Pi adds native MCP, promote
+// this entry to wire `mergeJson(ctx.home/.pi/<mcp.json>, serverJs)`.
+//
+// Skipped on custom-dir (keep real platform config clean).
+
+export function installPi(ctx) {
+  if (ctx.ijfwCustomDir) {
+    printInfo('Custom-dir install -- skipping Pi merges.');
+    printOk('Pi: real platform config left untouched.');
+    return { status: 'noop' };
+  }
+
+  const agentsSrc = path.join(ctx.repoRoot, 'pi', 'AGENTS.md');
+  const agentsDst = path.join(ctx.home, '.pi', 'agent', 'AGENTS.md');
+  copyIfMissing(agentsSrc, agentsDst);
+
+  printOk('Pi: rules-only install (~/.pi/agent/AGENTS.md). No MCP -- Pi has no native MCP client (extension bridge required for memory).');
+  return { status: 'ok' };
+}

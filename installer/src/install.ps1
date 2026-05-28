@@ -6,7 +6,7 @@
 #   -> merge marketplace into %USERPROFILE%\.claude\settings.json -> summary.
 #
 # Usage:
-#   Invoke-Expression (iwr https://gitlab.com/therealseandonahoe/ijfw/-/raw/main/installer/src/install.ps1).Content
+#   Invoke-Expression (iwr https://raw.githubusercontent.com/FerroxLabs/ijfw/main/installer/src/install.ps1).Content
 #   or:
 #   .\install.ps1 -Dir C:\Users\me\.ijfw -Branch main
 
@@ -19,7 +19,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$DEFAULT_REPO = "https://gitlab.com/therealseandonahoe/ijfw.git"
+$DEFAULT_REPO = "https://github.com/FerroxLabs/ijfw.git"
 
 function Write-Ok($msg) { Write-Host "  [ok] $msg" -ForegroundColor Green }
 function Write-Info($msg) { Write-Host "  ... $msg" -ForegroundColor Gray }
@@ -101,7 +101,11 @@ function Invoke-CloneOrPull($target, $branch) {
       $currentOrigin = ($currentOriginRaw | Out-String).Trim()
       $stalePatterns = @(
         '^https://github\.com/seandonahoe/ijfw(\.git)?/?$',
-        '^https://github\.com/therealseandonahoe/ijfw(\.git)?/?$'
+        '^https://github\.com/therealseandonahoe/ijfw(\.git)?/?$',
+        # V155 rebrand: GitLab was canonical through v1.5.4; Windows users who
+        # installed from gitlab.com need their origin migrated forward to
+        # FerroxLabs/ijfw on GitHub. Mirrors install.js STALE_PATTERNS.
+        '^https://gitlab\.com/therealseandonahoe/ijfw(\.git)?/?$'
       )
       $isStale = $false
       foreach ($pat in $stalePatterns) {

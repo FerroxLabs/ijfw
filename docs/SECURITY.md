@@ -36,16 +36,16 @@ This means: even if a hostile prompt convinces the model to invoke `ijfw_update_
 
 `ijfw update`:
 1. Runs `npm audit signatures @ijfw/install@<target>`. On signature failure the interactive flow refuses unless the user re-confirms with `--yes` (acknowledging unverified provenance).
-2. Cross-verifies the target shasum against the GitLab release asset shasum (second factor; F-SEC-7). Compares npm's reported `dist.shasum` against the shasum the publisher recorded in the GitLab release description. Outcomes:
+2. Cross-verifies the target shasum against the GitHub release asset shasum (second factor; F-SEC-7). Compares npm's reported `dist.shasum` against the shasum the publisher recorded in the GitHub release body. Outcomes:
    - `verified` -- both shasums match: install proceeds.
-   - `mismatch` -- both available but differ: install is REFUSED (fail closed, non-zero exit). This catches the case where the npm registry is serving a tampered tarball, or the GitLab release was tampered with, or the publisher made an inconsistent release.
-   - `advisory` -- GitLab side is missing (older release, no shasum published, or transient fetch failure): requires explicit `--yes` to proceed; non-interactive contexts fail closed.
+   - `mismatch` -- both available but differ: install is REFUSED (fail closed, non-zero exit). This catches the case where the npm registry is serving a tampered tarball, or the GitHub release was tampered with, or the publisher made an inconsistent release.
+   - `advisory` -- GitHub side is missing (older release, no shasum published, or transient fetch failure): requires explicit `--yes` to proceed; non-interactive contexts fail closed.
    - `error` -- npm side missing (no shasum reported by `npm view`): install is REFUSED.
 3. On success: persists `last_good_shasum = <target shasum>` and `last_applied_version = <target>` to `state.json`. `last_good_shasum` is only written when the shasum was actually cross-verified (mode `verified`); advisory paths leave the previous value untouched so the record never contains an unverified hash.
 
 Critically, `last_good_shasum` records the CURRENTLY INSTALLED version's shasum -- not a comparison target. Earlier drafts (v2) required the new version's shasum to equal the old, which would have refused every legitimate update. v3 corrects this: shasum is a one-way "what did we actually install" record, not a precondition.
 
-Provenance attests origin, not safety. A compromised maintainer token could still sign a malicious release. This is documented limitation; the OOB confirmation step is the safety net. The shasum cross-check adds an independent second factor: even if the npm registry credential is compromised, the attacker would also need to compromise the GitLab release page (or the publisher's CI key that posts the shasum there) to avoid a mismatch.
+Provenance attests origin, not safety. A compromised maintainer token could still sign a malicious release. This is documented limitation; the OOB confirmation step is the safety net. The shasum cross-check adds an independent second factor: even if the npm registry credential is compromised, the attacker would also need to compromise the GitHub release page (or the publisher's CI key that posts the shasum there) to avoid a mismatch.
 
 ## Re-entrancy guard
 

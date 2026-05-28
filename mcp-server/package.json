@@ -1,6 +1,6 @@
 {
   "name": "@ijfw/memory-server",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "description": "Cross-platform persistent memory server for IJFW. 14 MCP tools (memory + admin/update + brain). Works with 15 platforms: 14 via MCP (Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, QwenCode, Cline, KimiCode, OpenClaw, Antigravity) plus Aider via the rules-only tier.",
   "author": "Sean Donahoe",
   "contributors": [

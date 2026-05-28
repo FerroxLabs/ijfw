@@ -39,8 +39,8 @@ npm registry probes.
 4. **Push** -- `git push origin main && git push origin vX.Y.Z`. Capture
    exit codes.
 
-5. **CI publish watch** -- poll the CI pipeline for the tag push (gitlab
-   pipelines via `glab ci status` or `curl` to API). Wait up to 15 min.
+5. **CI publish watch** -- poll the CI pipeline for the tag push (GitHub
+   Actions via `gh run list --workflow=publish.yml` or `gh api`). Wait up to 15 min.
    - On success: proceed.
    - On failure: capture job log excerpt; emit HIGH finding `CI_PUBLISH_FAIL`.
 
