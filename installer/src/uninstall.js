@@ -1,11 +1,12 @@
 // @ijfw/install -- reverse install. Preserves ~/.ijfw/memory/ unless --purge.
 
-import { existsSync, rmSync, cpSync, mkdtempSync, readFileSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'node:fs';
-import { resolve, join, dirname } from 'node:path';
+import { existsSync, rmSync, cpSync, mkdtempSync, readFileSync, writeFileSync, renameSync, unlinkSync, readdirSync, realpathSync } from 'node:fs';
+import { resolve, join, dirname, basename } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { unmergeMarketplace, claudeSettingsPath } from './marketplace.js';
+import { readLedger, isEmptyDir } from './install-ledger.js';
 
 // Repo root, resolved relative to this module (installer/src/uninstall.js ->
 // repo root is two dirs up). Used to byte-compare shipped Aider templates
@@ -413,6 +414,87 @@ import os; os.replace(p + ".tmp", p)
   return true;
 }
 
+// Locate a shipped template across git-clone and tarball layouts (mirrors the
+// Aider resolver). Used to prove a copy-if-missing file is pristine before
+// deleting it.
+function resolveShippedTemplate(rel, repoRoot) {
+  const root = repoRoot || REPO_ROOT;
+  const candidates = [
+    join(root, rel),
+    join(root, 'installer', 'templates', rel),
+    resolve(__dirname, '..', 'templates', rel),
+  ];
+  for (const c of candidates) { try { if (existsSync(c)) return c; } catch { /* skip */ } }
+  return '';
+}
+
+// Comprehensive Hermes config.yaml cleanup (issue #17). The installer writes
+// THREE ijfw surfaces: mcp_servers.ijfw-memory, plugins.enabled[ijfw], and a
+// hooks.pre_tool_use entry referencing plugins/ijfw/. The MCP-only remover left
+// the latter two behind -- and because PyYAML round-trips drop comments, the
+// sentinel markers vanish on the first edit, so sentinel-based removal cannot
+// catch them. This removes all three at the DATA level. PyYAML preferred;
+// regex fallback for hosts without python3.
+function removeHermesIjfwWiring(p) {
+  if (!existsSync(p)) return false;
+  const raw = readFileSync(p, 'utf8');
+  if (!/\bijfw\b/i.test(raw)) return false;
+
+  const py = spawnSync('python3', ['-c', `
+import sys, yaml
+p = sys.argv[1]
+with open(p) as f: raw = f.read()
+doc = yaml.safe_load(raw) if raw.strip() else {}
+if not isinstance(doc, dict): sys.exit(2)
+changed = False
+srv = doc.get('mcp_servers')
+if isinstance(srv, dict) and 'ijfw-memory' in srv:
+    del srv['ijfw-memory']; changed = True
+    if not srv: del doc['mcp_servers']
+pl = doc.get('plugins')
+if isinstance(pl, dict) and isinstance(pl.get('enabled'), list) and 'ijfw' in pl['enabled']:
+    pl['enabled'] = [x for x in pl['enabled'] if x != 'ijfw']; changed = True
+    if not pl['enabled']: del pl['enabled']
+    if not pl: del doc['plugins']
+hk = doc.get('hooks')
+if isinstance(hk, dict):
+    for ev in list(hk.keys()):
+        items = hk[ev]
+        if isinstance(items, list):
+            new = [it for it in items if not (isinstance(it, dict) and 'ijfw' in str(it.get('script','')))]
+            if len(new) != len(items):
+                changed = True
+                if new: hk[ev] = new
+                else: del hk[ev]
+    if isinstance(doc.get('hooks'), dict) and not doc['hooks']: del doc['hooks']
+if not changed: sys.exit(3)
+with open(p + '.tmp', 'w') as f:
+    if doc: yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)
+    else: f.write('')
+import os; os.replace(p + '.tmp', p)
+`, p], { encoding: 'utf8' });
+  if (py.status === 0) { backupFile(p); return true; }
+
+  // Regex fallback (no python3 / PyYAML). Strip sentinel blocks AND the real
+  // YAML entries the installer wrote outside them.
+  let out = raw
+    .replace(/# IJFW-MCP-BEGIN ijfw-memory\n(?:.*\n)*?# IJFW-MCP-END ijfw-memory\n/g, '')
+    .replace(/# IJFW-PLUGINS-BEGIN\n(?:.*\n)*?# IJFW-PLUGINS-END\n/g, '')
+    .replace(/# IJFW-HOOK-BEGIN pre_tool_use\n(?:.*\n)*?# IJFW-HOOK-END pre_tool_use\n/g, '')
+    // bare `- ijfw` list item under plugins.enabled
+    .replace(/^[ \t]*-[ \t]+ijfw[ \t]*\n/gm, '')
+    // a pre_tool_use hook entry referencing plugins/ijfw (script + interpreter lines)
+    .replace(/^[ \t]*-[ \t]+script:[ \t]*["']?plugins\/ijfw\/[^\n]*\n(?:[ \t]+\w+:[^\n]*\n)*/gm, '');
+  // Drop now-empty plugins:/enabled:/hooks: scaffolds we created.
+  out = out
+    .replace(/^plugins:\s*\n([ \t]+enabled:\s*\n)?(?=\S|\s*$)/gm, (m) => (/enabled:/.test(m) ? '' : ''))
+    .replace(/^hooks:\s*\n[ \t]+pre_tool_use:\s*\n(?=\S|\s*$)/gm, '');
+  if (out === raw) return false;
+  backupFile(p);
+  writeAtomic(p, out);
+  return true;
+}
+
 // Remove all ijfw-* skill dirs from a directory.
 function removeIjfwSkills(dir) {
   if (!existsSync(dir)) return 0;
@@ -464,6 +546,56 @@ function removeCodexCommands(dir) {
   return count;
 }
 
+// Issue #17: remove the hook SCRIPT FILES IJFW wrote (not just registrations).
+// Codex hooks all carry an "IJFW" marker in their header, so we only delete
+// files we can prove are ours -- a user's own non-IJFW hook is never touched.
+// The ijfw-owned `hooks/scripts/` subdir (tier-2 extension checks) is removed
+// wholesale.
+function removeCodexHookFiles(hooksDir) {
+  if (!existsSync(hooksDir)) return 0;
+  let count = 0;
+  // Tier-2 scripts subdir is IJFW-only.
+  const scriptsDir = join(hooksDir, 'scripts');
+  if (existsSync(scriptsDir)) { rmSync(scriptsDir, { recursive: true, force: true }); count++; }
+  // Top-level *.sh files that carry the IJFW marker.
+  let entries = [];
+  try { entries = readdirSync(hooksDir, { withFileTypes: true }); } catch { return count; }
+  for (const e of entries) {
+    if (!e.isFile() || !e.name.endsWith('.sh')) continue;
+    const p = join(hooksDir, e.name);
+    let body = '';
+    try { body = readFileSync(p, 'utf8'); } catch { continue; }
+    if (/\bIJFW\b/.test(body) || /\bijfw\b/.test(body)) {
+      rmSync(p, { force: true });
+      count++;
+    }
+  }
+  return count;
+}
+
+// Remove the `ijfw` entry from ~/.claude/plugins/known_marketplaces.json so the
+// host does not keep a stale pointer to a deleted marketplace.
+function removeKnownMarketplacesEntry(p) {
+  if (!existsSync(p)) return false;
+  let doc;
+  try { doc = JSON.parse(readFileSync(p, 'utf8')); } catch { return false; }
+  if (!doc || typeof doc !== 'object') return false;
+  let changed = false;
+  // Shape A: flat map { ijfw: {...} }.
+  if (doc.ijfw) { delete doc.ijfw; changed = true; }
+  // Shape B: { extraKnownMarketplaces: { ijfw: {...} } } (defensive).
+  if (doc.extraKnownMarketplaces && typeof doc.extraKnownMarketplaces === 'object'
+      && doc.extraKnownMarketplaces.ijfw) {
+    delete doc.extraKnownMarketplaces.ijfw;
+    if (Object.keys(doc.extraKnownMarketplaces).length === 0) delete doc.extraKnownMarketplaces;
+    changed = true;
+  }
+  if (!changed) return false;
+  backupFile(p);
+  writeAtomic(p, JSON.stringify(doc, null, 2) + '\n');
+  return true;
+}
+
 // Clean platform configs across all 15 platforms. `home` and `cwd` are
 // injectable so tests can point at a scratch sandbox; production callers use
 // the real HOME / process.cwd() defaults. `repoRoot` locates shipped templates
@@ -473,6 +605,16 @@ function cleanPlatforms(opts = {}) {
   const cwd = opts.cwd || process.cwd();
   const repoRoot = opts.repoRoot || REPO_ROOT;
   const removed = [];
+
+  // Claude: plugin registry leftover (issue #17). settings.json marketplace
+  // keys are handled by unmergeMarketplace() in main(); the mcpServers entry
+  // and the known_marketplaces.json pointer were not.
+  if (removeJsonMcpEntry(join(home, '.claude', 'settings.json'))) {
+    removed.push('~/.claude/settings.json  (removed ijfw-memory mcp entry)');
+  }
+  if (removeKnownMarketplacesEntry(join(home, '.claude', 'plugins', 'known_marketplaces.json'))) {
+    removed.push('~/.claude/plugins/known_marketplaces.json  (removed ijfw entry)');
+  }
 
   // Codex: config.toml MCP section
   if (removeTomlSection(join(home, '.codex', 'config.toml'))) {
@@ -492,6 +634,10 @@ function cleanPlatforms(opts = {}) {
   // Codex: IJFW.md context file
   const codexMd = join(home, '.codex', 'IJFW.md');
   if (existsSync(codexMd)) { rmSync(codexMd, { force: true }); removed.push('~/.codex/IJFW.md'); }
+  // Codex: hook SCRIPT FILES on disk (issue #17 -- registrations were cleared
+  // above but the .sh files lingered and still referenced ijfw).
+  const codexHookFiles = removeCodexHookFiles(join(home, '.codex', 'hooks'));
+  if (codexHookFiles > 0) removed.push(`~/.codex/hooks/  (removed ${codexHookFiles} IJFW hook scripts)`);
 
   // Gemini: settings.json MCP entry
   if (removeJsonMcpEntry(join(home, '.gemini', 'settings.json'))) {
@@ -517,14 +663,22 @@ function cleanPlatforms(opts = {}) {
   const vscodeMcp = join(cwd, '.vscode', 'mcp.json');
   if (removeJsonMcpEntry(vscodeMcp)) removed.push('.vscode/mcp.json  (removed ijfw-memory)');
 
-  // Hermes: config.yaml MCP entry + skills + context file
-  if (removeYamlMcpEntry(join(home, '.hermes', 'config.yaml'))) {
-    removed.push('~/.hermes/config.yaml  (removed ijfw-memory)');
+  // Hermes: config.yaml -- remove mcp_servers + plugins.enabled[ijfw] + hook
+  // wiring (issue #17, all three surfaces) + skills + context file.
+  if (removeHermesIjfwWiring(join(home, '.hermes', 'config.yaml'))) {
+    removed.push('~/.hermes/config.yaml  (removed ijfw-memory + plugin + hook wiring)');
   }
   const hermesSkills = removeIjfwSkills(join(home, '.hermes', 'skills'));
   if (hermesSkills > 0) removed.push(`~/.hermes/skills/ijfw-*  (removed ${hermesSkills} skill dirs)`);
   const hermesMd = join(home, '.hermes', 'HERMES.md');
   if (existsSync(hermesMd)) { rmSync(hermesMd, { force: true }); removed.push('~/.hermes/HERMES.md'); }
+  // Hermes: the IJFW plugin tree (issue #17 -- installer copies a full plugin
+  // tree to plugins/ijfw/; it is ijfw-namespaced so removing it is safe).
+  const hermesPlugin = join(home, '.hermes', 'plugins', 'ijfw');
+  if (existsSync(hermesPlugin)) {
+    rmSync(hermesPlugin, { recursive: true, force: true });
+    removed.push('~/.hermes/plugins/ijfw/  (removed plugin tree)');
+  }
 
   // Wayland: declarative plugin dir + skills + context file. The MCP server
   // and lifecycle hooks are declared inside plugins/ijfw/plugin.toml (no
@@ -575,11 +729,24 @@ function cleanPlatforms(opts = {}) {
     removed.push('~/.openclaw/openclaw.json  (removed mcp.servers.ijfw-memory)');
   }
 
-  // Pi: ~/.pi/agent/AGENTS.md -- strip IJFW marker regions, preserve user content.
-  const piStatus = stripMarkerFile(join(home, '.pi', 'agent', 'AGENTS.md'), {
-    label: '~/.pi/agent/AGENTS.md',
-  });
-  if (piStatus) removed.push(piStatus);
+  // Pi: ~/.pi/agent/AGENTS.md. First try marker-region stripping (preserves any
+  // user content). If the file has no markers (it is a whole-file copy-if-missing
+  // deploy of pi/AGENTS.md), fall back to pristine byte-match removal -- issue
+  // #17: without this the IJFW template lingered.
+  const piPath = join(home, '.pi', 'agent', 'AGENTS.md');
+  const piStatus = stripMarkerFile(piPath, { label: '~/.pi/agent/AGENTS.md' });
+  if (piStatus) {
+    removed.push(piStatus);
+  } else {
+    const piPristine = removeAiderFileIfPristine(
+      piPath, resolveShippedTemplate(join('pi', 'AGENTS.md'), repoRoot),
+    );
+    if (piPristine === 'removed') {
+      removed.push('~/.pi/agent/AGENTS.md  (removed -- matched shipped template)');
+    } else if (piPristine === 'kept-modified') {
+      removed.push('~/.pi/agent/AGENTS.md  (KEPT -- differs from shipped template; remove manually if it is IJFW-only)');
+    }
+  }
 
   // Cline: VS Code globalStorage cline_mcp_settings.json (OS-specific path).
   // Best-effort: we only touch an EXISTING globalStorage dir. If the extension's
@@ -702,9 +869,60 @@ function resolveTarget(opt) {
   return join(homedir(), '.ijfw');
 }
 
+// Security guard (audit finding): a recursive force-delete of `target` must
+// never be allowed to hit the home root, the filesystem root, a shallow path,
+// or a directory that is not actually an IJFW install. Without this, a stray
+// `--dir ~/projects/foo` or an exported `IJFW_HOME=/important` would rm -rf a
+// real user directory. Throws (caught by main) rather than deleting.
+function assertSafePurgeTarget(target) {
+  // Resolve symlinks so a symlinked target can't smuggle us out of bounds.
+  let real = target;
+  try { real = realpathSync(target); } catch { /* absent or not a link */ }
+  let home = homedir();
+  try { home = realpathSync(home); } catch { /* fall back to raw */ }
+  if (!real || real === '/' || real === home) {
+    throw new Error(`refusing to delete '${target}': it resolves to the home or filesystem root.`);
+  }
+  // Floor: never delete a path fewer than 2 segments below root.
+  if (real.split('/').filter(Boolean).length < 2) {
+    throw new Error(`refusing to delete shallow path '${real}'.`);
+  }
+  // Must look like an IJFW install -- a `.ijfw` basename or a known IJFW
+  // artifact inside it. Prevents nuking an arbitrary user dir.
+  const looksIjfw = basename(real) === '.ijfw'
+    || existsSync(join(real, 'state.json'))
+    || existsSync(join(real, 'install-method'))
+    || existsSync(join(real, 'install-ledger.json'))
+    || existsSync(join(real, 'mcp-server'))
+    || existsSync(join(real, 'memory'));
+  if (!looksIjfw) {
+    throw new Error(`refusing to delete '${target}': it does not look like an IJFW install (no state.json / install-method / mcp-server). Aborting.`);
+  }
+}
+
+// Issue #17: under --purge, remove platform dirs IJFW created (recorded in the
+// install ledger) -- but ONLY if they are empty after cleanPlatforms() stripped
+// the IJFW content. A dir the user populated stays non-empty and is kept; a dir
+// IJFW made for a CLI that was never installed is now empty and is removed.
+function removeCreatedDirs(home, createdDirs) {
+  const removed = [];
+  for (const rel of createdDirs || []) {
+    const abs = join(home, rel);
+    if (isEmptyDir(abs)) {
+      try { rmSync(abs, { recursive: false, force: true }); removed.push(`~/${rel}  (IJFW-created, now empty)`); }
+      catch { /* leave it */ }
+    }
+  }
+  return removed;
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
   const target = resolveTarget(opts);
+
+  // Read the created-dir ledger BEFORE the target dir is deleted (the ledger
+  // lives inside it). Used after platform cleanup to remove dirs IJFW created.
+  const ledgerCreatedDirs = existsSync(target) ? readLedger(target).createdDirs : [];
 
   console.log('This will remove IJFW configuration. Your memory at ~/.ijfw/memory/ will be preserved. Delete manually if desired.');
   if (opts.purge) {
@@ -728,9 +946,11 @@ async function main() {
   if (!existsSync(target)) {
     console.log(`IJFW directory absent (${target}); platform cleanup only.`);
   } else if (opts.purge) {
+    assertSafePurgeTarget(target);
     rmSync(target, { recursive: true, force: true });
     console.log(`  removed ${target} (purged).`);
   } else {
+    assertSafePurgeTarget(target);
     const memDir = join(target, 'memory');
     let stash = null;
     if (existsSync(memDir)) {
@@ -774,6 +994,15 @@ async function main() {
     if (projectCleaned.length > 0) {
       console.log('  project blocks cleaned:');
       for (const line of projectCleaned) console.log(`    ${line}`);
+    }
+    // Issue #17: remove platform dirs IJFW created (ledger) now that their IJFW
+    // content has been stripped and they are empty. Pre-existing dirs are kept.
+    if (opts.purge) {
+      const dirsRemoved = removeCreatedDirs(HOME, ledgerCreatedDirs);
+      if (dirsRemoved.length > 0) {
+        console.log('  IJFW-created dirs removed:');
+        for (const line of dirsRemoved) console.log(`    ${line}`);
+      }
     }
   } else {
     console.log(`  custom-dir uninstall (${target}) -- platform configs in your real home left untouched.`);

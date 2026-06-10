@@ -46,6 +46,7 @@ import {
 
 import * as targets1to7 from './install-targets-1-7.js';
 import * as targets8to14 from './install-targets-8-14.js';
+import { snapshotPreExistingDirs, writeLedger } from './install-ledger.js';
 
 // ============================================================
 // Canonical platform order (must match install.sh:199 default TARGETS)
@@ -781,6 +782,11 @@ export async function runInstall({
   pruneBackups({ home });
 
   // ---- Step 10: per-target loop ---------------------------------
+  // Issue #17: snapshot which platform-owned home dirs already exist so the
+  // uninstaller can later distinguish dirs IJFW created (safe to remove under
+  // --purge) from dirs the user already had (only un-merge, never delete).
+  const preExistingDirs = snapshotPreExistingDirs(home);
+
   const live = [];
   const standby = [];
   const failed = [];
@@ -845,6 +851,9 @@ export async function runInstall({
       standby.push(display);
     }
   }
+
+  // ---- Step 10b: write the created-vs-merged ledger -------------
+  writeLedger({ home, ijfwHome: resolvedIjfwHome, preExisting: preExistingDirs });
 
   // ---- Step 11: summary -----------------------------------------
   printSummary({

@@ -666,6 +666,13 @@ else
   fail "issue #16: indexer guard regressed (see $ISO_HOME/indexer-guard.out)"
 fi
 
+# Issue #17 regression: install -> uninstall --purge leaves zero ijfw refs.
+if (cd "$REPO_ROOT" && node --test installer/test/uninstall-grep-zero.test.mjs >"$ISO_HOME/grepzero.out" 2>&1); then
+  pass "issue #17: install/uninstall round-trip leaves zero ijfw references"
+else
+  fail "issue #17: uninstall left ijfw references (see $ISO_HOME/grepzero.out)"
+fi
+
 # 1.1.6b -- statusline + context bar gates
 hdr "1.1.6b -- statusline + context bar gates"
 

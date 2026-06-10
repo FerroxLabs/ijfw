@@ -18,7 +18,7 @@ const DEFAULT_REPO = 'https://github.com/FerroxLabs/ijfw.git';
 const DEFAULT_BRANCH = 'main';
 
 function parseArgs(argv) {
-  const out = { yes: false, dir: null, noMarketplace: false, branch: DEFAULT_BRANCH, branchExplicit: false, purge: false };
+  const out = { yes: false, dir: null, noMarketplace: false, branch: DEFAULT_BRANCH, branchExplicit: false, purge: false, dryRun: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--yes' || a === '-y') out.yes = true;
@@ -26,6 +26,7 @@ function parseArgs(argv) {
     else if (a === '--no-marketplace') out.noMarketplace = true;
     else if (a === '--branch') { out.branch = argv[++i]; out.branchExplicit = true; }
     else if (a === '--purge') out.purge = true;
+    else if (a === '--dry-run' || a === '--print-plan') out.dryRun = true;
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
   }
   return out;
@@ -83,10 +84,11 @@ export function resolveBranchOrTag({ branch, branchExplicit, _tagLookup, _logger
 
 function printHelp() {
   console.log(`ijfw-install -- IJFW installer
-Usage: npx @ijfw/install [--dir <path>] [--branch <name>] [--no-marketplace] [--yes]
+Usage: npx @ijfw/install [--dir <path>] [--branch <name>] [--no-marketplace] [--yes] [--dry-run]
   --dir             install location (default: $IJFW_HOME or ~/.ijfw)
   --branch          git branch or tag (default: latest released tag)
   --no-marketplace  skip merging ~/.claude/settings.json
+  --dry-run         print every file/dir the install would touch, write nothing
   --yes             non-interactive
 `);
 }
@@ -349,6 +351,18 @@ async function main() {
   }
 
   const target = resolveTarget(opts);
+
+  // --dry-run / --print-plan: show every path the installer would touch, then
+  // exit without writing anything (issue: a true plan-preview mode).
+  if (opts.dryRun) {
+    const { CANONICAL_ORDER } = await import('./install-flow.js');
+    const { renderPlan } = await import('./install-ledger.js');
+    console.log(`IJFW install target: ${target}`);
+    console.log('');
+    console.log(renderPlan(CANONICAL_ORDER));
+    process.exit(0);
+  }
+
   const createdThisRun = !existsSync(target);
 
   const sigint = () => {

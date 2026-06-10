@@ -46,6 +46,17 @@ for (const name of ['aider.conf.yml', 'CONVENTIONS.md']) {
   if (existsSync(src)) cpSync(src, resolve('templates/aider', name));
 }
 
+// Stage the Pi AGENTS.md template too (issue #17): ~/.pi/agent/AGENTS.md is a
+// whole-file copy-if-missing deploy with no markers, so uninstall byte-matches
+// it against this shipped copy before removing. Without it the tarball uninstall
+// can never prove the file is pristine and leaves it behind.
+rmSync('templates/pi', { recursive: true, force: true });
+mkdirSync('templates/pi', { recursive: true });
+{
+  const src = resolve(repoRoot, 'pi', 'AGENTS.md');
+  if (existsSync(src)) cpSync(src, resolve('templates/pi', 'AGENTS.md'));
+}
+
 // --- 2. Bundle ---------------------------------------------------------------
 await build({
   entryPoints: ['src/install.js', 'src/uninstall.js', 'src/ijfw.js'],
