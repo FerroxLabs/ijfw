@@ -60,6 +60,42 @@ Several independent off-ramps, from "this one project" to "all of it, now":
 - **Tenant isolation**: declare a tenant in `<project>/.ijfw/tenant` (first line) or via `IJFW_TENANT`. Cross-project memory search then only surfaces projects in the same tenant, so one client's memory never bleeds into another's session. Opt-in and migration-free: absent a declaration, everything is one default tenant and nothing changes.
 - **No-import**: IJFW never ingests your existing memory from other tools unless you explicitly run an import (e.g. `ijfw import claude-mem`, which is idempotent and supports `--dry-run`). Nothing is imported behind your back.
 - **`--no-marketplace`**: at install or uninstall time, skip touching `~/.claude/settings.json` entirely.
+- **`IJFW_MINIMAL=1`** (v1.6.1): the single master switch for "memory only, nothing else". Disables the codebase indexer, update check, dashboard auto-start, transcript parsing, AGENTS.md generation, style/voice capture, and cross-project surfacing in one move. Memory recall and the banner still work.
+- **`IJFW_NO_VOICE_EXEMPLAR=1`** (v1.6.1): stop storing short excerpts of your prompt text for voice learning (local-only either way).
+- **`IJFW_NO_CROSS_PROJECT=1`** (v1.6.1): disable both the cross-project registry write and cross-project memory search.
+
+---
+
+## Minimal mode and the full collection table
+
+`IJFW_MINIMAL=1` is the quickest way to run quiet. Add it to your shell profile to make it permanent. The table below is the complete accounting of what is collected and how to turn each one off individually.
+
+| What | Where it goes | Default | Disable |
+| --- | --- | --- | --- |
+| Codebase index (paths + first line of each file) | `.ijfw/index/` (local) | on, **project-only** [1] | `IJFW_MINIMAL=1` |
+| Update check (`npm view` once/24h) | npm registry (package name only) | on | `IJFW_DISABLE_UPDATE_CHECK=1` / `IJFW_MINIMAL=1` |
+| Model-list probe | the vendor API whose key you set | only if key set | unset the API key |
+| Style metadata capture (counts, never text) | `.ijfw/.session-style.jsonl` | on | `IJFW_PROFILE_KILL=1` / `IJFW_MINIMAL=1` |
+| Voice-exemplar capture (PII-scrubbed prompt excerpts) | `~/.ijfw/profile/` (0600) | on | `IJFW_NO_VOICE_EXEMPLAR=1` / `IJFW_PROFILE_KILL=1` / `IJFW_MINIMAL=1` |
+| Profile brief injection | local, into model context | **off** (opt-in) | stays off unless `ijfw personalize on` |
+| Auto-memorize at session end | `~/.ijfw/memory/` | **off** (consent) | `/memory-consent yes` to enable |
+| Vector embeddings | local | **off** | `IJFW_VECTORS=on` to enable |
+| Graph index | local | on | `IJFW_GRAPH_AUTO_INDEX=0` |
+| Cross-project registry (project paths) | `~/.ijfw/registry.md` (0600) | on | `IJFW_NO_REGISTRY=1` / `IJFW_NO_CROSS_PROJECT=1` / `IJFW_MINIMAL=1` |
+| Cross-project memory search | local | on | `IJFW_NO_CROSS_PROJECT=1` / `IJFW_MINIMAL=1` |
+| Dashboard server | `localhost` only | off (manual start) | do not start it |
+| CLAUDE.md / AGENTS.md injection | local project files | on | `IJFW_NO_INJECT=1` / `.ijfw/no-inject` |
+| All hooks | local | on | `IJFW_DISABLE=1` |
+
+[1] As of v1.6.1 the indexer refuses to walk `$HOME` or `/` and only indexes a folder with a project marker (`.git`, `package.json`, `go.mod`, ...) or one you bless with `ijfw init`. It also excludes user-data dirs (Desktop / Documents / Downloads / Pictures / Music / Movies / Library).
+
+### Network egress, in full
+
+IJFW makes outbound calls in exactly these cases, and **no code, file contents, prompts, or memory ever leave your machine**:
+
+- **Update check**: `npm view @ijfw/install version` once / 24h, package name only. Off with `IJFW_DISABLE_UPDATE_CHECK=1`.
+- **Model-list probes**: only for a vendor whose API key you set; the key is sent as an auth header, never in the URL.
+- **Install / update**: `git` / `npm` fetching the IJFW package itself.
 
 ---
 
