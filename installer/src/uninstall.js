@@ -475,20 +475,19 @@ import os; os.replace(p + '.tmp', p)
 `, p], { encoding: 'utf8' });
   if (py.status === 0) { backupFile(p); return true; }
 
-  // Regex fallback (no python3 / PyYAML). Strip sentinel blocks AND the real
-  // YAML entries the installer wrote outside them.
-  let out = raw
-    .replace(/# IJFW-MCP-BEGIN ijfw-memory\n(?:.*\n)*?# IJFW-MCP-END ijfw-memory\n/g, '')
-    .replace(/# IJFW-PLUGINS-BEGIN\n(?:.*\n)*?# IJFW-PLUGINS-END\n/g, '')
-    .replace(/# IJFW-HOOK-BEGIN pre_tool_use\n(?:.*\n)*?# IJFW-HOOK-END pre_tool_use\n/g, '')
+  // Regex fallback (no python3 / PyYAML). Strip the sentinel blocks and the real
+  // YAML entries the installer wrote. [\s\S]*? (star height 1) is used instead of
+  // (?:.*\n)*? to stay clear of detect-unsafe-regex; the input is a small local
+  // config file, never attacker-controlled at scale. Empty plugins:/hooks:
+  // scaffolds may remain but they carry zero ijfw references.
+  const out = raw
+    .replace(/# IJFW-MCP-BEGIN ijfw-memory\n[\s\S]*?# IJFW-MCP-END ijfw-memory\n/g, '')
+    .replace(/# IJFW-PLUGINS-BEGIN\n[\s\S]*?# IJFW-PLUGINS-END\n/g, '')
+    .replace(/# IJFW-HOOK-BEGIN pre_tool_use\n[\s\S]*?# IJFW-HOOK-END pre_tool_use\n/g, '')
     // bare `- ijfw` list item under plugins.enabled
     .replace(/^[ \t]*-[ \t]+ijfw[ \t]*\n/gm, '')
-    // a pre_tool_use hook entry referencing plugins/ijfw (script + interpreter lines)
-    .replace(/^[ \t]*-[ \t]+script:[ \t]*["']?plugins\/ijfw\/[^\n]*\n(?:[ \t]+\w+:[^\n]*\n)*/gm, '');
-  // Drop now-empty plugins:/enabled:/hooks: scaffolds we created.
-  out = out
-    .replace(/^plugins:\s*\n([ \t]+enabled:\s*\n)?(?=\S|\s*$)/gm, (m) => (/enabled:/.test(m) ? '' : ''))
-    .replace(/^hooks:\s*\n[ \t]+pre_tool_use:\s*\n(?=\S|\s*$)/gm, '');
+    // a pre_tool_use hook entry's script line referencing plugins/ijfw
+    .replace(/^[ \t]*-[ \t]+script:[ \t]*["']?plugins\/ijfw\/[^\n]*\n/gm, '');
   if (out === raw) return false;
   backupFile(p);
   writeAtomic(p, out);

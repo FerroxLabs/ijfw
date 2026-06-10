@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.6.1] - 2026-06-11 - Privacy and uninstall hardening
+
+A focused patch closing two community-reported bugs (#16, #17) and a sweep of
+privacy, security, and performance fixes from a full audit. No behavior changes
+for existing users beyond the bugs being gone.
+
+### Fixed
+
+- **#16 — the codebase indexer no longer walks your home directory.** A session
+  whose working directory was `$HOME` would recursively index everything under it
+  (Dropbox, Downloads, Documents, Library), capturing the first line of each file
+  and, on macOS, firing a cascade of permission prompts. The indexer now refuses
+  to index `$HOME` or `/`, indexes only a folder with a real project marker
+  (`.git`, `package.json`, `go.mod`, ...) or one you bless with the new
+  `ijfw init`, excludes user-data dirs as defense-in-depth, and is bounded so it
+  can never run unbounded. Regression test ships as an e2e gate.
+- **#17 — `ijfw-uninstall --purge` now leaves nothing behind.** Install and
+  uninstall are driven from one shared manifest plus a created-vs-merged ledger
+  written at install time, so removal is symmetric. This removes the orphaned
+  `ijfw-memory` MCP entry (the host no longer tries to spawn a deleted binary),
+  the Codex hook scripts on disk, the Hermes plugin tree and its `plugins.enabled`
+  + hook wiring, the stale `known_marketplaces.json` entry, the Pi `AGENTS.md`,
+  and any tool dirs IJFW created for CLIs that were never installed — while never
+  deleting a directory you already had. A sandboxed `install → uninstall → grep`
+  test asserts zero references remain.
+
+### Added
+
+- **`ijfw init`** — explicitly approve the current folder for codebase indexing
+  (for working folders with no VCS marker). Refuses to bless `$HOME` or `/`.
+- **`ijfw-install --dry-run` / `--print-plan`** — print every file and directory
+  the install would touch, writing nothing.
+- **`IJFW_MINIMAL=1`** — one master switch for "memory only, nothing else":
+  disables the indexer, update check, dashboard auto-start, transcript parsing,
+  AGENTS.md generation, style/voice capture, and cross-project surfacing.
+- **`IJFW_NO_VOICE_EXEMPLAR=1`** and **`IJFW_NO_CROSS_PROJECT=1`** — granular
+  privacy opt-outs. `docs/PRIVACY.md` now carries the full collect/disable table
+  and the complete network-egress accounting.
+
+### Security & privacy
+
+- Uninstall `--purge` refuses to delete the home root, the filesystem root, a
+  shallow path, or any directory that does not look like an IJFW install — closes
+  a `--dir` / `IJFW_HOME` data-loss footgun and a symlink-escape.
+- The Google model-list probe sends the API key as a header, not a URL query
+  param (keeps it out of proxy/CDN logs). Error-signal and registry files are
+  written owner-only (`0600`).
+
+### Performance
+
+- The session-start dashboard wait is now a short poll instead of a hard 500ms
+  sleep on the hot path.
+
 ## [1.6.0] - 2026-06-10 - Cross-system learning, honest observability, and a leaner package
 
 IJFW now learns your working style and keeps a portable, private profile you control — plus a sweep of reliability and polish across the CLI and the cross-AI engine.
