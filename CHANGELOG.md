@@ -47,11 +47,21 @@ for existing users beyond the bugs being gone.
 - The Google model-list probe sends the API key as a header, not a URL query
   param (keeps it out of proxy/CDN logs). Error-signal and registry files are
   written owner-only (`0600`).
+- The local dashboard rejects cross-origin browser requests to its data API
+  (`Sec-Fetch-Site` guard), so a page in another tab cannot read your memory or
+  cost data even though the server already binds to loopback only.
+- A `HOME`-unset edge (containers/cron) can no longer resolve a relative `.ijfw`
+  path; it falls back to the OS user directory.
 
 ### Performance
 
 - The session-start dashboard wait is now a short poll instead of a hard 500ms
   sleep on the hot path.
+- The codebase indexer uses one `awk` pass per file instead of a five-process
+  pipeline (`wc` + `grep | head | sed | cut`) — roughly 5x fewer subprocesses on
+  large trees, identical output.
+- The two best-effort per-prompt capture spawns now run detached instead of
+  blocking, removing about 100ms of synchronous Node cold-start from each prompt.
 
 ## [1.6.0] - 2026-06-10 - Cross-system learning, honest observability, and a leaner package
 
