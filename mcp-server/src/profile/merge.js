@@ -28,7 +28,7 @@ import { join } from 'node:path';
 
 import { withProfileLock } from './lock.js';
 import {
-  readProfile, writeProfile, profilePath, archiveDir,
+  readProfile, writeProfile, archiveDir,
 } from './store.js';
 import {
   makeProfile,
@@ -546,7 +546,7 @@ function decayAndArchive(list, bounds, now) {
  * Pure w.r.t. its input (returns a clone); the archive write is a side effect.
  */
 export function enforceBounds(profile, bounds = DEFAULT_BOUNDS) {
-  const b = { ...DEFAULT_BOUNDS, ...(bounds || {}) };
+  const b = { ...DEFAULT_BOUNDS, ...bounds };
   const next = clone(profile || makeProfile());
   const now = Date.now();
   const allArchived = [];

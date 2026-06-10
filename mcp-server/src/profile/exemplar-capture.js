@@ -29,7 +29,9 @@ import { appendExemplar, exemplarId, EXEMPLAR_TEXT_MAX } from './exemplar-store.
 const PII_PATTERNS = [
   /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,            // email
   /\b\d{3}-\d{2}-\d{4}\b/g,                              // US SSN shape
+  // eslint-disable-next-line security/detect-unsafe-regex -- linear-time PII redactor: each repetition consumes a mandatory digit, no ambiguous/overlapping quantifier; not ReDoS-exploitable.
   /\b(?:\d[ -]?){13,19}\b/g,                             // card-ish long digit run
+  // eslint-disable-next-line security/detect-unsafe-regex -- linear-time PII redactor: each repetition consumes a mandatory digit, no ambiguous/overlapping quantifier; not ReDoS-exploitable.
   /(?:\+?\d[\s().-]?){7,}\d/g,                           // phone-ish run of digits
   /\b[A-Za-z0-9_-]*(?:secret|token|api[_-]?key|password|passwd|bearer)[A-Za-z0-9_-]*\s*[:=]\s*\S+/gi, // assigned secret
   // Absolute homedir paths leak the OS username (/Users/<name>/, /home/<name>/,
@@ -215,7 +217,7 @@ export function captureCommitMessage(msg, opts = {}) {
         if (t.startsWith('#')) return false;
         if (/^(?:Co-Authored-By|Signed-off-by|Co-authored-by):/i.test(t)) return false;
         if (/Generated with \[Claude Code\]/i.test(t)) return false;
-        if (/^🤖/.test(t)) return false;
+        if (t.startsWith('🤖')) return false;
         return true;
       })
       .join('\n');

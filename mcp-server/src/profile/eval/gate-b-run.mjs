@@ -35,7 +35,7 @@ import { styleVector, fullStyleVector, fullStyleDistance } from './stylometry.js
 import { loadRealPersonas } from './real-personas.mjs';
 import { validateInstrument } from './instrument-validation.mjs';
 import {
-  buildPreReg, hashPreReg, assertFrozen, deriveMinMeanMargin,
+  buildPreReg, assertFrozen,
 } from './prereg.mjs';
 import {
   runGateBDecision, confirmatoryBooleans, deriveRealArmsCarried,
@@ -185,18 +185,18 @@ export async function runGateBProduction(opts = {}) {
   }
 
   // 2) personas (real, headline-eligible) + foreigner fingerprints.
-  const preRegInput = { corpus: 'reddit-single-subreddit', ...(opts.preRegInput || {}) };
+  const preRegInput = { corpus: 'reddit-single-subreddit', ...opts.preRegInput };
   const seedForPersonas = preRegInput.seed ?? 1;
   const nAuthors = preRegInput.minSubjects ?? Math.min(corpus.length, corpus.length);
   const personas = loadRealPersonas(corpus, {
     nAuthors: Math.min(nAuthors, corpus.length),
     seed: seedForPersonas,
-    ...(opts.personaCfg || {}),
+    ...opts.personaCfg,
   });
   const foreigners = loadRealPersonas(foreignersCorpus, {
     nAuthors: foreignersCorpus.length,
     seed: seedForPersonas,
-    ...(opts.personaCfg || {}),
+    ...opts.personaCfg,
   });
 
   // 3) build the deps for runGateBDecision. validate() is the HARD GATE: on fail,

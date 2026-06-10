@@ -224,7 +224,7 @@ export function bootstrapCI(perQuery, { iters = 1000, alpha = 0.05, seed = 42 } 
   if (n === 0) return { point, lo: 0, hi: 0 };
 
   const rng = mulberry32(seed);
-  const boots = new Array(iters);
+  const boots = Array.from({ length: iters });
   for (let i = 0; i < iters; i++) {
     let s = 0;
     for (let j = 0; j < n; j++) {

@@ -139,6 +139,7 @@ function parseFrontmatterValue(raw) {
   if (s === 'null' || s === '~' || s === '') return null;
   if (s === 'true') return true;
   if (s === 'false') return false;
+  // eslint-disable-next-line security/detect-unsafe-regex -- anchored ^...$, \d+ then a disambiguated optional group; linear.
   if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
   if (s.startsWith('"')) {
     try {

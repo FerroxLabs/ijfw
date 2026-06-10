@@ -128,7 +128,7 @@ function accToSession(acc, host) {
  * parseTranscript(file) -> Map<sessionId, acc>. One .jsonl may contain a single
  * session (the common case) but we group by the line's own sessionId to be safe.
  */
-function parseTranscript(file, accumulators, host) {
+function parseTranscript(file, accumulators, _host) {
   let raw;
   try { raw = readFileSync(file, 'utf8'); } catch { return; }
   const lines = raw.split('\n');

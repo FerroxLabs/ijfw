@@ -61,7 +61,7 @@ const AGENT_MAX_TOKENS = 1024; // matches the sequential driver: lets length var
 
 /** Run an array of async thunks in bounded-concurrency batches, preserving order. */
 async function mapBatched(items, batchSize, fn) {
-  const out = new Array(items.length);
+  const out = Array.from({ length: items.length });
   for (let i = 0; i < items.length; i += batchSize) {
     const slice = items.slice(i, i + batchSize);
     // eslint-disable-next-line no-await-in-loop

@@ -34,7 +34,7 @@ function launcherEditDistance(a, b) {
   const m = a.length, n = b.length;
   if (!m) return n; if (!n) return m;
   let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  const cur = new Array(n + 1);
+  const cur = Array.from({ length: n + 1 });
   for (let i = 1; i <= m; i++) {
     cur[0] = i;
     for (let j = 1; j <= n; j++) {

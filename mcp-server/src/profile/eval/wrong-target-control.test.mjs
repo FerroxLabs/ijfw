@@ -108,8 +108,8 @@ test('NEW LEG — sign-test: p >= perTestAlpha ⇒ NULL (even with mean+CI+major
 });
 
 test('McNemar reads p-value with perTestAlpha — ignores the helper hardcoded .significant(0.05)', () => {
-  const baseline = new Array(20).fill(0);
-  const arm = new Array(20).fill(0).map((_, i) => (i < 7 ? 1 : 0)); // 7 flips, 0 losses
+  const baseline = Array.from({ length: 20 }, () => 0);
+  const arm = Array.from({ length: 20 }, (_, i) => (i < 7 ? 1 : 0)); // 7 flips, 0 losses
   const m = mcnemar(baseline, arm);
   assert.ok(m.pValue > 0.01 && m.pValue < 0.05, `p=${m.pValue.toFixed(3)} lands between the alphas`);
   assert.equal(significantAt(m.pValue, 0.01), false, 'not significant at the strict Bonferroni alpha');

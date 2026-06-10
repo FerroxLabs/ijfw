@@ -10,8 +10,8 @@ import { topicRobustScalars, affixCounts, relFreqAffix } from './verifier-featur
 
 function meanSd(rows, floorPct) {
   const d = rows[0].length;
-  const mean = new Array(d).fill(0);
-  const sd = new Array(d).fill(0);
+  const mean = Array.from({ length: d }, () => 0);
+  const sd = Array.from({ length: d }, () => 0);
   for (const r of rows) for (let j = 0; j < d; j += 1) mean[j] += r[j];
   for (let j = 0; j < d; j += 1) mean[j] /= rows.length;
   for (const r of rows) for (let j = 0; j < d; j += 1) sd[j] += (r[j] - mean[j]) ** 2;

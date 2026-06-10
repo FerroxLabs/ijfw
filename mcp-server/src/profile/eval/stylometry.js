@@ -30,6 +30,7 @@ const HEDGES = [
   'it seems', 'roughly', 'approximately',
 ];
 // Conservative emoji + pictograph ranges (no external dep).
+// eslint-disable-next-line security/detect-unsafe-regex, no-misleading-character-class -- character class, no backtracking; intentional emoji + variation-selector (U+FE0F) class, match semantics must not change.
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu;
 const CONTRACTION_RE = /\b\w+'(?:s|t|re|ve|ll|d|m)\b/gi;
 
@@ -156,7 +157,7 @@ const Z_CAP = 8;
 // constant; no mean/variance is taken over the input. (Enforced by the anti-recompute
 // guard test.)
 function zStandardize(raw, refMean, refSd) {
-  const out = new Array(raw.length);
+  const out = Array.from({ length: raw.length });
   for (let i = 0; i < raw.length; i += 1) {
     let z = (raw[i] - refMean[i]) / refSd[i];
     if (z > Z_CAP) z = Z_CAP; else if (z < -Z_CAP) z = -Z_CAP;

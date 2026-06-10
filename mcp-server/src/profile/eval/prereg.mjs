@@ -112,7 +112,7 @@ export function simulatePower(preReg, {
   const rng = mulberry32(preReg.seeds.bootstrapSeed ^ 0x9e3779b9);
   let pass = 0;
   for (let s = 0; s < sims; s += 1) {
-    const margins = new Array(n);
+    const margins = Array.from({ length: n });
     for (let i = 0; i < n; i += 1) {
       // exponential(mean=spread) shifted so the overall mean is trueMeanMargin
       const exp = -Math.log(1 - rng()) * spread;

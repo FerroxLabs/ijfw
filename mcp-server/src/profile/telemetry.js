@@ -224,7 +224,7 @@ export function bucketByAge(events = [], opts = {}) {
   // Normalize ragged arrays to a common length (fill holes with 0) so the curve
   // is dense and comparable across slugs.
   const length = maxIdx + 1;
-  const totals = new Array(length).fill(0);
+  const totals = Array.from({ length }, () => 0);
   for (const slug of Object.keys(perSlug)) {
     const arr = perSlug[slug];
     for (let i = 0; i < length; i += 1) {

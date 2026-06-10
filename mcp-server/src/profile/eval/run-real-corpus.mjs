@@ -33,7 +33,7 @@ import { join } from 'node:path';
 import { renderBrief } from '../render-brief.js';
 import { makeProfile } from '../schema.js';
 import { deriveProfileFromSessions } from './gate-c-capture.mjs';
-import { runArm, objectiveAdherence } from './gate-b-behavior.mjs';
+import { runArm } from './gate-b-behavior.mjs';
 import {
   objectiveStyle, cohenKappa,
   bootstrapCI, mcnemar, expectedCalibrationError,

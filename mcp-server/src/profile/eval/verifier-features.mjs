@@ -76,6 +76,7 @@ function topicRobustScalars(text) {
   const straightQuote = (s.match(/"/g) || []).length;
   const curlyQuote = (s.match(/[“”‘’]/g) || []).length;
   const apostrophe = (s.match(/'/g) || []).length;
+  // oxlint-disable-next-line no-misleading-character-class -- intentional emoji + variation-selector (U+FE0F) class; match semantics must not change.
   const emoji = (s.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu) || []).length;
   // "typo"-ish signals: repeated-letter runs (sooo), lone i, multi-punct
   const repeatRun = (s.match(/([a-zA-Z])\1\1+/g) || []).length;
@@ -140,7 +141,7 @@ export function relFreqAffix(text, keys) {
 
 // ---- z-standardize against an INJECTED reference (DEV-derived) ----------------------
 function zStd(raw, mean, sd) {
-  const out = new Array(raw.length);
+  const out = Array.from({ length: raw.length });
   for (let i = 0; i < raw.length; i += 1) {
     let z = (raw[i] - mean[i]) / (sd[i] || 1e-6);
     if (z > Z_CAP) z = Z_CAP; else if (z < -Z_CAP) z = -Z_CAP;

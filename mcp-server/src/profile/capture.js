@@ -750,8 +750,10 @@ function contentHash(s) {
 // the derive side clean). Keep in sync deliberately if either list grows.
 const EDIT_PII_PATTERNS = [
   /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,        // email
+  // eslint-disable-next-line security/detect-unsafe-regex -- linear-time PII redactor: each repetition consumes a mandatory digit, no ambiguous/overlapping quantifier; not ReDoS-exploitable.
   /(?:\+?\d[\s().-]?){7,}\d/g,                        // phone-ish run of digits
   /\b\d{3}-\d{2}-\d{4}\b/g,                           // US SSN shape
+  // eslint-disable-next-line security/detect-unsafe-regex -- linear-time PII redactor: each repetition consumes a mandatory digit, no ambiguous/overlapping quantifier; not ReDoS-exploitable.
   /\b(?:\d[ -]?){13,19}\b/g,                          // card-ish long digit run
   /\b[A-Za-z0-9_-]*(?:secret|token|api[_-]?key|password|passwd|bearer)[A-Za-z0-9_-]*\s*[:=]\s*\S+/gi, // assigned secret
 ];

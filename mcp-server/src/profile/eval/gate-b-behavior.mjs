@@ -132,7 +132,7 @@ export function objectiveAdherence(output, probe) {
   if (gold.some((g) => g.includes('tab'))) {
     checks += 1;
     const lines = text.split('\n');
-    const tabIndented = lines.some((ln) => /^\t/.test(ln) || /^[^\S\t]*\t/.test(ln));
+    const tabIndented = lines.some((ln) => ln.startsWith('\t') || /^[^\S\t]*\t/.test(ln));
     const negatedTabs = isNegatedNear(text, /\btabs?\b/);
     if (tabIndented && !negatedTabs) hits += 1;
   }

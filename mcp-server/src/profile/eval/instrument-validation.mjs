@@ -200,7 +200,7 @@ export function gateDecision(m, cfg) {
 // validateInstrument(corpus, preReg) → structured validation result + pass/fail gate.
 // corpus: [{ id, docs: [text, ...] }, ...]. preReg.validation overrides DEFAULT_VALIDATION_CFG.
 export function validateInstrument(corpus, preReg = {}) {
-  const cfg = { ...DEFAULT_VALIDATION_CFG, ...(preReg.validation || {}) };
+  const cfg = { ...DEFAULT_VALIDATION_CFG, ...preReg.validation };
   // OPT-IN scorer (Gate B v3 trained verifier). preReg.scorer = { vectorize, distance }.
   // vectorize(text) -> opaque authorship object; distance(aFull, bFull) -> [0,1]. The
   // corpus "docs" are the unit of pairing (for the verifier these are author CHUNKS, and
