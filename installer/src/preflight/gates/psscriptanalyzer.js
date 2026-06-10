@@ -3,7 +3,7 @@
 // fallback so local preflight never leaves PowerShell completely unchecked.
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 function findPs1Files(dir, acc = []) {
@@ -160,12 +160,18 @@ export async function run(ctx) {
     return runFallback(files, t0, 'PSScriptAnalyzer module unavailable');
   }
 
-  // Run PSScriptAnalyzer inline via pwsh
+  // Run PSScriptAnalyzer inline via pwsh. Honor a repo-root
+  // PSScriptAnalyzerSettings.psd1 when present (rule excludes that do not apply
+  // to an interactive installer script); otherwise a plain Warning-severity scan.
+  const psSettings = join(ctx.repoRoot, 'PSScriptAnalyzerSettings.psd1');
+  const invoke = existsSync(psSettings)
+    ? `Invoke-ScriptAnalyzer -Path $f -Settings '${psSettings.replace(/'/g, "''")}' -ErrorAction SilentlyContinue`
+    : 'Invoke-ScriptAnalyzer -Path $f -Severity Warning -ErrorAction SilentlyContinue';
   const script = `
 $files = @(${files.map(f => `'${f.replace(/'/g, "''")}'`).join(',')})
 $found = $false
 foreach ($f in $files) {
-  $results = Invoke-ScriptAnalyzer -Path $f -Severity Warning -ErrorAction SilentlyContinue
+  $results = ${invoke}
   if ($results) {
     $found = $true
     foreach ($r in $results) {

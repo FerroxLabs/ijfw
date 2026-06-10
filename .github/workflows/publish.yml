@@ -85,12 +85,24 @@ jobs:
           echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
           echo "Publishing dist-tag: $DIST_TAG"
 
-      # No NODE_AUTH_TOKEN env -- Trusted Publishing exchanges the GitHub
-      # OIDC token (granted by `permissions: id-token: write` above) for a
-      # short-lived npm token automatically. NPM_TOKEN secret not required.
-      - name: Publish with provenance (Trusted Publishing / OIDC)
+      # Auth: a granular npm access token (publish rights + 2FA bypass) stored as
+      # the NPM_TOKEN repo secret. setup-node above wrote the registry into the
+      # job .npmrc; NODE_AUTH_TOKEN supplies the credential. id-token: write still
+      # lets npm attach a provenance attestation alongside token auth.
+      - name: Publish @ijfw/install with provenance
         working-directory: installer
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
+
+      # Second package: the MCP memory server. Ships src as-is (no build step,
+      # no prepublishOnly), so a bare publish is correct. Version is kept in
+      # lockstep with the installer by the preflight gate.
+      - name: Publish @ijfw/memory-server with provenance
+        working-directory: mcp-server
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
         run: npm publish --provenance --access public --tag "$DIST_TAG"
 

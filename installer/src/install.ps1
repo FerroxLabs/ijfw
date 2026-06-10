@@ -282,7 +282,7 @@ function Remove-StalePosixLaunchers {
         $removed++
       }
     } catch {
-      # Best-effort: keep going on locked / inaccessible files.
+      $null = $_  # best-effort: keep going on locked / inaccessible files
     }
   }
   if ($removed -gt 0) {
@@ -323,7 +323,7 @@ function Provision-Plugin {
     }
     Copy-Item $srcItem.FullName $dstItem -Force
     # Preserve source mtime so next install doesn't mistake our copy for a user edit.
-    try { (Get-Item $dstItem -ErrorAction Stop).LastWriteTime = $srcItem.LastWriteTime } catch {}
+    try { (Get-Item $dstItem -ErrorAction Stop).LastWriteTime = $srcItem.LastWriteTime } catch { $null = $_ }
   }
 }
 
