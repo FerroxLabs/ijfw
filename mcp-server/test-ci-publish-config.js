@@ -31,16 +31,17 @@ test('publish runs npm publish --provenance --access public', () => {
     'publish step must use --provenance --access public');
 });
 
-test('publish uses Trusted Publishing (OIDC), not a long-lived NPM_TOKEN', () => {
-  // The trust model is OIDC token exchange: id-token: write grants the
-  // short-lived npm token automatically. A static NPM_TOKEN / NODE_AUTH_TOKEN
-  // secret would be a regression to the old credential model. Strip YAML
-  // comments first so an explanatory "# No NODE_AUTH_TOKEN ..." line doesn't
-  // trip the negative checks — we care about actual usage, not documentation.
+test('publish uses granular NPM_TOKEN auth WITH provenance attestation', () => {
+  // Shipped trust model (v1.6.0+): a granular, 2FA-bypass NPM_TOKEN supplies the
+  // publish credential (OIDC trusted-publishing setup never activated on the Free
+  // tier), while id-token: write still lets npm attach a provenance attestation
+  // alongside token auth. Strip YAML comments first so explanatory lines don't
+  // trip the checks -- we care about actual usage, not documentation.
   const code = CI.split('\n').map(l => l.replace(/#.*$/, '')).join('\n');
-  assert.match(code, /id-token:\s*write/, 'publish job must request id-token: write for OIDC');
-  assert.doesNotMatch(code, /NODE_AUTH_TOKEN/, 'OIDC publishing must not wire NODE_AUTH_TOKEN');
-  assert.doesNotMatch(code, /secrets\.NPM_TOKEN/, 'OIDC publishing must not use a static NPM_TOKEN secret');
+  assert.match(code, /id-token:\s*write/, 'publish job must request id-token: write so npm can attach provenance');
+  assert.match(code, /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/,
+    'publish must wire NODE_AUTH_TOKEN from the NPM_TOKEN secret');
+  assert.match(code, /npm publish --provenance/, 'publish must still attach provenance');
 });
 
 test('neither package.json declares publishConfig.provenance (flag path preferred)', () => {

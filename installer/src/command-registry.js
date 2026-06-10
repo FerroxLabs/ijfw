@@ -43,6 +43,16 @@ export const COMMAND_REGISTRY = Object.freeze([
     helpGroup: 'GET STARTED',
   },
   {
+    name: 'init',
+    tier: 'primary',
+    owner: 'orchestrator',
+    description: 'Approve the current folder for codebase indexing',
+    aliases: [],
+    since: '1.6.1',
+    status: 'active',
+    helpGroup: 'GET STARTED',
+  },
+  {
     name: 'update',
     tier: 'primary',
     owner: 'orchestrator',
