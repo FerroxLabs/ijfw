@@ -659,6 +659,13 @@ else
   fail "1.1.6: Wave-1 unit tests failed"
 fi
 
+# Issue #16 regression: indexer must refuse $HOME / and marker-less folders.
+if bash "$REPO_ROOT/scripts/test-indexer-guard.sh" >"$ISO_HOME/indexer-guard.out" 2>&1; then
+  pass "issue #16: indexer root/home/marker guard holds (test-indexer-guard.sh)"
+else
+  fail "issue #16: indexer guard regressed (see $ISO_HOME/indexer-guard.out)"
+fi
+
 # 1.1.6b -- statusline + context bar gates
 hdr "1.1.6b -- statusline + context bar gates"
 

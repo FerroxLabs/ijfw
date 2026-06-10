@@ -13,12 +13,60 @@ INDEX_FILE="$INDEX_DIR/files.md"
 STAMP="$INDEX_DIR/.last-build"
 
 ROOT="${1:-.}"
+
+# --- Issue #16 guard: never index $HOME or /, and only index a real project. --
+# This is the privacy-critical gate. A session whose cwd is $HOME must NOT cause
+# a recursive walk of the home directory (Dropbox/Downloads/Documents/Library),
+# and a folder that is not a project must not be indexed at all. The guard runs
+# BEFORE any mkdir/find so a refused root writes nothing.
+ROOT_PHYS="$(cd "$ROOT" 2>/dev/null && pwd -P 2>/dev/null)"
+if [ -z "$ROOT_PHYS" ]; then
+  echo "IJFW indexer: cannot resolve '$ROOT' -- skipping." >&2
+  exit 0
+fi
+case "$ROOT_PHYS" in
+  ""|"/") echo "IJFW indexer: refusing to index the filesystem root -- skipping." >&2; exit 0 ;;
+esac
+# Resolve the physical $HOME, but only if HOME is actually set (an unset HOME
+# makes `cd "$HOME"` a no-op on bash 3.2 but an error on Linux -- don't depend
+# on either; treat unresolvable HOME as "not the home root").
+IJFW_HOME_PHYS=""
+if [ -n "${HOME:-}" ]; then
+  IJFW_HOME_PHYS="$(cd "$HOME" 2>/dev/null && pwd -P 2>/dev/null)"
+fi
+if [ -n "$IJFW_HOME_PHYS" ] && [ "$ROOT_PHYS" = "$IJFW_HOME_PHYS" ]; then
+  echo "IJFW indexer: refusing to index your home directory -- skipping." >&2
+  exit 0
+fi
+# Require a real project marker OR an explicit blessing from \`ijfw init\`
+# (which drops .ijfw/project). No marker, no init, no index.
+ijfw_has_project_marker() {
+  for _m in .git package.json go.mod Cargo.toml pyproject.toml setup.py \
+            tsconfig.json pom.xml build.gradle build.gradle.kts Gemfile \
+            composer.json deno.json deno.jsonc mix.exs Package.swift \
+            requirements.txt .hg .svn .ijfw/project; do
+    [ -e "$ROOT_PHYS/$_m" ] && return 0
+  done
+  return 1
+}
+if ! ijfw_has_project_marker; then
+  echo "IJFW indexer: '$ROOT_PHYS' has no project marker -- run \`ijfw init\` to index this folder. Skipping." >&2
+  exit 0
+fi
+# --- end issue #16 guard ---
+
 mkdir -p "$INDEX_DIR" 2>/dev/null
 
-# Skip if fresh (index newer than any source file in the last 60 seconds --
-# this is a quick-run check; full incremental detection happens on save).
+# Skip if fresh. Cheap fast-path first: if the stamp is younger than 60s, skip
+# without a full tree walk (the find -newer scan is itself expensive on large
+# repos). Only fall back to the per-file freshness scan when the stamp is older.
 if [ -f "$STAMP" ] && [ -f "$INDEX_FILE" ]; then
-  NEWER=$(find "$ROOT" -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.rs" -o -name "*.go" -o -name "*.rb" -o -name "*.java" -o -name "*.kt" -o -name "*.swift" -o -name "*.php" -o -name "*.md" \) -newer "$STAMP" -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/.next/*' -not -path '*/target/*' -not -path '*/.ijfw/*' 2>/dev/null | head -1)
+  STAMP_MTIME=$(stat -f %m "$STAMP" 2>/dev/null || stat -c %Y "$STAMP" 2>/dev/null || echo 0)
+  NOW_S=$(date +%s 2>/dev/null || echo 0)
+  if [ "$STAMP_MTIME" -gt 0 ] && [ "$NOW_S" -gt 0 ] && [ "$((NOW_S - STAMP_MTIME))" -lt 60 ]; then
+    exit 0
+  fi
+  NEWER=$(find "$ROOT" -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.rs" -o -name "*.go" -o -name "*.rb" -o -name "*.java" -o -name "*.kt" -o -name "*.swift" -o -name "*.php" -o -name "*.md" \) -newer "$STAMP" -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/.next/*' -not -path '*/target/*' -not -path '*/.ijfw/*' -not -path '*/Desktop/*' -not -path '*/Documents/*' -not -path '*/Downloads/*' -not -path '*/Pictures/*' -not -path '*/Music/*' -not -path '*/Movies/*' -not -path '*/Library/*' 2>/dev/null | head -1)
   [ -z "$NEWER" ] && exit 0
 fi
 
@@ -48,8 +96,17 @@ find "$ROOT" -type f \
   -not -path '*/.next/*' \
   -not -path '*/target/*' \
   -not -path '*/.ijfw/*' \
-  2>/dev/null | sort > "$INDEX_DIR/.files.tmp"
+  -not -path '*/Desktop/*' \
+  -not -path '*/Documents/*' \
+  -not -path '*/Downloads/*' \
+  -not -path '*/Pictures/*' \
+  -not -path '*/Music/*' \
+  -not -path '*/Movies/*' \
+  -not -path '*/Library/*' \
+  2>/dev/null | sort | head -n "${IJFW_INDEX_MAX:-5000}" > "$INDEX_DIR/.files.tmp"
 
+# Bound the index: a runaway root (huge monorepo) is capped so the detached
+# indexer can never run unbounded. Truncation is noted in the output footer.
 FILE_COUNT=$(wc -l < "$INDEX_DIR/.files.tmp" | tr -d ' ')
 
 {

@@ -319,6 +319,10 @@ function parseArgsInner(args) {
     return { cmd: 'doctor' };
   }
 
+  if (args[0] === 'init') {
+    return { cmd: 'init', force: args.includes('--force') };
+  }
+
   if (args[0] === 'update') {
     const opts = { cmd: 'update' };
     for (let i = 1; i < args.length; i++) {
@@ -2865,6 +2869,8 @@ if (isMainModule) {
     cmdImport(parsed).catch(err => { console.error(err.message); process.exit(1); });
   } else if (parsed.cmd === 'doctor') {
     cmdDoctor(parsed);
+  } else if (parsed.cmd === 'init') {
+    cmdInit(parsed);
   } else if (parsed.cmd === 'update') {
     cmdUpdate(parsed);
   } else if (parsed.cmd === 'version') {
@@ -2953,6 +2959,46 @@ function findCliAsset(...rel) {
     xdgConfig ? join(xdgConfig, 'ijfw', ...rel) : null,
   ].filter(Boolean);
   return candidates.find(p => existsSync(p)) || null;
+}
+// `ijfw init` -- explicitly bless the current folder for codebase indexing.
+// The indexer (scripts/build-codebase-index.sh) refuses any folder that has no
+// project marker (issue #16). For a plain working folder with no .git/package.json
+// etc, this drops a .ijfw/project marker so the indexer will index it. It will
+// NOT bless the home directory or filesystem root -- that is the whole point of
+// the guard.
+function cmdInit(parsed = {}) {
+  const cwd = process.cwd();
+  let phys;
+  try { phys = realpathSync(cwd); } catch { phys = resolve(cwd); }
+  let homePhys;
+  try { homePhys = realpathSync(homedir()); } catch { homePhys = homedir(); }
+  if (phys === '/' || phys === homePhys) {
+    console.error('ijfw init: refusing to bless your home directory or the filesystem root for indexing.');
+    console.error('Run `ijfw init` from inside an actual project folder.');
+    process.exit(1);
+  }
+  const marker = join(cwd, '.ijfw', 'project');
+  try {
+    mkdirSync(dirname(marker), { recursive: true });
+    if (existsSync(marker) && !parsed.force) {
+      console.log(`This folder is already initialised for IJFW indexing (${marker}).`);
+      process.exit(0);
+    }
+    const stamp = new Date().toISOString();
+    writeFileSync(
+      marker,
+      `# IJFW project marker\n` +
+      `# Created by \`ijfw init\`. This folder is approved for codebase indexing.\n` +
+      `# Safe to commit. Delete this file to stop IJFW indexing this folder.\n` +
+      `created_at: ${stamp}\n`,
+      { mode: 0o644 }
+    );
+    console.log('IJFW initialised. This folder is now approved for codebase indexing.');
+    console.log(`Marker: ${marker}`);
+  } catch (err) {
+    console.error(`ijfw init: could not write marker -- ${err.message}`);
+    process.exit(1);
+  }
 }
 function cmdInstall() {
   const script = findCliAsset('scripts', 'install.sh');
