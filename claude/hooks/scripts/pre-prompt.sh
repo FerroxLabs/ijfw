@@ -268,7 +268,8 @@ for base in \
     "$(pwd)/mcp-server/src"; do
   if [ -f "$base/profile/capture.js" ]; then CAPTURE="$base/profile/capture.js"; break; fi
 done
-if [ -n "$CAPTURE" ] && command -v node >/dev/null 2>&1; then
+if [ -n "$CAPTURE" ] && command -v node >/dev/null 2>&1 \
+   && [ "${IJFW_MINIMAL:-}" != "1" ] && [ -z "${IJFW_PROFILE_KILL:-}" ]; then
   # H3 fix: export the canonical host so capture.js resolveHost() stamps the
   # SAME provenance string the session-end flush + dream-trigger use. Without
   # this, resolveHost() falls back to its own default ('claude-code') while the
@@ -311,7 +312,11 @@ for base in \
     "$(pwd)/mcp-server/src"; do
   if [ -f "$base/profile/exemplar-capture.js" ]; then EXEMPLAR_CAPTURE="$base/profile/exemplar-capture.js"; break; fi
 done
-if [ -n "$EXEMPLAR_CAPTURE" ] && command -v node >/dev/null 2>&1; then
+# Privacy opt-outs: voice-exemplar capture stores excerpts of your prompt text.
+# Skip it under IJFW_MINIMAL, IJFW_NO_VOICE_EXEMPLAR=1, or the profile kill-switch.
+if [ -n "$EXEMPLAR_CAPTURE" ] && command -v node >/dev/null 2>&1 \
+   && [ "${IJFW_MINIMAL:-}" != "1" ] && [ "${IJFW_NO_VOICE_EXEMPLAR:-}" != "1" ] \
+   && [ -z "${IJFW_PROFILE_KILL:-}" ]; then
   node --input-type=module -e "
     try {
       const { captureMessage } = await import('file://' + process.argv[2]);

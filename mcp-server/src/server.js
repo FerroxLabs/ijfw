@@ -2424,9 +2424,16 @@ function handleMessage(msg) {
           case 'ijfw_metrics':
             result = handleMetrics(args || {});
             break;
-          case 'ijfw_cross_project_search':
-            result = handleCrossProjectSearch(args || {});
+          case 'ijfw_cross_project_search': {
+            // Privacy opt-out: a dedicated off-switch + the IJFW_MINIMAL master
+            // switch disable cross-project memory surfacing entirely.
+            const xpOff = /^(1|true|yes|on)$/i.test(process.env.IJFW_NO_CROSS_PROJECT || '')
+              || process.env.IJFW_MINIMAL === '1';
+            result = xpOff
+              ? { text: 'Cross-project search is disabled (IJFW_NO_CROSS_PROJECT / IJFW_MINIMAL).' }
+              : handleCrossProjectSearch(args || {});
             break;
+          }
           case 'ijfw_prompt_check': {
             const pc = checkPrompt((args && args.prompt) || '');
             const text = pc.vague

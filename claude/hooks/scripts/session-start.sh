@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # E4 -- universal disable switch.
 [ "${IJFW_DISABLE:-}" = "1" ] && exit 0
+# Minimal mode (v1.6.1): a single master switch for "memory only, nothing else".
+# When set, the optional background work (update check, codebase indexer,
+# transcript parser, dashboard, AGENTS.md generation) is skipped. Memory prelude
+# + banner still run. See docs/PRIVACY.md.
+IJFW_MIN="${IJFW_MINIMAL:-0}"
 # IJFW SessionStart -- emits banner first, runs detection async, never crashes Claude Code.
 #
 # Hardened against:
@@ -39,7 +44,7 @@ mkdir -p "$IJFW_GLOBAL/memory" 2>/dev/null
 # worker -- this fire-and-forget spawn keeps the SessionStart hot-path clean.
 # Wrapped in a 2s ceiling per v3 section 3.
 IJFW_HOOK_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-if [ -x "$IJFW_HOOK_DIR/ijfw-check-update.sh" ]; then
+if [ "$IJFW_MIN" != "1" ] && [ -x "$IJFW_HOOK_DIR/ijfw-check-update.sh" ]; then
   mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
   "$IJFW_HOOK_DIR/ijfw-check-update.sh" </dev/null >>"$HOME/.ijfw/logs/update-check.log" 2>&1 &
   disown $! 2>/dev/null || true
@@ -62,12 +67,15 @@ PROJECT_PATH=$(pwd -P 2>/dev/null)
 # P4b registry opt-out: a sensitive project stays out of the cross-project
 # registry (and therefore out of scope:'all' search) via `.ijfw/no-registry`
 # or IJFW_NO_REGISTRY=1. Default behavior is unchanged.
-if [ -n "$PROJECT_PATH" ] && [ "${IJFW_NO_REGISTRY:-}" != "1" ] && [ ! -f "$IJFW_DIR/no-registry" ]; then
+if [ -n "$PROJECT_PATH" ] && [ "$IJFW_MIN" != "1" ] && [ "${IJFW_NO_REGISTRY:-}" != "1" ] \
+   && [ "${IJFW_NO_CROSS_PROJECT:-}" != "1" ] && [ ! -f "$IJFW_DIR/no-registry" ]; then
   if [ ! -f "$REGISTRY_FILE" ] || ! grep -qF "$PROJECT_PATH |" "$REGISTRY_FILE" 2>/dev/null; then
     REG_HASH=$(printf '%s' "$PROJECT_PATH" | shasum 2>/dev/null | cut -c1-12)
     REG_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || TZ=UTC date +%Y-%m-%dT%H:%M:%SZ)
     if [ -n "$REG_HASH" ] && [ -n "$REG_ISO" ]; then
       printf '%s | %s | %s\n' "$PROJECT_PATH" "$REG_HASH" "$REG_ISO" >> "$REGISTRY_FILE" 2>/dev/null
+      # registry.md records project paths -- keep it owner-only (privacy).
+      chmod 600 "$REGISTRY_FILE" 2>/dev/null || true
     fi
   fi
 fi
@@ -421,7 +429,7 @@ if [ -f "$INDEX_FILE" ]; then
 fi
 
 # Detached background rebuild -- crashes surface in ~/.ijfw/logs/indexer.log.
-if [ -n "$INDEXER_SCRIPT" ]; then
+if [ "$IJFW_MIN" != "1" ] && [ -n "$INDEXER_SCRIPT" ]; then
   mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
   bash "$INDEXER_SCRIPT" . </dev/null >>"$HOME/.ijfw/logs/indexer.log" 2>&1 &
   disown $! 2>/dev/null || true
@@ -450,7 +458,7 @@ if [ "${IJFW_SKIP_PARSE:-}" != "1" ]; then
         rm -f "$PARSE_PIDFILE" 2>/dev/null
       fi
     fi
-    if [ "$SPAWN_OK" = "1" ]; then
+    if [ "$SPAWN_OK" = "1" ] && [ "$IJFW_MIN" != "1" ]; then
       # Detached transcript parser -- crashes surface in ~/.ijfw/logs/transcript-parser.log.
       mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
       node "$TRANSCRIPT_PARSER" --incremental </dev/null >>"$HOME/.ijfw/logs/transcript-parser.log" 2>&1 &
@@ -571,18 +579,24 @@ fi
 if [ "$DASH_RUNNING" -eq 1 ] && [ -f "$DASH_PORT_FILE" ]; then
   DASH_PORT=$(cat "$DASH_PORT_FILE" 2>/dev/null)
   [ -n "$DASH_PORT" ] && printf '[ijfw] Dashboard: http://localhost:%s\n' "$DASH_PORT"
-elif [ -n "$DASH_SERVER" ] && [ -n "$_NODE" ]; then
+elif [ "$IJFW_MIN" != "1" ] && [ -n "$DASH_SERVER" ] && [ -n "$_NODE" ]; then
   # Detached daemon -- crashes surface in ~/.ijfw/logs/dashboard.log.
   mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
   IJFW_DAEMON=1 "$_NODE" "$DASH_SERVER" </dev/null >>"$HOME/.ijfw/logs/dashboard.log" 2>&1 &
   disown $! 2>/dev/null || true
-  # Single 500ms wait -- enough for server.js to write the port file.
-  sleep 0.5 2>/dev/null || true
+  # Poll up to ~200ms (10 x 20ms) for the port file instead of a hard 500ms
+  # sleep on the hot path -- usually written in the first tick or two.
+  _DASH_WAIT=0
+  while [ "$_DASH_WAIT" -lt 10 ] && [ ! -f "$DASH_PORT_FILE" ]; do
+    sleep 0.02 2>/dev/null || true
+    _DASH_WAIT=$((_DASH_WAIT + 1))
+  done
   if [ -f "$DASH_PORT_FILE" ]; then
     DASH_PORT=$(cat "$DASH_PORT_FILE" 2>/dev/null)
     [ -n "$DASH_PORT" ] && printf '[ijfw] Dashboard: http://localhost:%s\n' "$DASH_PORT"
   else
-    printf '[ijfw] dashboard auto-start: port file not written within 500ms (check ~/.ijfw/logs/dashboard.log)\n' >&2 || true
+    # Port not up yet -- the URL is in ~/.ijfw/dashboard.port for the next session.
+    printf '[ijfw] dashboard starting in background (URL ready next session; see ~/.ijfw/logs/dashboard.log)\n' >&2 || true
   fi
 elif [ -n "$DASH_SERVER" ] && [ -z "$_NODE" ]; then
   printf '[ijfw] dashboard auto-start: node not in PATH; auto-start skipped (check ~/.ijfw/logs/dashboard.log)\n' >>"$HOME/.ijfw/logs/dashboard.log" 2>/dev/null || true
@@ -927,7 +941,7 @@ for _cand in \
     break
   fi
 done
-if [ -n "$AGENTS_MD_LOCK" ] && [ -n "$AGENTS_MD_BUILD" ] && ijfw_is_project_writable "$(pwd -P 2>/dev/null)" && ijfw_inject_enabled; then
+if [ "$IJFW_MIN" != "1" ] && [ -n "$AGENTS_MD_LOCK" ] && [ -n "$AGENTS_MD_BUILD" ] && ijfw_is_project_writable "$(pwd -P 2>/dev/null)" && ijfw_inject_enabled; then
   AGENTS_MD_TARGET="$(pwd -P 2>/dev/null)/AGENTS.md"
   AGENTS_MD_PROJECT_ROOT="$(pwd -P 2>/dev/null)"
   # Background the merge so the hook stays under budget. Inside the

@@ -232,9 +232,11 @@ async function probeGoogle(env, fetchImpl) {
   if (!key) return null;
   const { signal, cancel } = makeAbortable();
   try {
+    // Pass the key as a header, not a URL query param, so it never lands in
+    // proxy / CDN / firewall access logs (privacy audit finding).
     const r = await fetchImpl(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
-      { signal },
+      'https://generativelanguage.googleapis.com/v1beta/models',
+      { signal, headers: { 'x-goog-api-key': key } },
     );
     if (!r.ok) return null;
     const json = await r.json();

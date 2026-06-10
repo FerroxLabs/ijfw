@@ -102,7 +102,9 @@ if (firstErr || firstFail) {
     fs.mkdirSync('.ijfw', { recursive: true });
     const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const rec = { ts, error: firstErr || null, fail: firstFail || null };
-    fs.appendFileSync('.ijfw/.session-signals.jsonl', JSON.stringify(rec) + '\n');
+    // mode 0o600: error/fail excerpts can carry sensitive content -- keep them
+    // owner-only, not world-readable (privacy audit finding).
+    fs.appendFileSync('.ijfw/.session-signals.jsonl', JSON.stringify(rec) + '\n', { mode: 0o600 });
   } catch {}
 }
 
