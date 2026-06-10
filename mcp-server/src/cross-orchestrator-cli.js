@@ -450,6 +450,26 @@ function parseArgsInner(args) {
     return { cmd: 'recover', sub: args[1] || 'status' };
   }
 
+  // v1.6.0 CLI-honesty — top-level aliases so the documented bare verbs route
+  // instead of returning "Unknown command". `checkpoint` forwards to
+  // `memory checkpoint`; `worktree` forwards to `swarm worktree`. The canonical
+  // namespaced forms still work; these are thin shortcuts (see command-registry).
+  if (args[0] === 'checkpoint') {
+    return { cmd: 'memory-checkpoint', label: args[1] || 'manual' };
+  }
+  if (args[0] === 'worktree') {
+    return { cmd: 'worktree', sub: args[1] || 'list', rest: args.slice(2) };
+  }
+
+  // v1.6.0 Profile-bus learning control. Subcommands:
+  //   on | off              -> set inject = on | off
+  //   status | show         -> print flags + a summary of what was inferred
+  //   forget [id|pattern]   -> delete inferences (right-to-be-forgotten)
+  //   share-sensitive on|off-> toggle the med/high-sensitivity host allowlist
+  if (args[0] === 'personalize') {
+    return { cmd: 'personalize', sub: args[1] || 'status', rest: args.slice(2) };
+  }
+
   if (args[0] === 'receipt') {
     return { cmd: 'receipt', sub: args[1] || 'last' };
   }
@@ -563,8 +583,247 @@ Related:
 `.trim());
 }
 
+// v1.6.0 CLI-honesty — "did you mean?" engine. Two suggestion sources:
+//   (1) a curated map of documented-but-bare verbs to their real home
+//       (subcommands of another verb, or "not available in this release"),
+//   (2) nearest routed verb by Levenshtein edit-distance over the known set.
+// The curated map wins; edit-distance is the fallback. The goal: NO advertised
+// verb ever returns a bare "Unknown command" — every miss is guided.
+
+// Curated redirects for verbs users find in old docs / muscle memory. `to` is a
+// suggested command; `note` (optional) explains availability.
+const VERB_REDIRECTS = Object.freeze({
+  checkpoint:       { to: 'ijfw checkpoint <label>  (or: ijfw memory checkpoint <label>)' },
+  worktree:         { to: 'ijfw worktree <create|list|integrate|cleanup>  (or: ijfw swarm worktree …)' },
+  'worktree-drain': { to: 'ijfw swarm worktree cleanup <task-id>', note: 'there is no bulk "drain"; clean up worktrees per task.' },
+  'wave-status':    { to: 'ijfw swarm status', note: 'swarm progress (waves, ready/blocked) is shown by `ijfw swarm status`.' },
+  on:               { to: 'ijfw install   (to set up IJFW)   ·   ijfw personalize on   (to enable profile injection)', note: '`on` is not a verb. `off` removes IJFW; it has no symmetric reinstall toggle.' },
+  marketplace:      { to: null, note: 'not available in this release. Install via `ijfw install` or your agent\'s native plugin marketplace UI.' },
+  cluster:          { to: null, note: 'multi-machine cluster mode is a design milestone, not shipped in this release.' },
+  consent:          { to: 'ijfw personalize status', note: 'memory/profile consent is managed via `ijfw personalize` and the memory-consent skill.' },
+});
+
+// Every name the orchestrator can actually dispatch (canonical + registry
+// aliases + the bare top-level verbs the parser recognizes). Used as the
+// edit-distance candidate pool.
+function knownVerbNames() {
+  const names = new Set();
+  for (const e of COMMAND_REGISTRY) {
+    if (e.status === 'deprecated') continue;
+    names.add(e.name);
+    for (const a of (e.aliases || [])) names.add(a);
+  }
+  // Bare verbs the parser handles that may not be registry entries.
+  for (const v of ['status', 'help', 'env', 'recover', 'receipt', 'personalize',
+                   'checkpoint', 'worktree', 'memory', 'swarm', 'team',
+                   'blackboard', 'codex', 'insight', 'cross']) names.add(v);
+  // Drop flag-style + alias-only noise that would never be a useful suggestion.
+  names.delete('--purge-receipts');
+  return [...names];
+}
+
+// Classic iterative Levenshtein. Bounded inputs (CLI verbs), O(n*m) is fine.
+function editDistance(a, b) {
+  a = String(a); b = String(b);
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  let cur = new Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, cur] = [cur, prev];
+  }
+  return prev[n];
+}
+
+// Suggest the single nearest routed verb (prefix match preferred, then edit
+// distance). Returns null when nothing is close enough to be helpful.
+export function nearestVerb(raw, candidates = knownVerbNames()) {
+  const q = String(raw || '').toLowerCase();
+  if (!q) return null;
+  // Prefix / containment match first (cheap + high-signal).
+  const pref = candidates.filter(c => c.startsWith(q) || q.startsWith(c));
+  if (pref.length) {
+    return pref.sort((a, b) => Math.abs(a.length - q.length) - Math.abs(b.length - q.length))[0];
+  }
+  let best = null, bestD = Infinity;
+  for (const c of candidates) {
+    const d = editDistance(q, c.toLowerCase());
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  // Only suggest when reasonably close: <= 2 edits, or <= 40% of the longer.
+  const tol = Math.max(2, Math.floor(0.4 * Math.max(q.length, (best || '').length)));
+  return bestD <= tol ? best : null;
+}
+
+// ---------------------------------------------------------------------------
+// Profile-bus learning control — `ijfw personalize` (v1.6.0)
+// ---------------------------------------------------------------------------
+// MOAT NOTE: every profile module touched here (serve.js, audit.js,
+// sensitivity.js) is ZERO-LLM by construction (the P4.5 import-graph guard
+// proves serve.js never reaches the LLM tier). We import them DYNAMICALLY so
+// the top-of-file static import graph of this CLI stays clean and the
+// profile-moat-guard's transitive-import walk is never widened.
+
+const PERSONALIZE_CONSENT_VERSION = '1.6.0';
+
+function printPersonalizeHelp() {
+  console.log(`
+ijfw personalize -- control the profile-bus learning feature
+
+What it does: IJFW can learn your low-sensitivity interaction STYLE (verbosity,
+formality, code-vs-prose) locally and, only if you allow it, include a short
+brief in prompts so agents match your style. Capture is always local and never
+includes raw text. Injection is OFF until you turn it on.
+
+Usage:
+  ijfw personalize status            Show current flags + a summary of what was
+                                     inferred (alias: ijfw personalize show).
+  ijfw personalize on                Enable injecting the learned style brief.
+  ijfw personalize off               Disable injection (capture continues locally).
+  ijfw personalize forget [pattern]  Delete inferences. No pattern = forget ALL.
+  ijfw personalize share-sensitive on|off
+                                     Allow/deny med+high-sensitivity prefs to
+                                     leave to allowlisted hosts. Default off.
+
+Hard override: set IJFW_PROFILE_KILL=1 to force-disable ALL injection
+regardless of these settings.
+`.trim());
+}
+
+async function cmdPersonalize(sub, rest = []) {
+  const settings = resolveProfileSettings();
+  const killed = isTruthyEnv(process.env.IJFW_PROFILE_KILL);
+
+  if (sub === 'on' || sub === 'off') {
+    const next = writeProfileSettings({
+      inject: sub,
+      // First explicit on/off resolves the "ask" consent permanently.
+      inject_consent_version: PERSONALIZE_CONSENT_VERSION,
+    });
+    if (sub === 'on') {
+      console.log('Profile injection ENABLED. Your learned low-sensitivity style brief will be added to prompts.');
+      if (killed) console.log('Note: IJFW_PROFILE_KILL is set, so injection stays OFF until you unset it.');
+      console.log('Turn it off anytime with: ijfw personalize off');
+    } else {
+      console.log('Profile injection DISABLED. Capture continues locally; nothing is added to prompts.');
+    }
+    console.log(`(profile.inject = ${next.inject})`);
+    return;
+  }
+
+  if (sub === 'share-sensitive') {
+    const val = rest[0];
+    if (val !== 'on' && val !== 'off') {
+      console.error('Usage: ijfw personalize share-sensitive on|off');
+      process.exit(1);
+    }
+    const enable = val === 'on';
+    writeProfileSettings({ share_sensitive: enable });
+    // The serve-path allowlist is the SECOND gate (per-host). Toggling on writes
+    // a `*` wildcard line; toggling off removes it. This is the auditable file
+    // sensitivity.js reads (share-hosts.txt). We import its path helper lazily.
+    try {
+      const { shareHostsFilePath } = await import('./profile/sensitivity.js');
+      const p = shareHostsFilePath();
+      if (enable) {
+        mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
+        writeAtomic(p, '# Hosts allowed to receive medium/high-sensitivity profile fields.\n# Managed by `ijfw personalize share-sensitive`. `*` = all hosts.\n*\n', { mode: 0o600 });
+        console.log('Sensitive sharing ENABLED for all hosts (wildcard allowlist written).');
+        console.log(`Allowlist: ${p}  — edit it to restrict to specific hosts.`);
+      } else {
+        try { if (existsSync(p)) rmSync(p, { force: true }); } catch { /* */ }
+        console.log('Sensitive sharing DISABLED. Only low-sensitivity style can ever be injected.');
+      }
+    } catch (e) {
+      console.error(`Wrote the flag, but could not update the host allowlist: ${e.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === 'forget') {
+    const pattern = rest[0];
+    try {
+      const { forgetAndWrite } = await import('./profile/audit.js');
+      // No pattern => forget everything (a bare `*` matcher is rejected by the
+      // ReDoS guard, so we pass a catch-all regex the validator accepts).
+      const arg = pattern && pattern.trim() ? pattern.trim() : /.*/;
+      const r = await forgetAndWrite(arg);
+      if (!r || !r.ok) {
+        console.error(`Forget failed: ${(r && r.message) || (r && r.code) || 'unknown error'}`);
+        process.exit(1);
+      }
+      const n = (r.removed || []).length;
+      console.log(`Forgot ${n} inference${n === 1 ? '' : 's'}${pattern ? ` matching "${pattern}"` : ' (all)'}.`);
+      if (r.egressRemoved) console.log(`Also cleared ${r.egressRemoved} egress-log entr${r.egressRemoved === 1 ? 'y' : 'ies'}.`);
+      if (n === 0) console.log('Nothing matched — the profile may already be empty.');
+    } catch (e) {
+      console.error(`Forget failed: ${e.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === 'status' || sub === 'show') {
+    const effective = killed ? 'off (forced by IJFW_PROFILE_KILL)' : settings.inject;
+    console.log('IJFW personalize -- profile-bus status');
+    console.log('');
+    console.log(`  capture          ${settings.capture}        (local style metadata; never raw text)`);
+    console.log(`  inject           ${settings.inject}${settings.inject === 'ask' ? '       (default — not injecting until you run: ijfw personalize on)' : ''}`);
+    console.log(`  effective inject ${effective}`);
+    console.log(`  share_sensitive  ${settings.share_sensitive}      (med/high prefs ${settings.share_sensitive ? 'MAY' : 'will NOT'} leave)`);
+    console.log(`  consent          ${settings.inject_consent_version ? `resolved (v${settings.inject_consent_version})` : 'not yet asked'}`);
+    console.log('');
+    // Summary of what was inferred (zero-LLM audit path).
+    try {
+      const { profileGet } = await import('./profile/serve.js');
+      const r = profileGet({ context: { host: 'cli-personalize' }, env: process.env });
+      const styleN = r && r.profile ? Object.keys(r.profile.style || {}).length : 0;
+      const expN = r && r.profile ? Object.keys(r.profile.expertise || {}).length : 0;
+      const infN = r && r.profile ? (r.profile.inferences || []).length : 0;
+      console.log(`  Learned so far:  ${styleN} style ${styleN === 1 ? 'axis' : 'axes'}, ${expN} expertise domain${expN === 1 ? '' : 's'}, ${infN} inference${infN === 1 ? '' : 's'}.`);
+      if (styleN + expN + infN === 0) {
+        console.log('  (Nothing confirmed yet — keep using IJFW and a style profile builds over sessions.)');
+      } else {
+        console.log('  Inspect everything with: ijfw_brain { "verb": "profile.audit" }  (or via the memory-audit skill).');
+        console.log('  Delete anything with:    ijfw personalize forget [pattern]');
+      }
+    } catch (e) {
+      console.log(`  (Profile summary unavailable: ${e.message})`);
+    }
+    return;
+  }
+
+  if (sub === '--help' || sub === '-h' || sub === 'help') {
+    printPersonalizeHelp();
+    return;
+  }
+
+  console.error(`Unknown personalize subcommand: ${sub}`);
+  console.error('');
+  printPersonalizeHelp();
+  process.exit(1);
+}
+
 function printUnknownCommand(raw) {
   console.error(`Unknown command: ${raw}`);
+  const key = String(raw || '').toLowerCase();
+  const redirect = Object.prototype.hasOwnProperty.call(VERB_REDIRECTS, key)
+    ? VERB_REDIRECTS[key]
+    : null;
+  if (redirect) {
+    if (redirect.to) console.error(`Did you mean:  ${redirect.to}`);
+    if (redirect.note) console.error(`Note: ${redirect.note}`);
+  } else {
+    const near = nearestVerb(key);
+    if (near) console.error(`Did you mean:  ijfw ${near}`);
+  }
   console.error('Run `ijfw --help` for the user-facing command list, or `ijfw commands` for the full surface.');
 }
 
@@ -1520,6 +1779,70 @@ function cmpSemver(a, b) {
 
 function readState() { return readJsonSafe(join(ijfwHome(), 'state.json')) || {}; }
 function readSettings() { return readJsonSafe(join(ijfwHome(), 'settings.json')) || {}; }
+
+// ---------------------------------------------------------------------------
+// Profile-bus settings (v1.6.0) — consent + control surface.
+// ---------------------------------------------------------------------------
+// The `profile` block predates 1.6 in some installs; resolveProfileSettings()
+// backfills the documented defaults on read so the rest of the CLI + the hooks
+// never have to defend against a missing block. Defaults (design-locked):
+//   capture        = "on"    (local, low-sensitivity metadata only; never raw)
+//   inject         = "ask"   (do NOT silently inject — ask once, default off)
+//   share_sensitive= false   (med/high prefs require an explicit opt-in)
+const PROFILE_DEFAULTS = Object.freeze({
+  capture: 'on',
+  inject: 'ask',
+  share_sensitive: false,
+  inject_consent_version: null,
+});
+
+function resolveProfileSettings(settings = readSettings()) {
+  const p = (settings && typeof settings.profile === 'object' && settings.profile) || {};
+  return {
+    capture: p.capture === 'off' ? 'off' : 'on',
+    inject: (p.inject === 'on' || p.inject === 'off') ? p.inject : 'ask',
+    share_sensitive: p.share_sensitive === true,
+    inject_consent_version: typeof p.inject_consent_version === 'string'
+      ? p.inject_consent_version : null,
+  };
+}
+
+// resolveProfileInject(opts) -> 'on' | 'off' | 'ask'.
+// The single decision the inject GATE consults. The hard kill-switch
+// (IJFW_PROFILE_KILL) ALWAYS wins and forces 'off' — capture is never gated by
+// it, only injection. Otherwise the settings block decides.
+function isTruthyEnv(v) {
+  if (v === undefined || v === null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s !== '' && s !== '0' && s !== 'false' && s !== 'no' && s !== 'off';
+}
+export function resolveProfileInject({ settings, env = process.env } = {}) {
+  if (isTruthyEnv(env.IJFW_PROFILE_KILL)) return 'off';
+  return resolveProfileSettings(settings || readSettings()).inject;
+}
+
+// Persist the resolved `profile` block under the same single-writer lock the
+// state file uses, so a concurrent `ijfw personalize` and an `ijfw update`
+// can't clobber each other's settings.json. Merges into the existing file
+// (never drops unrelated keys) and writes atomically with 0600.
+function writeProfileSettings(patch) {
+  const path = join(ijfwHome(), 'settings.json');
+  const apply = () => {
+    const cur = readJsonSafe(path) || {};
+    const profile = { ...PROFILE_DEFAULTS, ...resolveProfileSettings(cur), ...patch };
+    const next = { ...cur, profile };
+    writeAtomic(path, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+    return profile;
+  };
+  try {
+    return withStateLockSync(apply);
+  } catch {
+    // Lock acquisition failed (e.g. EACCES on the lock dir) — fall back to a
+    // best-effort direct write rather than refusing to persist the user's
+    // explicit consent choice.
+    return apply();
+  }
+}
 
 // v1.5.0 audit M11 (F-REL-1): writeStateFields was best-effort — readState +
 // merge + writeAtomic was a TOCTOU window where a parallel `ijfw update`
@@ -2588,6 +2911,13 @@ if (isMainModule) {
     cmdEnv();
   } else if (parsed.cmd === 'recover') {
     cmdRecover(parsed.sub);
+  } else if (parsed.cmd === 'personalize') {
+    cmdPersonalize(parsed.sub, parsed.rest || []).catch(err => { console.error(err.message); process.exit(1); });
+  } else if (parsed.cmd === 'worktree') {
+    // Top-level alias forwarding to `swarm worktree`. cmdSwarmWorktree reads its
+    // own sub + args from the parsed tail (not process.argv) so the alias and
+    // the canonical `swarm worktree` path stay identical.
+    cmdSwarmWorktree(parsed.sub, parsed.rest || []);
   } else {
     // v1.5.1 W1.D+E: clean unknown-command message; no stale usage dump.
     printUnknownCommand(parsed.raw);
@@ -2652,12 +2982,22 @@ function cmdPreflight() {
   process.exit(res.status ?? 1);
 }
 function cmdDashboard(sub) {
-  const script = findCliAsset('scripts', 'dashboard', 'bin.js');
-  if (!script) {
-    console.error('dashboard/bin.js not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
+  // `ijfw dashboard start|stop|status` is the localhost SSE web dashboard
+  // documented in the README (binds 127.0.0.1:37891, port-walks to 37900).
+  // It is served by mcp-server/bin/ijfw-dashboard, NOT scripts/dashboard/bin.js
+  // (that one is the terminal text digest, surfaced via `ijfw status`). Routing
+  // `dashboard` at the text renderer silently no-op'd start/stop/status: the
+  // web server never bound and stop/status never reported true state.
+  const launcher = findCliAsset('mcp-server', 'bin', 'ijfw-dashboard');
+  if (!launcher) {
+    console.error('Dashboard server not found. Run `ijfw-install` to deploy ~/.ijfw/, or set IJFW_HOME to your IJFW tree.');
     process.exit(1);
   }
-  const res = spawnSync(process.execPath, [script, sub], { stdio: 'inherit' });
+  // Forward the verb plus any passthrough flags (--no-open, --port N) supplied
+  // after `dashboard` on the command line, so the launcher's own argv handling
+  // stays authoritative. argv = [node, cli, 'dashboard', <sub>, ...flags].
+  const passthrough = process.argv.slice(4);
+  const res = spawnSync(process.execPath, [launcher, sub, ...passthrough], { stdio: 'inherit' });
   process.exit(res.status ?? 1);
 }
 

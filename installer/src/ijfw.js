@@ -8,11 +8,59 @@ import { homedir, platform } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
   ORCHESTRATOR_COMMAND_NAMES,
+  INSTALLER_DIRECT_COMMAND_NAMES,
+  ALL_COMMAND_NAMES,
   primaryCommands,
   commandsByTier,
 } from './command-registry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// v1.6.0 CLI-honesty — launcher-side "did you mean?" so a bare unknown verb at
+// the launcher tier (marketplace / cluster / on / typos) is guided, never a
+// bare "Unknown subcommand". Mirrors printUnknownCommand() in the orchestrator;
+// kept intentionally small (no shared import to avoid coupling the launcher to
+// orchestrator internals — the registry is the only shared source of truth).
+const LAUNCHER_VERB_REDIRECTS = {
+  on:               'Did you mean:  ijfw install   ·   or  ijfw personalize on',
+  marketplace:      'Not available in this release — install via `ijfw install` or your agent\'s native plugin marketplace UI.',
+  cluster:          'Multi-machine cluster mode is a design milestone, not shipped in this release.',
+  'wave-status':    'Did you mean:  ijfw swarm status',
+  'worktree-drain': 'Did you mean:  ijfw worktree cleanup <task-id>',
+};
+
+function launcherEditDistance(a, b) {
+  a = String(a); b = String(b);
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  const cur = new Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur.slice();
+  }
+  return prev[n];
+}
+
+function launcherSuggest(raw) {
+  const q = String(raw || '').toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(LAUNCHER_VERB_REDIRECTS, q)) {
+    return LAUNCHER_VERB_REDIRECTS[q];
+  }
+  const candidates = [...ALL_COMMAND_NAMES, ...ORCHESTRATOR_COMMAND_NAMES, ...INSTALLER_DIRECT_COMMAND_NAMES]
+    .filter(c => c && !c.startsWith('--'));
+  let best = null, bestD = Infinity;
+  for (const c of candidates) {
+    const d = launcherEditDistance(q, c.toLowerCase());
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  const tol = Math.max(2, Math.floor(0.4 * Math.max(q.length, (best || '').length)));
+  return (best && bestD <= tol) ? `Did you mean:  ijfw ${best}` : null;
+}
 
 function repoRoot() {
   let dir = __dirname;
@@ -418,8 +466,10 @@ async function main() {
       break;
     }
     default: {
-      console.error(`Unknown subcommand: ${sub}`);
-      printHelp();
+      console.error(`Unknown command: ${sub}`);
+      const hint = launcherSuggest(sub);
+      if (hint) console.error(hint);
+      console.error('Run `ijfw --help` for the user-facing command list, or `ijfw commands` for the full surface.');
       process.exit(1);
     }
   }

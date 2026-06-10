@@ -232,10 +232,29 @@ Every command ships in three forms: a shell command, a Claude Code slash command
 | Command | Purpose |
 |---------|---------|
 | `ijfw memory checkpoint "<text>"` | Snapshot a decision, pattern, or note to local memory. |
+| `ijfw checkpoint "<text>"` | Top-level shortcut for `ijfw memory checkpoint`. |
 | `ijfw memory search "<query>"` | BM25 ranked search over local memory. Add `--scope all` to search every registered IJFW project. |
 | `ijfw import claude-mem` | Absorb existing claude-mem SQLite memory into IJFW markdown. |
 | `ijfw import claude-mem --all` | Discover projects automatically, import in bulk. |
 | `ijfw import claude-mem --dry-run` | Show what would happen first. |
+
+### Personalize (profile-bus learning)
+
+IJFW can learn your low-sensitivity interaction *style* (verbosity, formality,
+code-vs-prose) locally and — only if you opt in — include a short brief in
+prompts so agents match it. Capture is always local and never includes raw
+text. Injection is **off until you turn it on**.
+
+| Command | Purpose |
+|---------|---------|
+| `ijfw personalize status` | Show the current flags plus a summary of what was inferred. |
+| `ijfw personalize on` | Enable injecting the learned low-sensitivity style brief into prompts. |
+| `ijfw personalize off` | Disable injection. Capture continues locally. |
+| `ijfw personalize forget [pattern]` | Delete inferences (no pattern = forget all). |
+| `ijfw personalize share-sensitive on\|off` | Allow/deny medium+high-sensitivity prefs to allowlisted hosts. Default off. |
+
+Hard override: set `IJFW_PROFILE_KILL=1` to force-disable all injection
+regardless of these settings.
 
 ### Multi-AI Trident
 
@@ -521,7 +540,7 @@ Runtime: zero npm dependencies. Tokens: the cross-AI Trident uses your existing 
 Yes, and verifiable in your own metrics. Sources: right-model dispatch (a cheaper tier when adequate, the heavyweight when needed), prompt cache discipline, output rules that cut padding, context discipline that stops re-pasting. Typical observed: 25 percent or more output reduction versus unmanaged baseline. The log is in your project.
 
 **Can I turn it off?**
-Yes. `ijfw off` disables the core skill. Each command is isolated. The MCP server can be unregistered per platform. Backups are timestamped. Nothing is sticky.
+Yes. `ijfw off` removes what IJFW added: it unregisters the MCP server across all 15 platforms, deletes IJFW skill/command/context files, and strips IJFW's managed marker regions out of every project `CLAUDE.md` / `AGENTS.md` it ever touched -- your own content in those files is preserved. Every file it edits is backed up with a timestamped `.bak` first. Your memory at `~/.ijfw/memory/` is kept (delete by hand, or `ijfw off --purge` to remove it too). Files it can't prove were IJFW-authored (e.g. hand-edited Aider rules) are left in place and called out so you can remove them yourself.
 
 **What about my existing memory in claude-mem or other tools?**
 `ijfw import claude-mem` round-trips the SQLite store into IJFW markdown. Idempotent. Safe to rerun. `--dry-run` shows what would happen first.

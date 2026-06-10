@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 // IJFW PostToolUse hook -- single-invocation consolidated pipeline.
-// Replaces the prior shell + 2-to-3 node spawn version. Behaviour-identical:
 //   - JSON payload parse + tool_response extraction
 //   - ERROR/FAIL signal capture into .ijfw/.session-signals.jsonl
-//   - ANSI strip, trailing-whitespace strip, blank-line collapse
-//   - noise-line filter (npm warn, docker Fresh, webpack chunk, etc.)
-//   - >500 line truncation with error-aware context slice
 //   - detached observation-capture dispatch
 //   - hookSpecificOutput envelope emit (TERMINAL stdout line)
 //
-// Measured: ~145ms (old 2x-node) -> target <100ms (single cold start + JS work).
+// W5.1 (v1.6.0): the hook no longer re-emits the tool output as
+// additionalContext. additionalContext is ADDITIVE in Claude Code -- it
+// appends to what the model already received, it cannot replace it -- so
+// echoing the (cleaned) output back duplicated every tool result in context,
+// a measurable driver of premature compaction. We now emit NOTHING on success
+// (the model already has the output) and a single-line breadcrumb on failure
+// (preserves error-surfacing at ~1 line instead of hundreds). This also
+// retired the ANSI-strip / noise-filter / >500-line truncation machinery whose
+// only consumer was the removed echo -- the hook is leaner and faster as a
+// result. Signal capture (to disk) and the detached obs-capture child are
+// unchanged; neither reads stdout.
 // ESM (repo package.json has "type":"module").
 
 import * as fs from 'node:fs';
@@ -100,75 +106,70 @@ if (firstErr || firstFail) {
   } catch {}
 }
 
-// --- 4) Trim noise ---
-// 4a: ANSI escape strip + trailing whitespace strip per line.
-const rawLines = responseText
-  .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-  .split('\n')
-  .map(l => l.replace(/\s+$/, ''));
-
-// 4b: Collapse consecutive blank lines (match awk state machine).
-const collapsed = [];
-let prevBlank = false;
-for (const line of rawLines) {
-  if (line === '') {
-    if (!prevBlank) collapsed.push('');
-    prevBlank = true;
-  } else {
-    collapsed.push(line);
-    prevBlank = false;
-  }
-}
-
-// 4c: Drop noise patterns (same set as prior sed pipeline).
-const drop = [
-  /^\s*PASS /,
-  /^\s*\.\.\.\./,
-  /^collecting/,
-  /^\s*npm (?:warn|notice)/,
-  /^added \d+ packages/,
-  /^Requirement already satisfied/,
-  /^Downloading /,
-  /^Installing collected/,
-  /^\s*--->/,
-  /^Removing intermediate container/,
-  /^\s*\[internal\]/,
-  /^chunk \{/,
-  /^asset [a-f0-9]/,
-  /^\s*(?:Compiling|Downloading|Fresh) /
-];
-const filtered = collapsed.filter(line => !drop.some(re => re.test(line)));
-
-// --- 5) Truncate if > 500 lines ---
-let out;
-if (filtered.length > 500) {
-  const hasErrMarker =
-    filtered.some(l => /^(?:ERROR|WARN|FAIL|CRITICAL|FATAL|Traceback|\s*at [A-Z])/.test(l)) ||
-    filtered.some(l => /\berror\b|\bwarn(?:ing)?\b|\bfailed\b/i.test(l));
-  if (hasErrMarker) {
-    const head = filtered.slice(0, 100);
-    const tail = filtered.slice(-30);
-    // Extract error context: each match + 1-before + 1-after, cap 120 lines total.
-    const errCtx = [];
-    const errCap = 120;
-    for (let i = 0; i < filtered.length && errCtx.length < errCap; i++) {
-      if (/\b(?:error|warn(?:ing)?|failed|traceback|fatal|critical)\b/i.test(filtered[i])) {
-        if (i > 0) errCtx.push(filtered[i - 1]);
-        errCtx.push(filtered[i]);
-        if (i < filtered.length - 1) errCtx.push(filtered[i + 1]);
-      }
+// --- 3b) S4 edit-delta capture: the CORRECTION LOOP (the HEART). ---
+// On an Edit/Write tool, the diff between what the agent PROPOSED and what
+// actually got committed is the cleanest personalization signal there is (per
+// the cross-audit: that diff IS the citation). We record it as a metadata-
+// minimized evidence row in .ijfw/.session-edits.jsonl via the profile capture
+// module. Best-effort + fail-soft: a parse/resolve/import error here must NEVER
+// block a tool — wrapped in try/catch and a detached dynamic import so the hook
+// returns within its latency budget regardless.
+//
+//   Edit  tool_input: { file_path, old_string (the PROPOSED prior span),
+//                       new_string (the COMMITTED span) }
+//   Write tool_input: { file_path, content (the COMMITTED body) } — no prior
+//                       span on the payload, so the first Write is recorded as
+//                       a landed proposal (accept); a LATER Edit to the same
+//                       file is the user's correction (edit-after).
+try {
+  const payload = JSON.parse(INPUT);
+  const toolName = String(payload && payload.tool_name || '');
+  const ti = (payload && payload.tool_input) || {};
+  if ((toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit') && ti && ti.file_path) {
+    // Resolve the profile capture module the same way session-end.sh does.
+    let captureMod = null;
+    const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || '';
+    const candidates = [
+      pluginRoot ? join(pluginRoot, '..', 'mcp-server', 'src', 'profile', 'capture.js') : '',
+      join(ijfwHome(), '.ijfw', 'mcp-server', 'src', 'profile', 'capture.js'),
+      join(process.cwd(), 'mcp-server', 'src', 'profile', 'capture.js'),
+    ].filter(Boolean);
+    for (const c of candidates) {
+      if (fs.existsSync(c)) { captureMod = c; break; }
     }
-    out = `[ijfw] Output condensed: ${filtered.length} lines to key sections\n\n${head.join('\n')}\n\n${errCtx.join('\n')}\n\n... tail ...\n\n${tail.join('\n')}\n`;
-  } else {
-    const head = filtered.slice(0, 250);
-    const tail = filtered.slice(-50);
-    out = `[ijfw] Output condensed: ${filtered.length} lines to key sections\n\n${head.join('\n')}\n\n${tail.join('\n')}\n`;
+    if (captureMod) {
+      // MultiEdit carries an `edits[]` array; Edit/Write carry a single span.
+      const spans = Array.isArray(ti.edits) && ti.edits.length
+        ? ti.edits.map((e) => ({ proposed: e.old_string, committed: e.new_string }))
+        : [{
+          proposed: ti.old_string,
+          committed: ti.new_string !== undefined ? ti.new_string : ti.content,
+        }];
+      const sessionId = (payload && (payload.session_id || payload.sessionId)) || null;
+      // Dynamic import is async; we intentionally do not await — fire-and-forget
+      // so the hook never adds import latency to the tool's critical path. Any
+      // failure is swallowed (best-effort capture).
+      import('file://' + captureMod).then((mod) => {
+        if (!mod || typeof mod.captureEditDelta !== 'function') return;
+        for (const s of spans) {
+          try {
+            mod.captureEditDelta({
+              sessionId,
+              filePath: ti.file_path,
+              proposed: s.proposed,
+              committed: s.committed,
+              ts: Date.now(),
+              cwd: process.cwd(),
+              env: process.env,
+            });
+          } catch { /* per-span best-effort */ }
+        }
+      }).catch(() => { /* import best-effort */ });
+    }
   }
-} else {
-  out = filtered.join('\n');
-}
+} catch { /* edit-delta capture is best-effort; never block the tool */ }
 
-// --- 6) Dispatch observation capture as detached child (fire-and-forget) ---
+// --- 4) Dispatch observation capture as detached child (fire-and-forget) ---
 // Invariant: this spawns BEFORE the envelope emit so there's no interleave risk.
 // Child inherits a piped stdin; parent closes it and unref()s so it outlives us.
 const obsScript = process.argv[2];
@@ -187,10 +188,17 @@ if (obsScript && fs.existsSync(obsScript)) {
   } catch {}
 }
 
-// --- 7) Emit hookSpecificOutput envelope (TERMINAL stdout line) ---
-process.stdout.write(JSON.stringify({
-  hookSpecificOutput: {
-    hookEventName: 'PostToolUse',
-    additionalContext: out
-  }
-}));
+// --- 5) Emit (TERMINAL stdout line) ---
+// Success: emit nothing. The model already received the full tool_response;
+// additionalContext can only ADD, so any success emit is pure duplication.
+// Failure: a single-line breadcrumb keeps the error visible without echoing
+// hundreds of lines. firstErr/firstFail were already scanned in step 3.
+if (firstErr || firstFail) {
+  const detail = String(firstErr || firstFail).replace(/\s+/g, ' ').trim().slice(0, 200);
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PostToolUse',
+      additionalContext: `[ijfw] tool reported an issue: ${detail}`
+    }
+  }));
+}

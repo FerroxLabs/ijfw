@@ -45,12 +45,24 @@ if [ -x "$IJFW_HOOK_DIR/ijfw-check-update.sh" ]; then
   disown $! 2>/dev/null || true
 fi
 
+# --- P0b: one-time GLOBAL-config cleanup (self-heals installs polluted by the
+# pre-1.6.0 cwd bug that wrote ~/CLAUDE.md / ~/AGENTS.md). Sentinel-guarded and
+# idempotent -- instant after the first session -- and backgrounded so it never
+# blocks the hook even on a large ~/AGENTS.md. ---
+if [ -f "$IJFW_HOOK_DIR/global-cleanup.sh" ]; then
+  bash "$IJFW_HOOK_DIR/global-cleanup.sh" </dev/null >/dev/null 2>&1 &
+  disown $! 2>/dev/null || true
+fi
+
 # --- Project registry (Phase 3: enables cross-project memory search) ---
 # Append <absolute-path> | <sha256-12> | <first-seen-iso> on first sight only.
 # Registry lives in ~/.ijfw/ (gitignored); per-project memory remains in repo.
 REGISTRY_FILE="$IJFW_GLOBAL/registry.md"
 PROJECT_PATH=$(pwd -P 2>/dev/null)
-if [ -n "$PROJECT_PATH" ]; then
+# P4b registry opt-out: a sensitive project stays out of the cross-project
+# registry (and therefore out of scope:'all' search) via `.ijfw/no-registry`
+# or IJFW_NO_REGISTRY=1. Default behavior is unchanged.
+if [ -n "$PROJECT_PATH" ] && [ "${IJFW_NO_REGISTRY:-}" != "1" ] && [ ! -f "$IJFW_DIR/no-registry" ]; then
   if [ ! -f "$REGISTRY_FILE" ] || ! grep -qF "$PROJECT_PATH |" "$REGISTRY_FILE" 2>/dev/null; then
     REG_HASH=$(printf '%s' "$PROJECT_PATH" | shasum 2>/dev/null | cut -c1-12)
     REG_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || TZ=UTC date +%Y-%m-%dT%H:%M:%SZ)
@@ -135,7 +147,10 @@ fi
 # --- One-shot migration (lockfile-guarded, idempotent) ---
 # mkdir is atomic on POSIX → safe lock without flock dependency.
 # .migrated is written FIRST so a crash mid-import doesn't double-import next run.
-if [ ! -f "$MIGRATED_FLAG" ] && mkdir "$MIGRATION_LOCK" 2>/dev/null; then
+# P5 opt-out: a project can decline the first-run auto-import of other tools'
+# memory (claude-mem / memsearch / memorix) via `.ijfw/no-import` or
+# IJFW_NO_IMPORT=1. Reversible -- removing the opt-out lets it run on a later session.
+if [ "${IJFW_NO_IMPORT:-}" != "1" ] && [ ! -f "$IJFW_DIR/no-import" ] && [ ! -f "$MIGRATED_FLAG" ] && mkdir "$MIGRATION_LOCK" 2>/dev/null; then
   # Ensure lock is released on kill or early exit -- prevents stale lock on crash.
   trap 'rm -rf "$MIGRATION_LOCK" 2>/dev/null || true' EXIT INT TERM
   # Write the flag first -- if we crash, next run sees we already attempted.
@@ -647,16 +662,107 @@ if [ -s "$KB_FILE" ] || [ -s "$HANDOFF_FILE" ] || [ -f "$IJFW_DIR/memory/project
   } > "$MEM_BUF"
 fi
 
+# --- P0 cwd guard (v1.6.0 config-write hardening) -----------------------------
+# IJFW must NEVER author CLAUDE.md/AGENTS.md outside a project working dir.
+# Historically these writes were gated by `if true;` against the cwd, so a
+# session that started with cwd == $HOME authored a GLOBAL ~/CLAUDE.md (loaded
+# by Claude Code for EVERY project) -- a cross-tenant config bleed. The guard
+# refuses the write when the resolved target dir is the user's home root or the
+# filesystem root. Project-scoped writes (the normal, peer-standard case) are
+# untouched, so unification is preserved.
+IJFW_WRITE_ROOT="$(pwd -P 2>/dev/null)"
+# Resolve the physical $HOME, but ONLY if HOME is actually set. Guarding the cd
+# matters: `cd "$HOME"` with HOME unset is `cd ""`, which is a no-op on macOS
+# bash 3.2 (leaves IJFW_HOME_PHYS == cwd) but errors on Linux/CI bash (leaving it
+# empty) -- a shell-dependent result we must NOT depend on.
+IJFW_HOME_PHYS=""
+if [ -n "${HOME:-}" ]; then
+  IJFW_HOME_PHYS="$(cd "$HOME" 2>/dev/null && pwd -P 2>/dev/null)"
+fi
+ijfw_is_project_writable() {
+  # $1 = candidate physical dir. Returns 0 (writable) / 1 (refuse).
+  _cand="$1"
+  case "$_cand" in
+    ""|"/") return 1 ;;
+  esac
+  # Fail CLOSED: if we cannot resolve a physical $HOME we cannot prove the target
+  # isn't the home root, so refuse rather than risk a global-config write.
+  [ -z "$IJFW_HOME_PHYS" ] && return 1
+  # Refuse the user's home root -- that is the global-config bleed vector.
+  [ "$_cand" = "$IJFW_HOME_PHYS" ] && return 1
+  return 0
+}
+
+# P2 consent: injection is ON by default (unification), but a project can opt OUT
+# of the CLAUDE.md/AGENTS.md managed-block writes via `.ijfw/no-inject` or
+# IJFW_NO_INJECT=1. Returns 0 (inject) / 1 (skip).
+ijfw_inject_enabled() {
+  [ "${IJFW_NO_INJECT:-}" = "1" ] && return 1
+  [ -f "$IJFW_DIR/no-inject" ] && return 1
+  return 0
+}
+
 # CLAUDE.md management runs regardless of memory state -- we want to auto-generate
 # a project context file on session 1 of a new project even if no memory exists yet.
-if true; then
+if ijfw_is_project_writable "$IJFW_WRITE_ROOT" && ijfw_inject_enabled; then
   # Belt-and-suspenders: inject memory into CLAUDE.md at a managed section.
   # Claude Code ALWAYS loads CLAUDE.md -- this is the one guaranteed visibility
   # path. We use markers so we never touch user-authored content; only the
   # region between markers is rewritten each session.
-  CLAUDE_MD="CLAUDE.md"
+  CLAUDE_MD="$IJFW_WRITE_ROOT/CLAUDE.md"
   MARK_START="<!-- IJFW-MEMORY-START (managed -- do not edit manually) -->"
   MARK_END="<!-- IJFW-MEMORY-END -->"
+
+  # S6 -- profile snapshot for non-MCP rules surfaces.
+  # Clients that do NOT honor MCP instructions/resources (and even Claude
+  # between MCP turns) read CLAUDE.md as the floor. We embed a SHORT exported
+  # profile snapshot (renderSnapshot output: STYLE + EXPERTISE bands only, NO
+  # unapproved preference slugs) so the user's portable style/expertise travels
+  # to those surfaces too -- refreshed every session.
+  #
+  # This runs ONLY inside the cwd-guard + inject-enabled gate above, so it
+  # inherits every injection-remediation guarantee for free: no global-config
+  # bleed (the guard already refused $HOME/root), respect for .ijfw/no-inject,
+  # and the byte-identical-skip (the snapshot is part of the managed block, so
+  # an unchanged snapshot yields an unchanged block -> no rewrite).
+  #
+  # Resolution mirrors the other helper lookups (plugin root / ~/.ijfw / repo).
+  # Any failure (no node, no profile, cold start, kill-switch, redaction) yields
+  # an EMPTY snapshot and the stanza is simply omitted -- never a crash, never a
+  # leak. forceLowOnly + includePreferences omitted => style/expertise bands only.
+  PROFILE_SNAPSHOT=""
+  if [ -n "$_NODE" ]; then
+    _IJFW_RENDER_BRIEF=""
+    for _cand in \
+        "${CLAUDE_PLUGIN_ROOT:-}/mcp-server/src/profile/render-brief.js" \
+        "$HOME/.ijfw/mcp-server/src/profile/render-brief.js" \
+        "$IJFW_HOOK_DIR/../../../mcp-server/src/profile/render-brief.js"; do
+      if [ -f "$_cand" ]; then _IJFW_RENDER_BRIEF="$_cand"; break; fi
+    done
+    if [ -n "$_IJFW_RENDER_BRIEF" ]; then
+      # Resolve the store sibling from the same dir so the ESM imports line up.
+      _IJFW_PROFILE_STORE="$(dirname "$_IJFW_RENDER_BRIEF")/store.js"
+      # Plain -e (CommonJS host) + dynamic import() of the ESM modules: works on
+      # every supported node without the --input-type flag, and the async IIFE
+      # avoids any top-level-await requirement.
+      PROFILE_SNAPSHOT=$("$_NODE" -e '
+        const briefUrl = process.argv[1];
+        const storeUrl = process.argv[2];
+        (async () => {
+          try {
+            const { renderSnapshot } = await import(briefUrl);
+            const { readProfile } = await import(storeUrl);
+            const res = readProfile();
+            if (!res || !res.ok || !res.profile) return;
+            // forceLowOnly: passive read => low-sensitivity only (style+expertise
+            // bands). includePreferences is left default-OFF: no preference slugs.
+            const { text } = renderSnapshot(res.profile, { forceLowOnly: true });
+            if (text && text.trim()) process.stdout.write(text);
+          } catch { /* fail closed: emit nothing */ }
+        })();
+      ' "file://$_IJFW_RENDER_BRIEF" "file://$_IJFW_PROFILE_STORE" 2>/dev/null)
+    fi
+  fi
 
   # Build the managed block.
   # Contains memory context only. Banner display was removed -- showing a
@@ -668,6 +774,15 @@ if true; then
   MANAGED_BLOCK=$(
     echo "$MARK_START"
     cat "$MEM_BUF"
+    # S6 -- profile snapshot stanza (omitted entirely when empty so the
+    # byte-identical skip stays exact for users without a confirmed profile).
+    if [ -n "$PROFILE_SNAPSHOT" ]; then
+      echo ""
+      echo "<ijfw-profile>"
+      echo "Your portable working profile (derived from what you've said/edited; style + expertise only):"
+      printf '%s\n' "$PROFILE_SNAPSHOT"
+      echo "</ijfw-profile>"
+    fi
     # Plugin priority directive: IJFW handles project workflows when installed.
     if [ -d "$HOME/.claude/plugins/cache/claude-plugins-official/superpowers" ] || \
        [ -d "$HOME/.claude/get-shit-done" ]; then
@@ -761,8 +876,13 @@ if true; then
       const src = fs.readFileSync(file, "utf8");
       const re = new RegExp(startM.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[\\s\\S]*?" + endM, "m");
       const out = src.replace(re, block);
-      fs.writeFileSync(file + ".tmp", out);
-      fs.renameSync(file + ".tmp", file);
+      // Byte-identical skip: when the rebuilt block already matches what is on
+      // disk, do NOT rewrite the file. Avoids dirtying git status with a no-op
+      // diff every session (the #1 obtrusiveness "wince").
+      if (out !== src) {
+        fs.writeFileSync(file + ".tmp", out);
+        fs.renameSync(file + ".tmp", file);
+      }
     ' "$CLAUDE_MD" "$MANAGED_BLOCK" 2>/dev/null
   else
     # User has CLAUDE.md but no marker -- append block at end, preserving user content.
@@ -770,6 +890,17 @@ if true; then
       echo ""
       echo "$MANAGED_BLOCK"
     } >> "$CLAUDE_MD" 2>/dev/null
+  fi
+
+  # P2 first-run consent notice (one-time per project): surface, via the agent
+  # banner, that IJFW keeps this project's memory in a managed block and how to
+  # opt out. The .inject-noticed sentinel makes it fire exactly once.
+  if [ ! -f "$IJFW_DIR/.inject-noticed" ]; then
+    {
+      echo ""
+      echo "[ijfw] This project's memory lives in a managed block in CLAUDE.md / AGENTS.md (your own content is preserved). To keep IJFW out of this project's files, run: touch .ijfw/no-inject"
+    } >> "$BANNER_BUF" 2>/dev/null
+    : > "$IJFW_DIR/.inject-noticed" 2>/dev/null
   fi
 fi
 
@@ -796,7 +927,7 @@ for _cand in \
     break
   fi
 done
-if [ -n "$AGENTS_MD_LOCK" ] && [ -n "$AGENTS_MD_BUILD" ]; then
+if [ -n "$AGENTS_MD_LOCK" ] && [ -n "$AGENTS_MD_BUILD" ] && ijfw_is_project_writable "$(pwd -P 2>/dev/null)" && ijfw_inject_enabled; then
   AGENTS_MD_TARGET="$(pwd -P 2>/dev/null)/AGENTS.md"
   AGENTS_MD_PROJECT_ROOT="$(pwd -P 2>/dev/null)"
   # Background the merge so the hook stays under budget. Inside the

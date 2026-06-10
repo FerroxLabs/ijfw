@@ -1,0 +1,90 @@
+[
+  {
+    "question_id": "syn_temporal_01",
+    "question_type": "temporal-reasoning",
+    "question": "How many weeks before I adopted my cat did I move apartments?",
+    "question_date": "2024/03/10 (Sun) 09:00",
+    "answer": "Two weeks",
+    "answer_session_ids": ["answer_syn_a", "answer_syn_b"],
+    "haystack_session_ids": ["sess_syn_a", "sess_syn_b"],
+    "haystack_dates": ["2024/02/12 (Mon) 10:00", "2024/02/26 (Mon) 10:00"],
+    "haystack_sessions": [
+      [
+        { "role": "user", "content": "I finally moved into the new apartment today.", "has_answer": true },
+        { "role": "assistant", "content": "Congratulations on the move!" }
+      ],
+      [
+        { "role": "user", "content": "I adopted a cat this afternoon.", "has_answer": true },
+        { "role": "assistant", "content": "What did you name them?" }
+      ]
+    ]
+  },
+  {
+    "question_id": "syn_knowledge_update_01",
+    "question_type": "knowledge-update",
+    "question": "What is my current job title?",
+    "question_date": "2024/06/01 (Sat) 12:00",
+    "answer": "Staff Engineer",
+    "answer_session_ids": ["answer_syn_c"],
+    "haystack_session_ids": ["sess_syn_c", "sess_syn_d"],
+    "haystack_dates": ["2024/01/05 (Fri) 08:00", "2024/05/20 (Mon) 08:00"],
+    "haystack_sessions": [
+      [
+        { "role": "user", "content": "I just started as a Senior Engineer." }
+      ],
+      [
+        { "role": "user", "content": "Got promoted, I'm a Staff Engineer now.", "has_answer": true }
+      ]
+    ]
+  },
+  {
+    "question_id": "syn_multisession_01",
+    "question_type": "multi-session",
+    "question": "Which two cities did I say I want to visit?",
+    "question_date": "2024/04/01 (Mon) 18:00",
+    "answer": "Lisbon and Kyoto",
+    "answer_session_ids": ["answer_syn_e", "answer_syn_f"],
+    "haystack_session_ids": ["sess_syn_e", "sess_syn_f"],
+    "haystack_dates": ["2024/02/01 (Thu) 09:00", "2024/03/01 (Fri) 09:00"],
+    "haystack_sessions": [
+      [
+        { "role": "user", "content": "I've always wanted to visit Lisbon.", "has_answer": true }
+      ],
+      [
+        { "role": "user", "content": "Kyoto is also high on my travel list.", "has_answer": true }
+      ]
+    ]
+  },
+  {
+    "question_id": "syn_single_session_user_01",
+    "question_type": "single-session-user",
+    "question": "What allergy did I mention?",
+    "question_date": "2024/02/20 (Tue) 14:00",
+    "answer": "Peanuts",
+    "answer_session_ids": ["answer_syn_g"],
+    "haystack_session_ids": ["sess_syn_g"],
+    "haystack_dates": ["2024/02/15 (Thu) 11:00"],
+    "haystack_sessions": [
+      [
+        { "role": "user", "content": "Just a heads up, I'm allergic to peanuts.", "has_answer": true },
+        { "role": "assistant", "content": "Noted, I'll keep that in mind." }
+      ]
+    ]
+  },
+  {
+    "question_id": "syn_abstain_01_abs",
+    "question_type": "single-session-user",
+    "question": "What is my blood type?",
+    "question_date": "2024/05/01 (Wed) 10:00",
+    "answer": "I don't know.",
+    "answer_session_ids": [],
+    "haystack_session_ids": ["sess_syn_h"],
+    "haystack_dates": ["2024/04/10 (Wed) 10:00"],
+    "haystack_sessions": [
+      [
+        { "role": "user", "content": "I had a regular checkup at the clinic today." },
+        { "role": "assistant", "content": "Hope everything went well!" }
+      ]
+    ]
+  }
+]

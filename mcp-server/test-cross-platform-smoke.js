@@ -39,7 +39,7 @@ const REPO_ROOT = join(__dirname, '..');
 const SERVER_JS = join(REPO_ROOT, 'mcp-server', 'src', 'server.js');
 
 // Canonical TARGETS list -- mirrors installer/src/install-flow.js:CANONICAL_ORDER.
-// 15 platforms.
+// 16 platforms.
 const PLATFORMS = [
   // 5 critical platforms (live-verified by sibling test suites; smoke
   // re-asserts install-path landing for matrix completeness).
@@ -61,9 +61,11 @@ const PLATFORMS = [
   { id: 'aider',    tier: 'rules-only', name: 'Aider' },
   // Platform #15 (v1.5.1) -- Antigravity.
   { id: 'antigravity', tier: 'mcp-config', name: 'Antigravity' },
+  // Platform #16 -- Pi (rules-only; no native MCP, ~/.pi/agent/AGENTS.md).
+  { id: 'pi', tier: 'rules-only', name: 'Pi' },
 ];
 
-assert.equal(PLATFORMS.length, 15, '15-platform matrix invariant');
+assert.equal(PLATFORMS.length, 16, '16-platform matrix invariant');
 
 // -------------------------------------------------------------------------
 // Per-platform expected landing site under a sandbox HOME.
@@ -87,13 +89,14 @@ const HOME_PATHS = {
   codex:    (h) => [join(h, '.codex', 'config.toml')],
   gemini:   (h) => [join(h, '.gemini', 'settings.json')],
   hermes:   (h) => [join(h, '.hermes', 'config.yaml')],
-  wayland:  (h) => [join(h, '.wayland', 'config.yaml')],
+  wayland:  (h) => [join(h, '.wayland', 'plugins', 'ijfw', 'plugin.toml')],
   windsurf: (h) => [join(h, '.codeium', 'windsurf', 'mcp_config.json')],
   opencode: (h) => [join(h, '.config', 'opencode', 'opencode.json')],
   qwen:     (h) => [join(h, '.qwen', 'settings.json')],
   kimi:     (h) => [join(h, '.kimi', 'mcp.json')],
   openclaw: (h) => [join(h, '.openclaw', 'openclaw.json')],
   aider:    (h) => [join(h, '.aider.conf.yml'), join(h, 'CONVENTIONS.md')],
+  pi:       (h) => [join(h, '.pi', 'agent', 'AGENTS.md')],
 };
 
 // Project-scoped writes (Cursor, Copilot land config inside PWD).
@@ -187,11 +190,11 @@ function cleanup(sandbox) {
 // OR (rules-only tier) validates the conventions doc lands.
 // -------------------------------------------------------------------------
 
-test('matrix: 15 platforms canonical (no drift)', () => {
+test('matrix: 16 platforms canonical (no drift)', () => {
   // Mirror installer/src/install-flow.js:CANONICAL_ORDER. If this drifts, the
   // matrix is out of sync and Phase 5 docs (PHASE-5-SMOKE-MATRIX.md) need
   // updating.
-  assert.equal(CANONICAL_ORDER.length, 15, 'CANONICAL_ORDER must list 15 platforms');
+  assert.equal(CANONICAL_ORDER.length, 16, 'CANONICAL_ORDER must list 16 platforms');
   const canonicalSet = new Set(CANONICAL_ORDER);
   for (const p of PLATFORMS) {
     assert.ok(canonicalSet.has(p.id), `CANONICAL_ORDER missing platform '${p.id}'`);
@@ -259,12 +262,12 @@ test('gemini: ~/.gemini/settings.json + extension bundle land', async () => {
   } finally { cleanup(sb); }
 });
 
-test('wayland: ~/.wayland/config.yaml + plugin tree land', async () => {
+test('wayland: ~/.wayland/plugins/ijfw/plugin.toml + plugin tree land', async () => {
   const sb = isolatedSandbox('wayland');
   try {
     await installInSandbox('wayland', sb);
     const cfg = HOME_PATHS.wayland(sb.home)[0];
-    assert.ok(existsSync(cfg), `wayland config.yaml missing`);
+    assert.ok(existsSync(cfg), `wayland plugin.toml missing`);
     const text = readText(cfg);
     assert.ok(text.includes('ijfw-memory'), 'mcp entry missing');
     assert.ok(existsSync(join(sb.home, '.wayland', 'plugins', 'ijfw')), 'plugin tree missing');
@@ -400,6 +403,19 @@ test('aider: rules-only tier lands ~/.aider.conf.yml + ~/CONVENTIONS.md', async 
     assert.ok(existsSync(conv), `~/CONVENTIONS.md missing at ${conv}`);
     const confText = readText(conf);
     assert.ok(confText.includes('CONVENTIONS.md'), 'aider.conf.yml does not reference CONVENTIONS.md');
+  } finally { cleanup(sb); }
+});
+
+test('pi: rules-only tier lands ~/.pi/agent/AGENTS.md', async () => {
+  // Pi has no native MCP client. Tier-3: ship the AGENTS.md rules doc to Pi's
+  // documented config path. installPi copies pi/AGENTS.md -> ~/.pi/agent/AGENTS.md.
+  const sb = isolatedSandbox('pi');
+  try {
+    await installInSandbox('pi', sb);
+    const [agents] = HOME_PATHS.pi(sb.home);
+    assert.ok(existsSync(agents), `~/.pi/agent/AGENTS.md missing at ${agents}`);
+    const text = readText(agents);
+    assert.ok(text.includes('IJFW') || text.includes('ijfw'), 'pi AGENTS.md missing IJFW rules');
   } finally { cleanup(sb); }
 });
 

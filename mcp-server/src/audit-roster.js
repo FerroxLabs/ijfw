@@ -86,8 +86,24 @@ export const ROSTER = [
     family: 'google',
     model: '',
     name: 'Gemini CLI',
-    invoke: 'gemini',
-    note: 'Strong on security + architectural patterns. Auto-detects piped stdin for headless mode.',
+    // v1.6.0 xaudit-fix — STALE-ARGV repair. Bare `gemini` BREAKS on the
+    // current CLI (verified gemini-cli 0.43.0) for two reasons:
+    //   1. Trusted-directory gate (added like codex's --skip-git-repo-check):
+    //      a non-interactive invoke outside a "trusted" folder exits immediately
+    //      with "Gemini CLI is not running in a trusted directory" and emits ZERO
+    //      output. --skip-trust bypasses it (env GEMINI_CLI_TRUST_WORKSPACE=true
+    //      is the alternative). Without it the CLI path NEVER succeeds; runs were
+    //      only ever rescued by the API fallback (every historical receipt shows
+    //      gemini source='api', never 'cli').
+    //   2. Recursive IJFW-MCP autostart: when the ijfw gemini extension is
+    //      loaded, `gemini` autostarts the IJFW MCP server (the same self-
+    //      referential hang codex dodges via mcp_servers.ijfw-memory.enabled=false).
+    //      `-e none` loads zero extensions, removing the autostart latency/noise.
+    // Prompt is delivered on stdin: piped non-TTY stdin triggers headless mode,
+    // so no -p value is needed (and `-p` with no value is a yargs error under
+    // whitespace-split argv). Verified returning findings end-to-end 2026-06-08.
+    invoke: 'gemini --skip-trust -e none',
+    note: 'Strong on security + architectural patterns. Reads the prompt from piped stdin in headless mode. --skip-trust bypasses the trusted-directory gate (gemini-cli >=0.43); -e none disables extensions so the IJFW MCP server is not recursively autostarted.',
     detect: (env) => Boolean(env.GEMINI_CLI || env.GOOGLE_CLOUD_PROJECT_GEMINI) || /gemini-cli/i.test(env._ || ''),
     // model is resolved at call-time via model-refresh.js (24h-cached probe).
     get apiFallback() {
@@ -99,8 +115,22 @@ export const ROSTER = [
     family: 'oss',
     model: '',
     name: 'Qwen Code',
-    invoke: 'qwen -p',
-    note: 'Apache-2.0 weights (Qwen3-Coder-480B-A35B), agentic-tuned (~67% SWE-Bench Verified). Fork of gemini-cli; supports qwen-oauth (free Coding Plan tier), plus openai/anthropic/gemini auth-types via `qwen auth`. Diversity value for Trident: third independent training lineage outside openai/google.',
+    // v1.6.0 xaudit-fix — STALE-ARGV repair. `qwen -p` (no value) is wrong on
+    // current Qwen Code (verified 0.15.6): `-p/--prompt` is now DEPRECATED and a
+    // bare `-p` with no argument is a yargs error under whitespace-split argv.
+    // The prompt is delivered on stdin (this fork ignores the positional `query`
+    // and prints "No input provided via stdin" if nothing is piped). Bare
+    // `qwen <stdin>` ALSO fails silently: the implicit startup auto-discovery
+    // runs an approval/confirmation flow that auto-cancels under non-TTY stdin
+    // and emits only "Operation cancelled." with ZERO findings (the gemini-cli-
+    // fork analog of gemini's trusted-directory gate). `--bare` skips that
+    // auto-discovery and `--yolo` auto-approves all actions, so the headless run
+    // reaches the model — or fails FAST + CLEAN on auth ("No auth type is
+    // selected ... before running in non-interactive mode" in ~1s when neither a
+    // qwen-oauth login nor DASHSCOPE_API_KEY is configured). Verified 2026-06-08:
+    // `--bare --yolo` errors cleanly on auth in 1s instead of the silent cancel.
+    invoke: 'qwen --bare --yolo',
+    note: 'Apache-2.0 weights (Qwen3-Coder-480B-A35B), agentic-tuned (~67% SWE-Bench Verified). Fork of gemini-cli; supports qwen-oauth (free Coding Plan tier), plus openai/anthropic/gemini auth-types via `qwen auth`. Reads the prompt from piped stdin; --bare skips the startup auto-discovery that auto-cancels under non-TTY stdin, --yolo auto-approves. Diversity value for Trident: third independent training lineage outside openai/google.',
     detect: (env) => Boolean(env.QWEN_SESSION) || /(?:^|\W)qwen(?:\W|$)/i.test(env._ || ''),
     apiFallback: { provider: 'openai-compat', model: 'qwen3-coder-plus', authEnv: 'DASHSCOPE_API_KEY', endpoint: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions' },
   },
@@ -119,8 +149,18 @@ export const ROSTER = [
     family: 'oss',
     model: '',
     name: 'Kimi (Moonshot)',
-    invoke: 'kimi',
-    note: 'Moonshot AI Kimi K2 series (Chinese open-source lineage, separate from DeepSeek). Long-context strength makes it useful for whole-file or whole-module audits where context window matters. OpenAI-compatible API via platform.moonshot.ai. Detection is left at false because no canonical session env var ships with Kimi today -- prefer double-coverage over false self-exclusion.',
+    // v1.6.0 xaudit-fix — STALE-ARGV repair. Bare `kimi` (verified 1.38.0) is a
+    // Click-style `kimi [OPTIONS] COMMAND` agent that PROMPTS INTERACTIVELY by
+    // default (`--prompt ... Default: prompt interactively`), so a piped prompt
+    // on stdin would stall waiting on a TTY. `--print` is the non-interactive
+    // "print mode" (it implicitly adds `--yolo`) and, with `--input-format text`
+    // (the default), the input is read from piped stdin. `--quiet` is the shipped
+    // alias for `--print --output-format text --final-message-only`, which prints
+    // ONLY the final assistant message to stdout (the "resume session" hint goes
+    // to stderr, keeping stdout clean for fence parsing). Verified 2026-06-08:
+    // `kimi --print --quiet` returned a clean JSON fence with both seeded bugs.
+    invoke: 'kimi --print --quiet',
+    note: 'Moonshot AI Kimi K2 series (Chinese open-source lineage, separate from DeepSeek). Long-context strength makes it useful for whole-file or whole-module audits where context window matters. `kimi --print --quiet` is the headless mode (reads the prompt from piped stdin, prints only the final assistant message). OpenAI-compatible API via platform.moonshot.ai. Detection is left at false because no canonical session env var ships with Kimi today -- prefer double-coverage over false self-exclusion.',
     detect: () => false,
     apiFallback: { provider: 'openai-compat', model: 'kimi-k2.6', authEnv: 'MOONSHOT_API_KEY', endpoint: 'https://api.moonshot.ai/v1/chat/completions' },
   },
@@ -129,8 +169,16 @@ export const ROSTER = [
     family: 'oss',
     model: '',
     name: 'opencode',
-    invoke: 'opencode',
-    note: 'OSS / local-friendly; good when privacy matters.',
+    // v1.6.0 xaudit-fix — STALE-ARGV repair. Bare `opencode` launches the
+    // INTERACTIVE TUI (verified opencode 1.15.11): it renders a full-screen
+    // ANSI app and never consumes the piped prompt, so every cross-audit run
+    // hung until the per-auditor SIGKILL timeout (status='timeout'). opencode
+    // has NO apiFallback, so there was no rescue path — opencode was 100%
+    // broken for every user. The non-interactive subcommand is `opencode run`,
+    // which reads the prompt from stdin and prints the model reply to stdout
+    // (verified returning a clean response 2026-06-08).
+    invoke: 'opencode run',
+    note: 'OSS / local-friendly; good when privacy matters. `opencode run` is the headless subcommand (bare `opencode` opens the interactive TUI and would hang).',
     detect: (env) => Boolean(env.OPENCODE_SESSION || env.OPENCODE_HOME),
     apiFallback: null,
   },
@@ -149,8 +197,20 @@ export const ROSTER = [
     family: 'openai',
     model: '',
     name: 'Copilot CLI',
-    invoke: 'gh copilot suggest',
-    note: 'Convenient if gh CLI is already authenticated.',
+    // v1.6.0 xaudit-fix — STALE-ARGV repair. `gh copilot suggest` was the OLD
+    // `gh` CLI extension, which only echoes a single shell-command suggestion
+    // (not a code audit) and is a different binary entirely. The standalone
+    // GitHub Copilot CLI (`copilot`, verified 1.0.59) is the real headless
+    // auditor: `-p/--prompt` runs a non-interactive scripting turn, and a bare
+    // `-p` (no inline value) consumes the prompt from piped stdin. Non-
+    // interactive mode REQUIRES `--allow-all-tools` (per the CLI's own help:
+    // "required for non-interactive mode"), otherwise it blocks on a tool-
+    // permission confirmation. Verified 2026-06-08: `copilot -p --allow-all-tools`
+    // reaches the service in seconds and fails FAST + CLEAN when the account's
+    // Copilot is org-policy-restricted (an environmental auth/entitlement error,
+    // not a hang). detect() left on GH_COPILOT_TOKEN/COPILOT_CLI_SESSION.
+    invoke: 'copilot -p --allow-all-tools',
+    note: 'Standalone GitHub Copilot CLI (`copilot`, not the old `gh copilot` extension). `-p` reads the prompt from piped stdin; `--allow-all-tools` is required for non-interactive mode. Convenient if Copilot CLI is already authenticated and not org-policy-restricted.',
     detect: (env) => Boolean(env.GH_COPILOT_TOKEN || env.COPILOT_CLI_SESSION),
     apiFallback: null,
   },
@@ -159,8 +219,14 @@ export const ROSTER = [
     family: 'anthropic',
     model: '',
     name: 'Claude Code',
+    // `claude -p` (== --print) is the headless mode: reads the prompt from piped
+    // stdin and prints the reply to stdout. Verified 2026-06-08 returning fast +
+    // clean (4s) — in this repo claude is the CALLER (CLAUDECODE=1), so detect()
+    // below correctly self-excludes it from its own Trident; the invoke is only
+    // exercised when a NON-claude caller picks claude as an auditor. When claude
+    // IS a valid (non-self) auditor, `claude -p` is the correct current form.
     invoke: 'claude -p',
-    note: 'Anthropic; useful when you want a second Claude pass in a fresh session.',
+    note: 'Anthropic; useful when you want a second Claude pass in a fresh session. `claude -p` reads the prompt from piped stdin (headless --print mode). Self-excluded via detect() when claude is the caller.',
     detect: (env) => Boolean(env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT || env.CLAUDE_PLUGIN_ROOT),
     // model is resolved at call-time via model-refresh.js (24h-cached probe).
     get apiFallback() {
@@ -206,7 +272,18 @@ export function isInstalled(id) {
   const bin = entry.invoke.split(/\s+/)[0];
   // POSIX `command -v` is the portable existence check; bash builtin form
   // works reliably across macOS + Linux. spawnSync exit code = 0 → present.
-  const r = spawnSync('bash', ['-lc', `command -v ${JSON.stringify(bin)} >/dev/null 2>&1`], { timeout: 2000 });
+  //
+  // v1.6.0 diag-fix — `command -v` returns success for a regular file on PATH
+  // even when it is NOT executable, so a dangling/non-+x file shadowing a real
+  // auditor name made doctor report `cli_installed: true` for something that
+  // CANNOT actually be invoked (the "present-claimed but invocation-broken"
+  // false report). We now additionally require the resolved target to pass
+  // `[ -x ]` (or be a shell builtin/keyword/function with no filesystem path,
+  // which `command -v` reports without a leading slash — those are genuinely
+  // runnable). A real installed CLI is an executable file and still passes.
+  const probe = `p=$(command -v ${JSON.stringify(bin)} 2>/dev/null) || exit 1; ` +
+    `case "$p" in /*) [ -x "$p" ] ;; *) : ;; esac`;
+  const r = spawnSync('bash', ['-lc', probe], { timeout: 2000 });
   const installed = r.status === 0;
   _installedCache.set(id, { value: installed, ts: Date.now() });
   return installed;

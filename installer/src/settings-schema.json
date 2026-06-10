@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "auto_update", "statusline", "update_check", "context_bar"],
+  "$comment": "profile block is OPTIONAL: pre-1.6 settings files predate it and resolveProfileSettings() backfills defaults on read.",
   "properties": {
     "schema_version": { "type": "integer", "const": 1 },
     "auto_update": {
@@ -46,6 +47,31 @@
         "used_warn": { "type": "number", "minimum": 0, "maximum": 1 },
         "used_critical": { "type": "number", "minimum": 0, "maximum": 1 },
         "style": { "type": "string", "enum": ["left", "runway", "classic"] }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Profile-bus (cross-system style learning) consent + control. capture stays local always; inject gates whether the learned brief is added to prompts.",
+      "properties": {
+        "capture": {
+          "type": "string",
+          "enum": ["on", "off"],
+          "description": "Whether per-message style metadata is captured locally. Default 'on' (local, low-sensitivity, never raw text)."
+        },
+        "inject": {
+          "type": "string",
+          "enum": ["on", "ask", "off"],
+          "description": "Whether the learned low-sensitivity style brief is injected into prompts. 'on' injects; 'off' never injects; 'ask' (default) prompts once then defaults to not-injecting until enabled."
+        },
+        "share_sensitive": {
+          "type": "boolean",
+          "description": "Whether medium/high-sensitivity prefs may leave to allowlisted hosts. Default false. Toggling on writes the per-host allowlist."
+        },
+        "inject_consent_version": {
+          "type": ["string", "null"],
+          "description": "Semver of the last injection-consent prompt shown. Null means never asked. Mirrors auto_update_consent_version."
+        }
       }
     }
   }

@@ -23,9 +23,36 @@
 // the only prior validation and was insufficient.
 
 import { basename, resolve, join } from 'node:path';
-import { realpathSync, statSync } from 'node:fs';
+import { realpathSync, statSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { searchCorpus } from './search-bm25.js';
+
+// --- Tenant isolation (P4) ----------------------------------------------------
+// cross-project search must not surface one tenant's memory in another tenant's
+// session (e.g. a contractor running two companies on one machine). Isolation is
+// OPT-IN and migration-free: a project declares its tenant in `.ijfw/tenant`
+// (first non-empty line). Absent => DEFAULT_TENANT, so single-tenant users see
+// exactly the prior behavior (every project is 'default', so all match).
+
+export const DEFAULT_TENANT = 'default';
+
+/** Read a project's declared tenant from `<path>/.ijfw/tenant`.
+ *  Returns the first non-empty trimmed line, or DEFAULT_TENANT when the file is
+ *  absent/unreadable/empty. Never throws. */
+export function resolveProjectTenant(canonicalProjectPath) {
+  try {
+    const raw = readFileSync(join(canonicalProjectPath, '.ijfw', 'tenant'), 'utf8');
+    const line = raw.split('\n').map((s) => s.trim()).find((s) => s.length > 0);
+    return line || DEFAULT_TENANT;
+  } catch {
+    return DEFAULT_TENANT;
+  }
+}
+
+function normTenant(t) {
+  const s = (t == null ? '' : String(t)).trim();
+  return s.length ? s : DEFAULT_TENANT;
+}
 
 // v1.5.0 audit MED #10 (memory-engine.md F-SPD-2): per-project corpus
 // cache keyed on (canonicalProjectPath, signature) where `signature` is
@@ -182,11 +209,22 @@ export function buildCorpus(projects, readProjectMemory, opts = {}) {
   const allowedRoots = Array.isArray(opts.allowedRoots) && opts.allowedRoots.length
     ? opts.allowedRoots
     : defaultAllowedRoots();
+  // Tenant gate (P4): only surface projects in the CALLER's tenant. Caller tenant
+  // defaults to 'default'; candidate tenant is read from each project's
+  // .ijfw/tenant (injectable for tests via opts.resolveTenant). Default==default
+  // means no behavior change until a user opts in by declaring tenants.
+  const callerTenant = normTenant(opts.tenant);
+  const tenantOf = typeof opts.resolveTenant === 'function'
+    ? (p) => normTenant(opts.resolveTenant(p))
+    : resolveProjectTenant;
   const docs = [];
   for (const entry of projects) {
     if (!entry || typeof entry !== 'object') continue;
     const canonical = safeResolveProjectPath(entry.path, allowedRoots);
     if (canonical === null) continue;  // skipped (symlink-escape or missing)
+
+    // Tenant isolation: skip projects that belong to a different tenant.
+    if (tenantOf(canonical) !== callerTenant) continue;
 
     // v1.5.0 audit MED #10: try the mtime cache before re-reading.
     // The cache is opt-out via opts.useCache=false (tests / consistency runs).

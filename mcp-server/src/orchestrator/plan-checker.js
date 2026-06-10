@@ -7,7 +7,7 @@
  * surfaced in the `ijfw-plan-check` skill as the deterministic pre-dispatch
  * gate.
  *
- * Distilled from /Users/seandonahoe/.claude/agents/gsd-plan-checker.md — extracts
+ * Distilled from the gsd-plan-checker agent definition: extracts
  * the mechanically-checkable rules (the prose-reasoning ones stay in the skill).
  *
  * No I/O, no network — operates on plan text passed in by caller.

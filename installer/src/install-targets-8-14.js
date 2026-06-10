@@ -31,6 +31,7 @@ import {
   clineMerge,
   printOk,
   printInfo,
+  guardProjectWrite,
 } from './install-helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -95,11 +96,23 @@ export function installCopilot(ctx) {
     return { status: 'noop' };
   }
 
-  const dst = path.join(process.cwd(), '.vscode', 'mcp.json');
+  const cwd = ctx.cwd || process.cwd();
+  // cwd-parity guard: Copilot is entirely project-scoped (./.vscode/mcp.json +
+  // ./.github/copilot-instructions.md). If cwd is the user's home root these
+  // become ~/.vscode/mcp.json + ~/.github/... -- a global config bleed. Skip.
+  if (!guardProjectWrite(cwd, ctx.home, {
+    platformLabel: 'Copilot project rules',
+    log: ctx.log,
+  })) {
+    printOk('Copilot: real platform config left untouched.');
+    return { status: 'noop' };
+  }
+
+  const dst = path.join(cwd, '.vscode', 'mcp.json');
   ensureDir(path.dirname(dst));
   mergeJson(dst, ctx.serverJsNative || ctx.serverJs);
 
-  const rulesDst = path.join(process.cwd(), '.github', 'copilot-instructions.md');
+  const rulesDst = path.join(cwd, '.github', 'copilot-instructions.md');
   const rulesSrc = path.join(ctx.repoRoot, 'copilot', 'copilot-instructions.md');
   const wroteRules = copyIfMissing(rulesSrc, rulesDst);
 

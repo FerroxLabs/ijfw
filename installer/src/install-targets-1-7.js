@@ -52,6 +52,7 @@ import {
   writeAtomic,
   isLive,
   prettyName,
+  guardProjectWrite,
 } from './install-helpers.js';
 
 // ----------------------------------------------------------------------
@@ -385,8 +386,18 @@ export async function installCodex(ctx) {
   }
 
   // 7. Project-level skills and command aliases (only if we look like a project).
+  // cwd-parity guard: a project marker like `.ijfw` also exists at ~/.ijfw, so
+  // without this guard a `cwd == $HOME` install would author ~/.codex/skills and
+  // ~/.codex/commands as if home were a project (global bleed). guardProjectWrite
+  // refuses cwd == home / '/'.
   const cwd = ctx.cwd || process.cwd();
-  if (existsSync(join(cwd, '.codex', 'config.toml')) || existsSync(join(cwd, '.ijfw'))) {
+  if (
+    guardProjectWrite(cwd, ctx.home, {
+      platformLabel: 'Codex project skills/commands',
+      log: ctx.log,
+    }) &&
+    (existsSync(join(cwd, '.codex', 'config.toml')) || existsSync(join(cwd, '.ijfw')))
+  ) {
     const projSkills = join(cwd, '.codex', 'skills');
     ensureDir(projSkills);
     for (const sd of listSubdirs(repoSkills)) {
@@ -511,15 +522,22 @@ export async function installGemini(ctx) {
 // ----------------------------------------------------------------------
 
 /**
- * Install IJFW into Wayland CLI.
+ * Install IJFW into Wayland Core.
  *
- * Ports install.sh:1421-1452.
+ * Wayland Core discovers on-disk *declarative* plugins at
+ * `~/.wayland/plugins/<name>/plugin.toml` -- a manifest with NO executable
+ * `entry` that declares an MCP server + lifecycle hooks. Wayland connects the
+ * declared MCP server and deterministically fires the declared hooks into the
+ * model's context (SessionStart memory prelude, PrePrompt recall). This is the
+ * only IJFW surface Wayland can actually load: it reads TOML (not YAML) and
+ * cannot run Python plugins/hooks, so we drop a single declarative plugin.toml
+ * here instead of the old config.yaml + Python plugin tree.
  *
  * Writes:
- *   - $HOME/.wayland/config.yaml (mergeYamlMcp)
+ *   - $HOME/.wayland/plugins/ijfw/plugin.toml (declarative manifest: MCP server
+ *     `ijfw-memory` via `node <serverJs>` + session_start / pre_prompt hooks)
  *   - $HOME/.wayland/WAYLAND.md (if absent)
  *   - $HOME/.wayland/skills/* (per-skill copy-if-absent from shared/skills/)
- *   - $HOME/.wayland/plugins/ijfw/* (plugin tree, excluding __pycache__)
  */
 export async function installWayland(ctx) {
   if (ctx.ijfwCustomDir) {
@@ -531,9 +549,11 @@ export async function installWayland(ctx) {
     );
   }
 
-  const dst = join(ctx.home, '.wayland', 'config.yaml');
-  ensureDir(dirname(dst));
-  mergeYamlMcp(dst, ctx.serverJsNative);
+  // Declarative plugin manifest. Overwrite on upgrade so the schema stays
+  // current (mirror semantics, matching the other Wayland mirror writes).
+  const pluginToml = join(ctx.home, '.wayland', 'plugins', 'ijfw', 'plugin.toml');
+  ensureDir(dirname(pluginToml));
+  writeFileSync(pluginToml, renderWaylandPluginToml(ctx), { encoding: 'utf8' });
 
   // WAYLAND.md (copy if absent).
   ensureDir(join(ctx.home, '.wayland'));
@@ -549,56 +569,73 @@ export async function installWayland(ctx) {
     copyDirIfAbsent(sd.path, join(ctx.home, '.wayland', 'skills', sd.name));
   }
 
-  // Plugin tree (mirrors `find ... -mindepth 1 -maxdepth 1 ! -name __pycache__`).
-  const pluginSrc = join(ctx.repoRoot, 'wayland', 'plugins', 'ijfw');
-  if (existsSync(pluginSrc)) {
-    const pluginDst = join(ctx.home, '.wayland', 'plugins', 'ijfw');
-    ensureDir(pluginDst);
-    let entries;
-    let readdirErr = null;
-    try { entries = readdirSync(pluginSrc); } catch (err) { entries = []; readdirErr = err; }
-    if (readdirErr) {
-      // V155-031: previously silent — readdir failure degraded to a no-op
-      // "install" while printOk still fired. Surface as a warning so the
-      // operator can see the bundle is incomplete.
-      ctx.log.warn(`Wayland plugin tree readdir failed: ${readdirErr.message || readdirErr}`);
-    }
-    // V155-031: mirror semantics. Remove dst entries that are no longer in
-    // src (excluding the always-skipped __pycache__) BEFORE copying. POSIX
-    // and Windows alike accumulated stale files across upgrades.
-    const srcNames = new Set(entries.filter((n) => n !== '__pycache__'));
-    let dstEntries = [];
-    try { dstEntries = readdirSync(pluginDst); } catch { /* fresh dir */ }
-    for (const name of dstEntries) {
-      if (name === '__pycache__') continue;
-      if (!srcNames.has(name)) {
-        try { rmSync(join(pluginDst, name), { recursive: true, force: true }); }
-        catch (err) {
-          ctx.log.warn(`Wayland plugin: could not remove stale ${name}: ${err.message || err}`);
-        }
-      }
-    }
-    for (const name of entries) {
-      if (name === '__pycache__') continue;
-      const src = join(pluginSrc, name);
-      const dstEntry = join(pluginDst, name);
-      try {
-        const st = statSync(src);
-        if (st.isDirectory()) {
-          // bash `cp -r` overwrites; cpSync with force/recursive matches that.
-          cpSync(src, dstEntry, { recursive: true, force: true });
-        } else if (st.isFile()) {
-          copyFileSync(src, dstEntry);
-        }
-      } catch { /* skip on stat/copy failure */ }
-    }
-  }
-
-  // B7: wire tier-2 hook registration into config.yaml.
-  mergeYamlHook(dst, 'plugins/ijfw/hooks/pre_tool_use_extension_check.py', ctx.ts);
-
-  ctx.log.ok('Installed Wayland bundle: MCP + WAYLAND.md + skills + plugin + tier-2 hook');
+  ctx.log.ok('Installed Wayland bundle: declarative plugin.toml + WAYLAND.md + skills');
   return { status: 'ok' };
+}
+
+// Read the IJFW version from installer/package.json (the same source of truth
+// install-flow seeds state from). ctx carries no `version`, so resolve it from
+// ctx.repoRoot. Falls back to '0.0.0' only if the file is unreadable -- the
+// manifest still parses; Wayland does not gate on the version value.
+function ijfwVersion(ctx) {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(ctx.repoRoot, 'installer', 'package.json'), 'utf8'),
+    );
+    if (pkg && typeof pkg.version === 'string' && pkg.version) return pkg.version;
+  } catch { /* fall through to default */ }
+  return '0.0.0';
+}
+
+// Escape a value for a TOML basic ("...") string: backslashes first, then
+// double-quotes. Same escaping mergeToml() uses for the Codex config.toml args
+// path, so a Windows absolute path (C:\Users\...\server.js) stays valid TOML.
+function tomlBasicString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+// Render the Wayland declarative plugin.toml. Must match Wayland's
+// PluginManifest schema exactly -- Wayland deserializes with
+// deny_unknown_fields and rejects declared hooks / mcp_server without the
+// matching [permissions] flags, so do NOT add keys outside this schema.
+function renderWaylandPluginToml(ctx) {
+  const serverJs = tomlBasicString(ctx.serverJsNative);
+  const version = tomlBasicString(ijfwVersion(ctx));
+  return [
+    '[plugin]',
+    'name = "wayland-ijfw"',
+    `version = "${version}"`,
+    'description = "IJFW memory + lifecycle hooks for Wayland Core"',
+    'license = "MIT"',
+    '',
+    '[permissions]',
+    'register_hooks = true',
+    'register_mcp_server = true',
+    '',
+    '[runtime]',
+    'kind = "declarative"',
+    '',
+    '[mcp_server]',
+    'name = "ijfw-memory"',
+    '',
+    '[mcp_server.transport]',
+    'kind = "stdio"',
+    'command = "node"',
+    `args = ["${serverJs}"]`,
+    '',
+    // Only session_start and pre_prompt dispatch in Wayland today; the
+    // post_tool_use / session_end / pre_compact phases are registered-but-
+    // log-only on the Wayland side, so they are intentionally omitted. Add
+    // them here once Wayland wires those phases.
+    '[[hooks]]',
+    'phase = "session_start"',
+    'tool = "ijfw_memory_prelude"',
+    '',
+    '[[hooks]]',
+    'phase = "pre_prompt"',
+    'tool = "ijfw_memory_recall"',
+    '',
+  ].join('\n');
 }
 
 // ----------------------------------------------------------------------
@@ -730,6 +767,16 @@ export async function installCursor(ctx) {
   }
 
   const cwd = ctx.cwd || process.cwd();
+  // cwd-parity guard: Cursor is entirely project-scoped (./.cursor/...). If cwd
+  // is the user's home root, those writes would become ~/.cursor/... -- a global
+  // config bleed (installer-side mirror of the SessionStart hook P0 fix). Skip.
+  if (!guardProjectWrite(cwd, ctx.home, {
+    platformLabel: 'Cursor project rules',
+    log: ctx.log,
+  })) {
+    ctx.log.ok('Cursor: real platform config left untouched.');
+    return { status: 'noop' };
+  }
   const dst = join(cwd, '.cursor', 'mcp.json');
   ensureDir(dirname(dst));
   mergeJson(dst, ctx.serverJsNative);
@@ -776,8 +823,19 @@ export async function installWindsurf(ctx) {
   ensureDir(dirname(dst));
   mergeJson(dst, ctx.serverJsNative);
 
-  // .windsurfrules in project root (only if absent).
+  // .windsurfrules in project root (only if absent). This is the ONLY
+  // project-scoped write here -- the MCP config above is home-scoped (correct
+  // global config). cwd-parity guard: if cwd is the home root, writing
+  // ./.windsurfrules would land ~/.windsurfrules (global bleed). Skip ONLY the
+  // project rules; the home MCP merge above already happened.
   const cwd = ctx.cwd || process.cwd();
+  if (!guardProjectWrite(cwd, ctx.home, {
+    platformLabel: 'Windsurf project rules (.windsurfrules)',
+    log: ctx.log,
+  })) {
+    ctx.log.ok(`Merged MCP into ${dst}`);
+    return { status: 'ok' };
+  }
   const projectRules = join(cwd, '.windsurfrules');
   const repoRules = join(ctx.repoRoot, 'windsurf', '.windsurfrules');
 

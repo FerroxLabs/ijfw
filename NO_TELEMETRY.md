@@ -20,6 +20,43 @@ IJFW ships zero analytics SDKs, zero phone-home endpoints, zero
 "anonymous usage reporting." There is nothing to toggle off because
 nothing is on.
 
+## What IJFW writes into your project files, and how to control it
+
+To unify memory + routing across every agent, IJFW injects a small managed
+block into the files each platform reads. It edits **only** the region between
+its own markers (`<!-- IJFW-MEMORY-START -->` ... `<!-- IJFW-MEMORY-END -->`,
+plus `<ijfw-routing>` / `<!-- IJFW-AGENTS -->` / `<!-- IJFW-BLACKBOARD -->`);
+everything outside the markers is yours and is never touched.
+
+| File | When | Scope |
+|------|------|-------|
+| `CLAUDE.md` (project root) | every session, only if the block changed | this project only |
+| `AGENTS.md` (project root) | every session, only if the block changed | this project only |
+| `.cursor/rules/ijfw.mdc`, `.windsurfrules`, `.github/copilot-instructions.md` | at install | this project only |
+
+IJFW **never** writes a global `~/CLAUDE.md` / `~/AGENTS.md`. A project-root
+guard refuses any write whose target resolves to your home directory, and a
+one-time cleanup strips stray global blocks left by older versions.
+
+**Platform tiers.** Six platforms (Claude, Gemini, OpenCode, Qwen, Cline,
+Kimi/OpenClaw) can receive memory transiently via MCP/hooks; nine (Codex,
+Wayland, Hermes, Cursor, Windsurf, Copilot, Aider, Antigravity, Pi) only read a
+static file, so a project-scoped file is the only way to reach them.
+
+**Opt-out knobs** (injection is on by default — these turn parts off per project):
+
+| Knob | Effect |
+|------|--------|
+| `touch .ijfw/no-inject` (or `IJFW_NO_INJECT=1`) | Stop writing the CLAUDE.md / AGENTS.md managed blocks for this project. |
+| `touch .ijfw/no-registry` (or `IJFW_NO_REGISTRY=1`) | Keep this project out of the cross-project registry, so it never appears in another project's `scope:'all'` search. |
+| `echo company-a > .ijfw/tenant` (or `IJFW_TENANT=company-a`) | Tenant isolation: cross-project search only surfaces projects with the **same** tenant. Run different companies in separate tenants and their memory never crosses. |
+| `touch .ijfw/no-import` (or `IJFW_NO_IMPORT=1`) | Decline the one-time first-run auto-import of other tools' memory (claude-mem / memsearch / memorix) into this project. Reversible. |
+
+The first time IJFW injects into a project it surfaces a one-line heads-up naming
+the managed block and the `.ijfw/no-inject` opt-out. `npx @ijfw/install uninstall`
+removes every managed block from every project it touched (your content
+preserved) and keeps `~/.ijfw/memory/` unless you pass `--purge`.
+
 ## What calls out to the network, and why
 
 | Action | Why | Your control |

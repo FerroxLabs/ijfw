@@ -50,7 +50,13 @@ export function recoveryStatus(projectRoot = process.cwd()) {
   const team = readTeamAssembly(projectRoot);
   const plan = buildSwarmPlan(projectRoot);
   const tasks = blackboard.tasks.data.tasks || [];
-  const latest = readLatest(paths.latest);
+  // readLatest() returns a wrapper { code, data } — unwrap to the bare
+  // checkpoint object (or null) so consumers can read `.id`/`.ts` directly.
+  // Previously the wrapper leaked through, so `ijfw recover status` printed
+  // "Latest checkpoint: undefined" even when latest.json existed and held a
+  // valid checkpoint (latest.id was on latest.data.id, never latest.id).
+  const latestRead = readLatest(paths.latest);
+  const latest = latestRead.code === 'ok' ? latestRead.data : null;
   return {
     ok: true,
     latest,

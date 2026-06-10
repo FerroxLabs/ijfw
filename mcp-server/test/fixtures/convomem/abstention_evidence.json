@@ -1,0 +1,19 @@
+{
+  "_note": "SYNTHETIC hand-authored fixture. NOT real ConvoMem content. Mirrors the abstention_evidence evidence_type -> adversarial bucket (answer NOT present -> the model must abstain; gold normalised to 'unknown').",
+  "evidence_items": [
+    {
+      "question": "What is my brother's middle name?",
+      "answer": "I don't have that information.",
+      "category": "Family",
+      "message_evidences": [],
+      "conversations": [
+        {
+          "messages": [
+            { "speaker": "User", "text": "My brother is visiting next week." },
+            { "speaker": "Assistant", "text": "That'll be nice, enjoy the visit!" }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.6.0] - 2026-06-10 - Cross-system learning, honest observability, and a leaner package
+
+IJFW now learns your working style and keeps a portable, private profile you control — plus a sweep of reliability and polish across the CLI and the cross-AI engine.
+
+### Added — Cross-system learning
+
+- **IJFW learns how you work, privately and on by default.** From your first session, IJFW builds a lightweight model of your communication style — terseness, formality, rhythm, tone — derived locally from interaction *metadata only* (never your message text) at zero LLM cost. Captured across Claude Code, Codex, and Gemini; stored as plain markdown you can read, edit, or wipe; available to every MCP-connected AI on your stack.
+- **`ijfw personalize` — one switch, fully in your control.** `on` / `off` toggles whether your learned style rides into your AI's context (low-sensitivity by default, opt-in — capture is local-only and never injected until you say so). `status` shows what's been learned and the current settings; `forget` wipes the profile. `IJFW_PROFILE_KILL` is an instant kill-switch. Full controls in the README's eighth engine.
+
+### Improved — CLI
+
+- **Friendlier command surface.** `ijfw` now offers "did you mean…?" guidance for mistyped or subcommand-style verbs, and `checkpoint` / `worktree` are available as top-level shortcuts — fewer dead ends, faster discovery.
+
+### Improved — Multi-AI Trident (cross-audit)
+
+- **Broader, more dependable auditor support.** The cross-audit roster was refreshed against the current generation of partner CLIs (Gemini, OpenCode, Qwen, Kimi, Copilot) for more reliable multi-model reviews across the stack, with regression coverage that keeps the roster current as those tools evolve.
+
+### Documentation and honesty
+
+- **README rebuilt as a visual, benefit-first landing page.** Every engine (memory, build discipline, cross-audit, specialist bench, token economy, observability, learns-you, design contract, platforms, and "it is yours") now leads with what it does for you, backed by a deep-dive doc. Proof is up front, ties are stated as ties, and there are no em dashes anywhere.
+- **Observability now describes exactly what ships.** The dashboard's savings tile reports only measured, defensible numbers (real cache-read savings at Anthropic's posted cache pricing, first-recall memory savings, and pre-ship cross-audit findings). An earlier "estimated spend without IJFW" multiplier with no empirical baseline was removed for honesty, and the docs were corrected to match the shipping code.
+
+### Packaging
+
+- **The benchmark and lab-study harness no longer ships in the product package.** The research tooling that compares IJFW against other memory systems (competitor adapters, dataset loaders, judge calibration, and run scripts) is not part of what the product runtime uses, so it was moved to a separate repository. The published packages are smaller and contain no benchmark sidecars or research scaffolding. The product keeps its own self-contained retrieval-quality harness (`ijfw metrics --benchmark`).
+
+### Stability & optimizations
+
+- Reliability and robustness improvements across the memory, learning, capture, and CLI layers, with expanded functional and end-to-end test coverage.
+
 ## [1.5.6] — 2026-05-28 — Windows installer fix and Pi platform support
 
 A focused patch release closing the one regression that escaped the v1.5.5 sweep and adding a new platform.

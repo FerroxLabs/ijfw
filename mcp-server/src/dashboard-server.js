@@ -1481,7 +1481,13 @@ if (process.argv.includes('--daemon')) {
   const pidFile  = process.env.IJFW_PID_FILE  || join(homedir(), '.ijfw', 'dashboard.pid');
   const portFile = process.env.IJFW_PORT_FILE || join(homedir(), '.ijfw', 'dashboard.port');
 
-  startServer().then(({ port }) => {
+  // Optional preferred-port override (forwarded by the launcher's `--port N`).
+  // Unset = default 37891-37900 walk. Invalid values fall back to the default.
+  const startOpts = {};
+  const envPort = Number.parseInt(process.env.IJFW_DASHBOARD_PORT || '', 10);
+  if (Number.isInteger(envPort) && envPort > 0 && envPort < 65536) startOpts.port = envPort;
+
+  startServer(startOpts).then(({ port }) => {
     const ijfwDir = dirname(pidFile);
     mkdirSync(ijfwDir, { recursive: true });
     // PID file: plain write (single writer; pid is meaningless mid-write)

@@ -1,0 +1,40 @@
+{
+  "_note": "SYNTHETIC hand-authored fixture mirroring the ConvoMem evidence-file envelope. NOT real ConvoMem content (which is CC-BY-NC-4.0 and never committed). Invented people/facts only. Mirrors the user_evidence evidence_type -> single-hop bucket.",
+  "evidence_items": [
+    {
+      "question": "What nickname did I give my houseplant?",
+      "answer": "Sir Photosynthesis",
+      "category": "Home Life",
+      "message_evidences": [
+        { "speaker": "User", "text": "I named my new fern Sir Photosynthesis." }
+      ],
+      "conversations": [
+        {
+          "messages": [
+            { "speaker": "User", "text": "I finally bought a fern for my desk." },
+            { "speaker": "Assistant", "text": "Nice! Ferns love indirect light." },
+            { "speaker": "User", "text": "I named my new fern Sir Photosynthesis." },
+            { "speaker": "Assistant", "text": "A noble name for a noble plant." }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "Which gym locker number is mine?",
+      "answer": "Locker 214",
+      "category": "Fitness",
+      "message_evidences": [
+        { "speaker": "User", "text": "They assigned me locker 214 at the gym today." }
+      ],
+      "conversations": [
+        {
+          "messages": [
+            { "speaker": "User", "text": "Signed up at the new gym down the road." },
+            { "speaker": "Assistant", "text": "Congrats on starting a routine!" },
+            { "speaker": "User", "text": "They assigned me locker 214 at the gym today." }
+          ]
+        }
+      ]
+    }
+  ]
+}

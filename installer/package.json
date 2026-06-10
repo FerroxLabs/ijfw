@@ -1,6 +1,6 @@
 {
   "name": "@ijfw/install",
-  "version": "1.5.6",
+  "version": "1.6.0",
   "description": "One-command installer for IJFW -- the AI efficiency layer. One install, every AI coding agent, zero config.",
   "type": "module",
   "bin": {
@@ -13,6 +13,7 @@
     "src/install.ps1",
     "docs/GUIDE.md",
     "docs/guide/assets",
+    "templates/aider/**",
     "scripts/pack-hub-extension.js",
     "scripts/hub-extension/**",
     "README.md",
@@ -21,8 +22,9 @@
   ],
   "scripts": {
     "build": "node scripts/build.js",
-    "test": "node --test test.js",
+    "test": "node --test test.js test/uninstall-completeness.test.mjs test/project-write-guard.test.mjs",
     "test:hub-extension": "node --test test/test-pack-hub-extension.js",
+    "test:uninstall-completeness": "node --test test/uninstall-completeness.test.mjs",
     "preflight": "node dist/ijfw.js preflight",
     "pack:check": "npm pack --dry-run",
     "pack:hub-extension": "node scripts/pack-hub-extension.js",

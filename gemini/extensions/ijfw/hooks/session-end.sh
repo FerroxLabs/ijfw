@@ -94,6 +94,44 @@ if command -v node >/dev/null 2>&1 && [ -n "$HOOK_STDIN" ]; then
 fi
 [ -n "$SESSION_ID_END" ] && rmdir "$IJFW_DIR/.banner-shown.${SESSION_ID_END}.lock" 2>/dev/null || true
 
+# --- Profile bus P1: flush the per-session style accumulator ---
+# Mirrors claude/hooks/scripts/session-end.sh: turns the per-message metadata
+# accumulated by gemini before-agent.sh into ONE .ijfw/.session-style.jsonl
+# contract record (METADATA ONLY), applying the hardening gates (quarantine /
+# PII / identity / influence-cap). Best-effort + isolated: a flush failure never
+# crashes Gemini.
+#
+# Why here (and not after-agent.sh): AfterAgent fires after EVERY subagent turn,
+# so flushing there would clear the accumulator mid-session. SessionEnd is the
+# true end-of-session boundary -- the correct single flush site, matching Claude.
+# It runs BEFORE the dream-trigger spawn so this session's style row is durably
+# on disk before the dream consumer (which reads the style stream) launches.
+#
+# Host: export the canonical 'gemini' so capture.js resolveHost() stamps the SAME
+# provenance string before-agent.sh + the dream-trigger ("gemini" arg) use.
+export IJFW_HOST="${IJFW_HOST:-gemini}"
+CAPTURE_FLUSH=""
+for base in \
+    "$HOME/.ijfw/mcp-server/src" \
+    "$(pwd)/mcp-server/src"; do
+  if [ -f "$base/profile/capture.js" ]; then CAPTURE_FLUSH="$base/profile/capture.js"; break; fi
+done
+if [ -n "$CAPTURE_FLUSH" ] && command -v node >/dev/null 2>&1; then
+  SID_FLUSH="${IJFW_SESSION_ID:-${SESSION_ID_END:-}}"
+  [ -z "$SID_FLUSH" ] && SID_FLUSH="$SESSION_NUM"
+  node --input-type=module -e "
+    const { flushSession } = await import('file://' + process.argv[1]);
+    try {
+      flushSession({
+        sessionId: process.argv[2] || null,
+        ts: Date.now(),
+        cwd: process.cwd(),
+        env: process.env,
+      });
+    } catch {}
+  " "$CAPTURE_FLUSH" "$SID_FLUSH" 2>>"$HOME/.ijfw/logs/gemini-session-end.log" || true
+fi
+
 # Dream cycle trigger (D3 -- inline detached spawn at SessionEnd).
 # Replaces the legacy `SESSION_NUM % 5 == 0` startup-flag deferral with
 # a fire-and-forget spawn that returns within ~50ms. Cooldown enforced

@@ -4,6 +4,15 @@
 # .ijfw/ already covers it, but explicit entry survives if someone narrows
 # the parent rule later.
 .ijfw/index/
+# Profile-bus real-corpus eval scratch (Gate B/C). Contains derived prose slugs +
+# raw result blobs — NEVER commit. Parent .ijfw/ already covers the repo-relative
+# default; runs use a /tmp scratch outside the repo entirely. Explicit for clarity.
+.ijfw/profile-eval-scratch/
+
+# Disposable README-preview artifacts (regenerate any time via /tmp/readme-preview.mjs
+# + scripts/render-*.mjs). NEVER commit — the full-page render is ~13MB.
+/README-preview.html
+docs/img/README-github-preview*.png
 
 # v1.5.2 visible-layer (Plan A IJFW Brain).
 #
@@ -52,9 +61,29 @@ installer/docs/
 # Internal planning docs (per-project, not public).
 .planning/
 
+# NonCommercial benchmark transcripts (LoCoMo / ConvoMem, CC-BY-NC) — run
+# INTERNALLY only, NEVER commit their content. Cell files carry question/gold
+# text (= the dataset's copyrighted material). Only DERIVED metrics (accuracy,
+# McNemar) may be reported, in a scrubbed internal doc. Data is fetched-not-bundled.
+**/_private/
+
+# The ENTIRE lab study lives in its OWN separate repo, never bundled with the
+# product. It carries NonCommercial dataset transcripts (LoCoMo / LongMemEval)
+# and infra notes (pod IPs, SSH key names) that must not ship in this public
+# MIT repo. Moved out to a sibling dir (e.g. ../ijfw-lab-study). This rule keeps
+# it from ever creeping back in.
+lab-study/
+
+# Internal superpowers planning / spec / audit docs (R&D notes, absolute dev
+# paths). Moved out to a sibling dir. Never part of the published product.
+docs/superpowers/
+
 # Node
 node_modules/
 dist/
+# installer/templates/ is staged by installer/scripts/build.js (Aider convention
+# templates for the published tarball) -- build artifact, not source.
+installer/templates/
 *.log
 .DS_Store
 

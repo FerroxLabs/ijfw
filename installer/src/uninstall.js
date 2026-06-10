@@ -1,10 +1,60 @@
 // @ijfw/install -- reverse install. Preserves ~/.ijfw/memory/ unless --purge.
 
 import { existsSync, rmSync, cpSync, mkdtempSync, readFileSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { unmergeMarketplace, claudeSettingsPath } from './marketplace.js';
+
+// Repo root, resolved relative to this module (installer/src/uninstall.js ->
+// repo root is two dirs up). Used to byte-compare shipped Aider templates
+// against the user's installed copies before any deletion.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const REPO_ROOT = resolve(__dirname, '..', '..');
+
+// resolveAiderTemplate -- locate a shipped Aider convention template across the
+// two layouts this module runs from:
+//
+//   (a) git clone  -> <repoRoot>/aider/<name>            (REPO_ROOT/aider/...)
+//   (b) npm tarball -> dist/uninstall.js, templates staged by build.js at
+//                      <pkgRoot>/templates/aider/<name>  (i.e. ../templates from dist)
+//
+// The published @ijfw/install package does NOT ship the repo's top-level
+// `aider/` dir, and dist/uninstall.js's REPO_ROOT points two dirs above
+// `dist/` (the package root's parent) -- so the (a) path does not exist in a
+// pure-tarball install. build.js copies the templates into templates/aider/,
+// which IS in package.json "files"; this resolver finds them there.
+//
+// Returns the first existing candidate path, or '' if none found (caller then
+// treats the file as un-provable -> KEEPS it, never deletes).
+//
+// `repoRoot` is injectable so tests can point at the repo layout explicitly.
+function resolveAiderTemplate(name, repoRoot) {
+  // Order matters. An explicitly-injected repoRoot is authoritative and is
+  // checked FIRST -- tests rely on this to pin a specific layout, and it lets a
+  // caller override the auto-detected location. The __dirname-relative
+  // candidates are the production fallback for a pure tarball (where no
+  // repoRoot/aider exists). They come LAST so the package's own staged-template
+  // location can never shadow an explicit caller choice.
+  const root = repoRoot || REPO_ROOT;
+  const candidates = [
+    // (a) git clone: top-level aider/ under the (injected) repo root.
+    join(root, 'aider', name),
+    // (a') repo root with staged templates under installer/.
+    join(root, 'installer', 'templates', 'aider', name),
+    // (b) tarball/dist fallback: templates staged next to the package root.
+    //   dist/uninstall.js -> __dirname=<pkg>/dist -> <pkg>/templates/aider/<name>
+    //   src/uninstall.js  -> __dirname=<pkg>/src  -> <pkg>/templates/aider/<name>
+    //   (__dirname's parent is the package root in both layouts)
+    resolve(__dirname, '..', 'templates', 'aider', name),
+  ];
+  for (const c of candidates) {
+    try { if (existsSync(c)) return c; } catch { /* skip */ }
+  }
+  return '';
+}
 
 // Atomic write: write to a temp sibling, then rename into place.
 // Prevents mid-write truncation from leaving a half-written config.
@@ -69,6 +119,81 @@ function backupFile(p) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Project marker-region stripping (the headline P3 honesty gap).
+//
+// IJFW injects managed marker regions into project CLAUDE.md / AGENTS.md
+// (and into rules files). Uninstall must remove exactly those regions and
+// preserve every user-authored line. This mirrors
+// claude/hooks/scripts/global-cleanup.sh's `ijfw_strip_blocks` node payload
+// verbatim, ported to in-process JS so uninstall.js needs no subprocess.
+// ---------------------------------------------------------------------------
+
+// Pure string -> { text, changed }. Never throws. Strips the five IJFW marker
+// regions, the autogen comment, and the AGENTS.md explainer paragraph, then
+// collapses blank-line runs. START tags are PREFIX-matched (the MEMORY start
+// tag carries a "(managed -- do not edit manually)" suffix in CLAUDE.md but is
+// bare in AGENTS.md.tmpl) so both shapes are caught.
+function stripIjfwRegions(src) {
+  if (typeof src !== 'string') return { text: src, changed: false };
+  const before = src;
+  let out = src;
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regions = [
+    ['<!-- IJFW-MEMORY-START', '<!-- IJFW-MEMORY-END -->'],
+    ['<!-- IJFW-ROUTING-START', '<!-- IJFW-ROUTING-END -->'],
+    ['<!-- IJFW-AGENTS-START', '<!-- IJFW-AGENTS-END -->'],
+    ['<!-- IJFW-BLACKBOARD-START', '<!-- IJFW-BLACKBOARD-END -->'],
+    ['<!-- IJFW-DISCIPLINE-START', '<!-- IJFW-DISCIPLINE-END -->'],
+  ];
+  for (const [start, end] of regions) {
+    // eslint-disable-next-line security/detect-non-literal-regexp -- start/end are hardcoded IJFW sentinel literals, regex-escaped before use.
+    const re = new RegExp('\\n*' + esc(start) + '[\\s\\S]*?' + esc(end) + '[^\\n]*', 'g');
+    out = out.replace(re, '');
+  }
+  // IJFW autogen comment (CLAUDE.md).
+  out = out.replace(/\n*<!-- Auto-generated by IJFW from repo scan\.[^\n]*-->/g, '');
+  // AGENTS.md explainer paragraph for the managed regions. The count word has
+  // drifted ("Four" -> "Five") across versions; match either so we strip the
+  // IJFW-authored explainer regardless of which template version wrote it.
+  out = out.replace(/\n*(?:Four|Five) IJFW-managed regions live in this file\.[\s\S]*?IJFW will never touch it\./g, '');
+  // Collapse blank-line runs; keep a single trailing newline.
+  out = out.replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
+  if (out.length) out += '\n';
+  return { text: out, changed: out !== before };
+}
+
+// Does this text carry any IJFW marker region? Cheap pre-check so we only back
+// up + rewrite files we actually authored into.
+function hasIjfwMarker(text) {
+  return /IJFW-MEMORY-START|IJFW-ROUTING-START|IJFW-AGENTS-START|IJFW-BLACKBOARD-START|IJFW-DISCIPLINE-START/.test(text);
+}
+
+// Strip IJFW marker regions from a project markdown file, preserving user
+// content. Guarded end-to-end: never throws. Backs up before editing.
+// When `deleteIfEmpty` is set, a file whose post-strip body is whitespace-only
+// is removed entirely (used for rules files that are wholly IJFW-managed apart
+// from optional user additions). Returns a human-readable status or null.
+function stripMarkerFile(p, opts = {}) {
+  try {
+    if (!existsSync(p)) return null;
+    let text;
+    try { text = readFileSync(p, 'utf8'); } catch { return null; }
+    if (!hasIjfwMarker(text)) return null;
+    const { text: stripped, changed } = stripIjfwRegions(text);
+    if (!changed) return null;
+    backupFile(p);
+    if (opts.deleteIfEmpty && stripped.trim() === '') {
+      rmSync(p, { force: true });
+      return `${opts.label || p}  (removed -- became empty after IJFW region strip)`;
+    }
+    writeAtomic(p, stripped);
+    return `${opts.label || p}  (stripped IJFW marker regions, user content preserved)`;
+  } catch {
+    return null;
+  }
+}
+
 // Remove [mcp_servers.ijfw-memory] section from a TOML file.
 function removeTomlSection(p) {
   if (!existsSync(p)) return false;
@@ -99,6 +224,95 @@ function removeJsonMcpEntry(p) {
     changed = true;
   }
   return changed;
+}
+
+// Remove ijfw-memory from a NESTED JSON MCP container. `keyPath` is the chain
+// of object keys leading to the map that holds the 'ijfw-memory' entry, e.g.
+//   ['mcp']            -> OpenCode  (doc.mcp['ijfw-memory'])
+//   ['mcp','servers']  -> OpenClaw  (doc.mcp.servers['ijfw-memory'])
+// Backs up before editing; atomic write. Never throws.
+function removeNestedMcpEntry(p, keyPath) {
+  try {
+    if (!existsSync(p)) return false;
+    let doc;
+    try { doc = JSON.parse(readFileSync(p, 'utf8')); } catch { return false; }
+    if (!doc || typeof doc !== 'object') return false;
+    let node = doc;
+    for (const k of keyPath) {
+      if (!node[k] || typeof node[k] !== 'object') return false;
+      node = node[k];
+    }
+    if (!node['ijfw-memory']) return false;
+    backupFile(p);
+    delete node['ijfw-memory'];
+    writeAtomic(p, JSON.stringify(doc, null, 2) + '\n');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Resolve the Cline cline_mcp_settings.json path for the given home, returning
+// only an EXISTING globalStorage location (read-only discovery -- unlike the
+// installer we never fall back to an OS default we'd then create). Mirrors the
+// candidate list in install-helpers.clineMerge. Returns the settings file path
+// or null if no Cline globalStorage dir is present.
+function resolveClineSettingsPath(home) {
+  const H = home;
+  const APPDATA = process.env.APPDATA || join(H, 'AppData', 'Roaming');
+  const ext = 'saoudrizwan.claude-dev';
+  let userDirs;
+  if (process.platform === 'darwin') {
+    userDirs = [
+      join(H, 'Library', 'Application Support', 'Code', 'User'),
+      join(H, 'Library', 'Application Support', 'Code - Insiders', 'User'),
+      join(H, 'Library', 'Application Support', 'VSCodium', 'User'),
+    ];
+  } else if (process.platform === 'win32') {
+    userDirs = [
+      join(APPDATA, 'Code', 'User'),
+      join(APPDATA, 'Code - Insiders', 'User'),
+      join(APPDATA, 'VSCodium', 'User'),
+    ];
+  } else {
+    userDirs = [
+      join(H, '.config', 'Code', 'User'),
+      join(H, '.config', 'VSCodium', 'User'),
+      join(H, '.var', 'app', 'com.visualstudio.code', 'config', 'Code', 'User'),
+      join(H, 'snap', 'code', 'current', '.config', 'Code', 'User'),
+    ];
+  }
+  for (const d of userDirs) {
+    const settings = join(d, 'globalStorage', ext, 'settings', 'cline_mcp_settings.json');
+    if (existsSync(settings)) return settings;
+  }
+  return null;
+}
+
+// Remove ~/.aider.conf.yml / ~/CONVENTIONS.md ONLY when the on-disk file is a
+// byte-for-byte match of the shipped template. Aider files carry no markers and
+// were copy-if-missing at install, so we cannot distinguish IJFW-authored from
+// user-edited any other way. If the bytes differ (user edited, or a pre-existing
+// file install never touched), we LEAVE the file and signal so the caller can
+// log honestly. Returns 'removed' | 'kept-modified' | 'absent'.
+function removeAiderFileIfPristine(installedPath, templatePath) {
+  try {
+    if (!existsSync(installedPath)) return 'absent';
+    if (!existsSync(templatePath)) return 'kept-modified'; // can't prove pristine
+    let a, b;
+    try {
+      a = readFileSync(installedPath);
+      b = readFileSync(templatePath);
+    } catch { return 'kept-modified'; }
+    if (a.equals(b)) {
+      backupFile(installedPath);
+      rmSync(installedPath, { force: true });
+      return 'removed';
+    }
+    return 'kept-modified';
+  } catch {
+    return 'kept-modified';
+  }
 }
 
 // Remove IJFW matcher-groups from ~/.codex/hooks.json. Handles three shapes:
@@ -250,71 +464,236 @@ function removeCodexCommands(dir) {
   return count;
 }
 
-function cleanPlatforms() {
+// Clean platform configs across all 15 platforms. `home` and `cwd` are
+// injectable so tests can point at a scratch sandbox; production callers use
+// the real HOME / process.cwd() defaults. `repoRoot` locates shipped templates
+// (Aider byte-match). Never throws -- every helper guards itself.
+function cleanPlatforms(opts = {}) {
+  const home = opts.home || HOME;
+  const cwd = opts.cwd || process.cwd();
+  const repoRoot = opts.repoRoot || REPO_ROOT;
   const removed = [];
 
   // Codex: config.toml MCP section
-  if (removeTomlSection(join(HOME, '.codex', 'config.toml'))) {
+  if (removeTomlSection(join(home, '.codex', 'config.toml'))) {
     removed.push('~/.codex/config.toml  (removed [mcp_servers.ijfw-memory])');
   }
   // Codex: hooks.json IJFW entries
-  if (removeCodexHooks(join(HOME, '.codex', 'hooks.json'))) {
+  if (removeCodexHooks(join(home, '.codex', 'hooks.json'))) {
     removed.push('~/.codex/hooks.json  (removed IJFW hook entries)');
   }
   // Codex: skill dirs
-  const codexSkills = removeIjfwSkills(join(HOME, '.codex', 'skills'));
+  const codexSkills = removeIjfwSkills(join(home, '.codex', 'skills'));
   if (codexSkills > 0) removed.push(`~/.codex/skills/ijfw-*  (removed ${codexSkills} skill dirs)`);
   // Codex: command alias files. Remove only IJFW's exact command filenames
   // because several are intentionally not ijfw-prefixed.
-  const codexCommands = removeCodexCommands(join(HOME, '.codex', 'commands'));
+  const codexCommands = removeCodexCommands(join(home, '.codex', 'commands'));
   if (codexCommands > 0) removed.push(`~/.codex/commands  (removed ${codexCommands} IJFW command aliases)`);
   // Codex: IJFW.md context file
-  const codexMd = join(HOME, '.codex', 'IJFW.md');
+  const codexMd = join(home, '.codex', 'IJFW.md');
   if (existsSync(codexMd)) { rmSync(codexMd, { force: true }); removed.push('~/.codex/IJFW.md'); }
 
   // Gemini: settings.json MCP entry
-  if (removeJsonMcpEntry(join(HOME, '.gemini', 'settings.json'))) {
+  if (removeJsonMcpEntry(join(home, '.gemini', 'settings.json'))) {
     removed.push('~/.gemini/settings.json  (removed ijfw-memory)');
   }
   // Gemini: extension dir
-  const geminiExt = join(HOME, '.gemini', 'extensions', 'ijfw');
+  const geminiExt = join(home, '.gemini', 'extensions', 'ijfw');
   if (existsSync(geminiExt)) {
     rmSync(geminiExt, { recursive: true, force: true });
     removed.push('~/.gemini/extensions/ijfw/');
   }
 
   // Cursor: project .cursor/mcp.json
-  const cursorMcp = join('.cursor', 'mcp.json');
+  const cursorMcp = join(cwd, '.cursor', 'mcp.json');
   if (removeJsonMcpEntry(cursorMcp)) removed.push('.cursor/mcp.json  (removed ijfw-memory)');
 
   // Windsurf: global mcp_config.json
-  if (removeJsonMcpEntry(join(HOME, '.codeium', 'windsurf', 'mcp_config.json'))) {
+  if (removeJsonMcpEntry(join(home, '.codeium', 'windsurf', 'mcp_config.json'))) {
     removed.push('~/.codeium/windsurf/mcp_config.json  (removed ijfw-memory)');
   }
 
   // Copilot / VS Code: project .vscode/mcp.json
-  const vscodeMcp = join('.vscode', 'mcp.json');
+  const vscodeMcp = join(cwd, '.vscode', 'mcp.json');
   if (removeJsonMcpEntry(vscodeMcp)) removed.push('.vscode/mcp.json  (removed ijfw-memory)');
 
   // Hermes: config.yaml MCP entry + skills + context file
-  if (removeYamlMcpEntry(join(HOME, '.hermes', 'config.yaml'))) {
+  if (removeYamlMcpEntry(join(home, '.hermes', 'config.yaml'))) {
     removed.push('~/.hermes/config.yaml  (removed ijfw-memory)');
   }
-  const hermesSkills = removeIjfwSkills(join(HOME, '.hermes', 'skills'));
+  const hermesSkills = removeIjfwSkills(join(home, '.hermes', 'skills'));
   if (hermesSkills > 0) removed.push(`~/.hermes/skills/ijfw-*  (removed ${hermesSkills} skill dirs)`);
-  const hermesMd = join(HOME, '.hermes', 'HERMES.md');
+  const hermesMd = join(home, '.hermes', 'HERMES.md');
   if (existsSync(hermesMd)) { rmSync(hermesMd, { force: true }); removed.push('~/.hermes/HERMES.md'); }
 
-  // Wayland: config.yaml MCP entry + skills + context file
-  if (removeYamlMcpEntry(join(HOME, '.wayland', 'config.yaml'))) {
-    removed.push('~/.wayland/config.yaml  (removed ijfw-memory)');
+  // Wayland: declarative plugin dir + skills + context file. The MCP server
+  // and lifecycle hooks are declared inside plugins/ijfw/plugin.toml (no
+  // separate config.yaml entry), so removing the plugin dir removes the MCP
+  // wiring + hooks in one shot.
+  const waylandPluginDir = join(home, '.wayland', 'plugins', 'ijfw');
+  if (existsSync(waylandPluginDir)) {
+    rmSync(waylandPluginDir, { recursive: true, force: true });
+    removed.push('~/.wayland/plugins/ijfw/  (removed plugin.toml + hooks + MCP)');
   }
-  const waylandSkills = removeIjfwSkills(join(HOME, '.wayland', 'skills'));
+  // Legacy (<= v1.5.x): the old installer wrote a config.yaml MCP entry. Strip
+  // it on upgrade-then-uninstall so stale wiring does not linger.
+  if (removeYamlMcpEntry(join(home, '.wayland', 'config.yaml'))) {
+    removed.push('~/.wayland/config.yaml  (removed legacy ijfw-memory)');
+  }
+  const waylandSkills = removeIjfwSkills(join(home, '.wayland', 'skills'));
   if (waylandSkills > 0) removed.push(`~/.wayland/skills/ijfw-*  (removed ${waylandSkills} skill dirs)`);
-  const waylandMd = join(HOME, '.wayland', 'WAYLAND.md');
+  const waylandMd = join(home, '.wayland', 'WAYLAND.md');
   if (existsSync(waylandMd)) { rmSync(waylandMd, { force: true }); removed.push('~/.wayland/WAYLAND.md'); }
 
+  // ---- Platforms 8-15 (P3 completeness) -------------------------------------
+
+  // Qwen Code: ~/.qwen/settings.json -- flat mcpServers.
+  if (removeJsonMcpEntry(join(home, '.qwen', 'settings.json'))) {
+    removed.push('~/.qwen/settings.json  (removed ijfw-memory)');
+  }
+
+  // Kimi Code: ~/.kimi/mcp.json -- flat mcpServers.
+  if (removeJsonMcpEntry(join(home, '.kimi', 'mcp.json'))) {
+    removed.push('~/.kimi/mcp.json  (removed ijfw-memory)');
+  }
+
+  // Antigravity: two surfaces, both flat mcpServers (IDE + CLI `agy`).
+  if (removeJsonMcpEntry(join(home, '.gemini', 'antigravity', 'mcp_config.json'))) {
+    removed.push('~/.gemini/antigravity/mcp_config.json  (removed ijfw-memory)');
+  }
+  if (removeJsonMcpEntry(join(home, '.gemini', 'config', 'mcp_config.json'))) {
+    removed.push('~/.gemini/config/mcp_config.json  (removed ijfw-memory)');
+  }
+
+  // OpenCode: ~/.config/opencode/opencode.json -- nested mcp['ijfw-memory'].
+  if (removeNestedMcpEntry(join(home, '.config', 'opencode', 'opencode.json'), ['mcp'])) {
+    removed.push('~/.config/opencode/opencode.json  (removed mcp.ijfw-memory)');
+  }
+
+  // OpenClaw: ~/.openclaw/openclaw.json -- nested mcp.servers['ijfw-memory'].
+  if (removeNestedMcpEntry(join(home, '.openclaw', 'openclaw.json'), ['mcp', 'servers'])) {
+    removed.push('~/.openclaw/openclaw.json  (removed mcp.servers.ijfw-memory)');
+  }
+
+  // Pi: ~/.pi/agent/AGENTS.md -- strip IJFW marker regions, preserve user content.
+  const piStatus = stripMarkerFile(join(home, '.pi', 'agent', 'AGENTS.md'), {
+    label: '~/.pi/agent/AGENTS.md',
+  });
+  if (piStatus) removed.push(piStatus);
+
+  // Cline: VS Code globalStorage cline_mcp_settings.json (OS-specific path).
+  // Best-effort: we only touch an EXISTING globalStorage dir. If the extension's
+  // storage isn't discoverable we say so honestly rather than claim it's clean.
+  const clineSettings = resolveClineSettingsPath(home);
+  if (clineSettings) {
+    if (removeJsonMcpEntry(clineSettings)) {
+      removed.push(`${clineSettings}  (removed ijfw-memory)`);
+    }
+  } else {
+    removed.push('Cline: no globalStorage found -- if you use Cline, remove the ijfw-memory MCP entry manually.');
+  }
+
+  // Aider: ~/.aider.conf.yml + ~/CONVENTIONS.md. No markers -> only remove when
+  // byte-identical to the shipped template (cannot prove IJFW-authorship
+  // otherwise). Leave + log honestly when the user has edited the file.
+  const confResult = removeAiderFileIfPristine(
+    join(home, '.aider.conf.yml'),
+    resolveAiderTemplate('aider.conf.yml', repoRoot),
+  );
+  if (confResult === 'removed') {
+    removed.push('~/.aider.conf.yml  (removed -- matched shipped template)');
+  } else if (confResult === 'kept-modified') {
+    removed.push('~/.aider.conf.yml  (KEPT -- differs from shipped template; remove manually if it is IJFW-only)');
+  }
+  const convResult = removeAiderFileIfPristine(
+    join(home, 'CONVENTIONS.md'),
+    resolveAiderTemplate('CONVENTIONS.md', repoRoot),
+  );
+  if (convResult === 'removed') {
+    removed.push('~/CONVENTIONS.md  (removed -- matched shipped template)');
+  } else if (convResult === 'kept-modified') {
+    removed.push('~/CONVENTIONS.md  (KEPT -- differs from shipped template; remove manually if it is IJFW-only)');
+  }
+
   return removed;
+}
+
+// ---------------------------------------------------------------------------
+// Registry-driven project-block stripping (the headline P3 gap).
+//
+// IJFW's session-start hook appends each opened project to ~/.ijfw/registry.md
+// (line shape: `<absolute-path> | <hash> | <iso>`) and injects managed marker
+// regions into that project's CLAUDE.md / AGENTS.md. Uninstall walks the
+// registry and strips those regions back out, preserving all user content. It
+// also cleans rules files in the current working directory.
+// ---------------------------------------------------------------------------
+
+// Parse ~/.ijfw/registry.md into a list of absolute project paths. Each line is
+// `<path> | <hash> | <iso>`; the path is the first ` | `-delimited field. Blank
+// / malformed lines are skipped. Missing file -> []. Never throws.
+function parseRegistryPaths(registryPath) {
+  try {
+    if (!existsSync(registryPath)) return [];
+    const raw = readFileSync(registryPath, 'utf8');
+    const paths = [];
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const first = trimmed.split('|')[0].trim();
+      if (!first) continue;
+      // Only accept absolute paths -- a malformed line without a real path is
+      // ignored rather than acted on.
+      if (!first.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(first)) continue;
+      paths.push(first);
+    }
+    return paths;
+  } catch {
+    return [];
+  }
+}
+
+function stripRegisteredProjectBlocks(opts = {}) {
+  const home = opts.home || HOME;
+  const cwd = opts.cwd || process.cwd();
+  const registryPath = opts.registryPath || join(home, '.ijfw', 'registry.md');
+  const results = [];
+
+  // 1. Registry-listed projects: strip CLAUDE.md + AGENTS.md marker regions.
+  for (const projPath of parseRegistryPaths(registryPath)) {
+    let dirExists = false;
+    try { dirExists = existsSync(projPath); } catch { dirExists = false; }
+    if (!dirExists) continue;
+    for (const name of ['CLAUDE.md', 'AGENTS.md']) {
+      const filePath = join(projPath, name);
+      const status = stripMarkerFile(filePath, { label: join(projPath, name) });
+      if (status) results.push(status);
+    }
+  }
+
+  // 2. Current-cwd rules files.
+  //    .cursor/rules/ijfw.mdc is wholly IJFW-authored -> safe to delete.
+  try {
+    const cursorRule = join(cwd, '.cursor', 'rules', 'ijfw.mdc');
+    if (existsSync(cursorRule)) {
+      backupFile(cursorRule);
+      rmSync(cursorRule, { force: true });
+      results.push('.cursor/rules/ijfw.mdc  (removed -- wholly IJFW-authored)');
+    }
+  } catch { /* best-effort */ }
+
+  //    .windsurfrules + .github/copilot-instructions.md carry IJFW marker
+  //    regions amid possible user content -> strip regions, delete if empty.
+  const windsurfStatus = stripMarkerFile(join(cwd, '.windsurfrules'), {
+    label: '.windsurfrules', deleteIfEmpty: true,
+  });
+  if (windsurfStatus) results.push(windsurfStatus);
+
+  const copilotStatus = stripMarkerFile(join(cwd, '.github', 'copilot-instructions.md'), {
+    label: '.github/copilot-instructions.md', deleteIfEmpty: true,
+  });
+  if (copilotStatus) results.push(copilotStatus);
+
+  return results;
 }
 
 function resolveTarget(opt) {
@@ -382,12 +761,19 @@ async function main() {
     }
   }
 
-  // Clean up platform configs across all 13 platforms -- canonical only.
+  // Clean up platform configs across all 15 platforms PLUS project-scoped
+  // CLAUDE.md / AGENTS.md marker blocks -- canonical only.
   if (isCanonical) {
     const cleaned = cleanPlatforms();
     if (cleaned.length > 0) {
       console.log('  platform configs cleaned:');
       for (const line of cleaned) console.log(`    ${line}`);
+    }
+    // Registry-driven project-block strip (CLAUDE.md / AGENTS.md / rules files).
+    const projectCleaned = stripRegisteredProjectBlocks();
+    if (projectCleaned.length > 0) {
+      console.log('  project blocks cleaned:');
+      for (const line of projectCleaned) console.log(`    ${line}`);
     }
   } else {
     console.log(`  custom-dir uninstall (${target}) -- platform configs in your real home left untouched.`);
@@ -397,4 +783,22 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((e) => { console.error(e.message || String(e)); process.exit(1); });
+// Auto-run only when executed directly (e.g. `node uninstall.js`). Guarded so
+// the module can be imported by tests without triggering a destructive run.
+const isDirectRun = process.argv[1]
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main().catch((e) => { console.error(e.message || String(e)); process.exit(1); });
+}
+
+export {
+  stripIjfwRegions,
+  stripMarkerFile,
+  cleanPlatforms,
+  stripRegisteredProjectBlocks,
+  parseRegistryPaths,
+  removeNestedMcpEntry,
+  removeAiderFileIfPristine,
+  resolveAiderTemplate,
+  resolveClineSettingsPath,
+};

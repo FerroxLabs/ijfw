@@ -86,6 +86,77 @@ export function nativePath(p) {
   return normalize(String(p));
 }
 
+/**
+ * isProjectWritable -- decide whether project-scoped (cwd-relative) installer
+ * writes are safe. Mirrors the SessionStart hook's `ijfw_is_project_writable`
+ * (claude/hooks/scripts/session-start.sh): refuse when the candidate cwd
+ * resolves to the user's home root or to '/', because those turn project files
+ * (./.cursor/, ./.windsurfrules, ./.vscode/mcp.json, ./.github/...) into a
+ * GLOBAL config bleed (the v1.6.0 P0 bug, but on the installer side).
+ *
+ * FAIL CLOSED: if we cannot resolve cwd or home, we refuse rather than risk a
+ * home-root write. Paths are compared after realpathSync so a symlinked $HOME
+ * (e.g. /var -> /private/var on macOS) still matches.
+ *
+ * Pure-ish: reads only the filesystem for path canonicalization, writes
+ * nothing. `home` defaults to homeReal().
+ *
+ * @param {string} cwd   candidate project directory (where ./... writes land)
+ * @param {string} [home] the user's home dir (defaults to homeReal())
+ * @returns {boolean} true => project writes are safe; false => refuse
+ */
+export function isProjectWritable(cwd, home) {
+  if (!cwd || typeof cwd !== 'string') return false;
+
+  // Resolve the candidate cwd to its physical path. If realpath fails (e.g. the
+  // dir doesn't exist), fall back to a normalized resolve so we can still catch
+  // the literal home-root / '/' cases; if even that is unusable, refuse.
+  let candReal;
+  try { candReal = realpathSync(cwd); }
+  catch {
+    try { candReal = resolve(cwd); } catch { return false; }
+  }
+  if (!candReal || candReal === '/' || candReal === sep) return false;
+
+  // Resolve home. Fail closed if we cannot establish a physical home path --
+  // we cannot prove the candidate isn't the home root without it.
+  const rawHome = (home && typeof home === 'string' && home.length > 0) ? home : homedir();
+  if (!rawHome) return false;
+  let homeRealPath;
+  try { homeRealPath = realpathSync(rawHome); }
+  catch {
+    try { homeRealPath = resolve(rawHome); } catch { return false; }
+  }
+  if (!homeRealPath) return false;
+
+  // The bleed vector: cwd === $HOME. Refuse.
+  if (candReal === homeRealPath) return false;
+
+  return true;
+}
+
+/**
+ * guardProjectWrite -- caller-side convenience around isProjectWritable. When
+ * the write is refused, emits one honest one-liner (no scary diagnostics, per
+ * the IJFW positive-framing rule) and returns false so the caller can skip the
+ * project-scoped write while still completing any home-scoped work.
+ *
+ * @param {string} cwd
+ * @param {string} home
+ * @param {{ platformLabel?: string, log?: { info: (s:string)=>void } }} [opts]
+ * @returns {boolean} true => proceed with project write; false => skip
+ */
+export function guardProjectWrite(cwd, home, opts = {}) {
+  if (isProjectWritable(cwd, home)) return true;
+  const label = opts.platformLabel || 'project rules';
+  const info = (opts.log && typeof opts.log.info === 'function') ? opts.log.info : printInfo;
+  info(
+    `Run \`ijfw install\` from a project directory to install ${label}; ` +
+    'skipped (cwd is your home directory).',
+  );
+  return false;
+}
+
 // ============================================================================
 // Atomic writes + backup  (install.sh:585-590)
 // ============================================================================

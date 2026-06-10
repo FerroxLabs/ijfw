@@ -45,6 +45,53 @@ const DB_FILENAME = 'memory.db';
 const INDEX_DIR_NAME = 'index';
 const IJFW_DIR_NAME = '.ijfw';
 
+// --- W1.3 (v1.6.0): natural-language OR-query construction ------------------
+//
+// FTS5 treats a space-separated MATCH as implicit AND -- every token must
+// co-occur in one indexed entry. A real natural-language recall ("what
+// database did we pick for the auth service") almost never has all its tokens
+// in a single entry, so the implicit-AND query starves and retrieves nothing.
+// expandQuery() only OR-groups *synonyms* ("(db OR database) AND user"); the
+// inter-token relation stays AND. The fix (proven by the v1.6.0 bench harness)
+// is to OR the salient terms: drop stopwords + sub-3-char tokens, dedup, fold
+// each surviving token's synonym group in, and OR-join. Single-token and
+// exact-phrase queries are unaffected (one quoted term / one OR-group).
+const FTS_STOPWORDS = new Set([
+  'the', 'and', 'for', 'are', 'was', 'were', 'with', 'that', 'this', 'from',
+  'who', 'what', 'when', 'where', 'which', 'whom', 'whose', 'why', 'how',
+  'did', 'does', 'has', 'had', 'have', 'been', 'being', 'into', 'than',
+  'same', 'both', 'also', 'about', 'between', 'their', 'they', 'them',
+  'his', 'her', 'its', 'our', 'your', 'you', 'she', 'him',
+]);
+
+// Strip FTS5 special / column-separator chars to spaces, collapse whitespace.
+// Keeps alphanumerics + underscore + spaces. (Mirrors the bench harness's
+// sanitiser; inlined so the hot search path stays uncoupled from bench code.)
+function sanitizeFtsQuery(q) {
+  if (typeof q !== 'string') return '';
+  return q.replace(/[^a-zA-Z0-9_\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Build an OR-of-salient-terms FTS5 query from a natural-language string.
+// Each surviving token is folded through expandQuery so synonym groups still
+// fire (e.g. "auth" -> "(auth OR authentication)"); non-expanding tokens are
+// quoted as literals (safe against any residual FTS5 keyword). Returns '' when
+// nothing salient survives, so the caller can fall back to the raw query.
+function buildOrQuery(q) {
+  const sanitized = sanitizeFtsQuery(q);
+  if (!sanitized) return '';
+  const seen = new Set();
+  const groups = [];
+  for (const tok of sanitized.split(/\s+/)) {
+    const t = tok.toLowerCase();
+    if (t.length < 3 || FTS_STOPWORDS.has(t) || seen.has(t)) continue;
+    seen.add(t);
+    const { expanded, applied } = expandQuery(tok);
+    groups.push(applied ? expanded : `"${tok}"`);
+  }
+  return groups.join(' OR ');
+}
+
 // --- Driver bootstrap (top-level await; resolves once at module load) -----
 
 let DRIVER = null;
@@ -524,7 +571,12 @@ export function searchMemory(q, files, limit = MAX_RESULTS, options) {
         if (rowCount(db) === 0 && files.length > 0) {
           autoIndex(db, files);
         }
-        const ftsQuery = applied ? expanded : q;
+        // W1.3: OR the salient terms so NL queries don't starve under FTS5's
+        // implicit AND. Falls back to the synonym-expanded (or raw) query when
+        // no salient term survives. Final catch retries the raw query so a
+        // malformed rewrite can never regress to fewer results than today.
+        const orQuery = buildOrQuery(q);
+        const ftsQuery = orQuery || (applied ? expanded : q);
         let rows;
         try {
           rows = searchFts5(db, ftsQuery, limit, tier_semantic, include_stale);

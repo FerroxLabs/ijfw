@@ -943,6 +943,54 @@ else
 fi
 
 # ============================================================
+# FUNCTIONAL-SMOKE GATE
+# ============================================================
+# Drive every flagship feature end-to-end through its REAL interface (MCP
+# JSON-RPC, CLI verbs binding sockets), not just unit/--help/route shape. This
+# gate exists because unit-green did NOT mean working: memory recall, the
+# dashboard, the workflow surface, doctor, and cross-audit all shipped silently
+# broken while every unit test passed. Blocking here makes "green" mean working.
+hdr "Functional smoke (real-interface end-to-end)"
+if (cd "$REPO_ROOT/mcp-server" && node scripts/run-functional-smoke.mjs \
+      >"$ISO_HOME/functional-smoke.out" 2>&1); then
+  pass "functional-smoke: all harnesses green ($(grep -c '^-> ' "$ISO_HOME/functional-smoke.out" 2>/dev/null || echo '?') driven)"
+else
+  fail "functional-smoke: a flagship feature is broken end-to-end (see $ISO_HOME/functional-smoke.out)"
+fi
+
+# ============================================================
+# CROSS-CLIENT INJECTION VERIFICATION GATE (personalization S8)
+# ============================================================
+# Personalization ships ONE local profile and projects it into every CLI coding
+# agent through whatever injection surface that client honors. We may ONLY claim
+# a client ("personalization travels here") once it is PROVEN through that
+# client's REAL surface (MCP initialize `instructions`, MCP resource read, the
+# session-start rules-file). The harness drives all three end-to-end with
+# negative controls (kill switch / opt-out => NO injection) and emits a
+# machine-readable per-client verdict so marketing lists ONLY verified clients.
+#
+# This is also auto-run by the functional-smoke gate above (it is discovered as a
+# functional-smoke*.mjs harness); we run it EXPLICITLY here too so the named gate
+# surfaces the verdict line and asserts the verified set is non-empty.
+hdr "Cross-client injection verification (verified/partial/unverified)"
+if (cd "$REPO_ROOT/mcp-server" && node scripts/functional-smoke-injection.mjs \
+      >"$ISO_HOME/injection-verify.out" 2>&1); then
+  VERDICT_LINE=$(grep '^INJECTION_VERDICTS_JSON:' "$ISO_HOME/injection-verify.out" 2>/dev/null | head -1)
+  # Read the authoritative verifiedCount field from the verdict line (no jq dep).
+  # Avoids grep-counting "verified" across the blob, which double-counts the
+  # detail map.
+  VERIFIED_COUNT=$(printf '%s' "$VERDICT_LINE" | grep -o '"verifiedCount":[0-9]*' | head -1 | grep -o '[0-9]*')
+  [ -z "$VERIFIED_COUNT" ] && VERIFIED_COUNT=0
+  if [ "$VERIFIED_COUNT" -gt 0 ]; then
+    pass "injection-verify: $VERIFIED_COUNT client(s) VERIFIED (real-surface + negative controls); verdict line emitted for marketing"
+  else
+    fail "injection-verify: harness green but ZERO clients verified -- refusing to claim cross-client injection (see $ISO_HOME/injection-verify.out)"
+  fi
+else
+  fail "injection-verify: a claimed injection surface regressed or a negative control leaked (see $ISO_HOME/injection-verify.out)"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 hdr "Summary"

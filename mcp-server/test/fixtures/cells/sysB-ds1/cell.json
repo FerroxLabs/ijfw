@@ -1,0 +1,46 @@
+{
+  "dataset": { "name": "ds1" },
+  "adapter": { "name": "sysB" },
+  "ingest_wall_ms": 8000,
+  "judge_cost_usd": 0.04,
+  "ingest_completeness": 0.95,
+  "n_query_errors": 1,
+  "metrics": {
+    "latency_p50_ms": 200,
+    "recall_at_5": 0.6,
+    "mrr": 0.5,
+    "answer_match_mean": 0.5
+  },
+  "by_dimension": {
+    "temporal": { "answer_match_mean": 0.5 },
+    "multi-hop": { "answer_match_mean": 0.5 }
+  },
+  "panel": {
+    "fleiss_kappa": 0.72,
+    "per_judge": [
+      { "judge": "j1", "leniency": { "rate": 0.6 } },
+      { "judge": "j2", "leniency": { "rate": 0.55 } },
+      { "judge": "j3", "leniency": { "rate": 0.58 } }
+    ],
+    "per_query": [
+      {
+        "dim": "temporal",
+        "majority": "CORRECT",
+        "verdicts": [
+          { "judge": "j1", "verdict": "CORRECT" },
+          { "judge": "j2", "verdict": "CORRECT" },
+          { "judge": "j3", "verdict": "CORRECT" }
+        ]
+      },
+      {
+        "dim": "temporal",
+        "majority": "INCORRECT",
+        "verdicts": [
+          { "judge": "j1", "verdict": "INCORRECT" },
+          { "judge": "j2", "verdict": "INCORRECT" },
+          { "judge": "j3", "verdict": "INCORRECT" }
+        ]
+      }
+    ]
+  }
+}

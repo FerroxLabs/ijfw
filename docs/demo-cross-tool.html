@@ -1,0 +1,52 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<style>
+  :root{ --bg:#0f1115; --panel:#161922; --line:#262b38; --ink:#e7eaf0; --mut:#8b94a4;
+         --accent:#ff6b35; --you:#7fb2ff; --ok:#2fbf71; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.6 ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;padding:30px}
+  .card{max-width:1000px;margin:0 auto;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;overflow:hidden}
+  .cap{padding:16px 22px 4px;font:600 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    color:var(--mut);letter-spacing:.02em}
+  .cap b{color:var(--accent)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+  .pane{padding:18px 22px 22px}
+  .pane:first-child{border-right:1px solid var(--line)}
+  .ph{display:flex;align-items:center;gap:8px;font:600 12.5px/1 -apple-system,sans-serif;
+    color:var(--ink);margin-bottom:14px;letter-spacing:.01em}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .when{color:var(--mut);font-weight:400}
+  .turn{margin:10px 0}
+  .who{color:var(--you);font-weight:700}
+  .who.a{color:var(--mut)}
+  .sys{color:var(--mut)}
+  .code{color:var(--ink)}
+  .kw{color:var(--accent)}
+  .recall{margin-top:12px;padding:10px 12px;border:1px solid #3a2a1e;border-radius:9px;
+    background:linear-gradient(90deg,rgba(255,107,53,.10),rgba(255,107,53,.02));color:#f2c894;font-size:13px}
+  .recall b{color:var(--accent)}
+  .foot{padding:14px 22px;border-top:1px solid var(--line);
+    font:500 14px/1.5 -apple-system,sans-serif;color:var(--ink)}
+  .foot b{color:var(--accent)}
+  .local{color:var(--ok);font-weight:700}
+</style></head>
+<body>
+<div class="card" id="card">
+  <div class="cap">You tell <b>one</b> AI tool. <b>Every</b> AI tool remembers. Nothing leaves your machine.</div>
+  <div class="grid">
+    <div class="pane">
+      <div class="ph"><span class="dot" style="background:#d96b4a"></span> Claude Code <span class="when">· Monday</span></div>
+      <div class="turn"><span class="who">you ›</span> we use <span class="kw">Zod</span> for validation, never Yup. API errors always return <span class="code">{ error, code }</span>.</div>
+      <div class="turn"><span class="who a">ijfw ›</span> <span class="sys">noted &amp; stored locally → <span class="code">.ijfw/memory</span></span></div>
+    </div>
+    <div class="pane">
+      <div class="ph"><span class="dot" style="background:#6f9bd8"></span> Cursor <span class="when">· Wednesday — different tool, two days later</span></div>
+      <div class="turn"><span class="who">you ›</span> add validation to the signup route</div>
+      <div class="turn"><span class="who a">cursor ›</span> <span class="sys">writes a <span class="kw">Zod</span> schema, returns <span class="code">{ error, code }</span> on failure</span></div>
+      <div class="recall">↳ <b>recalled from IJFW memory:</b> "Zod, never Yup" · "errors: { error, code }" &nbsp;·&nbsp; <span class="local">local</span></div>
+    </div>
+  </div>
+  <div class="foot">You never re-explained a thing. The decision you made in <b>Claude Code</b> on Monday shaped what <b>Cursor</b> wrote on Wednesday — because they share one memory, on your disk.</div>
+</div>
+</body></html>

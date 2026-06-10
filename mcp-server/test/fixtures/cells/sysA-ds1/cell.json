@@ -1,0 +1,64 @@
+{
+  "dataset": { "name": "ds1" },
+  "adapter": { "name": "sysA" },
+  "ingest_wall_ms": 5000,
+  "judge_cost_usd": 0.06,
+  "ingest_completeness": 1,
+  "n_query_errors": 0,
+  "metrics": {
+    "latency_p50_ms": 120,
+    "recall_at_5": 0.8,
+    "mrr": 0.72,
+    "answer_match_mean": 0.75
+  },
+  "by_dimension": {
+    "temporal": { "answer_match_mean": 0.7 },
+    "multi-hop": { "answer_match_mean": 0.8 }
+  },
+  "panel": {
+    "fleiss_kappa": 0.85,
+    "per_judge": [
+      { "judge": "j1", "leniency": { "rate": 0.9 } },
+      { "judge": "j2", "leniency": { "rate": 0.8 } },
+      { "judge": "j3", "leniency": { "rate": 0.85 } }
+    ],
+    "per_query": [
+      {
+        "dim": "temporal",
+        "majority": "CORRECT",
+        "verdicts": [
+          { "judge": "j1", "verdict": "CORRECT" },
+          { "judge": "j2", "verdict": "CORRECT" },
+          { "judge": "j3", "verdict": "CORRECT" }
+        ]
+      },
+      {
+        "dim": "temporal",
+        "majority": "CORRECT",
+        "verdicts": [
+          { "judge": "j1", "verdict": "CORRECT" },
+          { "judge": "j2", "verdict": "INCORRECT" },
+          { "judge": "j3", "verdict": "CORRECT" }
+        ]
+      },
+      {
+        "dim": "multi-hop",
+        "majority": "CORRECT",
+        "verdicts": [
+          { "judge": "j1", "verdict": "CORRECT" },
+          { "judge": "j2", "verdict": "CORRECT" },
+          { "judge": "j3", "verdict": "CORRECT" }
+        ]
+      },
+      {
+        "dim": "multi-hop",
+        "majority": "INCORRECT",
+        "verdicts": [
+          { "judge": "j1", "verdict": "INCORRECT" },
+          { "judge": "j2", "verdict": "INCORRECT" },
+          { "judge": "j3", "verdict": "INCORRECT" }
+        ]
+      }
+    ]
+  }
+}

@@ -115,7 +115,7 @@ function mean(values) {
 
 // Deterministic PRNG (mulberry32) so the synthetic corpus is reproducible
 // across runs + machines. Same seed => same docs/queries/gold-mapping.
-function mulberry32(seed) {
+export function mulberry32(seed) {
   let a = seed >>> 0;
   return function() {
     a = (a + 0x6d2b79f5) >>> 0;

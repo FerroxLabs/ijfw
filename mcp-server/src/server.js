@@ -326,6 +326,21 @@ function safeProjectDir() {
 const PROJECT_DIR = safeProjectDir();
 const PROJECT_HASH = createHash('sha256').update(PROJECT_DIR).digest('hex').slice(0, 12);
 const IJFW_DIR = join(PROJECT_DIR, '.ijfw');
+
+// Tenant isolation (P4): the current project's tenant gates cross-project search
+// so one tenant's memory never surfaces in another's session. Source of truth:
+// IJFW_TENANT env, else `<project>/.ijfw/tenant` (first non-empty line), else
+// 'default'. Default==default => no behavior change until a user opts in.
+function currentTenant() {
+  const env = (process.env.IJFW_TENANT || '').trim();
+  if (env) return env;
+  try {
+    const raw = readFileSync(join(IJFW_DIR, 'tenant'), 'utf8');
+    const line = raw.split('\n').map((s) => s.trim()).find((s) => s.length > 0);
+    if (line) return line;
+  } catch { /* no tenant declared */ }
+  return 'default';
+}
 // REPO_ROOT is the parent of .ijfw/ — required by resolveBrainPaths.
 const REPO_ROOT = dirname(IJFW_DIR);
 // paths() re-reads the layout sentinel on every call so a long-running server
@@ -871,7 +886,7 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
     // crossProjectSearch, not the legacy naive keyword-count scan.
     const projects = readRegistry();
     if (projects.length === 0) return [];
-    return crossProjectSearch(query, projects, readProjectMemory, { limit });
+    return crossProjectSearch(query, projects, readProjectMemory, { limit, tenant: currentTenant() });
   }
 
   const sources = [
@@ -1215,7 +1230,20 @@ const TOOLS = [
 
 // --- Tool Handlers ---
 
-function handleRecall({ context_hint, detail_level = 'standard', from_project }) {
+// v1.6.0 functional-smoke fix — recall is genuinely async: its catch-all
+// natural-language branch calls `searchMemory` (async: opens the embedding-cache
+// db + runs the optional cold-tier vector rerank). The prior signature was
+// synchronous and the branch did `const results = searchMemory(...)` WITHOUT
+// awaiting, so `results` was a Promise: `results.length === 0` was
+// `undefined === 0` (false) and `results.map(...)` threw
+// "results.map is not a function" — making EVERY free-text recall
+// (exact-keyword AND natural-language) fail at runtime while every unit/route
+// test still passed (they only exercise the reserved context_hint branches:
+// session_start / handoff / decisions / facts / design_template, which return
+// synchronously). Making the function async + awaiting the search closes the
+// flagship-recall silent break. The single dispatch site (tools/call) already
+// runs inside an async IIFE, so awaiting the handler is free.
+async function handleRecall({ context_hint, detail_level = 'standard', from_project }) {
   // Cross-project explicit pull. We bypass current-project sources and read
   // the target project's knowledge/handoff/journal directly. Search queries
   // are routed through crossProjectSearch (BM25) via scope:'all' on the
@@ -1357,7 +1385,7 @@ function handleRecall({ context_hint, detail_level = 'standard', from_project })
     }
   }
 
-  const results = searchMemory(context_hint);
+  const results = await searchMemory(context_hint);
   if (results.length === 0) return { text: `No memories matching: ${context_hint}` };
   return { text: results.map(r => `[${r.source}] ${r.content}`).join('\n') };
 }
@@ -1949,7 +1977,7 @@ function handleCrossProjectSearch({ pattern, limit = 10 } = {}) {
   if (projects.length === 0) {
     return { text: 'No other IJFW projects on record. Open one more project to enable cross-project search.' };
   }
-  const hits = crossProjectSearch(pattern, projects, readProjectMemory, { limit });
+  const hits = crossProjectSearch(pattern, projects, readProjectMemory, { limit, tenant: currentTenant() });
   if (hits.length === 0) {
     return { text: `No matches for "${pattern}" across ${projects.length} project${projects.length === 1 ? '' : 's'}.` };
   }
@@ -1988,7 +2016,12 @@ function handleMetrics({ period = '7d', metric = 'tokens' } = {}) {
     return Number.isFinite(t) && t >= cutoff;
   });
   if (within.length === 0) {
-    return { text: `Window ${period}: no sessions yet. Earlier history available -- try period: 'all'.` };
+    // Don't suggest 'all' when the caller is already on 'all' (the rows simply
+    // carry no parseable timestamp in that case).
+    const hint = period === 'all'
+      ? ` ${rows.length} record(s) on disk but none carry a parseable timestamp.`
+      : ` Earlier history available -- try period: 'all'.`;
+    return { text: `Window ${period}: no sessions in range.${hint}` };
   }
 
   if (metric === 'sessions') {
@@ -2059,12 +2092,58 @@ function handleMessage(msg) {
   const { method, params, id } = msg;
 
   switch (method) {
-    case 'initialize':
-      return createResponse(id, {
+    case 'initialize': {
+      // v1.6.0 PERSONALIZATION S1 — OPTIONAL `instructions` field. The MCP
+      // `instructions` string is surfaced by hosts as ambient context the moment
+      // they connect, so it is the cross-tool "it followed me" surface: the same
+      // observed-pattern brief the Resource path serves, delivered without an
+      // explicit read. It is GATED EXACTLY like the passive Resource read
+      // (resources/read above): only when settings.profile.inject === 'on' AND
+      // IJFW_PROFILE_KILL is not engaged, and ALWAYS forceLowOnly (a passive
+      // injection carries no per-read consent, so LOW sensitivity only — the
+      // STYLE + EXPERTISE bands, never preference slugs). Best-effort: any error
+      // omits `instructions` and returns the plain initialize result — the field
+      // is strictly additive and must NEVER break protocol handshake.
+      const base = {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {}, resources: {}, prompts: {} },
         serverInfo: { name: 'ijfw-memory', version: PKG_VERSION, schemaVersion: SCHEMA_VERSION }
-      });
+      };
+      return (async () => {
+        try {
+          // INJECT GATE — identical resolution to resources/read so the consent
+          // semantics are the same across every passive-injection surface.
+          let injectOn = false;
+          try {
+            const fs = await import('node:fs');
+            const path = await import('node:path');
+            const home = process.env.IJFW_HOME || path.join(process.env.HOME || '', '.ijfw');
+            const s = JSON.parse(fs.readFileSync(path.join(home, 'settings.json'), 'utf8'));
+            injectOn = s && s.profile && s.profile.inject === 'on';
+          } catch { injectOn = false; }
+          const kill = String(process.env.IJFW_PROFILE_KILL || '').trim().toLowerCase();
+          const killed = kill !== '' && kill !== '0' && kill !== 'false' && kill !== 'no' && kill !== 'off';
+          if (!injectOn || killed) {
+            return createResponse(id, base);
+          }
+          const { profileBrief } = await import('./profile/serve.js');
+          // forceLowOnly: passive injection => LOW-sensitivity ONLY, always —
+          // no env flag / allowlist entry can elevate a handshake-time brief.
+          const r = profileBrief({
+            context: { host: 'mcp-initialize' },
+            env: process.env,
+            forceLowOnly: true,
+          });
+          const instructions = r && typeof r.brief === 'string' ? r.brief : '';
+          // Empty brief (cold start / nothing earned) => omit the field entirely
+          // so the handshake stays byte-identical to the un-personalized server.
+          if (instructions) base.instructions = instructions;
+          return createResponse(id, base);
+        } catch {
+          return createResponse(id, base);
+        }
+      })();
+    }
 
     case 'notifications/initialized':
     case 'notifications/cancelled':
@@ -2164,8 +2243,22 @@ function handleMessage(msg) {
               // surface `isError: true` so the orchestrator-LLM treats it as a
               // hard stop rather than an advisory note (mirrors the prior
               // ijfw_subagent_post_done `block: true` contract).
+              //
+              // Functional-smoke fix (workflow-state dig): `isError` must also
+              // track the SDK's primary `ok` contract, not just `refused`. Every
+              // query() result carries `ok` (contract §7); a verb can return a
+              // genuine `{ ok:false }` WITHOUT `refused` (e.g. roster.synthesize
+              // on an unknown domain -> `{ ok:false, reason:'domain-template-
+              // missing' }`). Keying `isError` on `refused` alone reported those
+              // real failures to the orchestrator-LLM as SUCCESS — the same
+              // silent-swallow class as the memory-recall regression, and a
+              // cross-surface inconsistency with the CLI (cli-run.js exits
+              // non-zero on any `ok:false`). Widen the trigger to `ok === false
+              // || refused` so the MCP surface, the CLI surface, and the `ok`
+              // contract all agree.
               const refused = r && r.refused === true;
-              result = { text: JSON.stringify(r, null, 2), isError: !!refused };
+              const failed = !r || r.ok === false;
+              result = { text: JSON.stringify(r, null, 2), isError: failed || refused };
             } catch (err) {
               const msg = err && err.message ? err.message : String(err);
               result = { text: JSON.stringify({ ok: false, error: msg }), isError: true };
@@ -2289,7 +2382,7 @@ function handleMessage(msg) {
             break;
           }
           case 'ijfw_memory_recall':
-            result = handleRecall(args || {});
+            result = await handleRecall(args || {});
             emitRecallObservation(args || {});
             break;
           case 'ijfw_memory_store':
@@ -2377,7 +2470,15 @@ function handleMessage(msg) {
             const INLINE_BYTES = 50 * 1024;
 
             if (lines <= INLINE_LINES && bytes <= INLINE_BYTES && !timedOut) {
-              result = { text: stdout || '(no output)', isError: exitCode !== 0 };
+              // On failure, annotate so the human sees WHY even when the command
+              // produced no output (e.g. `exit 7` with empty stdout/stderr). The
+              // isError flag already signals failure to the client; this surfaces
+              // the exit code in the text too.
+              const body = stdout || '(no output)';
+              result = {
+                text: exitCode !== 0 ? `${body}\n[ijfw_run] command exited ${exitCode}` : body,
+                isError: exitCode !== 0,
+              };
               break;
             }
 
@@ -2413,9 +2514,79 @@ function handleMessage(msg) {
     }
 
     case 'resources/list':
-      return createResponse(id, { resources: [] });
-    case 'resources/read':
-      return createError(id, -32601, 'No resources available');
+      // PHASE P4.6 — expose the user-global profile brief as an MCP Resource
+      // for PASSIVE injection. A host that supports resource subscription can
+      // read this without an explicit tool call, surfacing the observed-pattern
+      // brief into context. cacheScope:'session' marks it host-session-cacheable
+      // (the brief changes only at SessionEnd re-derivation). The read path is
+      // ZERO-LLM (serve.js moat).
+      return createResponse(id, {
+        resources: [
+          {
+            uri: 'ijfw://profile/brief',
+            name: 'IJFW user profile brief',
+            description: 'Observed cross-system interaction patterns (informative, not directive). Sensitivity-gated, redaction-honored, zero-LLM.',
+            mimeType: 'text/markdown',
+            cacheScope: 'session',
+          },
+        ],
+      });
+    case 'resources/read': {
+      const uri = params && params.uri;
+      if (uri === 'ijfw://profile/brief') {
+        // ZERO-LLM read: profileBrief reads the store, composes via render-brief
+        // (sensitivity + redaction + kill-switch enforced), and logs egress.
+        // Cold start -> empty brief, never an error. Wrapped in an async IIFE
+        // (handleMessage is sync but may return a Promise — same pattern as
+        // tools/call) because serve.js is dynamically imported.
+        return (async () => {
+          try {
+            // v1.6.0 INJECT GATE — a passive Resource read is an injection, so it
+            // honors the same profile.inject consent the hooks use. Only inject
+            // when the resolved setting is "on" (IJFW_PROFILE_KILL forces off;
+            // "ask"/"off" serve an empty brief). Reading settings here keeps the
+            // gate consistent across the hook path and the MCP-resource path.
+            let injectOn = false;
+            try {
+              const fs = await import('node:fs');
+              const path = await import('node:path');
+              const home = process.env.IJFW_HOME || path.join(process.env.HOME || '', '.ijfw');
+              const s = JSON.parse(fs.readFileSync(path.join(home, 'settings.json'), 'utf8'));
+              injectOn = s && s.profile && s.profile.inject === 'on';
+            } catch { injectOn = false; }
+            const kill = String(process.env.IJFW_PROFILE_KILL || '').trim().toLowerCase();
+            const killed = kill !== '' && kill !== '0' && kill !== 'false' && kill !== 'no' && kill !== 'off';
+            if (!injectOn || killed) {
+              return createResponse(id, {
+                contents: [{ uri, mimeType: 'text/markdown', text: '' }],
+              });
+            }
+            const { profileBrief } = await import('./profile/serve.js');
+            // MED-3: a passive MCP Resource read can carry NO per-read user
+            // consent, so it must serve LOW-sensitivity ONLY — always. We force
+            // it here (forceLowOnly) so no env flag / allowlist entry can ever
+            // elevate a passive injection past the low tier.
+            const r = profileBrief({
+              context: { host: 'mcp-resource' },
+              env: process.env,
+              forceLowOnly: true,
+            });
+            return createResponse(id, {
+              contents: [
+                {
+                  uri,
+                  mimeType: 'text/markdown',
+                  text: String(r && r.brief ? r.brief : ''),
+                },
+              ],
+            });
+          } catch (err) {
+            return createError(id, -32603, `profile brief read failed: ${err.message}`);
+          }
+        })();
+      }
+      return createError(id, -32601, `Unknown resource: ${uri || '(none)'}`);
+    }
     case 'resources/templates/list':
       return createResponse(id, { resourceTemplates: [] });
     case 'prompts/list':

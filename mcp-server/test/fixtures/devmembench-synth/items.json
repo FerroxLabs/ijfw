@@ -1,0 +1,562 @@
+[
+  {
+    "id": "dm-dec-001",
+    "query_id": "dm-dec-001",
+    "category": "decision-recall",
+    "content": [
+      "We chose the Quillrun queue over Bazbus for the ingest pipeline because Quillrun guarantees at-least-once delivery with idempotency keys, and Bazbus only offered best-effort fan-out.",
+      "The Quillrun decision was ratified in the Plumeworks platform sync on cycle 7."
+    ],
+    "question": "Why did we pick Quillrun over Bazbus for the ingest pipeline?",
+    "gold": "Because Quillrun guarantees at-least-once delivery with idempotency keys while Bazbus was only best-effort."
+  },
+  {
+    "id": "dm-dec-002",
+    "query_id": "dm-dec-002",
+    "category": "decision-recall",
+    "content": [
+      "We decided to store session blobs in the Grendle object store rather than inline in Postgres because blobs routinely exceeded 4 MB and bloated the Vactor row cache."
+    ],
+    "question": "What store did we choose for session blobs and why not Postgres?",
+    "gold": "Grendle object store, because blobs over 4 MB bloated the Vactor row cache."
+  },
+  {
+    "id": "dm-dec-003",
+    "query_id": "dm-dec-003",
+    "category": "decision-recall",
+    "content": [
+      "The team adopted the Thornwell auth library instead of rolling our own because Thornwell ships a constant-time token comparator that closes the timing-leak we found in the Mibble prototype."
+    ],
+    "question": "What auth library did we adopt and what problem did it solve?",
+    "gold": "Thornwell, because its constant-time token comparator fixed the timing leak in the Mibble prototype."
+  },
+  {
+    "id": "dm-dec-004",
+    "query_id": "dm-dec-004",
+    "category": "decision-recall",
+    "content": [
+      "We chose to render the Driftwood dashboard server-side because the Korvanic charting widget hydrated too slowly on low-end devices during the field trial."
+    ],
+    "question": "Why is the Driftwood dashboard rendered server-side?",
+    "gold": "Because the Korvanic charting widget hydrated too slowly on low-end devices."
+  },
+  {
+    "id": "dm-dec-005",
+    "query_id": "dm-dec-005",
+    "category": "decision-recall",
+    "content": [
+      "We picked the Sablefin retry strategy of exponential backoff with jitter over fixed-interval retries because fixed intervals caused a thundering-herd against the Pellish gateway."
+    ],
+    "question": "What retry strategy did we choose and why?",
+    "gold": "Exponential backoff with jitter (Sablefin), because fixed intervals caused a thundering herd against the Pellish gateway."
+  },
+  {
+    "id": "dm-dec-006",
+    "query_id": "dm-dec-006",
+    "category": "decision-recall",
+    "content": [
+      "The decision was to deploy the Marrowby service on the Octrend runtime rather than the Vesque container, because Octrend gives us per-tenant CPU isolation that Vesque lacked."
+    ],
+    "question": "Which runtime hosts the Marrowby service and why?",
+    "gold": "The Octrend runtime, because it provides per-tenant CPU isolation that Vesque lacked."
+  },
+  {
+    "id": "dm-dec-007",
+    "query_id": "dm-dec-007",
+    "category": "decision-recall",
+    "content": [
+      "We agreed to use the Halcyform schema-migration tool over hand-written SQL because Halcyform produces reversible migrations that our Grindle CI can dry-run."
+    ],
+    "question": "Why did we adopt Halcyform for schema migrations?",
+    "gold": "Because Halcyform produces reversible migrations that Grindle CI can dry-run."
+  },
+  {
+    "id": "dm-dec-008",
+    "query_id": "dm-dec-008",
+    "category": "decision-recall",
+    "content": [
+      "We chose to cache geocoding results in the Frostmere KV layer instead of calling the Lanthorp API on every request because Lanthorp bills per lookup and the same coordinates repeated heavily."
+    ],
+    "question": "Why do we cache geocoding results in Frostmere?",
+    "gold": "Because Lanthorp bills per lookup and the same coordinates repeated heavily."
+  },
+  {
+    "id": "dm-dec-009",
+    "query_id": "dm-dec-009",
+    "category": "decision-recall",
+    "content": [
+      "The team decided to split the Wyndmoor monolith along the billing seam first because billing had the clearest data ownership and the fewest cross-calls into the Tessaract core."
+    ],
+    "question": "Why was billing chosen as the first split out of the Wyndmoor monolith?",
+    "gold": "Because billing had the clearest data ownership and the fewest cross-calls into the Tessaract core."
+  },
+  {
+    "id": "dm-dec-010",
+    "query_id": "dm-dec-010",
+    "category": "decision-recall",
+    "content": [
+      "We selected the Brunemark feature-flag service over an in-house toggle table because Brunemark supports gradual percentage rollouts that the Quillrun release train depends on."
+    ],
+    "question": "What feature-flag service did we choose and why?",
+    "gold": "Brunemark, because it supports gradual percentage rollouts the Quillrun release train depends on."
+  },
+  {
+    "id": "dm-con-001",
+    "query_id": "dm-con-001",
+    "category": "convention-recall",
+    "content": [
+      "Convention: this repo pins all dependencies with quux-lock; never edit the lockfile by hand, regenerate it with `quux-lock sync`."
+    ],
+    "question": "How does this repo pin its dependencies?",
+    "gold": "With quux-lock, regenerated via `quux-lock sync` rather than hand-edited."
+  },
+  {
+    "id": "dm-con-002",
+    "query_id": "dm-con-002",
+    "category": "convention-recall",
+    "content": [
+      "Convention: all timestamps are stored as epoch-millis in UTC; local-time strings are forbidden anywhere below the Driftwood presentation layer."
+    ],
+    "question": "How are timestamps stored in this codebase?",
+    "gold": "As epoch-millis in UTC."
+  },
+  {
+    "id": "dm-con-003",
+    "query_id": "dm-con-003",
+    "category": "convention-recall",
+    "content": [
+      "Convention: every Marrowby service module must export a `healthProbe()` named `vital` so the Octrend orchestrator can poll it on the /vital path."
+    ],
+    "question": "What health-check convention must Marrowby service modules follow?",
+    "gold": "Each module must export a healthProbe named `vital`, polled by Octrend on /vital."
+  },
+  {
+    "id": "dm-con-004",
+    "query_id": "dm-con-004",
+    "category": "convention-recall",
+    "content": [
+      "Convention: database tables use snake_case and are always prefixed with the owning bounded context, e.g. `billing_invoice`, `ingest_event`."
+    ],
+    "question": "What is the table-naming convention in this repo?",
+    "gold": "snake_case prefixed with the owning bounded context, e.g. billing_invoice."
+  },
+  {
+    "id": "dm-con-005",
+    "query_id": "dm-con-005",
+    "category": "convention-recall",
+    "content": [
+      "Convention: feature branches must be named `frostmere/<ticket>-<slug>` and squash-merged; merge commits are rejected by the Grindle CI gate."
+    ],
+    "question": "What is the branch-naming and merge convention?",
+    "gold": "Branches named frostmere/<ticket>-<slug>, squash-merged only; merge commits are rejected."
+  },
+  {
+    "id": "dm-con-006",
+    "query_id": "dm-con-006",
+    "category": "convention-recall",
+    "content": [
+      "Convention: monetary amounts are stored as integer minor units (cents) in a field suffixed `_minor`; floating-point money is banned project-wide."
+    ],
+    "question": "How are monetary amounts stored?",
+    "gold": "As integer minor units (cents) in fields suffixed _minor; no floats."
+  },
+  {
+    "id": "dm-con-007",
+    "query_id": "dm-con-007",
+    "category": "convention-recall",
+    "content": [
+      "Convention: all outbound HTTP calls go through the Sablefin client wrapper so retries, timeouts, and the Pellish circuit-breaker are applied uniformly."
+    ],
+    "question": "How must outbound HTTP calls be made in this codebase?",
+    "gold": "Through the Sablefin client wrapper, which applies retries, timeouts, and the Pellish circuit-breaker."
+  },
+  {
+    "id": "dm-con-008",
+    "query_id": "dm-con-008",
+    "category": "convention-recall",
+    "content": [
+      "Convention: log lines are emitted as single-line JSON and must include a `trace_id` field sourced from the Brunemark request context."
+    ],
+    "question": "What is the logging convention?",
+    "gold": "Single-line JSON logs that must include a trace_id from the Brunemark request context."
+  },
+  {
+    "id": "dm-con-009",
+    "query_id": "dm-con-009",
+    "category": "convention-recall",
+    "content": [
+      "Convention: environment config is read only at boot through the Halcyform config loader; reading `process.env` directly outside boot is forbidden."
+    ],
+    "question": "How is environment configuration read in this project?",
+    "gold": "Only at boot via the Halcyform config loader; direct process.env access outside boot is forbidden."
+  },
+  {
+    "id": "dm-con-010",
+    "query_id": "dm-con-010",
+    "category": "convention-recall",
+    "content": [
+      "Convention: public API responses are versioned with a `Grendle-Version` header, and breaking changes require a new major value on that header."
+    ],
+    "question": "How are public API responses versioned?",
+    "gold": "Via the Grendle-Version header; breaking changes require a new major value."
+  },
+  {
+    "id": "dm-stale-001",
+    "query_id": "dm-stale-001",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 3: the default ingest batch size is 500 records per flush.",
+      "Session 9: we lowered the default ingest batch size to 120 records per flush after the Quillrun queue started dropping oversized batches. This supersedes the earlier 500 value."
+    ],
+    "question": "What is the current default ingest batch size?",
+    "gold": "120 records per flush."
+  },
+  {
+    "id": "dm-stale-002",
+    "query_id": "dm-stale-002",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 2: the Marrowby service listens on port 8400.",
+      "Session 6: the Marrowby service now listens on port 9120; the old 8400 binding was retired when Octrend reassigned the port range."
+    ],
+    "question": "Which port does the Marrowby service currently listen on?",
+    "gold": "Port 9120."
+  },
+  {
+    "id": "dm-stale-003",
+    "query_id": "dm-stale-003",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 1: session tokens expire after 24 hours.",
+      "Session 5: token expiry was shortened to 2 hours after the Thornwell audit flagged long-lived tokens. The 24-hour value no longer applies."
+    ],
+    "question": "How long until a session token currently expires?",
+    "gold": "2 hours."
+  },
+  {
+    "id": "dm-stale-004",
+    "query_id": "dm-stale-004",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 4: nightly backups run at 02:00 UTC.",
+      "Session 8: backups were moved to 04:30 UTC to avoid overlapping the Halcyform migration window; 02:00 is no longer used."
+    ],
+    "question": "What time do nightly backups currently run?",
+    "gold": "04:30 UTC."
+  },
+  {
+    "id": "dm-stale-005",
+    "query_id": "dm-stale-005",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 2: the primary datastore for the billing context is the Vactor cluster.",
+      "Session 7: billing was migrated off Vactor onto the Grendle store; Vactor is now read-only legacy."
+    ],
+    "question": "What is the current primary datastore for the billing context?",
+    "gold": "The Grendle store."
+  },
+  {
+    "id": "dm-stale-006",
+    "query_id": "dm-stale-006",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 3: the rollout percentage for the new search ranker is 10%.",
+      "Session 11: the search ranker is now at 100% rollout; it graduated from the Brunemark flag and the flag was deleted."
+    ],
+    "question": "What is the current rollout percentage of the new search ranker?",
+    "gold": "100%."
+  },
+  {
+    "id": "dm-stale-007",
+    "query_id": "dm-stale-007",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 1: the team lead for the ingest squad is Marisol Vren.",
+      "Session 10: Marisol Vren moved to platform; the ingest squad is now led by Dario Quel as of this session."
+    ],
+    "question": "Who currently leads the ingest squad?",
+    "gold": "Dario Quel."
+  },
+  {
+    "id": "dm-stale-008",
+    "query_id": "dm-stale-008",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 5: the Sablefin client uses a 3-second request timeout.",
+      "Session 12: the Sablefin timeout was raised to 8 seconds because the Lanthorp upstream got slower; 3 seconds is obsolete."
+    ],
+    "question": "What is the current Sablefin request timeout?",
+    "gold": "8 seconds."
+  },
+  {
+    "id": "dm-stale-009",
+    "query_id": "dm-stale-009",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 2: the Driftwood dashboard refreshes every 60 seconds.",
+      "Session 9: the refresh interval was changed to 15 seconds after stakeholders wanted near-real-time tiles; 60 seconds is no longer the default."
+    ],
+    "question": "What is the current Driftwood dashboard refresh interval?",
+    "gold": "15 seconds."
+  },
+  {
+    "id": "dm-stale-010",
+    "query_id": "dm-stale-010",
+    "category": "contradiction-staleness",
+    "content": [
+      "Session 1: the maximum upload size is 25 MB.",
+      "Session 6: the maximum upload size was reduced to 10 MB after the Grendle store quota changed; the 25 MB limit is retired."
+    ],
+    "question": "What is the current maximum upload size?",
+    "gold": "10 MB."
+  },
+  {
+    "id": "dm-abs-001",
+    "query_id": "dm-abs-001",
+    "category": "abstention",
+    "content": [
+      "We chose the Quillrun queue for ingest because of its idempotency guarantees.",
+      "The Marrowby service runs on the Octrend runtime."
+    ],
+    "question": "What database does the Marrowby service use for its primary store?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-002",
+    "query_id": "dm-abs-002",
+    "category": "abstention",
+    "content": [
+      "Convention: timestamps are stored as epoch-millis UTC.",
+      "Convention: dependencies are pinned with quux-lock."
+    ],
+    "question": "What is the on-call rotation schedule for the platform team?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-003",
+    "query_id": "dm-abs-003",
+    "category": "abstention",
+    "content": [
+      "The Driftwood dashboard is rendered server-side because the Korvanic widget hydrated slowly."
+    ],
+    "question": "Which cloud region is the Driftwood dashboard deployed to?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-004",
+    "query_id": "dm-abs-004",
+    "category": "abstention",
+    "content": [
+      "Session tokens expire after 2 hours following the Thornwell audit.",
+      "Outbound HTTP goes through the Sablefin wrapper."
+    ],
+    "question": "What hashing algorithm does Thornwell use for password storage?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-005",
+    "query_id": "dm-abs-005",
+    "category": "abstention",
+    "content": [
+      "The default ingest batch size is 120 records per flush.",
+      "Backups run at 04:30 UTC."
+    ],
+    "question": "How many records does the Grendle store hold in total?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-006",
+    "query_id": "dm-abs-006",
+    "category": "abstention",
+    "content": [
+      "Branches are named frostmere/<ticket>-<slug> and squash-merged.",
+      "Monetary amounts are stored as integer minor units."
+    ],
+    "question": "What currency does the billing context default to for new tenants?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-007",
+    "query_id": "dm-abs-007",
+    "category": "abstention",
+    "content": [
+      "We adopted Brunemark for feature flags to support percentage rollouts.",
+      "The Wyndmoor monolith was split along the billing seam first."
+    ],
+    "question": "How much does the Brunemark feature-flag service cost per month?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-008",
+    "query_id": "dm-abs-008",
+    "category": "abstention",
+    "content": [
+      "The Marrowby service listens on port 9120.",
+      "The Sablefin request timeout is 8 seconds."
+    ],
+    "question": "What programming language is the Marrowby service written in?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-009",
+    "query_id": "dm-abs-009",
+    "category": "abstention",
+    "content": [
+      "Geocoding results are cached in Frostmere because Lanthorp bills per lookup.",
+      "Log lines are single-line JSON with a trace_id."
+    ],
+    "question": "What is the cache eviction TTL configured for the Frostmere KV layer?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-abs-010",
+    "query_id": "dm-abs-010",
+    "category": "abstention",
+    "content": [
+      "Schema migrations use Halcyform because it produces reversible migrations.",
+      "API responses are versioned with the Grendle-Version header."
+    ],
+    "question": "Which engineer authored the original Halcyform integration?",
+    "gold": "unknown"
+  },
+  {
+    "id": "dm-tmp-001",
+    "query_id": "dm-tmp-001",
+    "category": "temporal-recall",
+    "content": [
+      "We deprecated the Vexel API yesterday."
+    ],
+    "dates": [
+      "2024/03/05"
+    ],
+    "question_date": "2024/03/10",
+    "question": "On what date was the Vexel API deprecated?",
+    "gold": "2024/03/04"
+  },
+  {
+    "id": "dm-tmp-002",
+    "query_id": "dm-tmp-002",
+    "category": "temporal-recall",
+    "content": [
+      "I merged the Quillfish parser rewrite today."
+    ],
+    "dates": [
+      "2024/02/14"
+    ],
+    "question_date": "2024/02/20",
+    "question": "On what date was the Quillfish parser rewrite merged?",
+    "gold": "2024/02/14"
+  },
+  {
+    "id": "dm-tmp-003",
+    "query_id": "dm-tmp-003",
+    "category": "temporal-recall",
+    "content": [
+      "We onboarded the Tannin squad three days ago."
+    ],
+    "dates": [
+      "2023/11/15"
+    ],
+    "question_date": "2023/11/20",
+    "question": "On what date was the Tannin squad onboarded?",
+    "gold": "2023/11/12"
+  },
+  {
+    "id": "dm-tmp-004",
+    "query_id": "dm-tmp-004",
+    "category": "temporal-recall",
+    "content": [
+      "We rolled back the Marlow release this morning."
+    ],
+    "dates": [
+      "2024/04/01"
+    ],
+    "question_date": "2024/04/03",
+    "question": "On what date was the Marlow release rolled back?",
+    "gold": "2024/04/01"
+  },
+  {
+    "id": "dm-tmp-005",
+    "query_id": "dm-tmp-005",
+    "category": "temporal-recall",
+    "content": [
+      "I filed the Grendel patent application two days ago."
+    ],
+    "dates": [
+      "2024/06/15"
+    ],
+    "question_date": "2024/06/20",
+    "question": "On what date was the Grendel patent application filed?",
+    "gold": "2024/06/13"
+  },
+  {
+    "id": "dm-tmp-006",
+    "query_id": "dm-tmp-006",
+    "category": "temporal-recall",
+    "content": [
+      "The Sable app hit 10k users yesterday."
+    ],
+    "dates": [
+      "2024/07/04"
+    ],
+    "question_date": "2024/07/06",
+    "question": "On what date did the Sable app hit 10k users?",
+    "gold": "2024/07/03"
+  },
+  {
+    "id": "dm-tmp-007",
+    "query_id": "dm-tmp-007",
+    "category": "temporal-recall",
+    "content": [
+      "We cut the Brindle v2 branch four days ago."
+    ],
+    "dates": [
+      "2024/01/10"
+    ],
+    "question_date": "2024/01/16",
+    "question": "On what date was the Brindle v2 branch cut?",
+    "gold": "2024/01/06"
+  },
+  {
+    "id": "dm-tmp-008",
+    "query_id": "dm-tmp-008",
+    "category": "temporal-recall",
+    "content": [
+      "The Pellucid data migration completed today."
+    ],
+    "dates": [
+      "2024/09/20"
+    ],
+    "question_date": "2024/09/25",
+    "question": "On what date did the Pellucid data migration complete?",
+    "gold": "2024/09/20"
+  },
+  {
+    "id": "dm-tmp-009",
+    "query_id": "dm-tmp-009",
+    "category": "temporal-recall",
+    "content": [
+      "I disabled the Fern webhook five days ago."
+    ],
+    "dates": [
+      "2024/05/12"
+    ],
+    "question_date": "2024/05/20",
+    "question": "On what date was the Fern webhook disabled?",
+    "gold": "2024/05/07"
+  },
+  {
+    "id": "dm-tmp-010",
+    "query_id": "dm-tmp-010",
+    "category": "temporal-recall",
+    "content": [
+      "We signed the Castellan vendor contract yesterday."
+    ],
+    "dates": [
+      "2024/08/08"
+    ],
+    "question_date": "2024/08/12",
+    "question": "On what date was the Castellan vendor contract signed?",
+    "gold": "2024/08/07"
+  }
+]

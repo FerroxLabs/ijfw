@@ -93,11 +93,19 @@ test('GET / has strict CSP header', async () => {
 });
 
 test('Port walk: second server picks next port', async () => {
+  // Both servers request the same base port; the second must walk forward to a
+  // distinct free port. Assert the RELATIONSHIP (distinct + forward), not the
+  // absolute port numbers — asserting exact ports (BASE+3 / BASE+4) made this
+  // flaky whenever anything else occupied the 3789x range (e.g. an orphaned
+  // dashboard from a prior session), since the first server would itself walk
+  // past the occupied port. The behaviour under test is the walk, not the
+  // arithmetic.
   const { port: p1, server: s1 } = await startServer({ port: BASE_PORT + 3 });
   const { port: p2, server: s2 } = await startServer({ port: BASE_PORT + 3 });
   try {
-    assert.equal(p1, BASE_PORT + 3);
-    assert.equal(p2, BASE_PORT + 4);
+    assert.ok(p1 >= BASE_PORT + 3, `first server should bind at/above the requested base (got ${p1})`);
+    assert.notEqual(p2, p1, 'second server must not collide with the first');
+    assert.ok(p2 > p1, `second server should walk FORWARD to the next free port (p1=${p1}, p2=${p2})`);
   } finally {
     s1.close();
     s2.close();

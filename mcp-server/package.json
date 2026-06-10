@@ -1,6 +1,6 @@
 {
   "name": "@ijfw/memory-server",
-  "version": "1.5.6",
+  "version": "1.6.0",
   "description": "Cross-platform persistent memory server for IJFW. 14 MCP tools (memory + admin/update + brain). Works with 15 platforms: 14 via MCP (Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Copilot, Hermes, Wayland, OpenCode, QwenCode, Cline, KimiCode, OpenClaw, Antigravity) plus Aider via the rules-only tier.",
   "author": "Sean Donahoe",
   "contributors": [
@@ -28,10 +28,11 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node test.js && node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js",
+    "test": "node test.js && node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js test/profile-*.test.mjs src/profile/eval/*.test.mjs",
     "test:smoke": "node test.js",
     "test:full": "node --experimental-sqlite --test --test-force-exit test-*.js test/brain/test-*.js test/memory/test-*.js test/integration/test-*.js",
-    "test:graders": "node test/grade-symbol-graph-spec.js && node test/grade-symbol-graph-consistency.js && node test/grade-cascading-staleness.js && node test/grade-project-types.js"
+    "test:graders": "node test/grade-symbol-graph-spec.js && node test/grade-symbol-graph-consistency.js && node test/grade-cascading-staleness.js && node test/grade-project-types.js",
+    "functional-smoke": "node scripts/run-functional-smoke.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

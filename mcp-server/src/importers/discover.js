@@ -23,7 +23,7 @@ import { homedir } from 'node:os';
 const DEV_PARENTS = ['dev', 'Code', 'code', 'projects', 'repos', 'work', 'src'];
 
 // Decode Claude Code's path-encoded project directory name back to an absolute
-// path. Example: "-Users-seandonahoe-dev-pip" -> "/Users/seandonahoe/dev/pip".
+// path. Example: "-Users-alice-dev-pip" -> "/Users/alice/dev/pip".
 // Encoding replaces `/` with `-`. Leading `-` becomes leading `/`.
 // Caveat: directories with literal `-` in their name become ambiguous on
 // decode; we verify by checking whether the decoded path exists.

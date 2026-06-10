@@ -1,0 +1,23 @@
+{
+  "_note": "SYNTHETIC hand-authored fixture. NOT real ConvoMem content. Mirrors the changing_evidence evidence_type -> temporal bucket (a fact that CHANGED; gold is the CURRENT value, never the superseded one).",
+  "evidence_items": [
+    {
+      "question": "What is my current preferred coffee order?",
+      "answer": "Oat-milk cortado",
+      "category": "Daily Habits",
+      "message_evidences": [
+        { "speaker": "User", "text": "I used to get a flat white but now I always order an oat-milk cortado." }
+      ],
+      "conversations": [
+        {
+          "messages": [
+            { "speaker": "User", "text": "I used to get a flat white every morning." },
+            { "speaker": "Assistant", "text": "Sounds like a solid routine." },
+            { "speaker": "User", "text": "I used to get a flat white but now I always order an oat-milk cortado." },
+            { "speaker": "Assistant", "text": "Good switch, cortados are great." }
+          ]
+        }
+      ]
+    }
+  ]
+}

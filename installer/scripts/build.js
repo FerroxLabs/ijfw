@@ -19,7 +19,8 @@ import { build } from 'esbuild';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const installerRoot = resolve(here, '..');
-const repoDocs = resolve(installerRoot, '..', 'docs');
+const repoRoot = resolve(installerRoot, '..');
+const repoDocs = resolve(repoRoot, 'docs');
 
 process.chdir(installerRoot);
 
@@ -30,6 +31,20 @@ const guideSrc = resolve(repoDocs, 'GUIDE.md');
 const assetsSrc = resolve(repoDocs, 'guide', 'assets');
 if (existsSync(guideSrc)) cpSync(guideSrc, 'docs/GUIDE.md');
 if (existsSync(assetsSrc)) cpSync(assetsSrc, 'docs/guide/assets', { recursive: true });
+
+// --- 1b. Stage Aider convention templates for the tarball -------------------
+// The published @ijfw/install package does NOT ship the repo's `aider/` dir.
+// uninstall.js byte-compares the user's ~/.aider.conf.yml / ~/CONVENTIONS.md
+// against the shipped templates before auto-removing them; without the
+// templates in the tarball that comparison always fails and pristine IJFW
+// files are never cleaned up. Stage them into templates/aider/ (declared in
+// package.json "files") and resolve from there in uninstall.js.
+rmSync('templates/aider', { recursive: true, force: true });
+mkdirSync('templates/aider', { recursive: true });
+for (const name of ['aider.conf.yml', 'CONVENTIONS.md']) {
+  const src = resolve(repoRoot, 'aider', name);
+  if (existsSync(src)) cpSync(src, resolve('templates/aider', name));
+}
 
 // --- 2. Bundle ---------------------------------------------------------------
 await build({

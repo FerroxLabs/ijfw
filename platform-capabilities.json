@@ -17,7 +17,7 @@
       "skills": 34,
       "agents": 37,
       "commands": 22,
-      "hooks": 17,
+      "hooks": 18,
       "hookEvents": 6,
       "skillsPath": "claude/skills",
       "hooksPath": "claude/hooks/hooks.json",

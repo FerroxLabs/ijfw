@@ -18,5 +18,11 @@
     "used_warn": 0.50,
     "used_critical": 0.80,
     "style": "left"
+  },
+  "profile": {
+    "capture": "on",
+    "inject": "ask",
+    "share_sensitive": false,
+    "inject_consent_version": null
   }
 }

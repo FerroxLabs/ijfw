@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IJFW — Comparison</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161922; --line:#262b38; --ink:#e7eaf0; --mut:#9aa3b2;
+    --accent:#ff6b35; --yes:#2fbf71; --no:#5b6472; --partial:#e0a23a; --removed:#e2574c; --road:#5b9dff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:40px 24px 80px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:31px;margin:0 0 6px;letter-spacing:-.02em}
+  h1 .mark{color:var(--accent)}
+  .sub{color:var(--mut);font-size:15.5px;max-width:800px}
+  .sub b{color:var(--ink)}
+  h2{font-size:20px;margin:46px 0 4px;letter-spacing:-.01em}
+  h2 .n{color:var(--accent)}
+  .lede{color:var(--mut);font-size:14px;margin:2px 0 16px;max-width:840px}
+  .lede b{color:var(--ink)}
+  .caveat{background:#1c1206;border:1px solid #3a2a12;color:#f2c894;border-radius:10px;
+    padding:10px 14px;font-size:13px;margin:10px 0 16px}
+  table{width:100%;border-collapse:separate;border-spacing:0;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13.5px}
+  th,td{padding:11px 13px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+  th{background:#1b1f29;color:var(--mut);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+  tr:last-child td{border-bottom:none}
+  td:first-child,th:first-child{font-weight:600}
+  .ijfw td{background:linear-gradient(90deg,rgba(255,107,53,.15),rgba(255,107,53,.03));border-bottom:1px solid #3a2a1e}
+  .ijfw td:first-child{color:var(--accent);font-weight:800}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;line-height:1.7}
+  .yes{background:rgba(47,191,113,.16);color:var(--yes)}
+  .no{background:rgba(91,100,114,.18);color:#aeb6c4}
+  .partial{background:rgba(224,162,58,.16);color:var(--partial)}
+  .removed{background:rgba(226,87,76,.16);color:var(--removed)}
+  .road{background:rgba(91,157,255,.16);color:var(--road)}
+  .cs{display:block;color:var(--mut);font-size:12px;margin-top:3px}
+  .take{margin:12px 2px 0;color:var(--ink);font-size:14px}.take b{color:var(--accent)}
+  /* unify grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:8px;margin-top:6px}
+  .chip{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+  .chip .nm{font-weight:700;font-size:13.5px}
+  .chip .ds{color:var(--mut);font-size:11.5px;margin-top:2px;line-height:1.35}
+  .tierlabel{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 6px}
+  .halo{text-align:center;background:linear-gradient(90deg,rgba(255,107,53,.05),rgba(255,107,53,.13),rgba(255,107,53,.05));
+    border:1px dashed #3a2a1e;border-radius:12px;padding:13px;margin:14px 0 4px;color:var(--accent);font-weight:700;font-size:14.5px}
+  .guard{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:12px 18px;margin-top:14px}
+  .guard li{margin:7px 0;color:var(--mut);font-size:13.5px}.guard b{color:var(--ink)}
+  .shot{padding:14px 24px 28px;background:var(--bg);border-radius:14px}
+  .shot h2:first-child{margin-top:6px}
+  footer{margin-top:50px;color:var(--mut);font-size:12px;border-top:1px solid var(--line);padding-top:16px}
+  @media print{body{background:#fff;color:#111;padding:0}.caveat{background:#fff7ec}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1><span class="mark">IJFW</span> &mdash; one brain for every AI tool you use</h1>
+<p class="sub">IJFW is <b>not another coding agent, and not another memory SDK you bolt into one app.</b> It's a local-first personalization &amp; memory layer that sits <b>above every coding tool at the MCP level</b> &mdash; learns what you correct, carries it across all of them, and you own and audit all of it.</p>
+
+<div class="caveat">Competitor data: IJFW research scan, 2026-06-09 (live web + docs). Tools ship weekly &mdash; verify before publishing. IJFW rows = built &amp; tested on the v1.6 branch (unreleased). "Roadmap" means not shipped.</div>
+
+<!-- ============ PART 1: UNIFY ============ -->
+<section class="shot" id="shot-unify">
+<h2><span class="n">1.</span> The tools IJFW unifies <span style="color:var(--mut);font-weight:400;font-size:14px">(it sits on these &mdash; it doesn't compete with them)</span></h2>
+<p class="lede">Every developer juggles several of these. Today each one has its own siloed memory (or none). <b>IJFW puts one shared, learned-from-you brain underneath all of them at once.</b></p>
+
+<div class="tierlabel">Dedicated coding agents</div>
+<div class="grid">
+  <div class="chip"><div class="nm">Claude Code</div><div class="ds">Anthropic terminal agent</div></div>
+  <div class="chip"><div class="nm">Codex CLI</div><div class="ds">OpenAI terminal agent</div></div>
+  <div class="chip"><div class="nm">Gemini CLI</div><div class="ds">Google DeepMind</div></div>
+  <div class="chip"><div class="nm">Cursor</div><div class="ds">AI-first editor (Anysphere)</div></div>
+  <div class="chip"><div class="nm">Windsurf</div><div class="ds">AI IDE + Cascade</div></div>
+  <div class="chip"><div class="nm">GitHub Copilot</div><div class="ds">Microsoft / GitHub</div></div>
+  <div class="chip"><div class="nm">Aider</div><div class="ds">git-aware terminal agent</div></div>
+  <div class="chip"><div class="nm">Cline</div><div class="ds">VS Code agent</div></div>
+  <div class="chip"><div class="nm">OpenCode</div><div class="ds">open-source TUI agent</div></div>
+  <div class="chip"><div class="nm">Qwen Code</div><div class="ds">Alibaba CLI</div></div>
+  <div class="chip"><div class="nm">Kimi CLI</div><div class="ds">Moonshot AI</div></div>
+  <div class="chip"><div class="nm">Wayland</div><div class="ds">CLI coding agent</div></div>
+  <div class="chip"><div class="nm">Antigravity</div><div class="ds">AI dev surface</div></div>
+</div>
+<div class="tierlabel">General agents with strong coding</div>
+<div class="grid">
+  <div class="chip"><div class="nm">OpenClaw</div><div class="ds">self-hosted personal agent</div></div>
+  <div class="chip"><div class="nm">Hermes</div><div class="ds">Nous Research self-improving agent</div></div>
+  <div class="chip"><div class="nm">Pi</div><div class="ds">Inflection assistant</div></div>
+</div>
+<div class="halo">&darr;&nbsp; one shared, private, learned-from-you brain &nbsp;&darr;</div>
+<p class="take">No tool on this list shares its memory with the others. Even Hermes &mdash; which has its <em>own</em> learning loop &mdash; keeps it locked inside Hermes. <b>IJFW is the only layer that gives you one brain across all 16.</b></p>
+
+</section>
+<!-- ============ PART 2: THE REAL CATEGORY ============ -->
+<section class="shot" id="shot-layer">
+<h2><span class="n">2.</span> The real comparison: the memory / personalization layer</h2>
+<p class="lede">This is IJFW's actual category. And the pattern is stark: <b>every one is something you wire into a single app, one integration at a time, usually in the cloud.</b> They're built for app developers bolting memory into <em>their</em> product &mdash; not for the developer who already uses five tools and wants one memory under all of them.</p>
+<table>
+  <thead><tr>
+    <th>Product</th><th>How you install it</th><th>Auto across all your tools</th>
+    <th>Learns from your corrections</th><th>Local-first (default)</th><th>Built for</th>
+  </tr></thead>
+  <tbody>
+    <tr class="ijfw">
+      <td>IJFW</td>
+      <td><span class="tag yes">Zero-config</span><span class="cs">install once, sits under your existing tools</span></td>
+      <td><span class="tag yes">Yes</span><span class="cs">automatic, no per-app code</span></td>
+      <td><span class="tag yes">Yes</span><span class="cs">your edit diffs (proposed vs committed)</span></td>
+      <td><span class="tag yes">Yes</span><span class="cs">local-only store</span></td>
+      <td><b style="color:var(--accent)">You</b><span class="cs">the individual developer</span></td>
+    </tr>
+    <tr><td>Mem0</td><td><span class="tag no">Per-app SDK</span><span class="cs">client.add() in your code</span></td><td><span class="tag no">No</span></td><td><span class="tag partial">Extraction</span><span class="cs">LLM per record + explicit add</span></td><td><span class="tag no">Cloud</span><span class="cs">self-host avail</span></td><td>App developers</td></tr>
+    <tr><td>Letta (MemGPT)</td><td><span class="tag no">Build on Letta</span><span class="cs">replaces your tool</span></td><td><span class="tag no">No</span><span class="cs">Letta-native only</span></td><td><span class="tag partial">Agent-internal</span></td><td><span class="tag partial">Both</span></td><td>Agent builders</td></tr>
+    <tr><td>Zep</td><td><span class="tag no">Per-app SDK</span><span class="cs">→ cloud API</span></td><td><span class="tag no">No</span></td><td><span class="tag partial">Graph extraction</span></td><td><span class="tag no">Cloud</span><span class="cs">CE deprecated; Graphiti = your own Neo4j</span></td><td>App developers</td></tr>
+    <tr><td>Cognee</td><td><span class="tag partial">SDK / MCP</span><span class="cs">per-tool MCP config</span></td><td><span class="tag partial">Partial</span><span class="cs">MCP, manual per tool</span></td><td><span class="tag partial">LLM extraction</span></td><td><span class="tag yes">Local</span></td><td>App devs + power users</td></tr>
+    <tr><td>Honcho</td><td><span class="tag no">Per-integration</span><span class="cs">plugin per tool</span></td><td><span class="tag no">No</span></td><td><span class="tag partial">Auto reasoning</span><span class="cs">once integrated</span></td><td><span class="tag no">Cloud</span></td><td>App developers</td></tr>
+    <tr><td>MemMachine</td><td><span class="tag partial">Deploy + wire</span><span class="cs">middleware + MCP</span></td><td><span class="tag partial">Partial</span><span class="cs">explicit wiring</span></td><td><span class="tag partial">Store-after</span></td><td><span class="tag partial">Both</span></td><td>Agent builders</td></tr>
+    <tr><td>Memori</td><td><span class="tag no">Per-app SDK</span><span class="cs">wraps your LLM client</span></td><td><span class="tag no">No</span></td><td><span class="tag partial">Auto-classify turns</span></td><td><span class="tag partial">Hybrid</span></td><td>App developers</td></tr>
+    <tr><td>Hindsight</td><td><span class="tag no">Per-integration</span><span class="cs">40+ integrations</span></td><td><span class="tag no">No</span></td><td><span class="tag partial">Explicit retain/recall</span></td><td><span class="tag partial">Both</span></td><td>App developers</td></tr>
+  </tbody>
+</table>
+<p class="take">They're all <b>"bolt memory into one app."</b> IJFW is <b>"one memory under every app you already use."</b> That quadrant &mdash; local + zero-per-app-code + learns-from-your-corrections + across-all-your-tools &mdash; is empty except for IJFW.</p>
+
+</section>
+<!-- ============ PART 3: MEASURED ============ -->
+<section class="shot" id="shot-bench">
+<h2><span class="n">3.</span> Measured against the memory layer</h2>
+<div class="caveat">Internal lab study: Ferrox Labs authored this benchmark <em>and</em> competes in it; LoCoMo is hash-only (replication leg). Directional, not peer-reviewed &mdash; show the caveat if published.</div>
+<table>
+  <thead><tr><th>Claim</th><th>Result</th><th>Benchmark</th></tr></thead>
+  <tbody>
+    <tr><td>Memory beats no-memory</td><td><b style="color:var(--yes)">0.609</b> vs <b style="color:var(--no)">0.058</b> closed-book ceiling <span class="cs">+55 points</span></td><td>longmemeval (MIT), n=138, panel-graded</td></tr>
+    <tr><td>Temporal recall = the moat</td><td>Mem0 / Letta / Zep all <b style="color:var(--removed)">0.000</b> &middot; IJFW <b style="color:var(--yes)">0.676</b></td><td>LoCoMo temporal split</td></tr>
+    <tr><td>Head-to-head accuracy</td><td>IJFW <b style="color:var(--accent)">0.377</b> &gt; Letta 0.276 &gt; Mem0 0.111 &gt; Zep 0.055</td><td>LoCoMo, matched models, paired McNemar</td></tr>
+    <tr><td>Ingest cost</td><td>IJFW &asymp; free FTS indexing &middot; Mem0 = 1 LLM call <em>per record</em> (~13 min/conv)</td><td>cost frontier</td></tr>
+  </tbody>
+</table>
+
+</section>
+<!-- ============ PART 4: CAPABILITIES ============ -->
+<section class="shot" id="shot-caps">
+<h2><span class="n">4.</span> What IJFW does</h2>
+<table>
+  <thead><tr><th>Area</th><th>Capability</th><th>State</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="4">Personalization</td><td>Learns what you correct (edit-diff capture), evidence-gated (cite-or-drop)</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td>On-by-default, flick-to-off; high-confidence auto-acts, rest is show-and-confirm</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td>Communication-style fingerprint + expertise bands</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td>Drafts in your voice (few-shots your own writing; default-off, forgettable)</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td rowspan="2">Cross-tool reach</td><td>One profile into 16 tools via MCP + rules-file fallback; zero per-app code</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td>Per-client injection verification (only claims tools it proves)</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td rowspan="2">Memory engine</td><td>Hybrid retrieval (BM25 + dense, RRF) + multi-hop</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td>Time-aware recall + cross-session round indexing</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td rowspan="2">Privacy / control</td><td>Local-only; every disclosure logged; one-command forget</td><td><span class="tag yes">Built</span></td></tr>
+    <tr><td>Opt-outs (no-inject / no-registry / tenant / no-import); honest uninstall</td><td><span class="tag yes">Built</span></td></tr>
+  </tbody>
+</table>
+
+</section>
+<h2><span class="n">★</span> Honesty guardrails (for the README copy)</h2>
+<div class="guard"><ul>
+  <li><b>Voice: claim "drafts in your voice using your own writing", NOT "indistinguishable."</b> IJFW few-shots samples of <em>your own real writing</em> (default-off, visible, forgettable); it does not pass an authorship-verification bar and must never imply it does.</li>
+  <li><b>Don't say "never leaves the machine."</b> Say <em>"stored locally, every disclosure logged, forgettable."</em> Once it injects into a cloud tool it's disclosed &mdash; still the most private option here.</li>
+  <li><b>Frame the hosts as "works with," never "vs."</b> They're the surfaces IJFW unifies, not competitors.</li>
+  <li><b>Only list cross-tool clients we verified inject;</b> benchmark numbers carry the standing-limitation caveat.</li>
+</ul></div>
+
+<footer>IJFW &mdash; comparison source. Tags: <span class="tag yes">Yes/Built</span> <span class="tag partial">Partial</span> <span class="tag road">Roadmap</span> <span class="tag no">No</span>. The category is the memory layer; the coding tools are what we unify. Positioning: smarter, not cheaper.</footer>
+</div>
+</body>
+</html>

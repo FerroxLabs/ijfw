@@ -227,11 +227,58 @@ if [ ! -f "$JOURNAL" ]; then
 fi
 printf -- '- [%s] session-end: #%s\n' "$ISO_TIMESTAMP" "$SESSION_NUM" >> "$JOURNAL" 2>/dev/null
 
+# --- Profile bus P1: flush the per-session style accumulator ---
+# Turns the per-message metadata accumulated by pre-prompt.sh into ONE
+# .ijfw/.session-style.jsonl contract record (METADATA ONLY), applying the
+# hardening gates (quarantine / PII / identity / influence-cap). Best-effort +
+# isolated: a flush failure never crashes Claude Code.
+#
+# H1 lifecycle ordering (audit fix): this flush MUST run BEFORE the dream-trigger
+# spawn (deferred to end-of-file). flushSession is synchronous + fast, and it
+# writes THIS session's style row into .ijfw/.session-style.jsonl. The dream
+# cycle that this same session spawns reads that style stream, so the row must
+# be durably on disk before the detached consumer launches -- otherwise the
+# freshest session never informs the run it triggered.
+#
+# H3 lifecycle ordering (audit fix): export the canonical IJFW_HOST so
+# capture.js resolveHost() stamps the SAME provenance string the dream-trigger
+# spawn passes (--host claude-code). 'claude-code' is capture.js's resolveHost
+# default + its KNOWN_HOSTS trust-table key; keeping them identical makes
+# per-host trust + provenance consistent end-to-end.
+export IJFW_HOST="${IJFW_HOST:-claude-code}"
+CAPTURE_FLUSH=""
+for base in \
+    "$CLAUDE_PLUGIN_ROOT/../mcp-server/src" \
+    "$HOME/.ijfw/mcp-server/src" \
+    "$(pwd)/mcp-server/src"; do
+  if [ -f "$base/profile/capture.js" ]; then CAPTURE_FLUSH="$base/profile/capture.js"; break; fi
+done
+if [ -n "$CAPTURE_FLUSH" ] && command -v node >/dev/null 2>&1; then
+  node --input-type=module -e "
+    const { flushSession } = await import('file://' + process.argv[1]);
+    try {
+      flushSession({
+        sessionId: process.argv[2] || null,
+        ts: Date.now(),
+        cwd: process.cwd(),
+        env: process.env,
+      });
+    } catch {}
+  " "$CAPTURE_FLUSH" "${IJFW_SESSION_ID:-$SESSION_NUM}" 2>>"$HOME/.ijfw/logs/memorize.log" || true
+fi
+
 # Dream cycle trigger (D3 -- inline detached spawn at SessionEnd).
 # Replaces the legacy `SESSION_NUM % 5 == 0` startup-flag deferral with
 # a fire-and-forget spawn that returns within ~50ms (hook latency
 # budget). Cooldown enforced by runner.mjs via .ijfw/.dream-state.json
 # (4h). Set IJFW_DREAM_LEGACY=1 to revert to the old startup-flag path.
+#
+# H1/H2 lifecycle ordering (audit fix): RESOLUTION happens here, but the
+# detached SPAWN is deferred to AFTER (a) flushSession writes this session's
+# style row and (b) memorize truncates .session-feedback.jsonl. See the
+# "Dream cycle spawn (deferred)" block near end-of-file for the invocation and
+# the full ordering rationale. We only resolve the path here so the spawn
+# block stays a single guarded line.
 DREAM_TRIGGER=""
 for cand in \
     "$HOME/.ijfw/claude/skills/ijfw-summarize/scripts/dream-trigger.sh" \
@@ -240,9 +287,6 @@ for cand in \
     "$(dirname "$0")/../../skills/ijfw-summarize/scripts/dream-trigger.sh"; do
   [ -n "$cand" ] && [ -f "$cand" ] && { DREAM_TRIGGER="$cand"; break; }
 done
-if [ -n "$DREAM_TRIGGER" ]; then
-  bash "$DREAM_TRIGGER" "$(pwd)" "claude" "${IJFW_SESSION_ID:-}" 2>/dev/null || true
-fi
 
 # W4.6 / R6 -- session-dir pruning. Keep newest 30 markers; archive older
 # to .ijfw/archive/sessions/ as gzip if gzip is available, else rm.
@@ -329,6 +373,35 @@ if [ -n "$MEMORIZE" ]; then
     [ -f "$IJFW_DIR/.session-signals.jsonl" ]  && : > "$IJFW_DIR/.session-signals.jsonl"
     [ -f "$IJFW_DIR/.session-feedback.jsonl" ] && : > "$IJFW_DIR/.session-feedback.jsonl"
   fi
+fi
+
+# Dream cycle spawn (deferred) -- H1/H2 lifecycle ordering (audit fix).
+#
+# Deterministic order enforced across this script:
+#   1. flushSession (above, pre-resolution): writes THIS session's style row to
+#      .ijfw/.session-style.jsonl BEFORE any dream consumer launches (H1).
+#   2. memorize + its .session-feedback.jsonl truncation (the block directly
+#      above): runs to completion synchronously.
+#   3. dream-trigger spawn (HERE): launched only AFTER (1) and (2) have settled.
+#
+# Why spawn last (H2 feedback-race rationale): memorize truncates
+# .session-feedback.jsonl on success, while the detached runner.mjs reads that
+# same file. Spawning the dream consumer AFTER the truncation has already
+# completed eliminates the concurrent read-vs-truncate window entirely -- the
+# runner can never observe the file mid-truncation. The tradeoff is that this
+# session's feedback rows are consumed by memorize (which IS the feedback->
+# preference synthesizer) rather than by the dream cycle; the dream cycle's job
+# here is style/pattern consolidation over the .session-style.jsonl stream that
+# step (1) just populated, so it still receives this session's freshest signal.
+# (A parallel change adds a cursor to the dream stage for idempotent feedback
+# consumption, but correctness here does NOT depend on it -- the ordering alone
+# closes the race window.)
+#
+# H3: pass the canonical 'claude-code' host (matches capture.js resolveHost
+# default + the IJFW_HOST exported before flushSession) so provenance + per-host
+# trust stay consistent end-to-end. Replaces the old literal "claude".
+if [ -n "$DREAM_TRIGGER" ]; then
+  bash "$DREAM_TRIGGER" "$(pwd)" "claude-code" "${IJFW_SESSION_ID:-}" 2>/dev/null || true
 fi
 
 HOOK_LOG="$HOME/.ijfw/logs/hooks.log"

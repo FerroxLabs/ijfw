@@ -79,7 +79,7 @@ test('marketplace merge creates settings.json when absent', async () => {
 
 // --- Test 3b: heal stale github source from <= 1.2.6 ---
 test('marketplace merge heals stale github source written by <= 1.2.6', async () => {
-  // Reproduces the regression that broke /Users/seandonahoe's install:
+  // Reproduces the regression that broke a real user's install:
   // an existing settings.json carried `source: github, repo: TheRealSeanDonahoe/
   // ijfw`, which Claude Code resolved to a missing marketplace.json. Re-running
   // the installer must overwrite that block with the correct directory source,
@@ -168,4 +168,112 @@ test('uninstall --purge removes memory/', () => {
   assert.ok(!existsSync(dir), 'dir fully removed');
 
   rmSync(tmpHome, { recursive: true, force: true });
+});
+
+// --- Test 7: installWayland writes a Wayland-loadable declarative plugin.toml ---
+// Wayland Core only loads a declarative ~/.wayland/plugins/<name>/plugin.toml
+// (TOML, NO executable entry). The legacy config.yaml + Python plugin tree it
+// used to write were dead weight Wayland could never load. Drive installWayland
+// against a scratch home + the real repoRoot (so WAYLAND.md / skills resolve)
+// and assert the new outputs and the absence of the old ones.
+test('installWayland writes declarative plugin.toml, not config.yaml / Python tree', async () => {
+  const { installWayland } = await import('./src/install-targets-1-7.js');
+  const home = mkdtempSync(join(tmpdir(), 'ijfw-wayland-home-'));
+  try {
+    const serverJsNative = join('/abs', 'path', 'mcp-server', 'src', 'server.js');
+    const logged = [];
+    const ctx = {
+      home,
+      homeReal: home,
+      ijfwCustomDir: false,
+      repoRoot: join(HERE, '..'),
+      serverJsNative,
+      ts: '20260610T000000',
+      log: {
+        ok: (m) => logged.push(m),
+        note: () => {},
+        info: () => {},
+        warn: () => {},
+      },
+    };
+
+    const outcome = await installWayland(ctx);
+    assert.equal(outcome.status, 'ok');
+
+    // plugin.toml exists with the exact Wayland PluginManifest schema.
+    const pluginToml = join(home, '.wayland', 'plugins', 'ijfw', 'plugin.toml');
+    assert.ok(existsSync(pluginToml), 'declarative plugin.toml written');
+    const toml = readFileSync(pluginToml, 'utf8');
+    assert.match(toml, /^name = "wayland-ijfw"$/m);
+    assert.match(toml, /^license = "MIT"$/m);
+    assert.match(toml, /^\[permissions\]$/m);
+    assert.match(toml, /^register_hooks = true$/m);
+    assert.match(toml, /^register_mcp_server = true$/m);
+    assert.match(toml, /^\[runtime\]\nkind = "declarative"$/m);
+    assert.match(toml, /^\[mcp_server\]\nname = "ijfw-memory"$/m);
+    assert.match(toml, /^\[mcp_server\.transport\]$/m);
+    assert.match(toml, /^kind = "stdio"$/m);
+    assert.match(toml, /^command = "node"$/m);
+    // serverJsNative is emitted as a TOML basic string (the args entry).
+    assert.ok(
+      toml.includes(`args = ["${serverJsNative}"]`),
+      'serverJsNative interpolated into args',
+    );
+    // Version pulled from installer/package.json — a non-empty quoted string.
+    assert.match(toml, /^version = "\d+\.\d+\.\d+/m, 'real version interpolated');
+    // The two hooks Wayland actually dispatches today.
+    assert.match(toml, /phase = "session_start"\ntool = "ijfw_memory_prelude"/);
+    assert.match(toml, /phase = "pre_prompt"\ntool = "ijfw_memory_recall"/);
+    // Log-only phases stay OUT until Wayland wires them.
+    assert.ok(!toml.includes('post_tool_use'), 'no unsupported phases');
+    assert.ok(!toml.includes('session_end'), 'no unsupported phases');
+    // The old, broken Python hook name must not survive.
+    assert.ok(!toml.includes('ijfw_pre_prompt_recall'), 'old phantom tool name gone');
+
+    // The dead legacy outputs are NO LONGER written.
+    assert.ok(!existsSync(join(home, '.wayland', 'config.yaml')), 'no config.yaml');
+    assert.ok(
+      !existsSync(join(home, '.wayland', 'plugins', 'ijfw', '_manifest.py')),
+      'no Python plugin tree',
+    );
+
+    // The still-useful surfaces survive: WAYLAND.md + at least one skill.
+    assert.ok(existsSync(join(home, '.wayland', 'WAYLAND.md')), 'WAYLAND.md copied');
+    assert.ok(
+      existsSync(join(home, '.wayland', 'skills')) &&
+        readFileSync(pluginToml, 'utf8').length > 0,
+      'skills dir created',
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// --- Test 8: installWayland escapes a Windows-style serverJsNative path ---
+// serverJsNative can be a Windows absolute path with backslashes; it must be
+// emitted as a valid TOML basic string (backslashes doubled) or the manifest
+// fails to parse on Wayland.
+test('installWayland escapes backslashes in serverJsNative for TOML', async () => {
+  const { installWayland } = await import('./src/install-targets-1-7.js');
+  const home = mkdtempSync(join(tmpdir(), 'ijfw-wayland-win-'));
+  try {
+    const winPath = 'C:\\Users\\me\\.ijfw\\mcp-server\\src\\server.js';
+    const ctx = {
+      home,
+      ijfwCustomDir: false,
+      repoRoot: join(HERE, '..'),
+      serverJsNative: winPath,
+      ts: '20260610T000000',
+      log: { ok: () => {}, note: () => {}, info: () => {}, warn: () => {} },
+    };
+    await installWayland(ctx);
+    const toml = readFileSync(join(home, '.wayland', 'plugins', 'ijfw', 'plugin.toml'), 'utf8');
+    // Each backslash doubled in the basic string.
+    assert.ok(
+      toml.includes('args = ["C:\\\\Users\\\\me\\\\.ijfw\\\\mcp-server\\\\src\\\\server.js"]'),
+      'backslashes escaped for TOML',
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

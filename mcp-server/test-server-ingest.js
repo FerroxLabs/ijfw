@@ -101,14 +101,17 @@ test('handleStore: near-duplicate content returns deduped:true and skips append'
   assert.equal(readJournalLines().length, journalBefore + 1, 'dedup must skip append');
 });
 
-test('handleStore + handleRecall({facts}): facts feed is queryable', () => {
+test('handleStore + handleRecall({facts}): facts feed is queryable', async () => {
   // Drop a recognizable structured memory then read it back via recall.
   handleStore({
     content: 'lead: Alice\nrelease date: 2027-01-15',
     type: 'observation',
     summary: 'lead + release dates for Q1',
   });
-  const recall = handleRecall({ context_hint: 'facts' });
+  // handleRecall is async (its NL branch awaits searchMemory's cold-tier
+  // rerank). The reserved 'facts' branch still resolves synchronously inside
+  // the promise, so awaiting is correct and order-preserving.
+  const recall = await handleRecall({ context_hint: 'facts' });
   assert.equal(recall.isError, undefined, `recall errored: ${recall.text}`);
   assert.match(recall.text, /"predicate":\s*"lead"/);
   assert.match(recall.text, /"object":\s*"Alice"/);

@@ -176,6 +176,54 @@ if [ ! -f "$JOURNAL" ]; then
 fi
 printf -- '- [%s] codex-session-end: #%s\n' "$ISO_TIMESTAMP" "$SESSION_NUM" >> "$JOURNAL" 2>/dev/null
 
+# --- Profile bus P1: flush the per-session style accumulator ---
+# Mirrors claude/hooks/scripts/session-end.sh: turns the per-message metadata
+# accumulated by codex pre-prompt.sh into ONE .ijfw/.session-style.jsonl contract
+# record (METADATA ONLY), applying the hardening gates (quarantine / PII /
+# identity / influence-cap). Best-effort + isolated: a flush failure never
+# crashes Codex.
+#
+# Lifecycle ordering: this flush runs BEFORE the dream-trigger spawn below so
+# THIS session's style row is durably on disk before the dream consumer (which
+# reads .ijfw/.session-style.jsonl) launches -- otherwise the freshest session
+# never informs the run it triggered.
+#
+# Host: export the canonical 'codex' so capture.js resolveHost() stamps the SAME
+# provenance string the dream-trigger spawn passes (--host / "codex" arg). 'codex'
+# is a known key in capture.js HOST_TRUST (weight 0.9); keeping them identical
+# makes per-host trust + provenance consistent end-to-end.
+export IJFW_HOST="${IJFW_HOST:-codex}"
+CAPTURE_FLUSH=""
+for base in \
+    "$HOME/.ijfw/mcp-server/src" \
+    "$(pwd)/mcp-server/src"; do
+  if [ -f "$base/profile/capture.js" ]; then CAPTURE_FLUSH="$base/profile/capture.js"; break; fi
+done
+if [ -n "$CAPTURE_FLUSH" ] && command -v node >/dev/null 2>&1; then
+  # Resolve a session id: prefer the explicit env, then the stdin payload's
+  # session_id, then the local session counter -- so the flushed row is keyed to
+  # the same session the accumulator was built under.
+  SID_FLUSH="${IJFW_SESSION_ID:-}"
+  if [ -z "$SID_FLUSH" ] && [ -n "$HOOK_STDIN" ]; then
+    SID_FLUSH=$(printf '%s' "$HOOK_STDIN" | node -e '
+      let buf=""; process.stdin.on("data",c=>buf+=c);
+      process.stdin.on("end",()=>{ try { const j=JSON.parse(buf); process.stdout.write(j.session_id||""); } catch {} });
+    ' 2>/dev/null || true)
+  fi
+  [ -z "$SID_FLUSH" ] && SID_FLUSH="$SESSION_NUM"
+  node --input-type=module -e "
+    const { flushSession } = await import('file://' + process.argv[1]);
+    try {
+      flushSession({
+        sessionId: process.argv[2] || null,
+        ts: Date.now(),
+        cwd: process.cwd(),
+        env: process.env,
+      });
+    } catch {}
+  " "$CAPTURE_FLUSH" "$SID_FLUSH" 2>>"$HOME/.ijfw/logs/codex-session-end.log" || true
+fi
+
 # Dream cycle trigger (D3 -- inline detached spawn at SessionEnd).
 # Replaces the legacy `SESSION_NUM % 5 == 0` startup-flag deferral with
 # a fire-and-forget spawn that returns within ~50ms. Cooldown enforced

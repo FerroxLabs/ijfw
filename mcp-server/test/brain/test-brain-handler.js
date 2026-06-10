@@ -40,9 +40,18 @@ test('handleIjfwBrain: unknown verb -> error', async () => {
   assert.equal(r.error, 'unknown-verb');
 });
 
-test('IJFW_BRAIN_VERBS lists all 8 verbs', () => {
-  assert.equal(IJFW_BRAIN_VERBS.length, 8);
-  for (const v of ['think', 'links', 'wiki.get', 'wiki.compile', 'wiki.promote', 'wiki.export', 'wiki.shareReadme', 'conflict.resolve']) {
+test('IJFW_BRAIN_VERBS lists all 12 verbs', () => {
+  // v1.6.0 P4 folded the cross-system profile-bus read path into ijfw_brain as
+  // two read verbs (profile.get / profile.brief). The serving-security audit
+  // (M2) added two more — profile.forget (right-to-be-forgotten) and
+  // profile.audit (list inferences with provenance) — giving the user a real
+  // invocation surface for the audit module. Still NO new top-level tool, so the
+  // MCP cap stays 13/13. The original 8 brain verbs plus the 4 profile verbs.
+  assert.equal(IJFW_BRAIN_VERBS.length, 12);
+  for (const v of [
+    'think', 'links', 'wiki.get', 'wiki.compile', 'wiki.promote', 'wiki.export', 'wiki.shareReadme', 'conflict.resolve',
+    'profile.get', 'profile.brief', 'profile.forget', 'profile.audit',
+  ]) {
     assert.ok(IJFW_BRAIN_VERBS.includes(v), `missing ${v}`);
   }
 });

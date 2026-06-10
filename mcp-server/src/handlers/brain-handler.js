@@ -25,6 +25,9 @@ import { compileWikiPage, slugify } from '../brain/wiki-compiler.js';
 import { resolveCitations } from '../brain/citation-resolver.js';
 import { exportPageBundle, writeShareReadme } from '../brain/export.js';
 import { validateSafeRepoPath } from '../brain/path-guard.js';
+import { profileGet, profileBrief } from '../profile/serve.js';
+import { forgetAndWrite, listInferences } from '../profile/audit.js';
+import { readProfile } from '../profile/store.js';
 
 const WIKI_TYPES = ['concepts', 'entities', 'decisions', 'milestones'];
 
@@ -336,7 +339,99 @@ function verbConflictResolve(db, repoRoot, args) {
   return { ok: true, resolved: true, winnerId: args.winnerId, supersededIds, validTo: chosenValidTo };
 }
 
-export async function handleIjfwBrain({ verb, args = {}, db, repoRoot, env: _env, opts = {} } = {}) {
+// ---------------------------------------------------------------------------
+// PHASE P4 — cross-system profile bus serving verbs (folded into ijfw_brain so
+// the MCP tool cap stays at 13/13 — NO new top-level tool). Both verbs are
+// ZERO-LLM by construction: they route into src/profile/serve.js, which imports
+// only the store/render/egress/sensitivity modules (the P4.5 import-graph guard
+// proves the serve path never reaches the LLM tier). `env` threads the host's
+// env so per-host opt-in (IJFW_PROFILE_SHARE_SENSITIVE), redaction
+// (IJFW_PROFILE_REDACT) and the kill-switch (IJFW_PROFILE_KILL) are honored.
+//
+// args (both verbs, all optional):
+//   tokenBudget     number — cap brief output (brief only)
+//   context         { overlay?, host?, session? } — overlay key + egress meta
+//   shareSensitive  boolean — programmatic per-host opt-in (else env flag)
+// ---------------------------------------------------------------------------
+
+function profileServeOpts(args, env) {
+  return {
+    tokenBudget: args && Number.isFinite(args.tokenBudget) ? args.tokenBudget : undefined,
+    context: (args && args.context && typeof args.context === 'object') ? args.context : {},
+    shareSensitive: (args && typeof args.shareSensitive === 'boolean') ? args.shareSensitive : undefined,
+    env: env || process.env,
+  };
+}
+
+function verbProfileGet(args, env) {
+  return profileGet(profileServeOpts(args, env));
+}
+
+function verbProfileBrief(args, env) {
+  return profileBrief(profileServeOpts(args, env));
+}
+
+// ---------------------------------------------------------------------------
+// PHASE P4 — right-to-be-forgotten + audit INVOCATION SURFACE (audit M2). The
+// audit module's forgetAndWrite / listInferences were previously reachable only
+// from tests; these verbs give the user a real way to SEE what was inferred and
+// to DELETE it (the egress purge rides along inside forgetAndWrite). Folded into
+// ijfw_brain — NO new top-level tool, cap stays 13/13.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a forget pattern from wire args. Across JSON we accept ONLY a string
+ * (exact-id or `kind::`/`::subject` segment match — see audit.matcherFor) or an
+ * explicit { regex, flags? } object that we compile under audit's ReDoS guard.
+ * A bad regex source compiles into a RegExp whose forgetAndWrite pre-validation
+ * (validatePattern) rejects it BEFORE the global lock — so a hostile pattern can
+ * neither hang the event loop nor over-delete.
+ */
+function buildForgetPattern(args) {
+  if (args && typeof args.id === 'string' && args.id) return { ok: true, pattern: args.id };
+  if (args && typeof args.pattern === 'string' && args.pattern) return { ok: true, pattern: args.pattern };
+  if (args && args.regex && typeof args.regex === 'string') {
+    const flags = typeof args.flags === 'string' ? args.flags.replace(/[^gimsuy]/g, '') : '';
+    try {
+      return { ok: true, pattern: new RegExp(args.regex, flags) };
+    } catch (e) {
+      return { ok: false, error: 'invalid-regex', message: e.message };
+    }
+  }
+  return { ok: false, error: 'missing-pattern' };
+}
+
+async function verbProfileForget(args) {
+  const built = buildForgetPattern(args);
+  if (!built.ok) return { ok: false, error: built.error, message: built.message };
+  // forgetAndWrite validates the pattern (ReDoS guard) BEFORE taking the global
+  // profile lock, runs read→forget→write under the lock, and purges egress.
+  const r = await forgetAndWrite(built.pattern);
+  if (!r.ok) return { ok: false, error: r.code || 'forget-failed', message: r.message };
+  return {
+    ok: true,
+    removed: (r.removed || []).map((inf) => ({ id: inf.id, kind: inf.kind, subject: inf.subject })),
+    removedCount: (r.removed || []).length,
+    egressRemoved: r.egressRemoved || 0,
+  };
+}
+
+function verbProfileAudit() {
+  // Read the current global profile and surface every inference with full
+  // provenance (scope, evidence, source sessions/hosts, sensitivity). Cold
+  // start (no profile on disk) -> empty list, never an error.
+  let profile = null;
+  try {
+    const r = readProfile();
+    profile = r && r.ok ? r.profile : null;
+  } catch {
+    profile = null;
+  }
+  if (!profile) return { ok: true, inferences: [] };
+  return { ok: true, inferences: listInferences(profile) };
+}
+
+export async function handleIjfwBrain({ verb, args = {}, db, repoRoot, env = process.env, opts = {} } = {}) {
   if (!verb || typeof verb !== 'string') return { ok: false, error: 'missing-verb' };
   switch (verb) {
     case 'think':              return verbThink(db, repoRoot, args, opts);
@@ -347,6 +442,10 @@ export async function handleIjfwBrain({ verb, args = {}, db, repoRoot, env: _env
     case 'wiki.export':        return verbWikiExport(db, repoRoot, args);
     case 'wiki.shareReadme':   return verbWikiShareReadme(db, repoRoot);
     case 'conflict.resolve':   return verbConflictResolve(db, repoRoot, args);
+    case 'profile.get':        return verbProfileGet(args, env);
+    case 'profile.brief':      return verbProfileBrief(args, env);
+    case 'profile.forget':     return verbProfileForget(args);
+    case 'profile.audit':      return verbProfileAudit();
     default:                   return { ok: false, error: 'unknown-verb', verb };
   }
 }
@@ -355,4 +454,5 @@ export const IJFW_BRAIN_VERBS = [
   'think', 'links',
   'wiki.get', 'wiki.compile', 'wiki.promote', 'wiki.export', 'wiki.shareReadme',
   'conflict.resolve',
+  'profile.get', 'profile.brief', 'profile.forget', 'profile.audit',
 ];
