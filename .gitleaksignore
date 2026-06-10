@@ -41,9 +41,6 @@ mcp-server/test/fixtures/longmemeval-s/longmemeval_s_cleaned.json:generic-api-ke
 .planning/1.4.3/HANDOFF-1.4.3.md:generic-api-key:711
 /Users/seandonahoe/dev/ijfw/.planning/1.4.3/HANDOFF-1.4.3.md:generic-api-key:711
 
-# Deliberately fake token on line 110 of the redaction unit test (a synthetic
-# placeholder assigned to a `token` const in the test fixture). Not a real secret.
-# Both relative and absolute fingerprints listed: the preflight gate scans with an
-# absolute --source, so gitleaks emits the absolute-path fingerprint form.
-mcp-server/test/profile-edit-delta.test.mjs:generic-api-key:110
-/Users/seandonahoe/dev/ijfw/mcp-server/test/profile-edit-delta.test.mjs:generic-api-key:110
+# The fake token in mcp-server/test/profile-edit-delta.test.mjs (redaction unit
+# test) is handled by an inline `gitleaks:allow` comment on the line itself,
+# which is path-independent and works in CI. No fingerprint entry needed here.

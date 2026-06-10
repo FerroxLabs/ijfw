@@ -107,7 +107,7 @@ test('captureEditDelta writes ONE cited evidence row to .session-edits.jsonl, no
     const r = captureEditDelta({
       sessionId: 's1',
       filePath: join(root, 'src', 'auth.js'),
-      proposed: 'const token = "SECRET-PROPOSED-9f3a";',
+      proposed: 'const token = "SECRET-PROPOSED-9f3a";', // gitleaks:allow -- deliberately fake token in a redaction unit test, not a real secret
       committed: 'const token = process.env.TOKEN;',
       ts: 1000,
       cwd: root,
