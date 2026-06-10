@@ -117,11 +117,20 @@ FILE_COUNT=$(wc -l < "$INDEX_DIR/.files.tmp" | tr -d ' ')
 
   while IFS= read -r f; do
     [ -f "$f" ] || continue
-    SIZE=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
     EXT="${f##*.}"
-    # First non-comment, non-blank line as a "what-is-this" hint.
-    FIRSTLINE=$(grep -Ev '^[[:space:]]*(//|#|/\*|\*|--|"""|\*\*|$)' "$f" 2>/dev/null | head -1 | sed 's/["]/\\"/g' | cut -c1-120)
-    echo "- \`$f\` ($SIZE lines, .$EXT) -- ${FIRSTLINE:-<empty>}"
+    # One awk pass per file replaces the old 5-process pipeline (wc + grep | head
+    # | sed | cut): it counts lines AND extracts the first non-comment, non-blank
+    # line as a "what-is-this" hint, emitting the index line directly. Same output
+    # format, ~5x fewer subprocesses on large trees.
+    awk -v path="$f" -v ext="$EXT" '
+      hint == "" && $0 !~ /^[[:space:]]*(\/\/|#|\/\*|\*|--|"""|\*\*)/ && $0 !~ /^[[:space:]]*$/ { hint = $0 }
+      END {
+        gsub(/"/, "\\\"", hint)
+        h = substr(hint, 1, 120)
+        if (h == "") h = "<empty>"
+        printf "- `%s` (%d lines, .%s) -- %s\n", path, NR, ext, h
+      }
+    ' "$f" 2>/dev/null
     echo "$EXT" >> "$BY_LANG"
   done < "$INDEX_DIR/.files.tmp"
 

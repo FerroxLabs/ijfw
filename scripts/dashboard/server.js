@@ -1640,6 +1640,20 @@ if (portArg !== -1 && args[portArg + 1]) {
 const server = createServer((req, res) => {
   const url = req.url.split('?')[0];
 
+  // CSRF guard: this dashboard binds to loopback, but a malicious web page could
+  // still make the browser fetch its data API cross-origin. Browsers stamp
+  // Sec-Fetch-Site on every request; the dashboard's own page is 'same-origin'
+  // and direct tools (curl, address bar) send 'none'/nothing. Reject the rest on
+  // /api so memory/cost data cannot be read by another origin.
+  if (url.startsWith('/api')) {
+    const sfs = req.headers['sec-fetch-site'];
+    if (sfs === 'cross-site' || sfs === 'same-site') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end('{"error":"cross-origin request rejected"}');
+      return;
+    }
+  }
+
   if (url === '/api/data') {
     buildApiData()
       .then((data) => {

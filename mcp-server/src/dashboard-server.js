@@ -174,10 +174,26 @@ function requireLocalhost(req, res) {
   return false;
 }
 
+// CSRF guard: reject cross-origin browser requests to the data API. Browsers
+// stamp Sec-Fetch-Site; the dashboard's own page is 'same-origin', direct tools
+// (curl, address bar) send 'none'/nothing. Only same-machine cross-origin pages
+// hit 'cross-site'/'same-site' -- block those on /api.
+function rejectCrossSiteApi(req, res, path) {
+  if (!path.startsWith('/api')) return false;
+  const sfs = req.headers['sec-fetch-site'];
+  if (sfs === 'cross-site' || sfs === 'same-site') {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end('{"error":"cross-origin request rejected"}');
+    return true;
+  }
+  return false;
+}
+
 // ---------- simple router ----------
 function route(req, res, routes) {
   const url = new URL(req.url, 'http://localhost');
   const path = url.pathname;
+  if (rejectCrossSiteApi(req, res, path)) return;
   for (const [pattern, handler] of routes) {
     if (typeof pattern === 'string' ? path === pattern : pattern.test(path)) {
       handler(req, res, url);

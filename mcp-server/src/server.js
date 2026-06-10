@@ -2117,7 +2117,7 @@ function handleMessage(msg) {
           try {
             const fs = await import('node:fs');
             const path = await import('node:path');
-            const home = process.env.IJFW_HOME || path.join(process.env.HOME || '', '.ijfw');
+            const home = process.env.IJFW_HOME || path.join(process.env.HOME || homedir(), '.ijfw');
             const s = JSON.parse(fs.readFileSync(path.join(home, 'settings.json'), 'utf8'));
             injectOn = s && s.profile && s.profile.inject === 'on';
           } catch { injectOn = false; }
@@ -2557,7 +2557,7 @@ function handleMessage(msg) {
             try {
               const fs = await import('node:fs');
               const path = await import('node:path');
-              const home = process.env.IJFW_HOME || path.join(process.env.HOME || '', '.ijfw');
+              const home = process.env.IJFW_HOME || path.join(process.env.HOME || homedir(), '.ijfw');
               const s = JSON.parse(fs.readFileSync(path.join(home, 'settings.json'), 'utf8'));
               injectOn = s && s.profile && s.profile.inject === 'on';
             } catch { injectOn = false; }

@@ -296,7 +296,8 @@ if [ -n "$CAPTURE" ] && command -v node >/dev/null 2>&1 \
         env: process.env,
       });
     } catch {}
-  " "$HOOK_STDIN" "$CAPTURE" "$PROFILE_INJECTED" 2>>"$HOME/.ijfw/logs/pre-prompt.log" || true
+  " "$HOOK_STDIN" "$CAPTURE" "$PROFILE_INJECTED" </dev/null >>"$HOME/.ijfw/logs/pre-prompt.log" 2>&1 &
+  disown $! 2>/dev/null || true
 fi
 
 # --- Voice exemplars (v1.6.0): capture the user's OWN prompt text -------------
@@ -324,7 +325,8 @@ if [ -n "$EXEMPLAR_CAPTURE" ] && command -v node >/dev/null 2>&1 \
       try { payload = JSON.parse(process.argv[1] || '{}'); } catch {}
       captureMessage({ text: payload.prompt || '', ts: Date.now() });
     } catch {}
-  " "$HOOK_STDIN" "$EXEMPLAR_CAPTURE" 2>>"$HOME/.ijfw/logs/pre-prompt.log" || true
+  " "$HOOK_STDIN" "$EXEMPLAR_CAPTURE" </dev/null >>"$HOME/.ijfw/logs/pre-prompt.log" 2>&1 &
+  disown $! 2>/dev/null || true
 fi
 
 exit 0
