@@ -17,6 +17,17 @@
         # PSSA cannot always trace script-param usage through nested function
         # scopes, so `$Dir`, `$Yes`, etc. get flagged even though the top-level
         # flow reads them inside Get-Target, Invoke-InstallScript, etc.
-        'PSReviewUnusedParameter'
+        'PSReviewUnusedParameter',
+
+        # ShouldProcess (-WhatIf/-Confirm) is a cmdlet/module-author convention.
+        # install.ps1 is a standalone interactive script with its own confirm
+        # flow (`-Yes`); wiring SupportsShouldProcess into internal helpers like
+        # Remove-StalePosixLaunchers would add no value and change the UX.
+        'PSUseShouldProcessForStateChangingFunctions',
+
+        # Singular-noun naming is a module-export convention. These are private
+        # script-internal helpers (e.g. Remove-StalePosixLaunchers), not exported
+        # cmdlets, so the plural reads more naturally and exports nothing.
+        'PSUseSingularNouns'
     )
 }
