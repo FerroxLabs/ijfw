@@ -281,10 +281,22 @@ export function isInstalled(id) {
   // `[ -x ]` (or be a shell builtin/keyword/function with no filesystem path,
   // which `command -v` reports without a leading slash — those are genuinely
   // runnable). A real installed CLI is an executable file and still passes.
-  const probe = `p=$(command -v ${JSON.stringify(bin)} 2>/dev/null) || exit 1; ` +
-    `case "$p" in /*) [ -x "$p" ] ;; *) : ;; esac`;
-  const r = spawnSync('bash', ['-lc', probe], { timeout: 2000 });
-  const installed = r.status === 0;
+  //
+  // On native Windows `bash` is either absent (probe would mark every auditor
+  // uninstalled) or the WSL launcher (probe would report the Linux distro's
+  // PATH, which the Windows-side invoker cannot run). Use `where` instead:
+  // it resolves .cmd/.exe shims on the real Windows PATH, matching how the
+  // auditors are actually spawned (shell:true on win32).
+  let installed;
+  if (process.platform === 'win32') {
+    const r = spawnSync('where', [bin], { timeout: 2000, encoding: 'utf8', windowsHide: true });
+    installed = r.status === 0 && Boolean((r.stdout || '').trim());
+  } else {
+    const probe = `p=$(command -v ${JSON.stringify(bin)} 2>/dev/null) || exit 1; ` +
+      `case "$p" in /*) [ -x "$p" ] ;; *) : ;; esac`;
+    const r = spawnSync('bash', ['-lc', probe], { timeout: 2000 });
+    installed = r.status === 0;
+  }
   _installedCache.set(id, { value: installed, ts: Date.now() });
   return installed;
 }

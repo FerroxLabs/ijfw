@@ -322,7 +322,10 @@ test('copilot: project ./.vscode/mcp.json + .github/copilot-instructions.md land
     const cfg = PROJECT_PATHS.copilot(sb.proj)[0];
     assert.ok(existsSync(cfg), `copilot mcp.json missing at ${cfg}`);
     const doc = readJSON(cfg);
-    assert.equal(doc.mcpServers?.['ijfw-memory']?.command, 'node');
+    // VS Code's workspace mcp.json schema keys servers under `servers`,
+    // not `mcpServers` (the old key was why Copilot MCP never loaded).
+    assert.equal(doc.servers?.['ijfw-memory']?.command, 'node');
+    assert.equal(doc.mcpServers, undefined, 'legacy mcpServers key must not be written');
     assert.ok(existsSync(join(sb.proj, '.github', 'copilot-instructions.md')),
       'copilot-instructions.md missing in project .github/');
   } finally { cleanup(sb); }

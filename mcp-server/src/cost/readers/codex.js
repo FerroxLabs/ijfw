@@ -8,7 +8,7 @@
  */
 
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 
 const CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'sessions');
@@ -63,13 +63,13 @@ function processCodexFile(filePath, turns) {
   }
 
   if (!sessionId) {
-    // Derive session id from filename
-    const base = filePath.split('/').pop().replace('.jsonl', '');
-    sessionId = base;
+    // Derive session id from filename (basename handles both path separators)
+    sessionId = basename(filePath, '.jsonl');
   }
 
-  // Extract timestamp from session path (YYYY/MM/DD/filename)
-  const dateParts = filePath.match(/(\d{4})\/(\d{2})\/(\d{2})/);
+  // Extract timestamp from session path (YYYY/MM/DD/filename); paths are
+  // join()-built, so accept either separator (backslashes on Windows).
+  const dateParts = filePath.match(/(\d{4})[\\/](\d{2})[\\/](\d{2})/);
   const datePrefix = dateParts ? `${dateParts[1]}-${dateParts[2]}-${dateParts[3]}` : null;
 
   // Accumulate per-session totals from response_item/message content

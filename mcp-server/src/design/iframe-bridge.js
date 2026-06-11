@@ -99,10 +99,18 @@ export async function createPreviewSandbox({ html, name } = {}) {
   // surface for vercel-sandbox is evolving; we accept any JSON line that
   // contains a `url` field.
   try {
+    // shell:true on Windows so the vercel.cmd npm shim resolves; harmless on
+    // POSIX. sandboxId/tmpFile are internally generated (sanitized name +
+    // uuid under tmpdir), not user input.
     const r = spawnSync('vercel', ['sandbox', 'create', '--file', tmpFile, '--name', sandboxId], {
       encoding: 'utf8',
       timeout: PROVISION_TIMEOUT_MS,
+      shell: process.platform === 'win32',
     });
+    if (r.error) {
+      _advise(`createPreviewSandbox: vercel CLI not spawnable (${r.error.message}) -- falling back to static`);
+      return null;
+    }
     if (r.status !== 0) {
       _advise(`createPreviewSandbox: vercel CLI exit ${r.status} -- falling back to static`);
       return null;
@@ -140,7 +148,11 @@ export async function destroySandbox(sandboxId) {
       return;
     }
     if (entry.mode === 'cli') {
-      spawnSync('vercel', ['sandbox', 'delete', sandboxId], { encoding: 'utf8', timeout: DESTROY_TIMEOUT_MS });
+      spawnSync('vercel', ['sandbox', 'delete', sandboxId], {
+        encoding: 'utf8',
+        timeout: DESTROY_TIMEOUT_MS,
+        shell: process.platform === 'win32',
+      });
       return;
     }
   } catch (err) {

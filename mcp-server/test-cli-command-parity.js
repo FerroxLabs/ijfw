@@ -59,7 +59,9 @@ test('cli: ijfw cross audit <file> resolves through the terminal dispatcher', ()
         GH_TOKEN: '',
       },
     });
-    assert.equal(result.status, 0);
+    // Zero reachable auditors is INCONCLUSIVE: exit 3 per the documented
+    // exit-code contract (exit 0 here was the "CI gate lie" audit finding).
+    assert.equal(result.status, 3);
     assert.match(result.stdout, /Trident is standing by|Fired:/);
     assert.doesNotMatch(result.stderr, /Unknown subcommand: cross/);
   } finally {
@@ -104,7 +106,8 @@ test('cli: cross-audit alias accepts Claude-style --with before target', () => {
       GH_TOKEN: '',
     },
   });
-  assert.equal(result.status, 0);
+  // PATH is empty so no auditor can fire: INCONCLUSIVE = exit 3 (see above).
+  assert.equal(result.status, 3);
   assert.match(result.stdout, /Trident is standing by|Fired:/);
   assert.doesNotMatch(result.stderr, /Unknown (sub)?command/i);
 });

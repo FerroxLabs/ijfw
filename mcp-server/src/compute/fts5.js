@@ -242,9 +242,34 @@ function readUserVersion(db) {
   return Number(row.user_version ?? row.USER_VERSION ?? 0);
 }
 
+// quick_check throttle state, keyed per db handle. First write per handle
+// always checks; then every Nth write or once the time floor elapses.
+const QUICK_CHECK_EVERY_N = 100;
+const QUICK_CHECK_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const quickCheckState = new WeakMap(); // db handle -> { writes, lastTs }
+
+function shouldQuickCheck(db, now = Date.now()) {
+  let st = quickCheckState.get(db);
+  if (!st) {
+    st = { writes: 0, lastTs: 0 };
+    quickCheckState.set(db, st);
+  }
+  st.writes++;
+  if (
+    st.writes === 1 ||
+    st.writes % QUICK_CHECK_EVERY_N === 0 ||
+    (now - st.lastTs) >= QUICK_CHECK_MIN_INTERVAL_MS
+  ) {
+    st.lastTs = now;
+    return true;
+  }
+  return false;
+}
+
 // Insert one row into a content table inside a transaction, then run
-// PRAGMA quick_check on the whole db. Throws IntegrityError on anything
-// other than 'ok'. Returns { id } of the inserted row.
+// PRAGMA quick_check on the whole db (throttled; see above). Throws
+// IntegrityError on anything other than 'ok'. Returns { id } of the
+// inserted row.
 //
 // Allowed tables: raw, compiled, trident_run, schema_meta. Caller passes a
 // row object whose keys match the table's columns; binding is positional
@@ -291,19 +316,28 @@ export function safeWrite(db, table, row) {
   const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`;
   const values = cols.map(c => row[c]);
 
-  // Run insert + quick_check inside a single transaction. Rollback on
-  // either failure so we never leave a half-written FTS index behind.
+  // Run insert + (throttled) quick_check inside a single transaction.
+  // Rollback on either failure so we never leave a half-written FTS index
+  // behind. quick_check is a full-database scan, so it can't run on every
+  // insert (O(db size) per write while the lock is held); the corruption
+  // tripwire fires on the FIRST write per handle (compute callers hold
+  // long-lived handles, so reopen-after-corruption is still caught), then
+  // every Nth write or after a time floor, whichever comes first. State is
+  // keyed per HANDLE (WeakMap), unlike memory/fts5.js which keys per
+  // filename because server.js re-opens that db per store.
   let inserted;
   const tx = db.txn(() => {
     const stmt = db.prepare(sql);
     const info = stmt.run(...values);
     inserted = { id: info && info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
-    const qc = db.prepare('PRAGMA quick_check').get();
-    const status = qc && (qc.quick_check ?? qc.QUICK_CHECK);
-    if (status !== 'ok') {
-      throw new IntegrityError(
-        `PRAGMA quick_check failed after insert into ${table}: ${status || '(no result)'}.`
-      );
+    if (shouldQuickCheck(db)) {
+      const qc = db.prepare('PRAGMA quick_check').get();
+      const status = qc && (qc.quick_check ?? qc.QUICK_CHECK);
+      if (status !== 'ok') {
+        throw new IntegrityError(
+          `PRAGMA quick_check failed after insert into ${table}: ${status || '(no result)'}.`
+        );
+      }
     }
   });
   tx();

@@ -38,6 +38,12 @@ import { loadMigrations } from './migration-runner.js';
 // is imported directly so M1 runs synchronously inside the same txn batch.
 import { indexObsidianRelations } from './obsidian-parser.js';
 import { autoLink } from './auto-linker.js';
+// Ingest scrub gate (D-PILLAR-SPEC section 12) -- the warm-tier rebuild
+// reads raw markdown from disk, which is NOT guaranteed pre-scrubbed
+// (hand-edited notes, hook-written files, imports never went through
+// handleStore's redaction). autoIndex must apply the same redactSecrets
+// pass as fts5.js#indexEntry or secrets land cleartext in memory.db.
+import { redactSecrets } from '../redactor.js';
 
 const MAX_RESULTS  = 50;
 const SNIPPET_HALF = 60;
@@ -259,25 +265,35 @@ function runMemoryMigrationsSync(db, currentVersion, targetVersion) {
 }
 
 function autoIndex(db, files) {
-  let n = 0;
   // v1.5.1 R4-H2 — capture the rowid of every inserted entry so the
   // memory-moat aux indexing (M1 Obsidian relations, M2 auto-link) can run
   // over the warm-tier rebuild, not just the benchmark harness. The bulk
   // INSERT stays in one transaction for FTS write performance; M1/M2 run
   // AFTER commit so a parse/link failure can never abort the rebuild.
+  //
+  // Rollback safety: ids are collected in a transaction-local array and
+  // only published to `inserted` after txfn commits. If the batch rolls
+  // back, the rowids it produced no longer exist (and AUTOINCREMENT will
+  // reuse them), so running M1/M2 over them would attach links/tags/meta
+  // to the WRONG future entries.
   const inserted = [];
   const txfn = db.transaction((batch) => {
     const stmt = db.prepare(
       'INSERT INTO memory_entries (body, source, session_id, created_at) VALUES (?, ?, ?, ?)'
     );
+    const out = [];
     for (const item of batch) {
       const info = stmt.run(item.body, item.source, null, item.created_at);
       const id = info && info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null;
-      inserted.push({ id, body: item.body });
-      n++;
+      out.push({ id, body: item.body });
     }
+    return out;
   });
 
+  // Same ingest scrub gate as fts5.js#indexEntry (IJFW_INGEST_SCRUB=0 is
+  // the only escape hatch, local debugging only). Body AND source are
+  // scrubbed so the FTS index and downstream M1/M2 only see safe text.
+  const scrub = process.env.IJFW_INGEST_SCRUB !== '0';
   const batch = [];
   const now = Date.now();
   for (const f of files) {
@@ -286,10 +302,22 @@ function autoIndex(db, files) {
     let body;
     try { body = readFileSync(f.path, 'utf8'); } catch { continue; }
     if (!body) continue;
-    batch.push({ body, source: f.relpath || f.path, created_at: now });
+    const rawSource = f.relpath || f.path;
+    batch.push({
+      body: scrub ? redactSecrets(body) : body,
+      source: scrub ? redactSecrets(String(rawSource)) : rawSource,
+      created_at: now,
+    });
   }
   if (batch.length === 0) return 0;
-  try { txfn.immediate(batch); } catch { /* one bad batch should not abort the search */ }
+  let n = 0;
+  try {
+    const committed = txfn.immediate(batch);
+    if (Array.isArray(committed)) {
+      inserted.push(...committed);
+      n = committed.length;
+    }
+  } catch { /* one bad batch should not abort the search; rollback discards ids */ }
 
   // v1.5.1 R4-H2 — M1: Obsidian wikilink/tag/meta indexing into
   // memory_links/_tags/_meta. Synchronous + idempotent (indexObsidianRelations

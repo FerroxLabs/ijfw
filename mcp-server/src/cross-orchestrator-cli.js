@@ -9,7 +9,7 @@
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, readdirSync, rmSync, realpathSync, copyFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
+import { join, dirname, basename, isAbsolute, resolve, parse as parsePath, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { writeAtomic } from './lib/atomic-io.js';
@@ -210,7 +210,7 @@ function emitJson(value) {
   process.stdout.write(JSON.stringify(value, null, 2) + '\n');
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = argv.slice(2); // strip node + script path
 
   // Global --json flag: any command can be forced to JSON output regardless
@@ -508,20 +508,12 @@ function parseArgsInner(args) {
       return { cmd: 'cross-project-audit', rule, dryRun };
     }
 
-    const target = args[2];
-    let only = null;
-    let confirm = false;
-    let expand = false;
-    let chunk = false;
-
-    for (let i = 3; i < args.length; i++) {
-      if (args[i] === '--confirm') { confirm = true; }
-      else if (args[i] === '--expand') { expand = true; }
-      else if (args[i] === '--chunk') { chunk = true; } // v1.5.1 H1.6 — wire chunker
-      else if (args[i] === '--with' && args[i + 1]) { only = args[++i]; }
-    }
-
-    return { cmd: 'cross', mode, target, only, confirm, expand, chunk };
+    // Reuse the alias parser so `ijfw cross <mode>` and `ijfw cross-<mode>`
+    // share one grammar: --with=<id> form, flags-before-target ordering, and
+    // flag tokens never consumed as the target. The old position-rigid parser
+    // (target = args[2], space-separated --with only) silently dropped
+    // --with=<id> and dispatched the full paid roster.
+    return parseCrossAlias(mode, args.slice(1));
   }
 
   return { cmd: 'unknown', raw: args[0] };
@@ -1373,7 +1365,7 @@ async function cmdCross({ mode, target, only, confirm, expand, chunk }) {
       console.log(`Auditors fired (union): ${[...auditorIds].join(', ') || '(none)'}`);
       if (!firedAny) {
         console.log('No auditors fired -- run `ijfw doctor` to see the install hints.');
-        process.exit(2); // r17.1 — degraded exit code
+        process.exit(3); // zero picks contributed -- INCONCLUSIVE, same code as the normal path
       }
       for (const f of merged) {
         const sev = (f.severity || 'note').toUpperCase();
@@ -1401,7 +1393,10 @@ async function cmdCross({ mode, target, only, confirm, expand, chunk }) {
     console.log('Trident is standing by -- no auditors reachable yet.');
     console.log('Wire one in 30 seconds: run `ijfw doctor` for the exact install commands.');
     console.log('Tip: any one of codex / gemini / claude / copilot is enough to start.');
-    process.exit(0);
+    // No audit happened: exit 3 per the documented contract below (zero picks
+    // contributed = INCONCLUSIVE). Exit 0 here let CI gates pass green on a
+    // machine with no auditors installed.
+    process.exit(3);
   }
 
   const projectDir = process.cwd();
@@ -1425,7 +1420,7 @@ async function cmdCross({ mode, target, only, confirm, expand, chunk }) {
   if (picks.length === 0) {
     console.log('\nIJFW has the Trident ready -- install codex or gemini (or set OPENAI_API_KEY / GEMINI_API_KEY), then run `ijfw demo`.');
     console.log('Run `ijfw doctor` to see which auditors are available on this machine.');
-    return;
+    process.exit(3); // zero picks contributed -- INCONCLUSIVE per the exit contract
   }
 
   console.log(`Fired: ${picks.map(p => p.id).join(', ')}`);
@@ -2972,8 +2967,14 @@ function cmdInit(parsed = {}) {
   try { phys = realpathSync(cwd); } catch { phys = resolve(cwd); }
   let homePhys;
   try { homePhys = realpathSync(homedir()); } catch { homePhys = homedir(); }
-  if (phys === '/' || phys === homePhys) {
-    console.error('ijfw init: refusing to bless your home directory or the filesystem root for indexing.');
+  // Refuse any filesystem/drive root (parse().root catches '/', 'C:\\', UNC
+  // roots), the home directory itself, or any ANCESTOR of home (blessing
+  // /Users or /home would let the indexer walk every user's home -- the
+  // issue #16 privacy hole one directory up).
+  const isFsRoot = parsePath(phys).root === phys;
+  const isHomeOrAncestor = phys === homePhys || homePhys.startsWith(phys + sep);
+  if (isFsRoot || isHomeOrAncestor) {
+    console.error('ijfw init: refusing to bless your home directory, its ancestors, or a filesystem root for indexing.');
     console.error('Run `ijfw init` from inside an actual project folder.');
     process.exit(1);
   }
@@ -3007,6 +3008,9 @@ function cmdInstall() {
     process.exit(1);
   }
   const res = spawnSync('bash', [script, ...process.argv.slice(3)], { stdio: 'inherit' });
+  // spawnSync failure (bash missing, EACCES) yields status null + res.error
+  // and stdio:'inherit' prints nothing -- surface it instead of exiting mute.
+  if (res.error) console.error(`ijfw: failed to launch ${script}: ${res.error.message}`);
   process.exit(res.status ?? 1);
 }
 function cmdUninstall() {
@@ -3016,6 +3020,7 @@ function cmdUninstall() {
     process.exit(1);
   }
   const res = spawnSync(process.execPath, [script, ...process.argv.slice(3)], { stdio: 'inherit' });
+  if (res.error) console.error(`ijfw: failed to launch ${script}: ${res.error.message}`);
   process.exit(res.status ?? 1);
 }
 function cmdPreflight() {
@@ -3025,6 +3030,7 @@ function cmdPreflight() {
     process.exit(1);
   }
   const res = spawnSync(process.execPath, [script, ...process.argv.slice(3)], { stdio: 'inherit' });
+  if (res.error) console.error(`ijfw: failed to launch ${script}: ${res.error.message}`);
   process.exit(res.status ?? 1);
 }
 function cmdDashboard(sub) {
@@ -3044,6 +3050,7 @@ function cmdDashboard(sub) {
   // stays authoritative. argv = [node, cli, 'dashboard', <sub>, ...flags].
   const passthrough = process.argv.slice(4);
   const res = spawnSync(process.execPath, [launcher, sub, ...passthrough], { stdio: 'inherit' });
+  if (res.error) console.error(`ijfw: failed to launch ${launcher}: ${res.error.message}`);
   process.exit(res.status ?? 1);
 }
 

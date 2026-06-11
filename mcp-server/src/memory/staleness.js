@@ -169,7 +169,7 @@ export function propagateStaleMemory(memDb, computeDb, supersededNodeId, options
   if (namesToFlag.length > 0) {
     const updateMem = memDb.prepare(
       `UPDATE memory_entries SET stale_candidate = ? ` +
-      `WHERE COALESCE(stale_candidate, 0) < ? AND body LIKE ?`
+      `WHERE COALESCE(stale_candidate, 0) < ? AND body LIKE ? ESCAPE '\\'`
     );
 
     const txWrap = (typeof memDb.transaction === 'function')

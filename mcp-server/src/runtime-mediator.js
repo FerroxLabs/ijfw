@@ -215,8 +215,11 @@ export async function maybeWarnDivergence(opts = {}) {
 
 /**
  * Map an MCP tool name (+ args) to the (action, target) tuple used for
- * permission checks. Returns null for unrecognised tool names; callers
- * should treat null as "no policy applies, allow" (these are bundled-only).
+ * permission checks. Returns null for unrecognised tool names. Callers MUST
+ * treat null as fail-closed whenever an extension is active: every tool the
+ * server advertises has an explicit mapping here, so a null mapping means a
+ * future tool was added without a policy entry -- denying is the only answer
+ * that keeps the sandbox sound (see gatePermissionAndQuota in server.js).
  */
 export function toolNameToActionTarget(toolName, args) {
   switch (toolName) {
@@ -225,8 +228,23 @@ export function toolNameToActionTarget(toolName, args) {
     case 'ijfw_memory_recall':
     case 'ijfw_memory_search':
     case 'ijfw_memory_prelude':
+    case 'ijfw_memory_facts':
     case 'ijfw_cross_project_search':
       return { action: 'read', target: 'memory:read' };
+    case 'ijfw_brain': {
+      // Brain verbs can write to the facts DB (wiki rebuilds, fact upserts),
+      // so classify the whole facade as a write -- conservative by design.
+      const verb = (args && typeof args.verb === 'string' && args.verb) ? args.verb : '*';
+      return { action: 'write', target: `brain:${verb}` };
+    }
+    case 'ijfw_state': {
+      // state-sdk verbs mutate project orchestration state.
+      const verb = (args && typeof args.verb === 'string' && args.verb) ? args.verb : '*';
+      return { action: 'write', target: `state:${verb}` };
+    }
+    case 'ijfw_cross_audit_converge':
+      // autoFix:true mutates source -- always treat as a write.
+      return { action: 'write', target: 'audit:converge' };
     case 'ijfw_metrics':
       return { action: 'read', target: 'metrics:read' };
     case 'ijfw_update_check':

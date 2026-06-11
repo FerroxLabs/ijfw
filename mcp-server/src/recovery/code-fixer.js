@@ -286,14 +286,25 @@ export function tier2SyntaxCheckCmd(filePath) {
         ],
       };
     case '.py':
-      return { cmd: 'python3', args: ['-m', 'py_compile', filePath] };
+      // Windows ships python.exe, not python3. If neither exists the spawn
+      // ENOENT is treated as SKIP by verifyTier2, not a syntax failure.
+      return {
+        cmd: process.platform === 'win32' ? 'python' : 'python3',
+        args: ['-m', 'py_compile', filePath],
+      };
     case '.sh':
     case '.bash':
+      // On Windows this only works when a real bash.exe (Git Bash) is on
+      // PATH; otherwise verifyTier2 maps the ENOENT to SKIP.
       return { cmd: 'bash', args: ['-n', filePath] };
     case '.ts':
     case '.tsx': {
       // Only if tsc on PATH. The agent contract says SKIP when absent.
-      const which = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['tsc'], {
+      // On Windows tsc is a .cmd shim which Node cannot spawn without a
+      // shell (CVE-2024-27980), and shelling out with an interpolated
+      // filePath would be an injection vector -- so SKIP honestly there.
+      if (process.platform === 'win32') return null;
+      const which = spawnSync('which', ['tsc'], {
         encoding: 'utf8',
       });
       if (which.status === 0 && which.stdout.trim()) {
@@ -319,6 +330,11 @@ export async function verifyTier2(filePath) {
     await execFileAsync(spec.cmd, spec.args, { timeout: 15_000 });
     return { ok: true, skipped: false };
   } catch (err) {
+    // Checker binary missing/not spawnable (ENOENT, or EINVAL for Windows
+    // .cmd shims) is "cannot verify", not "syntax error" -- honest SKIP.
+    if (err && (err.code === 'ENOENT' || err.code === 'EINVAL')) {
+      return { ok: true, skipped: true };
+    }
     const stderr = err.stderr || err.stdout || err.message || '';
     return {
       ok: false,
@@ -369,10 +385,15 @@ async function resolveProjectVerifyCmd(projectRoot, verifyCmdOverride) {
 export async function verifyTier3(projectRoot, verifyCmdOverride) {
   const cmd = await resolveProjectVerifyCmd(projectRoot, verifyCmdOverride);
   if (!cmd) return { ok: true, skipped: true };
-  // Run the command via `sh -c` so script lines like `npm test --silent` work
-  // verbatim. Timeout is generous (5 min) because real test suites can be slow.
+  // Run the command via the platform shell so script lines like
+  // `npm test --silent` work verbatim: `sh -c` on POSIX, `cmd /d /s /c` on
+  // Windows ('sh' is not on PATH there). Timeout is generous (5 min)
+  // because real test suites can be slow.
+  const [shellBin, shellArgs] = process.platform === 'win32'
+    ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmd]]
+    : ['sh', ['-c', cmd]];
   return new Promise((resolve) => {
-    execFile('sh', ['-c', cmd], { cwd: projectRoot, timeout: 5 * 60_000 }, (err, stdout, stderr) => {
+    execFile(shellBin, shellArgs, { cwd: projectRoot, timeout: 5 * 60_000 }, (err, stdout, stderr) => {
       const combined = `${String(stdout || '')}\n${String(stderr || '')}`;
       if (err) {
         const evidence = combined.split('\n').slice(0, 20).join('\n');

@@ -119,7 +119,29 @@ export async function gatePermissionAndQuota({ toolName, args, activeExt, home, 
   }
   const mapping = toolNameToActionTarget(toolName, args || {});
   if (!mapping) {
-    return { allowed: true };
+    // Fail-closed: an extension is active (possibly MALFORMED) and this tool
+    // has no policy mapping. Allowing here would let any future tool silently
+    // bypass the sandbox -- and would also defeat the malformed-state deny,
+    // which lives inside checkPermission. Every advertised tool must have an
+    // explicit entry in toolNameToActionTarget (runtime-mediator.js).
+    const reason = `tool "${toolName}" not covered by extension policy`;
+    await logPermissionEvent({
+      tool: toolName,
+      extension: activeExt && activeExt.name ? activeExt.name : null,
+      action: null,
+      target: null,
+      allowed: false,
+      reason,
+      ts: new Date().toISOString(),
+    }).catch(() => {});
+    return {
+      allowed: false,
+      reason,
+      response: {
+        content: [{ type: 'text', text: `extension permission denied: ${reason}` }],
+        isError: true,
+      },
+    };
   }
   const permCheck = checkPermission(mapping.action, mapping.target, activeExt);
   if (!permCheck.allowed) {
@@ -389,12 +411,21 @@ const TEAM_DIR_NAME = 'team';
 const TEAM_FACETS = ['decisions', 'patterns', 'stack', 'members'];
 
 // Claude Code's native auto-memory lives at ~/.claude/projects/<encoded>/memory/
-// where <encoded> is the project path with `/` → `-`. IJFW reads these files
-// and surfaces them via MCP so all platforms (not just Claude) see the same
-// memories -- no fighting Claude's native "Remember X" handler.
+// where <encoded> is the project path with separators replaced by `-`. IJFW
+// reads these files and surfaces them via MCP so all platforms (not just
+// Claude) see the same memories -- no fighting Claude's native "Remember X"
+// handler. On Windows the path is `C:\Users\...` -- strip the drive letter and
+// replace both separator styles so the slug is a single flat dir segment
+// (a bare `\/`-only replace left backslashes + the drive colon in the segment,
+// producing a nonexistent nested path, so this source was silently empty on
+// Windows). Mirrors pathToSlug() in src/memory/reader.js -- keep in sync.
+// Exported for the Windows-encoding regression test.
+export function encodeClaudeProjectSlug(projectPath) {
+  return String(projectPath).replace(/^[A-Za-z]:/, '').replace(/[\\/]/g, '-');
+}
 const NATIVE_CLAUDE_DIR = join(
   homedir(), '.claude', 'projects',
-  PROJECT_DIR.replace(/\//g, '-'),
+  encodeClaudeProjectSlug(PROJECT_DIR),
   'memory'
 );
 
@@ -736,7 +767,11 @@ function appendFactsToSidecar(facts, meta) {
     return { ok: true, written: facts.length };
   } catch (err) {
     // Non-fatal: facts are augmentation, not source-of-truth. Journal already
-    // captured the raw memory.
+    // captured the raw memory. Still surface on stderr so operators see the
+    // degradation -- callers also fold the failure into the store result.
+    try {
+      process.stderr.write(`[ijfw facts] sidecar append failed (${err.code || err.message}); fact extraction degraded\n`);
+    } catch { /* stderr may be detached */ }
     return { ok: false, code: err.code || 'EUNKNOWN', message: err.message };
   }
 }
@@ -1556,26 +1591,30 @@ function handleStore({ content, type, tags = [], summary, why, how_to_apply }) {
     try { console.error('[ijfw memory] FTS5 index dispatch failed:', e?.message || e); } catch { /* never throw */ }
   }
 
+  // Secondary writes (facts + type-specific). Each tracked so we report
+  // partial success accurately rather than lying about "stored."
+  const failures = [];
+
   // H5.5 — Fact extraction AFTER successful append. Best-effort: a failure
-  // here is logged in the return text but does NOT poison the store result.
-  // Memory-id ties facts.jsonl rows back to their journal entry.
+  // here is folded into the partial-failure return text (and stderr) but the
+  // journal write above already succeeded. Memory-id ties facts.jsonl rows
+  // back to their journal entry.
   const factMeta = {
     ts: new Date().toISOString(),
     memory_id: factMemoryIdFor(journalEntry),
     source: `memory_store:${type}`,
   };
   const facts = extractFacts(safeContent);
-  appendFactsToSidecar(facts, factMeta);
+  const factsResult = appendFactsToSidecar(facts, factMeta);
+  if (!factsResult.ok) failures.push(`facts sidecar (${factsResult.code})`);
   // v1.5.0 audit H5.4 — mirror to bi-temporal SQL store. For each fact,
   // closes any prior currently-valid fact with the same (subject, predicate)
   // but different object before inserting. Same-object stores are a no-op.
   // Wrapped in a per-fact transaction inside temporal.js. Best-effort: any
-  // failure is logged to stderr but never breaks the journal-or-JSONL path.
-  writeFactsBitemporal(facts, factMeta);
-
-  // 2. Type-specific secondary writes. Each tracked so we report partial
-  // success accurately rather than lying about "stored."
-  const failures = [];
+  // failure is logged to stderr and never breaks the journal-or-JSONL path,
+  // but an unavailable facts DB is reported honestly in the store result.
+  const bitemporalResult = writeFactsBitemporal(facts, factMeta);
+  if (!bitemporalResult.ok) failures.push(`facts db (${bitemporalResult.code})`);
 
   if (type === 'decision' || type === 'pattern') {
     // Richer frontmatter block for retrieval-quality entries.
@@ -1986,8 +2025,9 @@ function handleCrossProjectSearch({ pattern, limit = 10 } = {}) {
 }
 
 // Phase 3 #6: aggregate session metrics. Reads .ijfw/metrics/sessions.jsonl,
-// tolerates v1 lines (treats missing token/cost fields as 0), groups by day,
-// renders compact text. Positive-framed zero-state when no sessions logged yet.
+// tolerates v1 lines (treats missing token/cost fields as 0), dedupes the
+// per-turn cumulative v5 rows to the latest row per session_id, groups by
+// day, renders compact text. Positive-framed zero-state when nothing logged.
 function handleMetrics({ period = '7d', metric = 'tokens' } = {}) {
   const file = join(IJFW_DIR, 'metrics', 'sessions.jsonl');
   const r = readMarkdownFile(file);
@@ -2024,19 +2064,45 @@ function handleMetrics({ period = '7d', metric = 'tokens' } = {}) {
     return { text: `Window ${period}: no sessions in range.${hint}` };
   }
 
+  // Schema v5: the Stop hook fires after EVERY assistant turn and appends one
+  // row per turn carrying the CUMULATIVE totals for the whole session so far,
+  // tagged with session_id + a monotonic turn counter. Summing every row
+  // therefore overcounts quadratically -- keep only the LATEST row per
+  // session_id (highest turn, falling back to timestamp; ties keep the later
+  // line). Old-format rows without a session_id are treated as one session
+  // per row, exactly as before.
+  const latestBySession = new Map();
+  const sessions = [];
+  for (const row of within) {
+    const sid = row.session_id;
+    if (typeof sid !== 'string' || sid.length === 0) {
+      sessions.push(row);
+      continue;
+    }
+    const prev = latestBySession.get(sid);
+    if (!prev) { latestBySession.set(sid, row); continue; }
+    const rowTurn = typeof row.turn === 'number' ? row.turn : null;
+    const prevTurn = typeof prev.turn === 'number' ? prev.turn : null;
+    const later = (rowTurn !== null && prevTurn !== null && rowTurn !== prevTurn)
+      ? rowTurn > prevTurn
+      : Date.parse(row.timestamp) >= Date.parse(prev.timestamp);
+    if (later) latestBySession.set(sid, row);
+  }
+  for (const row of latestBySession.values()) sessions.push(row);
+
   if (metric === 'sessions') {
-    const handoffs = within.filter(r => r.handoff).length;
-    const memEntries = within.reduce((s, r) => s + (r.memory_stores || 0), 0);
+    const handoffs = sessions.filter(r => r.handoff).length;
+    const memEntries = sessions.reduce((s, r) => s + (r.memory_stores || 0), 0);
     return { text: [
-      `Sessions in ${period}: ${within.length}`,
-      `Handoffs preserved: ${handoffs} (${Math.round(100 * handoffs / within.length)}%)`,
+      `Sessions in ${period}: ${sessions.length}`,
+      `Handoffs preserved: ${handoffs} (${Math.round(100 * handoffs / sessions.length)}%)`,
       `Memory entries logged: ${memEntries}`
     ].join('\n') };
   }
 
   if (metric === 'routing') {
     const counts = {};
-    for (const r of within) counts[r.routing || 'native'] = (counts[r.routing || 'native'] || 0) + 1;
+    for (const r of sessions) counts[r.routing || 'native'] = (counts[r.routing || 'native'] || 0) + 1;
     return { text: ['Routing mix:'].concat(
       Object.entries(counts).map(([k, v]) => `  ${k}: ${v}`)
     ).join('\n') };
@@ -2044,7 +2110,7 @@ function handleMetrics({ period = '7d', metric = 'tokens' } = {}) {
 
   // Group by UTC day for tokens / cost.
   const byDay = {};
-  for (const row of within) {
+  for (const row of sessions) {
     const day = String(row.timestamp).slice(0, 10);
     byDay[day] = byDay[day] || { in: 0, out: 0, cr: 0, cc: 0, cost: 0, n: 0 };
     byDay[day].in   += row.input_tokens || 0;
@@ -2060,7 +2126,7 @@ function handleMetrics({ period = '7d', metric = 'tokens' } = {}) {
     const total = days.reduce((s, d) => s + byDay[d].cost, 0);
     const lines = ['Day        | sessions | cost (USD)'];
     for (const d of days) lines.push(`${d} | ${String(byDay[d].n).padStart(8)} | $${byDay[d].cost.toFixed(4)}`);
-    lines.push(`Total: $${total.toFixed(4)} across ${within.length} session(s) -- clean session-ends only.`);
+    lines.push(`Total: $${total.toFixed(4)} across ${sessions.length} session(s) -- clean session-ends only.`);
     return { text: lines.join('\n') };
   }
 
@@ -2604,7 +2670,10 @@ function handleMessage(msg) {
       return createResponse(id, {});
 
     default:
-      if (id) return createError(id, -32601, `Method not found: ${method}`);
+      // Presence check, not truthiness: id 0 and id "" are valid JSON-RPC
+      // request ids (the MCP TS SDK numbers requests from 0) and MUST get a
+      // response. Only notifications (id absent/null) go unanswered.
+      if (id !== undefined && id !== null) return createError(id, -32601, `Method not found: ${method}`);
       return null;
   }
 }
@@ -2665,7 +2734,9 @@ function __attachStdioTransport() {
         response.then(r => { if (r) process.stdout.write(r + '\n'); }).catch(err => {
           process.stdout.write(JSON.stringify({
             jsonrpc: '2.0',
-            id: msg && msg.id ? msg.id : null,
+            // Presence check: id 0 / "" must round-trip so the client can
+            // correlate the error to its pending request.
+            id: (msg && msg.id !== undefined) ? msg.id : null,
             error: { code: -32603, message: `Internal error: ${err.message}` }
           }) + '\n');
         });
@@ -2675,7 +2746,7 @@ function __attachStdioTransport() {
     } catch (err) {
       process.stdout.write(JSON.stringify({
         jsonrpc: '2.0',
-        id: msg && msg.id ? msg.id : null,
+        id: (msg && msg.id !== undefined) ? msg.id : null,
         error: { code: -32603, message: `Internal error: ${err.message}` }
       }) + '\n');
     }
@@ -2787,6 +2858,7 @@ if (__isServerEntryPoint) {
 export {
   sanitizeContent, atomicWrite, readMarkdownFile, PROJECT_HASH,
   handleStore, handleRecall, handleSearch, handlePrelude,
+  handleMetrics,
   MEMORY_DIR, FACTS_FILE, FACTS_DB_FILE,
   getFactsDb,
   paths,

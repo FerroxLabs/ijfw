@@ -23,7 +23,10 @@ test('publish triggers on v* tags only', () => {
 test('publish job is gated behind the preflight job', () => {
   // The release must not publish unless preflight is green.
   assert.match(CI, /^\s*preflight:/m, 'preflight job missing');
-  assert.match(CI, /needs:\s*preflight/, 'publish must declare needs: preflight');
+  // v1.6.2: publish needs BOTH preflight and check-all (audit: tags used to
+  // publish without the unit/lint gate ever running).
+  assert.match(CI, /needs:\s*\[\s*preflight\s*,\s*check-all\s*\]/, 'publish must declare needs: [preflight, check-all]');
+  assert.match(CI, /^\s*check-all:/m, 'check-all job missing from publish workflow');
 });
 
 test('publish runs npm publish --provenance --access public', () => {

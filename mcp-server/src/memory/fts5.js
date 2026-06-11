@@ -8,7 +8,10 @@
 // Mirrors src/compute/fts5.js patterns:
 //   - WAL journal mode for concurrent readers
 //   - PRAGMA busy_timeout = 5000 + BEGIN IMMEDIATE for racing writers
-//   - PRAGMA quick_check post-write enforces integrity
+//   - PRAGMA quick_check corruption tripwire on a throttled cadence
+//     (first write per db file per process, then every Nth write or
+//     after a time floor -- never on every single-row insert, because
+//     quick_check is a full-database scan)
 //
 // Security model (D-PILLAR-SPEC section 12, real fix-wave C3):
 //   indexEntry runs `redactSecrets()` over `entry.body` AND `entry.source`
@@ -182,9 +185,52 @@ function readUserVersion(db) {
   return Number(row.user_version ?? row.USER_VERSION ?? 0);
 }
 
-// Insert one row into memory_entries inside a BEGIN IMMEDIATE transaction,
-// then run PRAGMA quick_check on the whole db. Throws MemoryIntegrityError
-// on anything other than 'ok'. Returns { id } of the inserted row.
+// Corruption tripwire cadence. PRAGMA quick_check walks every page of the
+// database, so running it inside EVERY single-row insert transaction is
+// O(db size) per write while the RESERVED lock is held -- a quadratic
+// total-cost cliff as the warm tier grows. The tripwire is kept, but on a
+// throttle: the FIRST write per db file per process always checks (so a
+// reopen-after-corruption is caught on the next write), then every Nth
+// write or once the time floor elapses, whichever fires first. State is
+// keyed by filename, NOT by handle, because server.js re-opens the db per
+// store -- a per-open or per-handle check would put the full scan right
+// back on the hot path.
+const QUICK_CHECK_EVERY_N = 100;
+const QUICK_CHECK_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const __quickCheckState = new Map(); // filename -> { writes, lastTs }
+
+function shouldQuickCheck(filename, now = Date.now()) {
+  const key = filename || ':unknown:';
+  let st = __quickCheckState.get(key);
+  if (!st) {
+    st = { writes: 0, lastTs: 0 };
+    __quickCheckState.set(key, st);
+  }
+  st.writes++;
+  if (
+    st.writes === 1 ||
+    st.writes % QUICK_CHECK_EVERY_N === 0 ||
+    (now - st.lastTs) >= QUICK_CHECK_MIN_INTERVAL_MS
+  ) {
+    st.lastTs = now;
+    return true;
+  }
+  return false;
+}
+
+// Test hook -- cadence logic is invisible from outside (it only changes
+// WHEN the scan runs), so tests assert on it directly.
+export const __quickCheck = {
+  shouldQuickCheck,
+  QUICK_CHECK_EVERY_N,
+  QUICK_CHECK_MIN_INTERVAL_MS,
+  reset: () => __quickCheckState.clear(),
+};
+
+// Insert one row into memory_entries inside a BEGIN IMMEDIATE transaction.
+// On the throttled cadence above, runs PRAGMA quick_check inside the same
+// transaction and throws MemoryIntegrityError on anything other than 'ok'
+// (rolling the insert back -- fail-safe). Returns { id } of the inserted row.
 //
 // Caller passes { body, source?, session_id? }. created_at is set here
 // (unix ms) so callers don't have to remember the convention.
@@ -224,12 +270,14 @@ export function indexEntry(db, entry) {
     inserted = {
       id: info && info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null,
     };
-    const qc = db.prepare('PRAGMA quick_check').get();
-    const status = qc && (qc.quick_check ?? qc.QUICK_CHECK);
-    if (status !== 'ok') {
-      throw new MemoryIntegrityError(
-        `PRAGMA quick_check failed after insert into memory_entries: ${status || '(no result)'}.`
-      );
+    if (shouldQuickCheck(db.__ijfw_filename)) {
+      const qc = db.prepare('PRAGMA quick_check').get();
+      const status = qc && (qc.quick_check ?? qc.QUICK_CHECK);
+      if (status !== 'ok') {
+        throw new MemoryIntegrityError(
+          `PRAGMA quick_check failed after insert into memory_entries: ${status || '(no result)'}.`
+        );
+      }
     }
   });
   tx();
@@ -282,6 +330,13 @@ export function indexEntry(db, entry) {
     const ts = row.created_at;
     const sessionId = row.session_id;
     const body = row.body;
+    // Receipt path must belong to the project that owns THIS db, never the
+    // process cwd (MCP hosts commonly spawn servers from $HOME, and openDb
+    // supports an explicit projectRoot distinct from cwd). The db lives at
+    // <root>/.ijfw/index/memory.db, so dirname(filename) IS the index dir.
+    const receiptDir = db.__ijfw_filename
+      ? dirname(db.__ijfw_filename)
+      : join(process.env.IJFW_PROJECT_DIR || process.cwd(), IJFW_DIR_NAME, INDEX_DIR_NAME);
     // v1.5.0 audit-LOW-memory-#14: dead-letter receipt for auto-index failures.
     // Fire-and-forget was already swallowed silently; now we append an
     // append-only JSONL receipt so silent indexer breakage is detectable in
@@ -293,10 +348,10 @@ export function indexEntry(db, entry) {
           // Lazy import; node:fs/promises is always available.
           import('node:fs/promises').then(({ appendFile, mkdir }) => {
             try {
-              const indexDir = '.ijfw/index';
+              const indexDir = receiptDir;
               return mkdir(indexDir, { recursive: true })
                 .then(() => appendFile(
-                  `${indexDir}/graph-errors.jsonl`,
+                  join(indexDir, 'graph-errors.jsonl'),
                   JSON.stringify({
                     ts: new Date().toISOString(),
                     session_id: sessionId || null,

@@ -394,15 +394,52 @@ test('runner.mjs --project-root completes cleanly without args extras', () => {
 // --- 9. tool-cap budget unchanged ------------------------------------------
 
 // v1.5.2.1: cap is 14 (raised 13 -> 14 in v1.5.2 for ijfw_brain). D3 itself
-// adds zero MCP tools — dream-trigger is a CLI verb, not an MCP tool — so
-// the regex count must stay at or below 14. The earlier `<= 12` assertion
-// was stale from before v1.5.0's `ijfw_memory_facts` and v1.5.2's
-// `ijfw_brain` raises. Note: the regex counts inline `name: 'ijfw_*` entries
-// only (not the UPPER_SNAKE_TOOL named-import references for update_check /
-// _apply at the array tail) — so the matched count is 12, the real
-// advertised count is 14. Both are within the documented ≤14 cap.
-test('MCP tool-cap inline name entries stay within the 14-tool cap', () => {
-  const server = readFileSync(join(REPO_ROOT, 'mcp-server', 'src', 'server.js'), 'utf8');
-  const matches = server.match(/name:\s*'ijfw_/g) || [];
-  assert.ok(matches.length <= 14, `tool-cap must be <= 14; saw ${matches.length}`);
+// adds zero MCP tools (dream-trigger is a CLI verb, not an MCP tool). The
+// earlier source-regex count saw only inline `name: 'ijfw_` literals (12 of
+// 14) and was blind to named-import tool defs like UPDATE_CHECK_TOOL, so two
+// more tools could land without tripping it. Derive the count from the
+// server's own tools/list response instead -- the advertised manifest is the
+// thing the cap governs, so the gate cannot drift from it.
+test('MCP advertised tool count stays within the 14-tool cap', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'ijfw-toolcap-'));
+  const server = spawn(
+    process.execPath,
+    [join(REPO_ROOT, 'mcp-server', 'src', 'server.js')],
+    { env: { ...process.env, HOME: home, USERPROFILE: home }, cwd: home },
+  );
+  try {
+    const tools = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('tools/list timed out after 10s')), 10_000,
+      );
+      let buf = '';
+      server.stdout.on('data', (chunk) => {
+        buf += chunk;
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let msg;
+          try { msg = JSON.parse(line); } catch { continue; }
+          if (msg.id === 2) {
+            clearTimeout(timer);
+            resolve((msg.result && msg.result.tools) || []);
+            return;
+          }
+        }
+      });
+      server.on('error', (err) => { clearTimeout(timer); reject(err); });
+      server.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n');
+      server.stdin.write('{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n');
+    });
+    assert.ok(tools.length > 0, 'tools/list returned an empty manifest');
+    assert.ok(tools.length <= 14, `tool-cap must be <= 14; server advertises ${tools.length}`);
+    for (const t of tools) {
+      assert.match(t.name, /^ijfw_/, `unexpected advertised tool name: ${t.name}`);
+    }
+  } finally {
+    server.kill();
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });

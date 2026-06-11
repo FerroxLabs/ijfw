@@ -166,11 +166,11 @@ export function propagateStale(db, supersededNodeId, options = {}) {
     // timeout in fts5.openDb, so concurrent reads remain unblocked.
     const updateRaw = db.prepare(
       `UPDATE raw SET stale_candidate = ? ` +
-      `WHERE stale_candidate < ? AND body LIKE ?`
+      `WHERE stale_candidate < ? AND body LIKE ? ESCAPE '\\'`
     );
     const updateCompiled = db.prepare(
       `UPDATE compiled SET stale_candidate = ? ` +
-      `WHERE stale_candidate < ? AND (topic LIKE ? OR body LIKE ?)`
+      `WHERE stale_candidate < ? AND (topic LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')`
     );
 
     const tx = (typeof db.txn === 'function')
@@ -204,12 +204,13 @@ export function propagateStale(db, supersededNodeId, options = {}) {
   };
 }
 
-// LIKE pattern escape -- our names can contain `%` or `_` (e.g. error
-// codes like `E_BUSY%` -- unlikely but possible). Escape both, plus the
-// backslash escape character. Use `\` as the escape; SQLite needs an
-// explicit ESCAPE clause to honour it, so we add that to the prepared
-// statement above. (Skipped here because in practice kg_node names from
-// our regex extractor never contain `%` or `_` chars.)
+// LIKE pattern escape -- kg_node names routinely contain `_` (the entity
+// extractor's snake_case/UPPER_SNAKE regexes REQUIRE underscores) and can
+// contain `%`. Escape both, plus the backslash escape character. SQLite
+// LIKE has NO default escape character, so every consuming statement above
+// carries an explicit ESCAPE '\' clause -- without it, `\_` matches a
+// literal backslash followed by ANY character and snake_case names
+// silently flag zero rows.
 function escapeLike(s) {
   return String(s).replace(/[\\%_]/g, '\\$&');
 }

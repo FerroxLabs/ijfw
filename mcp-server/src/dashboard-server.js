@@ -7,7 +7,7 @@
  */
 
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, watch, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, watch, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, renameSync, unlinkSync, openSync, readSync, closeSync, chmodSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, dirname, resolve, relative, isAbsolute, basename, sep } from 'node:path';
@@ -178,14 +178,31 @@ function requireLocalhost(req, res) {
 // stamp Sec-Fetch-Site; the dashboard's own page is 'same-origin', direct tools
 // (curl, address bar) send 'none'/nothing. Only same-machine cross-origin pages
 // hit 'cross-site'/'same-site' -- block those on /api.
+//
+// State-changing methods (POST/PUT/PATCH/DELETE) fail CLOSED when Sec-Fetch-Site
+// is absent: a browser cross-origin write always carries an Origin header (even
+// for no-preflight text/plain "simple requests"), so any Origin/Referer that does
+// not match our own Host is rejected. Requests with no browser markers at all
+// (curl, local scripts) carry neither header and stay allowed.
 function rejectCrossSiteApi(req, res, path) {
   if (!path.startsWith('/api')) return false;
-  const sfs = req.headers['sec-fetch-site'];
-  if (sfs === 'cross-site' || sfs === 'same-site') {
+  function reject() {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     res.end('{"error":"cross-origin request rejected"}');
     return true;
   }
+  const sfs = req.headers['sec-fetch-site'];
+  if (sfs === 'cross-site' || sfs === 'same-site') return reject();
+  const method = (req.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
+  // Writes: 'same-origin'/'none' are browser-proven safe; otherwise require any
+  // Origin/Referer present to match the host the request was addressed to.
+  if (sfs === 'same-origin' || sfs === 'none') return false;
+  const proof = req.headers['origin'] || req.headers['referer'];
+  if (!proof) return false;
+  let proofHost = null;
+  try { proofHost = new URL(proof).host; } catch {}
+  if (proofHost === null || proofHost !== (req.headers.host || '')) return reject();
   return false;
 }
 
@@ -205,14 +222,43 @@ function route(req, res, routes) {
 }
 
 // ---------- JSONL reader ----------
+// observations.jsonl is append-only with no rotation, so an unbounded
+// synchronous read+parse on every poll would stall the single-threaded server
+// (same hazard tailEvents() was rewritten to avoid). Bound the read to the
+// last OBS_TAIL_BYTES via fd+position, and cache the parsed array keyed on
+// mtime+size so repeated polls of an unchanged file never re-read it.
+const OBS_TAIL_BYTES = 5 * 1024 * 1024; // 5MB
+const obsCache = new Map(); // ledgerPath -> { key, data }
+
 function readObservations(ledgerPath) {
-  if (!existsSync(ledgerPath)) return [];
+  let st;
+  try { st = statSync(ledgerPath); } catch { return []; }
+  const key = `${st.mtimeMs}:${st.size}`;
+  const cached = obsCache.get(ledgerPath);
+  if (cached && cached.key === key) return cached.data;
   try {
-    return readFileSync(ledgerPath, 'utf8')
-      .split('\n')
-      .filter(Boolean)
+    const start = Math.max(0, st.size - OBS_TAIL_BYTES);
+    const len = st.size - start;
+    const buf = Buffer.allocUnsafe(len);
+    const fd = openSync(ledgerPath, 'r');
+    let read = 0;
+    try {
+      while (read < len) {
+        const n = readSync(fd, buf, read, len - read, start + read);
+        if (n === 0) break;
+        read += n;
+      }
+    } finally {
+      closeSync(fd);
+    }
+    let lines = buf.subarray(0, read).toString('utf8').split('\n').filter(Boolean);
+    // If we sliced mid-line, the first element may be truncated -- drop it.
+    if (start > 0) lines = lines.slice(1);
+    const data = lines
       .map(l => { try { return JSON.parse(l); } catch { return null; } })
       .filter(Boolean);
+    obsCache.set(ledgerPath, { key, data });
+    return data;
   } catch {
     return [];
   }
@@ -830,8 +876,11 @@ export async function startServer(options = {}) {
         req.on('end', () => {
           try {
             const parsed = JSON.parse(body);
-            mkdirSync(join(homedir(), '.ijfw'), { recursive: true });
-            writeFileSync(configPath, JSON.stringify(parsed, null, 2), 'utf8');
+            mkdirSync(join(homedir(), '.ijfw'), { recursive: true, mode: 0o700 });
+            // 0o600: config holds account/subscription data; keep it owner-only
+            // (mode only applies on create, so chmod existing files too).
+            writeFileSync(configPath, JSON.stringify(parsed, null, 2), { encoding: 'utf8', mode: 0o600 });
+            try { chmodSync(configPath, 0o600); } catch {}
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true }));
           } catch (err) {
@@ -1497,6 +1546,50 @@ if (process.argv.includes('--daemon')) {
   const pidFile  = process.env.IJFW_PID_FILE  || join(homedir(), '.ijfw', 'dashboard.pid');
   const portFile = process.env.IJFW_PORT_FILE || join(homedir(), '.ijfw', 'dashboard.port');
 
+  // Singleton guard: the spawner's pid-check (session-start.sh) is a classic
+  // check-then-act race -- two sessions starting in the same window both see no
+  // live daemon and both spawn --daemon. Without a guard here, the loser walks
+  // to the next port and OVERWRITES the shared pid/port files, orphaning the
+  // winner forever. Acquire the pid file with O_EXCL BEFORE binding: exactly
+  // one starter wins; losers exit 0 without binding or clobbering. A pid file
+  // whose owner is dead is stale and reclaimed once.
+  const ijfwDir = dirname(pidFile);
+  mkdirSync(ijfwDir, { recursive: true });
+
+  function pidAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try { process.kill(pid, 0); return true; }
+    catch (err) { return err.code === 'EPERM'; }
+  }
+
+  function acquirePidFile() {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        writeFileSync(pidFile, String(process.pid), { encoding: 'utf8', flag: 'wx' });
+        return true;
+      } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+        let holder = NaN;
+        try { holder = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10); } catch {}
+        if (pidAlive(holder)) return false; // live daemon already owns it
+        try { unlinkSync(pidFile); } catch {} // stale -- reclaim and retry once
+      }
+    }
+    return false; // lost the reclaim race to another starter; that one serves
+  }
+
+  if (!acquirePidFile()) {
+    process.stderr.write('[ijfw-dashboard] daemon already running -- exiting\n');
+    process.exit(0);
+  }
+
+  function releasePidFile() {
+    // Only remove the pid file if it is still ours.
+    try {
+      if (readFileSync(pidFile, 'utf8').trim() === String(process.pid)) unlinkSync(pidFile);
+    } catch {}
+  }
+
   // Optional preferred-port override (forwarded by the launcher's `--port N`).
   // Unset = default 37891-37900 walk. Invalid values fall back to the default.
   const startOpts = {};
@@ -1504,10 +1597,6 @@ if (process.argv.includes('--daemon')) {
   if (Number.isInteger(envPort) && envPort > 0 && envPort < 65536) startOpts.port = envPort;
 
   startServer(startOpts).then(({ port }) => {
-    const ijfwDir = dirname(pidFile);
-    mkdirSync(ijfwDir, { recursive: true });
-    // PID file: plain write (single writer; pid is meaningless mid-write)
-    writeFileSync(pidFile, String(process.pid), 'utf8');
     // Port file: atomic write via tmp+rename so readers never see a partial value (W4.2).
     // Cleanup tmp on rename failure so it doesn't leak (W9-M1).
     const portTmp = `${portFile}.tmp.${process.pid}.${Date.now()}`;
@@ -1519,6 +1608,7 @@ if (process.argv.includes('--daemon')) {
       throw new Error(`atomic write failed for ${portFile}: ${err.message}`);
     }
   }).catch(err => {
+    releasePidFile();
     process.stderr.write('[ijfw-dashboard] ' + err.message + '\n');
     process.exit(1);
   });
