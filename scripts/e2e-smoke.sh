@@ -87,8 +87,16 @@ hash_file() {
 
 # ------------------------------------------------------------
 # Paths we want to prove are untouched in scratch mode.
-# Every write target listed in the install.sh platform case blocks.
+# Every home-scoped write target the installer touches -- keep in sync with
+# the Mode 2 assertions below AND installer/src/install-targets-8-14.js.
 # ------------------------------------------------------------
+# Cline writes into the VS Code per-extension globalStorage; resolve the same
+# per-OS user dir the installer targets (mirrors the Mode 2 1.1.9 gate).
+case "$(uname -s 2>/dev/null)" in
+  Darwin)                  GUARD_CLINE_USER_DIR="$HOME/Library/Application Support/Code/User" ;;
+  CYGWIN*|MINGW*|MSYS_NT*) GUARD_CLINE_USER_DIR="${APPDATA:-$HOME/AppData/Roaming}/Code/User" ;;
+  *)                       GUARD_CLINE_USER_DIR="$HOME/.config/Code/User" ;;
+esac
 GUARD_PATHS=(
   "$HOME/.claude/settings.json"
   "$HOME/.claude/plugins/known_marketplaces.json"
@@ -100,6 +108,16 @@ GUARD_PATHS=(
   "$HOME/.hermes/HERMES.md"
   "$HOME/.wayland/config.yaml"
   "$HOME/.wayland/WAYLAND.md"
+  "$HOME/.config/opencode/opencode.json"
+  "$HOME/.qwen/settings.json"
+  "$HOME/.kimi/mcp.json"
+  "$HOME/.openclaw/openclaw.json"
+  "$HOME/.aider.conf.yml"
+  "$HOME/CONVENTIONS.md"
+  "$GUARD_CLINE_USER_DIR/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+  "$HOME/.gemini/antigravity/mcp_config.json"
+  "$HOME/.gemini/config/mcp_config.json"
+  "$HOME/.pi/agent/AGENTS.md"
 )
 
 # ============================================================

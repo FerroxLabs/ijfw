@@ -16,7 +16,7 @@ Author: Sean Donahoe
 - `aider/` -- Aider rules-only tier (`~/.aider.conf.yml` + `~/CONVENTIONS.md`)
 - `universal/` -- 20-line paste-anywhere rules file
 - `mcp-server/` -- Cross-platform MCP memory server (Node.js, zero deps)
-- `scripts/e2e-smoke.sh` -- end-to-end test harness (30+ gates across 2 modes); must pass before publish
+- `scripts/e2e-smoke.sh` -- end-to-end test harness (30+ gates across 2 modes); manual operator gate before publish (not CI-runnable: Mode 1 hashes the operator's real home-dir configs). CI enforces preflight + check-all.sh on v* tags via publish.yml.
 - `scripts/dashboard/` -- local observability dashboard (`ijfw dashboard start`)
 - `docs/` -- README, DESIGN.md
 
@@ -70,15 +70,18 @@ If a subagent's final report contains a ` ```diff ` block presented as if it wer
 Project memory at .ijfw/memory/. Call `ijfw_memory_prelude` for full context.
 
 Recent decisions:
-**How to apply:** v1.5.2 IJFW Brain (Plan A) shipped: visible `ijfw/` layer, dump-folder pipeline, dream-cycle with tiered LLM + budget guard, bi-temporal wiki with citation enforcement, combined `ijfw_brain` MCP tool (8 verbs in one slot). MCP cap 13 → 14. New runtime dep: `chokidar@^4.0.1`. Plans B (dashboard panel) and C (Wayland PR) consume the locked contract at `.planning/wayland-memory/CONTRACT.md`.
-**Why:** First milestone of the bigger Brain bet — combining bi-temporal facts + Obsidian-style graph + Karpathy LLM-wiki + cross-CLI breadth + sandboxed MCP runtime. Plan A is the backend foundation; Plans B/C surface it visually.
 **How to apply:** If user reports an install issue: npm view shows both at 1.4.0 globally. Smoke test: `cd $(mktemp -d) && npm install -g @ijfw/install && ijfw --version`. macOS users will work even though CI didn't verify it — pure-Node packages, no native build step except better-sqlite3 which has prebuilt binaries. If user wants a github mirror: origin remote needs to be re-set up (was removed during this session because the URL 404'd).
 **Why:** User principle: no half-shipping. v1.4.0's "v1.5.0 backlog" violated this — signing without a registry is the same UX as no signing because trust doesn't scale by hand; runtime mediation on one of seven platforms is the same UX as no runtime mediation for users on the other six; memory feedback with one detector is a demo not a product. Folding into v1.4.1 keeps the trust-model promise honest.
 **How to apply:** Next session: read .planning/1.4.1/HANDOFF-1.4.1.md, invoke /superpowers:subagent-driven-development, dispatch W8-A1 + W8-A2 + W8-A3 in parallel per the wave plan, then W8-B sequential after W8-A1, then W8-C1 + W8-C2 in parallel. Then round 11. Then ship 1.4.1. Use the same subagent-driven-development discipline + Ralph loop that worked for W7+W7.1. If user wants github mirror set up for B12, that's a manual step at github.com/TheRealSeanDonahoe/ijfw (create repo + push). If B6 default registry URL isn't yet live (DNS not configured), seed registry from docs/registry/publishers/v1.json in repo and use the GitLab Pages fallback URL.
 
-Last handoff: Handoff: 2026-05-25 (IJFW Brain v1.6.0 PLANNED — ready to execute Plan A)
-====================
+Last handoff: Handoff — 2026-06-10. ONE repo /Users/seandonahoe/dev/ijfw, branch feat/v1.6.0-benchmark-harness. Branch-only, NOTHING pushed.
+=========================================================================================================================
 </ijfw-memory>
+
+<ijfw-profile>
+Your portable working profile (derived from what you've said/edited; style + expertise only):
+expertise.markdown: novice
+</ijfw-profile>
 
 <ijfw-routing>
 IJFW is installed alongside a peer brainstorming skill. For project-level tasks (build, create, design, plan, brainstorm, landing page, app, website, dashboard, campaign, book, launch), prefer the ijfw:ijfw-workflow skill -- the user opted into IJFW via install, and ijfw-workflow is its configured workflow entry point. IJFW orchestrates think-build-ship end to end and dispatches peer specialist skills (frontend-design, TDD, code-review) as subagent tools when the workflow needs them.

@@ -31,6 +31,17 @@ jobs:
         working-directory: installer
         run: npm run build
 
+      # The gitleaks gate is blocking and (since the CI=true fail-closed fix in
+      # gates/gitleaks.js) FAILS when the binary is absent in CI. ubuntu-latest
+      # does not ship gitleaks, so install a pinned release here.
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.21.2
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
       - name: Run preflight (must be green to proceed)
         working-directory: installer
         run: node dist/ijfw.js preflight --json > preflight-report.json
@@ -43,9 +54,29 @@ jobs:
           path: installer/preflight-report.json
           retention-days: 30
 
+  # Release-day mirror of ci.yml's check-all job: a v* tag can land on a commit
+  # that never went through (or is ahead of) main CI, so the unit suite +
+  # banned-char lint + platform-drift gate must also block the publish itself.
+  check-all:
+    name: check-all.sh (release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # Node 22.x: node:sqlite is unavailable/partial on the runner default.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+      # check-all.sh runs the mcp-server suite, which needs better-sqlite3 +
+      # chokidar installed in a fresh checkout.
+      - name: Install mcp-server deps
+        working-directory: mcp-server
+        run: npm ci
+      - name: Run check-all
+        run: bash scripts/check-all.sh
+
   publish:
     name: Publish to npm
-    needs: preflight
+    needs: [preflight, check-all]
     runs-on: ubuntu-latest
     permissions:
       contents: write

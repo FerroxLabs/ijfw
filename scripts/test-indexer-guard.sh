@@ -114,6 +114,72 @@ else
 fi
 rm -rf "$H6"
 
+# ---------------------------------------------------------------------------
+# Case 7: explicit-root invocation writes the index into ROOT/.ijfw, never the
+# cwd's .ijfw (regression: cwd-relative paths clobbered another project's index).
+# ---------------------------------------------------------------------------
+H7="$(mktemp -d)"; PA="$H7/projA"; PB="$H7/projB"
+mkdir -p "$PA" "$PB/.ijfw/index"
+git -C "$PA" init -q 2>/dev/null; : > "$PA/package.json"
+printf 'const a = 1\n' > "$PA/a.js"
+printf 'SENTINEL-B\n' > "$PB/.ijfw/index/files.md"
+run_indexer "$PB" "$H7" "$PA" >/dev/null 2>&1
+if [ -f "$PA/.ijfw/index/files.md" ] && grep -q "a.js" "$PA/.ijfw/index/files.md" \
+   && grep -q "SENTINEL-B" "$PB/.ijfw/index/files.md"; then
+  ok "explicit root writes into ROOT/.ijfw, cwd's index untouched"
+else
+  bad "explicit root wrote into the wrong .ijfw (cwd clobber regression)"
+fi
+rm -rf "$H7"
+
+# ---------------------------------------------------------------------------
+# Case 8: a shell-file edit triggers a rebuild (regression: the freshness scan
+# omitted *.sh while the build walk included it -- stale index forever).
+# ---------------------------------------------------------------------------
+H8="$(mktemp -d)"; P8="$H8/shproj"; mkdir -p "$P8"
+: > "$P8/package.json"   # marker only; *.json is not an indexed type
+printf 'old_hint=1\n' > "$P8/tool.sh"
+run_indexer "$P8" "$H8" . >/dev/null 2>&1
+# Age the stamp past the 60s fast-path, then edit only the .sh file.
+touch -t 202001010000 "$P8/.ijfw/index/.last-build" 2>/dev/null
+printf 'new_hint_xyz=1\n' > "$P8/tool.sh"
+run_indexer "$P8" "$H8" . >/dev/null 2>&1
+if grep -q "new_hint_xyz" "$P8/.ijfw/index/files.md" 2>/dev/null; then
+  ok "editing only a .sh file triggers a rebuild"
+else
+  bad ".sh edit did not trigger a rebuild (freshness filter drift)"
+fi
+rm -rf "$H8"
+
+# ---------------------------------------------------------------------------
+# Case 9: malformed IJFW_INDEX_MAX falls back to the default cap instead of
+# finalizing an empty index over a good one.
+# ---------------------------------------------------------------------------
+H9="$(mktemp -d)"; P9="$H9/capproj"; mkdir -p "$P9"
+: > "$P9/package.json"
+printf 'const k = 1\n' > "$P9/keep.js"
+( cd "$P9" && HOME="$H9" IJFW_INDEX_MAX="5,000" bash "$INDEXER" . ) >/dev/null 2>&1
+if grep -q "keep.js" "$P9/.ijfw/index/files.md" 2>/dev/null; then
+  ok "malformed IJFW_INDEX_MAX falls back to default (index intact)"
+else
+  bad "malformed IJFW_INDEX_MAX produced an empty/broken index"
+fi
+rm -rf "$H9"
+
+# ---------------------------------------------------------------------------
+# Case 10: truncation is noted in the footer when the cap bites.
+# ---------------------------------------------------------------------------
+H10="$(mktemp -d)"; P10="$H10/bigproj"; mkdir -p "$P10"
+: > "$P10/package.json"
+printf 'x\n' > "$P10/f1.js"; printf 'x\n' > "$P10/f2.js"; printf 'x\n' > "$P10/f3.js"
+( cd "$P10" && HOME="$H10" IJFW_INDEX_MAX=2 bash "$INDEXER" . ) >/dev/null 2>&1
+if grep -q "truncated to 2 of 3" "$P10/.ijfw/index/files.md" 2>/dev/null; then
+  ok "truncation footer notes capped index (2 of 3)"
+else
+  bad "no truncation footer when IJFW_INDEX_MAX caps the index"
+fi
+rm -rf "$H10"
+
 echo ""
 echo "indexer guard: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

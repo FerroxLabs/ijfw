@@ -11,10 +11,17 @@ export async function run(ctx) {
   // Check binary availability
   const which = spawnSync('gitleaks', ['version'], { encoding: 'utf8' });
   if (which.status === null || which.error) {
+    // Fail-closed in CI: the workflows install gitleaks explicitly, so a
+    // missing binary there means the secret scan silently never ran (a
+    // runner-image change must not be able to disable the only pre-publish
+    // secret scan). Locally a missing binary stays a WARN with install hint.
+    const inCI = process.env.CI === 'true' || process.env.CI === '1';
     return {
       name: 'gitleaks',
-      status: 'WARN',
-      message: 'gitleaks not installed -- brew install gitleaks / https://github.com/gitleaks/gitleaks',
+      status: inCI ? 'FAIL' : 'WARN',
+      message: inCI
+        ? 'gitleaks not installed in CI -- secret scan is mandatory; the workflow must install gitleaks'
+        : 'gitleaks not installed -- brew install gitleaks / https://github.com/gitleaks/gitleaks',
       details: ['Secret scan skipped. Install gitleaks to enable this gate.'],
       durationMs: Date.now() - t0,
     };

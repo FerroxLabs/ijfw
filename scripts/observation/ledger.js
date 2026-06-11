@@ -6,7 +6,7 @@
  * Zero deps. All Node built-ins.
  */
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync, renameSync, statSync, rmdirSync, readdirSync, unlinkSync } from 'fs';
+import { appendFileSync, readFileSync, existsSync, mkdirSync, renameSync, statSync, rmdirSync, readdirSync, unlinkSync, openSync, readSync, closeSync, fstatSync } from 'fs';
 import { homedir } from 'os';
 import { join, basename } from 'path';
 
@@ -31,9 +31,9 @@ function acquireLock(retries = 10) {
       mkdirSync(LOCK_DIR);
       return true;
     } catch {
-      // busy-wait 20ms
-      const end = Date.now() + 20;
-      while (Date.now() < end) {}
+      // Sleep 20ms without burning CPU (Atomics.wait blocks the thread;
+      // the old `while (Date.now() < end) {}` spin pegged a core).
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }
   return false;
@@ -134,6 +134,36 @@ async function mirrorToSqlite(record) {
 
 // ---------- Public API ----------
 
+// Read only the tail of the ledger to find the last record's id. A full
+// readFileSync was O(file size) -- up to MAX_JSONL -- on EVERY tool call,
+// since capture.js runs per PostToolUse event.
+function lastRecordId() {
+  let fd = null;
+  try {
+    fd = openSync(JSONL_PATH, 'r');
+    const { size } = fstatSync(fd);
+    if (size === 0) return 0;
+    // 2x the line cap guarantees the window holds at least one full line.
+    const span = Math.min(size, MAX_LINE * 2);
+    const buf = Buffer.alloc(span);
+    const bytes = readSync(fd, buf, 0, span, size - span);
+    const lines = buf.toString('utf8', 0, bytes).split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const rec = JSON.parse(lines[i]);
+        if (rec && typeof rec.id === 'number') return rec.id;
+      } catch {
+        // earliest line in the window may be a partial record -- skip it
+      }
+    }
+    return 0;
+  } catch {
+    return 0;
+  } finally {
+    if (fd !== null) { try { closeSync(fd); } catch {} }
+  }
+}
+
 /**
  * Append one observation record to the JSONL ledger.
  * Atomic for short writes at OS level (single appendFile syscall).
@@ -146,31 +176,24 @@ export function appendObservation(obs) {
   mkdirSync(IJFW_GLOBAL, { recursive: true });
   rotateIfNeeded();
 
-  // Auto-increment id via line count (best-effort; gaps are fine)
-  let nextId = 1;
-  try {
-    if (existsSync(JSONL_PATH)) {
-      const lines = readFileSync(JSONL_PATH, 'utf8').split('\n').filter(Boolean);
-      if (lines.length > 0) {
-        const last = JSON.parse(lines[lines.length - 1]);
-        const lastId = last && typeof last.id === 'number' ? last.id : lines.length;
-        nextId = lastId + 1;
-      }
-    }
-  } catch {}
-
-  const record = { id: nextId, ...obs };
-  let line = JSON.stringify(record) + '\n';
-  if (Buffer.byteLength(line, 'utf8') > MAX_LINE) {
-    const truncated = { ...record, title: (record.title || '').slice(0, 200) };
-    line = JSON.stringify(truncated) + '\n';
-  }
-
+  // Derive the id INSIDE the lock so two concurrent captures cannot read the
+  // same tail and emit duplicate ids (the SQLite mirror keys on id and would
+  // silently drop the second via INSERT OR IGNORE). Best-effort; gaps are fine.
   const locked = acquireLock();
+  let record;
   try {
-    appendFileSync(JSONL_PATH, line, { encoding: 'utf8', flag: 'a' });
-  } catch (err) {
-    process.stderr.write(`[ijfw] observation append failed: ${err.message}\n`);
+    const nextId = lastRecordId() + 1;
+    record = { id: nextId, ...obs };
+    let line = JSON.stringify(record) + '\n';
+    if (Buffer.byteLength(line, 'utf8') > MAX_LINE) {
+      const truncated = { ...record, title: (record.title || '').slice(0, 200) };
+      line = JSON.stringify(truncated) + '\n';
+    }
+    try {
+      appendFileSync(JSONL_PATH, line, { encoding: 'utf8', flag: 'a' });
+    } catch (err) {
+      process.stderr.write(`[ijfw] observation append failed: ${err.message}\n`);
+    }
   } finally {
     if (locked) releaseLock();
   }

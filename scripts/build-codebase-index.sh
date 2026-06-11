@@ -7,11 +7,6 @@
 # Usage: bash scripts/build-codebase-index.sh [root]
 # Default root: current directory.
 
-IJFW_DIR=".ijfw"
-INDEX_DIR="$IJFW_DIR/index"
-INDEX_FILE="$INDEX_DIR/files.md"
-STAMP="$INDEX_DIR/.last-build"
-
 ROOT="${1:-.}"
 
 # --- Issue #16 guard: never index $HOME or /, and only index a real project. --
@@ -27,6 +22,12 @@ fi
 case "$ROOT_PHYS" in
   ""|"/") echo "IJFW indexer: refusing to index the filesystem root -- skipping." >&2; exit 0 ;;
 esac
+# Any filesystem root (covers Windows drive roots under MSYS/Cygwin where
+# pwd -P yields /c or C:/ shapes): a root is its own dirname.
+if [ "$(dirname "$ROOT_PHYS")" = "$ROOT_PHYS" ]; then
+  echo "IJFW indexer: refusing to index the filesystem root -- skipping." >&2
+  exit 0
+fi
 # Resolve the physical $HOME, but only if HOME is actually set (an unset HOME
 # makes `cd "$HOME"` a no-op on bash 3.2 but an error on Linux -- don't depend
 # on either; treat unresolvable HOME as "not the home root").
@@ -37,6 +38,16 @@ fi
 if [ -n "$IJFW_HOME_PHYS" ] && [ "$ROOT_PHYS" = "$IJFW_HOME_PHYS" ]; then
   echo "IJFW indexer: refusing to index your home directory -- skipping." >&2
   exit 0
+fi
+# Also refuse ancestors of $HOME (/Users, /home, ...): indexing a parent of
+# home walks the home directory too -- the same privacy hole as issue #16.
+if [ -n "$IJFW_HOME_PHYS" ]; then
+  case "$IJFW_HOME_PHYS/" in
+    "$ROOT_PHYS"/*)
+      echo "IJFW indexer: refusing to index an ancestor of your home directory -- skipping." >&2
+      exit 0
+      ;;
+  esac
 fi
 # Require a real project marker OR an explicit blessing from \`ijfw init\`
 # (which drops .ijfw/project). No marker, no init, no index.
@@ -55,6 +66,29 @@ if ! ijfw_has_project_marker; then
 fi
 # --- end issue #16 guard ---
 
+# Anchor all outputs to the VALIDATED root. These used to be cwd-relative
+# (".ijfw/index/..."), so an explicit-root run from another directory wrote
+# project A's index into project B's .ijfw -- clobbering B's index and letting
+# B's fresh stamp suppress rebuilds of A.
+IJFW_DIR="$ROOT_PHYS/.ijfw"
+INDEX_DIR="$IJFW_DIR/index"
+INDEX_FILE="$INDEX_DIR/files.md"
+STAMP="$INDEX_DIR/.last-build"
+
+# Source-file name filter -- single definition shared by the freshness scan and
+# the build walk so they can never drift (a type present in the build but not
+# the scan makes edits to that type invisible to the rebuild trigger; *.sh was
+# exactly that bug).
+NAME_FILTER=( \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
+  -o -name "*.py" -o -name "*.rs" -o -name "*.go" -o -name "*.rb" \
+  -o -name "*.java" -o -name "*.kt" -o -name "*.swift" -o -name "*.php" \
+  -o -name "*.md" -o -name "*.sh" \) )
+PATH_EXCLUDES=( -not -path '*/node_modules/*' -not -path '*/.git/*' \
+  -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/.next/*' \
+  -not -path '*/target/*' -not -path '*/.ijfw/*' -not -path '*/Desktop/*' \
+  -not -path '*/Documents/*' -not -path '*/Downloads/*' -not -path '*/Pictures/*' \
+  -not -path '*/Music/*' -not -path '*/Movies/*' -not -path '*/Library/*' )
+
 mkdir -p "$INDEX_DIR" 2>/dev/null
 
 # Skip if fresh. Cheap fast-path first: if the stamp is younger than 60s, skip
@@ -66,7 +100,7 @@ if [ -f "$STAMP" ] && [ -f "$INDEX_FILE" ]; then
   if [ "$STAMP_MTIME" -gt 0 ] && [ "$NOW_S" -gt 0 ] && [ "$((NOW_S - STAMP_MTIME))" -lt 60 ]; then
     exit 0
   fi
-  NEWER=$(find "$ROOT" -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.rs" -o -name "*.go" -o -name "*.rb" -o -name "*.java" -o -name "*.kt" -o -name "*.swift" -o -name "*.php" -o -name "*.md" \) -newer "$STAMP" -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/.next/*' -not -path '*/target/*' -not -path '*/.ijfw/*' -not -path '*/Desktop/*' -not -path '*/Documents/*' -not -path '*/Downloads/*' -not -path '*/Pictures/*' -not -path '*/Music/*' -not -path '*/Movies/*' -not -path '*/Library/*' 2>/dev/null | head -1)
+  NEWER=$(find "$ROOT" -type f "${NAME_FILTER[@]}" -newer "$STAMP" "${PATH_EXCLUDES[@]}" 2>/dev/null | head -1)
   [ -z "$NEWER" ] && exit 0
 fi
 
@@ -83,30 +117,25 @@ FILE_COUNT=0
 BY_LANG=$(mktemp 2>/dev/null || echo "$INDEX_DIR/.lang-count")
 : > "$BY_LANG"
 
-# Find source files, categorized by extension.
-find "$ROOT" -type f \
-  \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
-     -o -name "*.py" -o -name "*.rs" -o -name "*.go" -o -name "*.rb" \
-     -o -name "*.java" -o -name "*.kt" -o -name "*.swift" -o -name "*.php" \
-     -o -name "*.md" -o -name "*.sh" \) \
-  -not -path '*/node_modules/*' \
-  -not -path '*/.git/*' \
-  -not -path '*/dist/*' \
-  -not -path '*/build/*' \
-  -not -path '*/.next/*' \
-  -not -path '*/target/*' \
-  -not -path '*/.ijfw/*' \
-  -not -path '*/Desktop/*' \
-  -not -path '*/Documents/*' \
-  -not -path '*/Downloads/*' \
-  -not -path '*/Pictures/*' \
-  -not -path '*/Music/*' \
-  -not -path '*/Movies/*' \
-  -not -path '*/Library/*' \
-  2>/dev/null | sort | head -n "${IJFW_INDEX_MAX:-5000}" > "$INDEX_DIR/.files.tmp"
+# Capture the scan epoch BEFORE the walk: a file edited while the build runs
+# must still compare -newer than the stamp next run. Touching the stamp after
+# the walk gave mid-build edits an mtime older than the stamp, so they were
+# never re-indexed until edited again.
+STAMP_TMP="$INDEX_DIR/.last-build.tmp"
+touch "$STAMP_TMP"
 
 # Bound the index: a runaway root (huge monorepo) is capped so the detached
-# indexer can never run unbounded. Truncation is noted in the output footer.
+# indexer can never run unbounded. Validate the cap -- a malformed value (e.g.
+# "5,000") would make `head -n` fail and finalize an EMPTY index over a good one.
+CAP="${IJFW_INDEX_MAX:-5000}"
+case "$CAP" in ''|*[!0-9]*) CAP=5000 ;; esac
+
+# Find source files, categorized by extension.
+find "$ROOT" -type f "${NAME_FILTER[@]}" "${PATH_EXCLUDES[@]}" \
+  2>/dev/null | sort > "$INDEX_DIR/.files.all.tmp"
+TOTAL_COUNT=$(wc -l < "$INDEX_DIR/.files.all.tmp" | tr -d ' ')
+head -n "$CAP" "$INDEX_DIR/.files.all.tmp" > "$INDEX_DIR/.files.tmp"
+rm -f "$INDEX_DIR/.files.all.tmp" 2>/dev/null
 FILE_COUNT=$(wc -l < "$INDEX_DIR/.files.tmp" | tr -d ' ')
 
 {
@@ -139,9 +168,15 @@ FILE_COUNT=$(wc -l < "$INDEX_DIR/.files.tmp" | tr -d ' ')
   sort "$BY_LANG" | uniq -c | sort -rn | head -20 | while read -r count ext; do
     echo "- .$ext: $count"
   done
+
+  # Keep the header comment's promise: truncation is noted in the footer.
+  if [ "$TOTAL_COUNT" -gt "$FILE_COUNT" ] 2>/dev/null; then
+    echo ""
+    echo "NOTE: index truncated to $FILE_COUNT of $TOTAL_COUNT files (IJFW_INDEX_MAX=$CAP)"
+  fi
 } >> "$INDEX_FILE"
 
 rm -f "$INDEX_DIR/.files.tmp" "$BY_LANG" 2>/dev/null
-touch "$STAMP"
+mv "$STAMP_TMP" "$STAMP" 2>/dev/null || touch "$STAMP"
 
 echo "Codebase indexed ($FILE_COUNT files)"

@@ -35,3 +35,9 @@ description = "Audit briefs occasionally quote a redactor input verbatim to demo
 paths = [
   '''\.planning/audit-briefs/.*''',
 ]
+
+[[allowlists]]
+description = "IJFW profile-derive cursor state. Runtime-only, gitignored; the key field is a session UUID used as a dedupe cursor, not a credential."
+paths = [
+  '''\.ijfw/\.profile-derive-cursor\.json''',
+]

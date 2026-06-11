@@ -73,7 +73,10 @@ fi
 # ---------------------------------------------------------------------------
 # Test: output has no banned unicode
 # ---------------------------------------------------------------------------
-BANNED_CHARS=$(echo "$OUTPUT" | LC_ALL=C grep -P '[\x{2014}\x{00A7}\x{2501}\x{2713}\x{2714}]' 2>/dev/null || true)
+# Match raw UTF-8 byte sequences (same construction as check-all.sh) so the
+# gate works on BSD grep (no -P) and GNU grep under LC_ALL=C alike.
+# em dash U+2014, section U+00A7, box U+2501, checks U+2713/U+2714.
+BANNED_CHARS=$(printf '%s' "$OUTPUT" | LC_ALL=C grep -E $'\342\200\224|\302\247|\342\224\201|\342\234\223|\342\234\224' || true)
 if [ -z "$BANNED_CHARS" ]; then
   ok "output contains no banned unicode characters"
 else

@@ -72,7 +72,10 @@ const resolvers = {
   claude: {
     agents: () => countFiles('claude/agents', { ext: '.md' }),
     commands: () => countFiles('claude/commands', { ext: '.md' }),
-    hooks: () => countFiles('claude/hooks/scripts')
+    // claude hooks ship as .sh + .js only; the extension filter keeps stray
+    // files (.DS_Store, editor swap files) from inflating the count.
+    hooks: () => countFiles('claude/hooks/scripts', { ext: '.sh' })
+      + countFiles('claude/hooks/scripts', { ext: '.js' })
   },
   codex: {
     agents: () => 0, // no codex/agents dir — runtime-generated only

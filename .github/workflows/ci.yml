@@ -31,6 +31,17 @@ jobs:
         working-directory: installer
         run: npm run build
 
+      # The gitleaks gate is blocking and (since the CI=true fail-closed fix in
+      # gates/gitleaks.js) FAILS when the binary is absent in CI. ubuntu-latest
+      # does not ship gitleaks, so install a pinned release here.
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.21.2
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
       - name: Run preflight (JSON output)
         working-directory: installer
         run: node dist/ijfw.js preflight --json > preflight-report.json
@@ -114,18 +125,39 @@ jobs:
         with:
           node-version: '22.x'
 
+      # Capture the exit code instead of swallowing it with `|| true`, and keep
+      # stderr OUT of the JSON report so a partial failure can never be posted
+      # as if it were audit findings. The job goes red at the end (below) so
+      # the comment still posts first with the honest failure context.
       - name: Run cross-audit
-        run: node mcp-server/bin/ijfw cross-audit --json > /tmp/trident-report.json 2>&1 || true
+        id: audit
+        run: |
+          rc=0
+          node mcp-server/bin/ijfw cross-audit --json > /tmp/trident-report.json 2> /tmp/trident-stderr.log || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
 
       - name: Post audit results as PR comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          AUDIT_RC: ${{ steps.audit.outputs.rc }}
         run: |
           body="## Trident cross-audit\n\n"
-          if [ -f /tmp/trident-report.json ]; then
+          if [ "${AUDIT_RC:-1}" = "0" ] \
+            && node -e "JSON.parse(require('fs').readFileSync('/tmp/trident-report.json','utf8'))" 2>/dev/null; then
             body="${body}\`\`\`json\n$(head -c 8000 /tmp/trident-report.json)\n\`\`\`"
           else
-            body="${body}_Report not available. Check workflow logs._"
+            body="${body}_Cross-audit FAILED (exit ${AUDIT_RC:-unknown}) or produced invalid JSON. Check workflow logs._"
+            if [ -s /tmp/trident-stderr.log ]; then
+              body="${body}\n\n\`\`\`\n$(head -c 2000 /tmp/trident-stderr.log)\n\`\`\`"
+            fi
           fi
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%b' "$body")"
+
+      - name: Fail job when cross-audit failed
+        if: steps.audit.outputs.rc != '0'
+        env:
+          AUDIT_RC: ${{ steps.audit.outputs.rc }}
+        run: |
+          echo "cross-audit exited $AUDIT_RC" >&2
+          exit 1

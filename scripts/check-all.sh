@@ -83,7 +83,9 @@ if (cd mcp-server && npm test) >/tmp/ijfw-mcp-test.out 2>&1; then
   ok "mcp-server suite passed"
 else
   echo "--- failing tests ---"
-  grep -E "^not ok|✖|✗" /tmp/ijfw-mcp-test.out | head -40
+  # `|| true`: when npm dies before any test runs there are no "not ok" lines;
+  # grep's exit 1 + pipefail would kill the script here and hide the tail below.
+  grep -E "^not ok|✖|✗" /tmp/ijfw-mcp-test.out | head -40 || true
   tail -12 /tmp/ijfw-mcp-test.out
   fail "mcp-server suite"
   exit 1
@@ -124,6 +126,27 @@ if [ -e "$PATTERNS_JSON" ]; then
 else
   ok "$PATTERNS_JSON not present -- skipped"
 fi
+
+echo
+echo "== hook timeouts =="
+# Claude Code reads hook `timeout` in SECONDS. Values like 15000 are a
+# milliseconds-vs-seconds authoring bug that silently replaces the intended
+# fail-fast watchdog (15s) with hours. Cap every hook at 60.
+node -e '
+const cfg = require("./claude/hooks/hooks.json");
+let bad = 0;
+for (const [event, entries] of Object.entries(cfg.hooks || cfg)) {
+  if (!Array.isArray(entries)) continue;
+  for (const e of entries) for (const h of (e.hooks || [])) {
+    if (h.timeout != null && Number(h.timeout) > 60) {
+      console.error(`hook timeout > 60s (units are SECONDS, not ms): ${event} -> ${h.command} = ${h.timeout}`);
+      bad++;
+    }
+  }
+}
+process.exit(bad ? 1 : 0);
+'
+ok "all hook timeouts <= 60s"
 
 echo
 echo "== platform drift =="
