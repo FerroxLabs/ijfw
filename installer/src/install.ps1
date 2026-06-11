@@ -95,7 +95,7 @@ function Invoke-CloneOrPull($target, $branch) {
       # Self-heal stale origin URLs across host migrations (1.2.9 parity with install.js).
       # Without this, Windows users on the pre-GitLab origin still 404 on every upgrade.
       # V155-012: only rewrite ORIGINS THAT MATCH KNOWN STALE PATTERNS. Previously
-      # this clobbered SSH remotes, forks, and any user-customized origin — anyone
+      # this clobbered SSH remotes, forks, and any user-customized origin -- anyone
       # working on the IJFW source itself ended up silently retargeted to upstream.
       # Port the install.js STALE_PATTERNS allowlist verbatim (case-insensitive).
       $currentOrigin = ($currentOriginRaw | Out-String).Trim()

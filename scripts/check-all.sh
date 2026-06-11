@@ -72,7 +72,12 @@ if ! command -v node >/dev/null 2>&1; then
   fail "node not on PATH"
   exit 1
 fi
-(cd mcp-server && node --test 2>&1 | tail -8)
+# Use the package's canonical `npm test` (node test.js + the curated suite with
+# --experimental-sqlite). A bare `node --test` here ran node:sqlite tests without
+# the flag and pulled in non-suite files -> ~136 spurious failures that the real
+# suite (0-fail) never has. `set -o pipefail` above makes the pipe gate on the
+# real exit code.
+(cd mcp-server && npm test 2>&1 | tail -12)
 ok "mcp-server suite passed"
 
 echo
