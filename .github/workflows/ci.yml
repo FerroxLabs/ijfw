@@ -72,6 +72,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Pin Node 22.x (matches the other jobs). Without this, check-all ran on the
+      # runner's default Node, where node:sqlite is unavailable/partial and the
+      # mcp-server suite failed ~129 sqlite-backed tests.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
       - name: Run check-all
         run: bash scripts/check-all.sh
 
