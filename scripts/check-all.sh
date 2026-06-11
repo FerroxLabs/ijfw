@@ -77,8 +77,17 @@ fi
 # the flag and pulled in non-suite files -> ~136 spurious failures that the real
 # suite (0-fail) never has. `set -o pipefail` above makes the pipe gate on the
 # real exit code.
-(cd mcp-server && npm test 2>&1 | tail -12)
-ok "mcp-server suite passed"
+# Capture full output so a failure shows WHICH test failed (tail-only hid it).
+if (cd mcp-server && npm test) >/tmp/ijfw-mcp-test.out 2>&1; then
+  tail -12 /tmp/ijfw-mcp-test.out
+  ok "mcp-server suite passed"
+else
+  echo "--- failing tests ---"
+  grep -E "^not ok|✖|✗" /tmp/ijfw-mcp-test.out | head -40
+  tail -12 /tmp/ijfw-mcp-test.out
+  fail "mcp-server suite"
+  exit 1
+fi
 
 echo
 echo "== installer syntax check =="
