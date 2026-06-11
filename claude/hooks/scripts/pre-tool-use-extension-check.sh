@@ -4,9 +4,10 @@
 # Claude Code only. Other platforms get tier-1 (MCP server wrap) only.
 #
 # Enforces the active extension's permissions allowlist against Claude Code's
-# built-in tools (Edit, Write, Bash, Read, etc.) before they run. Blocks with
-# a stderr message that Claude surfaces to the user when the active extension
-# has not declared the relevant tool in its permissions.
+# built-in tools (Edit, Write, Bash, Read, etc.) before they run. Blocks by
+# exiting 2 AND emitting the structured permissionDecision:"deny" JSON on
+# stdout (both block per the PreToolUse contract); the reason is also written
+# to stderr for the user.
 #
 # With NO ~/.ijfw/state/active-extension.json present (bundled IJFW context),
 # this hook is a no-op -- preserving the backwards-compat invariant.
@@ -31,16 +32,29 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 const home = process.env.HOME || homedir();
 const stateFile = join(home, ".ijfw", "state", "active-extension.json");
+// Claude Code PreToolUse contract: only exit code 2 OR a stdout JSON
+// permissionDecision:"deny" blocks the call. Exit 1 is non-blocking
+// (stderr shown, tool runs anyway). Emit BOTH so the deny holds even
+// if one channel is dropped.
+const deny = (reason) => {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    },
+  }) + "\n");
+  process.stderr.write(reason + "\n");
+  process.exit(2);
+};
 let active;
 try {
   active = JSON.parse(await readFile(stateFile, "utf8"));
   if (!active || typeof active !== "object" || !active.name || !active.permissions) {
-    process.stderr.write("ijfw extension permission check: malformed active-extension state\n");
-    process.exit(1);
+    deny("ijfw extension permission check: malformed active-extension state");
   }
 } catch (err) {
-  process.stderr.write(`ijfw extension permission check: ${err.message}\n`);
-  process.exit(1);
+  deny(`ijfw extension permission check: ${err.message}`);
 }
 const payload = await new Promise((r) => {
   let buf = "";
@@ -59,12 +73,10 @@ const has = (set, want) =>
   set.has("*") ||
   [...set].some((p) => p.endsWith(":*") && want.startsWith(p.slice(0, -1)));
 if (writeTools.has(tool) && !has(writes, `tool:${tool.toLowerCase()}`) && !has(writes, "tool:*")) {
-  process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.writes)\n`);
-  process.exit(1);
+  deny(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.writes)`);
 }
 if (readTools.has(tool) && !has(reads, `tool:${tool.toLowerCase()}`) && !has(reads, "tool:*")) {
-  process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.reads)\n`);
-  process.exit(1);
+  deny(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.reads)`);
 }
 process.exit(0);
 ' <<<"$INPUT"

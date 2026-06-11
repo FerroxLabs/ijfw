@@ -18,16 +18,18 @@ STATE="${HOME:-$USERPROFILE}/.ijfw/state/active-extension.json"
 [ ! -f "$STATE" ] && exit 0
 
 # Reshape Gemini payload to Claude-compat shape.
-# Fail-closed: parse error or missing required fields → exit 1 (deny).
+# Fail-closed: parse error or missing required fields → exit 2 (deny).
+# Deny paths exit 2, not 1: per the platform hook contract (mirrored from
+# Claude's PreToolUse) only exit 2 aborts the tool call; exit 1 is advisory.
 RESHAPED=$(node -e "
 let p;
 try { p = JSON.parse(process.argv[1]); } catch (e) {
   process.stderr.write('[ijfw] gemini hook: malformed payload -- denying\n');
-  process.exit(1);
+  process.exit(2);
 }
 if (!p || typeof p !== 'object' || !p.tool || typeof p.tool.name !== 'string') {
   process.stderr.write('[ijfw] gemini hook: malformed payload -- denying\n');
-  process.exit(1);
+  process.exit(2);
 }
 process.stdout.write(JSON.stringify({
   hook_event_name: p.event === 'pre_tool_use' ? 'PreToolUse' : (p.event || ''),
@@ -58,12 +60,12 @@ try {
   active = JSON.parse(await readFile(stateFile, "utf8"));
   if (!active || typeof active !== "object" || !active.name || !active.permissions) {
     process.stderr.write("ijfw extension permission check: malformed active-extension state\n");
-    process.exit(1);
+    process.exit(2);
   }
 } catch (err) {
   if (err.code === "ENOENT") process.exit(0);
   process.stderr.write(`ijfw extension permission check: ${err.message}\n`);
-  process.exit(1);
+  process.exit(2);
 }
 const payload = await new Promise((r) => {
   let buf = "";
@@ -90,12 +92,12 @@ const has = (set, want) =>
 if (writeTools.has(tool) && !has(writes, `tool:${tool.toLowerCase()}`) && !has(writes, "tool:*")) {
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.writes)\n`);
   await emitEvent(active.name, tool, false, "not in permissions.writes");
-  process.exit(1);
+  process.exit(2);
 }
 if (readTools.has(tool) && !has(reads, `tool:${tool.toLowerCase()}`) && !has(reads, "tool:*")) {
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.reads)\n`);
   await emitEvent(active.name, tool, false, "not in permissions.reads");
-  process.exit(1);
+  process.exit(2);
 }
 await emitEvent(active.name, tool, true);
 process.exit(0);

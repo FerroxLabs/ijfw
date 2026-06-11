@@ -7,6 +7,8 @@
 #
 # With NO ~/.ijfw/state/active-extension.json present, hook is a no-op.
 # Fail-closed: malformed active-extension state denies the call.
+# Deny paths exit 2, not 1: the Codex hook contract matches Claude verbatim,
+# where only exit 2 aborts the tool call; exit 1 is a non-blocking error.
 
 [ "${IJFW_DISABLE:-}" = "1" ] && exit 0
 
@@ -36,12 +38,12 @@ try {
   active = JSON.parse(await readFile(stateFile, "utf8"));
   if (!active || typeof active !== "object" || !active.name || !active.permissions) {
     process.stderr.write("ijfw extension permission check: malformed active-extension state\n");
-    process.exit(1);
+    process.exit(2);
   }
 } catch (err) {
   if (err.code === "ENOENT") process.exit(0);
   process.stderr.write(`ijfw extension permission check: ${err.message}\n`);
-  process.exit(1);
+  process.exit(2);
 }
 const payload = await new Promise((r) => {
   let buf = "";
@@ -72,12 +74,12 @@ const has = (set, want) =>
 if (writeTools.has(tool) && !has(writes, `tool:${tool.toLowerCase()}`) && !has(writes, "tool:*")) {
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.writes)\n`);
   await emitEvent(active.name, tool, false, "not in permissions.writes");
-  process.exit(1);
+  process.exit(2);
 }
 if (readTools.has(tool) && !has(reads, `tool:${tool.toLowerCase()}`) && !has(reads, "tool:*")) {
   process.stderr.write(`extension "${active.name}" not permitted to use ${tool} (declare tool:${tool.toLowerCase()} in permissions.reads)\n`);
   await emitEvent(active.name, tool, false, "not in permissions.reads");
-  process.exit(1);
+  process.exit(2);
 }
 await emitEvent(active.name, tool, true);
 process.exit(0);

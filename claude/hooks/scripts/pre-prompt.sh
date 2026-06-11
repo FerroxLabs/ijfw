@@ -35,15 +35,12 @@ if [ -d "$HOME/.claude/plugins/cache/severity1-marketplace/prompt-improver" ]; t
   HAS_PROMPT_IMPROVER=1
 fi
 
-# Read user config (best-effort).
+# Read user config (best-effort). Pure shell: promptCheck is a fixed enum, so
+# a sed extraction replaces what used to be a dedicated node cold start
+# (~50-80ms) on every prompt submission just to read one JSON key.
 PROMPT_CHECK_MODE="signals"
 if [ -f ".ijfw/config.json" ]; then
-  cfg_mode=$(node -e '
-    try {
-      const c = JSON.parse(require("fs").readFileSync(".ijfw/config.json","utf8"));
-      process.stdout.write(String(c.promptCheck || ""));
-    } catch {}
-  ' 2>/dev/null)
+  cfg_mode=$(sed -nE 's/.*"promptCheck"[[:space:]]*:[[:space:]]*"(off|signals|interrupt)".*/\1/p' .ijfw/config.json 2>/dev/null | head -n 1)
   case "$cfg_mode" in
     off|signals|interrupt) PROMPT_CHECK_MODE="$cfg_mode" ;;
   esac
@@ -256,6 +253,17 @@ if [ -n "$RESULT" ]; then
   printf '%s' "$RESULT"
 fi
 
+# --- Profile kill-switch (shared by both capture legs below) ------------------
+# Truthiness MUST match the JS inject gate above: '', '0', 'false', 'no', 'off'
+# all mean NOT killed. A bare [ -z ] test here would treat IJFW_PROFILE_KILL=0
+# as killed -- injection stays on (JS gate) while capture silently stops, so the
+# profile serves but never learns.
+PROFILE_KILLED=0
+case "$(printf '%s' "${IJFW_PROFILE_KILL:-}" | tr '[:upper:]' '[:lower:]')" in
+  ""|0|false|no|off) PROFILE_KILLED=0 ;;
+  *) PROFILE_KILLED=1 ;;
+esac
+
 # --- Profile bus P1: per-message style capture (METADATA ONLY) ---
 # Folds this message's metadata (length/emoji/code/formality counts — never the
 # text) into the per-session accumulator the SessionEnd flush turns into one
@@ -268,44 +276,13 @@ for base in \
     "$(pwd)/mcp-server/src"; do
   if [ -f "$base/profile/capture.js" ]; then CAPTURE="$base/profile/capture.js"; break; fi
 done
-if [ -n "$CAPTURE" ] && command -v node >/dev/null 2>&1 \
-   && [ "${IJFW_MINIMAL:-}" != "1" ] && [ -z "${IJFW_PROFILE_KILL:-}" ]; then
-  # H3 fix: export the canonical host so capture.js resolveHost() stamps the
-  # SAME provenance string the session-end flush + dream-trigger use. Without
-  # this, resolveHost() falls back to its own default ('claude-code') while the
-  # rest of the pipeline must agree on it -- keeping them identical here makes
-  # per-host trust weighting + provenance consistent end-to-end. Matches the
-  # 'claude-code' key in capture.js KNOWN_HOSTS / resolveHost default.
-  export IJFW_HOST="${IJFW_HOST:-claude-code}"
-  # profile_influenced (P1.2): true when a profile brief was injected into the
-  # turn. The prompt-check additionalContext above is our injection surface, so
-  # a non-empty RESULT means a brief rode along this turn.
-  PROFILE_INJECTED="false"
-  [ -n "$RESULT" ] && PROFILE_INJECTED="true"
-  node --input-type=module -e "
-    const { captureMessage } = await import('file://' + process.argv[2]);
-    let payload = {};
-    try { payload = JSON.parse(process.argv[1] || '{}'); } catch {}
-    try {
-      captureMessage({
-        sessionId: payload.session_id || null,
-        text: payload.prompt || '',
-        ts: Date.now(),
-        profileInjected: process.argv[3] === 'true',
-        cwd: process.cwd(),
-        env: process.env,
-      });
-    } catch {}
-  " "$HOOK_STDIN" "$CAPTURE" "$PROFILE_INJECTED" </dev/null >>"$HOME/.ijfw/logs/pre-prompt.log" 2>&1 &
-  disown $! 2>/dev/null || true
-fi
 
 # --- Voice exemplars (v1.6.0): capture the user's OWN prompt text -------------
 # Feeds the SAME prompt text into the transient voice-exemplar store so a future
 # drafter can few-shot the user's real writing. Capture-side only scrubs PII,
 # tags a register, skips machine output / control prompts, dedups + bounds. This
-# is a SEPARATE best-effort call from the capture.js metadata path above: a
-# failure here NEVER affects prompt-check output and NEVER crashes Claude Code.
+# is a SEPARATE best-effort call from the capture.js metadata path: a failure
+# here NEVER affects prompt-check output and NEVER crashes Claude Code.
 EXEMPLAR_CAPTURE=""
 for base in \
     "$CLAUDE_PLUGIN_ROOT/../mcp-server/src" \
@@ -313,19 +290,63 @@ for base in \
     "$(pwd)/mcp-server/src"; do
   if [ -f "$base/profile/exemplar-capture.js" ]; then EXEMPLAR_CAPTURE="$base/profile/exemplar-capture.js"; break; fi
 done
+
+# Gate each leg, then run BOTH in a single background node process (one cold
+# start per prompt instead of two -- both legs parse the same HOOK_STDIN).
+# An empty argv path disables that leg inside the node block.
+RUN_CAPTURE=""
+if [ -n "$CAPTURE" ] && [ "${IJFW_MINIMAL:-}" != "1" ] && [ "$PROFILE_KILLED" != "1" ]; then
+  RUN_CAPTURE="$CAPTURE"
+fi
 # Privacy opt-outs: voice-exemplar capture stores excerpts of your prompt text.
 # Skip it under IJFW_MINIMAL, IJFW_NO_VOICE_EXEMPLAR=1, or the profile kill-switch.
-if [ -n "$EXEMPLAR_CAPTURE" ] && command -v node >/dev/null 2>&1 \
-   && [ "${IJFW_MINIMAL:-}" != "1" ] && [ "${IJFW_NO_VOICE_EXEMPLAR:-}" != "1" ] \
-   && [ -z "${IJFW_PROFILE_KILL:-}" ]; then
+RUN_EXEMPLAR=""
+if [ -n "$EXEMPLAR_CAPTURE" ] && [ "${IJFW_MINIMAL:-}" != "1" ] \
+   && [ "${IJFW_NO_VOICE_EXEMPLAR:-}" != "1" ] && [ "$PROFILE_KILLED" != "1" ]; then
+  RUN_EXEMPLAR="$EXEMPLAR_CAPTURE"
+fi
+
+if { [ -n "$RUN_CAPTURE" ] || [ -n "$RUN_EXEMPLAR" ]; } && command -v node >/dev/null 2>&1; then
+  # H3 fix: export the canonical host so capture.js resolveHost() stamps the
+  # SAME provenance string the session-end flush + dream-trigger use. Without
+  # this, resolveHost() falls back to its own default ('claude-code') while the
+  # rest of the pipeline must agree on it -- keeping them identical here makes
+  # per-host trust weighting + provenance consistent end-to-end. Matches the
+  # 'claude-code' key in capture.js KNOWN_HOSTS / resolveHost default.
+  export IJFW_HOST="${IJFW_HOST:-claude-code}"
+  # profile_influenced (P1.2): true ONLY when an actual profile brief rode
+  # along this turn. A non-empty RESULT is NOT enough -- intent nudges,
+  # vague-prompt blocks, the one-time consent ask, and voice blocks all emit
+  # context without a brief. Match the <ijfw-profile> marker, exactly like the
+  # JS feedback-row check above, or the dream runner's self-corroboration
+  # barrier excludes mislabeled rows from preference derivation.
+  PROFILE_INJECTED="false"
+  case "$RESULT" in
+    *'<ijfw-profile>'*) PROFILE_INJECTED="true" ;;
+  esac
   node --input-type=module -e "
-    try {
-      const { captureMessage } = await import('file://' + process.argv[2]);
-      let payload = {};
-      try { payload = JSON.parse(process.argv[1] || '{}'); } catch {}
-      captureMessage({ text: payload.prompt || '', ts: Date.now() });
-    } catch {}
-  " "$HOOK_STDIN" "$EXEMPLAR_CAPTURE" </dev/null >>"$HOME/.ijfw/logs/pre-prompt.log" 2>&1 &
+    let payload = {};
+    try { payload = JSON.parse(process.argv[1] || '{}'); } catch {}
+    if (process.argv[2]) {
+      try {
+        const styleMod = await import('file://' + process.argv[2]);
+        styleMod.captureMessage({
+          sessionId: payload.session_id || null,
+          text: payload.prompt || '',
+          ts: Date.now(),
+          profileInjected: process.argv[4] === 'true',
+          cwd: process.cwd(),
+          env: process.env,
+        });
+      } catch {}
+    }
+    if (process.argv[3]) {
+      try {
+        const exemplarMod = await import('file://' + process.argv[3]);
+        exemplarMod.captureMessage({ text: payload.prompt || '', ts: Date.now() });
+      } catch {}
+    }
+  " "$HOOK_STDIN" "$RUN_CAPTURE" "$RUN_EXEMPLAR" "$PROFILE_INJECTED" </dev/null >>"$HOME/.ijfw/logs/pre-prompt.log" 2>&1 &
   disown $! 2>/dev/null || true
 fi
 

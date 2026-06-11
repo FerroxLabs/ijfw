@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Background update-check worker. Detached from SessionStart hook (v3 Âsection 3).
+// Background update-check worker. Detached from SessionStart hook (v3 ï¿½section 3).
 //
 // Contract:
 //   - Reads settings.json + state.json + cache/update-check.json
@@ -106,7 +106,13 @@ function cmpSemver(a, b) {
 }
 
 function npmView(pkg) {
-  const r = spawnSync('npm', ['view', pkg, 'version', '--json'], { encoding: 'utf8', timeout: 10_000 });
+  // shell:true on Windows so npm.cmd resolves; harmless on POSIX. Matches
+  // mcp-server/src/lib/npm-view.js. `pkg` is a hardcoded constant, not user input.
+  const r = spawnSync('npm', ['view', pkg, 'version', '--json'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    shell: process.platform === 'win32',
+  });
   if (r.error) return { ok: false, message: r.error.message || String(r.error) };
   if (r.status !== 0) return { ok: false, message: (r.stderr || '').trim().slice(0, 100) || `exit ${r.status}` };
   const raw = (r.stdout || '').trim().replace(/^"|"$/g, '');
@@ -121,7 +127,7 @@ function npmView(pkg) {
   const cacheDir = join(home, 'cache');
   ensureDir(cacheDir);
 
-  // Stale run-dir cleanup happens regardless (v3 Âsection 2)
+  // Stale run-dir cleanup happens regardless (v3 ï¿½section 2)
   cleanStaleRunDirs();
 
   // Dedupe: in-flight marker

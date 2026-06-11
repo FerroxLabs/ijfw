@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-start.sh",
-            "timeout": 15000
+            "timeout": 15
           }
         ]
       }
@@ -17,7 +17,7 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-compact.sh",
-            "timeout": 10000
+            "timeout": 10
           }
         ]
       }
@@ -28,7 +28,7 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-end.sh",
-            "timeout": 10000
+            "timeout": 10
           }
         ]
       }
@@ -39,17 +39,17 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-tool-use.sh",
-            "timeout": 5000
+            "timeout": 5
           },
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/sandbox-nudge.sh",
-            "timeout": 5000
+            "timeout": 5
           },
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-tool-use-extension-check.sh",
-            "timeout": 2000
+            "timeout": 2
           }
         ]
       },
@@ -59,7 +59,7 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/compute-nudge.sh",
-            "timeout": 50
+            "timeout": 1
           }
         ]
       }
@@ -70,7 +70,7 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/post-tool-use.sh",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }
@@ -81,7 +81,7 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-prompt.sh",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }

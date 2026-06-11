@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 # IJFW SessionEnd (Stop hook) -- save session state, write metrics, manage journal.
 # NOTE: no `set -e` -- hooks must NEVER crash Claude Code.
+#
+# IMPORTANT -- Stop fires after EVERY assistant turn, not once per session.
+# Metrics row contract (.ijfw/metrics/sessions.jsonl, schema v5):
+#   - One row is appended per turn. Each row carries the CUMULATIVE usage
+#     totals for the whole session so far, plus "session_id" (from the Stop
+#     payload) and a monotonically increasing "turn" counter.
+#   - Aggregators MUST dedupe by session_id and take the LATEST row per
+#     session (last-row-wins; order by turn, falling back to timestamp).
+#     Summing all rows for a session overcounts quadratically.
+#   - Transcript usage is read INCREMENTALLY via a byte-offset cursor in
+#     .ijfw/metrics/.transcript-cursor.json -- only the appended tail is
+#     parsed each turn, never the whole transcript.
 
 # E4 -- universal disable switch. Any hook respects IJFW_DISABLE=1.
 [ "${IJFW_DISABLE:-}" = "1" ] && exit 0
@@ -47,15 +59,47 @@ if [ -f "$IJFW_DIR/memory/project-journal.md" ]; then
   [ -z "$MEMORY_STORES" ] && MEMORY_STORES=0
 fi
 
+# Read Claude Code Stop hook payload from stdin (best-effort).
+# Payload includes transcript_path; we parse the transcript for usage tokens.
+HOOK_STDIN=""
+if [ ! -t 0 ]; then
+  HOOK_STDIN=$(cat 2>/dev/null || true)
+fi
+
+# Extract session_id from the payload without spawning node (best-effort;
+# session ids are UUIDs so a simple sed is safe). Used to keep SESSION_NUM
+# stable across the many Stop firings of one session.
+PAYLOAD_SESSION_ID=""
+if [ -n "$HOOK_STDIN" ]; then
+  PAYLOAD_SESSION_ID=$(printf '%s' "$HOOK_STDIN" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+fi
+
 LOCK="$IJFW_DIR/.session-counter.lock"
 COUNTER="$IJFW_DIR/.session-counter"
+COUNTER_ID="$IJFW_DIR/.session-counter-id"
+MARKER_TS_FILE="$IJFW_DIR/.session-marker-ts"
 SESSION_NUM=""
+SAME_SESSION="false"
 for i in 1 2 3 4 5; do
   if mkdir "$LOCK" 2>/dev/null; then
     trap 'rmdir "$LOCK" 2>/dev/null' EXIT
     CURRENT=$(cat "$COUNTER" 2>/dev/null || echo 0)
-    SESSION_NUM=$((CURRENT + 1))
-    echo "$SESSION_NUM" > "$COUNTER"
+    # Stop fires every turn: only advance the counter on the FIRST Stop of a
+    # session (new session_id); later turns reuse the same number so journal
+    # entries / markers / metrics rows do not inflate per turn.
+    if [ -n "$PAYLOAD_SESSION_ID" ] && [ "$(cat "$COUNTER_ID" 2>/dev/null)" = "$PAYLOAD_SESSION_ID" ] && [ "${CURRENT:-0}" -gt 0 ] 2>/dev/null; then
+      SESSION_NUM="$CURRENT"
+      SAME_SESSION="true"
+    else
+      SESSION_NUM=$((CURRENT + 1))
+      echo "$SESSION_NUM" > "$COUNTER"
+      if [ -n "$PAYLOAD_SESSION_ID" ]; then
+        echo "$PAYLOAD_SESSION_ID" > "$COUNTER_ID" 2>/dev/null
+      else
+        rm -f "$COUNTER_ID" 2>/dev/null
+      fi
+      echo "$TIMESTAMP" > "$MARKER_TS_FILE" 2>/dev/null
+    fi
     rmdir "$LOCK" 2>/dev/null
     trap - EXIT
     break
@@ -67,52 +111,93 @@ SESSION_NUM="${SESSION_NUM:-$(date +%s%N 2>/dev/null | tail -c 8 || date +%s)}"
 HAS_HANDOFF="false"
 [ -f "$IJFW_DIR/memory/handoff.md" ] && HAS_HANDOFF="true"
 
-# Read Claude Code Stop hook payload from stdin (best-effort).
-# Payload includes transcript_path; we parse the transcript for usage tokens.
-HOOK_STDIN=""
-if [ ! -t 0 ]; then
-  HOOK_STDIN=$(cat 2>/dev/null || true)
-fi
-
 # Schema v2 (Phase 3 #6 + #2): adds input/output/cache tokens, cost_usd, model,
 # and reserved prompt_check_* fields. v1 readers tolerate missing fields; v2
 # readers tolerate v1 lines (token fields default to 0). Single bump avoids
 # the coordination bug flagged in AUDIT.md.
+# Schema v5: adds session_id + turn. Rows stay CUMULATIVE per session (one row
+# per Stop/turn); aggregators dedupe by session_id, last-row-wins (see header).
 if command -v node >/dev/null 2>&1; then
   JSONLINE=$(node -e '
     const fs = require("fs");
     let usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
     let model = null;
+    let sessionId = null;
+    let turn = 1;
 
-    // Parse Stop hook stdin (JSON) for transcript_path; sum usage across turns.
+    // Parse Stop hook stdin (JSON) for transcript_path. Stop fires every turn,
+    // so usage is summed INCREMENTALLY: a byte-offset cursor persisted in
+    // .ijfw/metrics/.transcript-cursor.json records how far into the transcript
+    // we already counted; each turn reads only the appended tail. The running
+    // totals live in the cursor, so the emitted row is still cumulative.
     try {
       const stdin = process.argv[8] || "";
       if (stdin.trim()) {
         const payload = JSON.parse(stdin);
         const tp = payload && payload.transcript_path;
+        sessionId = (payload && typeof payload.session_id === "string" && payload.session_id) || null;
+        const cursorFile = ".ijfw/metrics/.transcript-cursor.json";
+        let cur = null;
+        try { cur = JSON.parse(fs.readFileSync(cursorFile, "utf8")); } catch {}
+        // Reuse the cursor only for the SAME session; without a session id we
+        // cannot tell sessions apart, so fall back to a full re-read.
+        if (!sessionId || !cur || typeof cur !== "object" || cur.session_id !== sessionId) {
+          cur = { v: 1, session_id: sessionId, transcript_path: null, offset: 0, turn: 0, usage: null, model: null };
+        }
+        turn = (Number(cur.turn) || 0) + 1;
+        cur.turn = turn;
         const maxBytes = Number(process.env.IJFW_TRANSCRIPT_MAX_BYTES || 100 * 1024 * 1024);
-        let ok = false;
-        try {
-          const st = tp && fs.statSync(tp);
-          ok = !!(st && st.isFile() && st.size <= maxBytes);
-        } catch {}
-        if (ok) {
-          const lines = fs.readFileSync(tp, "utf8").split("\n");
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const m = JSON.parse(line);
-              const u = m && m.message && m.message.usage;
-              if (u) {
-                usage.input_tokens += u.input_tokens || 0;
-                usage.output_tokens += u.output_tokens || 0;
-                usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
-                usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
-              }
-              if (m && m.message && m.message.model && !model) model = m.message.model;
-            } catch {}
+        let st = null;
+        try { st = tp && fs.statSync(tp); } catch {}
+        if (st && st.isFile()) {
+          // Resume from the cursor only if it points inside the same file.
+          // Offsets always land on a line boundary, so utf8 decode is safe.
+          let start = 0;
+          if (cur.transcript_path === tp && Number.isFinite(cur.offset)
+              && cur.offset > 0 && cur.offset <= st.size && cur.usage) {
+            start = cur.offset;
+            usage.input_tokens = Number(cur.usage.input_tokens) || 0;
+            usage.output_tokens = Number(cur.usage.output_tokens) || 0;
+            usage.cache_read_input_tokens = Number(cur.usage.cache_read_input_tokens) || 0;
+            usage.cache_creation_input_tokens = Number(cur.usage.cache_creation_input_tokens) || 0;
+            model = cur.model || null;
+          }
+          const toRead = st.size - start;
+          if (toRead > 0 && toRead <= maxBytes) {
+            const fd = fs.openSync(tp, "r");
+            const buf = Buffer.alloc(toRead);
+            const got = fs.readSync(fd, buf, 0, toRead, start);
+            fs.closeSync(fd);
+            const text = buf.toString("utf8", 0, got);
+            const lines = text.split("\n");
+            // A trailing partial line (no newline yet) is left for next turn.
+            let pendingBytes = 0;
+            if (lines.length && lines[lines.length - 1] !== "") {
+              pendingBytes = Buffer.byteLength(lines.pop(), "utf8");
+            }
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const m = JSON.parse(line);
+                const u = m && m.message && m.message.usage;
+                if (u) {
+                  usage.input_tokens += u.input_tokens || 0;
+                  usage.output_tokens += u.output_tokens || 0;
+                  usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
+                  usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
+                }
+                if (m && m.message && m.message.model && !model) model = m.message.model;
+              } catch {}
+            }
+            cur.transcript_path = tp;
+            cur.offset = start + got - pendingBytes;
+            cur.usage = usage;
+            cur.model = model;
+          } else if (toRead === 0 && start > 0) {
+            // Nothing appended since last turn; totals carry over unchanged.
           }
         }
+        try { fs.writeFileSync(cursorFile, JSON.stringify(cur)); } catch {}
       }
     } catch {}
 
@@ -158,9 +243,13 @@ if command -v node >/dev/null 2>&1; then
       : null;
 
     const o = {
-      v: 4,
+      // v5: + session_id and turn. One CUMULATIVE row per turn; aggregators
+      // must take the latest row per session_id (last-row-wins), not sum rows.
+      v: 5,
       timestamp: process.argv[1],
       session: Number(process.argv[2]),
+      session_id: sessionId,
+      turn: turn,
       mode: process.argv[3],
       effort: process.argv[4],
       routing: process.argv[5],
@@ -208,24 +297,33 @@ if command -v node >/dev/null 2>&1; then
   fi
 fi
 
-# Session marker -- fixed-format, no user input interpolated.
+# Session marker -- fixed-format, no user input interpolated. Stop fires per
+# turn: reuse the session's first-seen timestamp so later turns overwrite the
+# SAME marker file instead of creating one file per turn (prune-loop churn).
+MARKER_TS="$TIMESTAMP"
+if [ "$SAME_SESSION" = "true" ]; then
+  MARKER_TS=$(cat "$MARKER_TS_FILE" 2>/dev/null)
+  [ -z "$MARKER_TS" ] && MARKER_TS="$TIMESTAMP"
+fi
 {
   echo "<!-- ijfw schema:1 -->"
-  echo "# Session: $TIMESTAMP"
+  echo "# Session: $MARKER_TS"
   echo "Session #$SESSION_NUM"
   echo "Memory updates this session: $MEMORY_STORES"
   echo "Handoff present: $HAS_HANDOFF"
-} > "$IJFW_DIR/sessions/session_$TIMESTAMP.md" 2>/dev/null
+} > "$IJFW_DIR/sessions/session_$MARKER_TS.md" 2>/dev/null
 
-# Append schema-versioned journal entry.
-JOURNAL="$IJFW_DIR/memory/project-journal.md"
-if [ ! -f "$JOURNAL" ]; then
-  {
-    echo "<!-- ijfw schema:1 -->"
-    echo "# IJFW Project Journal"
-  } > "$JOURNAL" 2>/dev/null
+# Append schema-versioned journal entry -- once per session, not per turn.
+if [ "$SAME_SESSION" != "true" ]; then
+  JOURNAL="$IJFW_DIR/memory/project-journal.md"
+  if [ ! -f "$JOURNAL" ]; then
+    {
+      echo "<!-- ijfw schema:1 -->"
+      echo "# IJFW Project Journal"
+    } > "$JOURNAL" 2>/dev/null
+  fi
+  printf -- '- [%s] session-end: #%s\n' "$ISO_TIMESTAMP" "$SESSION_NUM" >> "$JOURNAL" 2>/dev/null
 fi
-printf -- '- [%s] session-end: #%s\n' "$ISO_TIMESTAMP" "$SESSION_NUM" >> "$JOURNAL" 2>/dev/null
 
 # --- Profile bus P1: flush the per-session style accumulator ---
 # Turns the per-message metadata accumulated by pre-prompt.sh into ONE
@@ -485,7 +583,9 @@ if command -v node >/dev/null 2>&1; then
   node -e '
     const fs = require("fs");
     try {
-      const tridentFile = ".ijfw/cross-runs.jsonl";
+      // Writer is mcp-server/src/receipts.js (receipts/ subdir); keep in sync
+      // with session-start.sh RECEIPTS_FILE.
+      const tridentFile = ".ijfw/receipts/cross-runs.jsonl";
       const knowledgeFile = ".ijfw/memory/knowledge.md";
       const handoffFile = ".ijfw/memory/handoff.md";
 

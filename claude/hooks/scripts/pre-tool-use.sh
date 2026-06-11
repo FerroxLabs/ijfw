@@ -29,42 +29,70 @@ done
 
 DETECTED=""
 
-if [ -n "$PATTERNS_JSON" ] && command -v node >/dev/null 2>&1; then
-  # Read destructive_commands array from patterns.json and match against input.
-  # node prints one regex per line; bash iterates and applies each with grep -Eiq.
-  PATTERNS=$(node -e '
-    const fs = require("fs");
-    try {
-      const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      process.stdout.write((p.destructive_commands || []).join("\n"));
-    } catch (e) {
-      // 1.2.9: write a fallback sentinel so /ijfw doctor can flag that the
-      // hook is running on the inline 3-pattern fallback instead of the
-      // full 17-pattern catalog. Without this, a corrupted patterns.json
-      // silently degraded destructive-command detection.
-      try {
-        const path = require("path");
-        const home = process.env.HOME || "";
-        if (home) {
-          fs.mkdirSync(path.join(home, ".ijfw"), { recursive: true });
-          fs.writeFileSync(path.join(home, ".ijfw", ".patterns-fallback-active"),
-            new Date().toISOString() + " " + (e.message || String(e)).slice(0, 200) + "\n");
-        }
-      } catch { /* sentinel is best-effort */ }
-      process.exit(0);
-    }
-  ' "$PATTERNS_JSON" 2>/dev/null)
+# Perf: this hook runs on EVERY tool call (no matcher in hooks.json), and the
+# old version paid a node cold start per call to re-parse the static
+# patterns.json plus one echo|grep pipeline per pattern. Instead, extract the
+# regex list ONCE into a flat cache keyed by patterns.json path+mtime, then
+# match the whole catalog with a single grep -f. node only runs on a cache
+# miss (first call, or patterns.json changed).
+CACHE_DIR="$HOME/.ijfw/cache"
+CACHE_FILE="$CACHE_DIR/destructive-patterns.txt"
+CACHE_STAMP="$CACHE_DIR/destructive-patterns.stamp"
+USE_CACHE=0
 
-  if [ -n "$PATTERNS" ]; then
-    while IFS= read -r pat; do
-      [ -z "$pat" ] && continue
-      if echo "$INPUT" | grep -Eiq "$pat" 2>/dev/null; then
-        DETECTED="${DETECTED}- Potentially destructive command matched. Verify intent before proceeding.\n"
-        break
+if [ -n "$PATTERNS_JSON" ]; then
+  # mtime: BSD stat first (macOS), GNU stat fallback (Linux). Empty -> no
+  # usable stamp, so the cache is treated as always-stale (old per-call cost,
+  # never stale results).
+  _mtime=$(stat -f %m "$PATTERNS_JSON" 2>/dev/null || stat -c %Y "$PATTERNS_JSON" 2>/dev/null || true)
+  _want_stamp="$PATTERNS_JSON $_mtime"
+  _have_stamp=""
+  [ -f "$CACHE_STAMP" ] && _have_stamp=$(cat "$CACHE_STAMP" 2>/dev/null)
+  if [ -n "$_mtime" ] && [ -f "$CACHE_FILE" ] && [ "$_have_stamp" = "$_want_stamp" ]; then
+    USE_CACHE=1
+  elif command -v node >/dev/null 2>&1; then
+    # Cache miss: extract destructive_commands (one regex per line) from
+    # patterns.json. Written via tmp+mv so a concurrent hook never reads a
+    # half-written cache.
+    mkdir -p "$CACHE_DIR" 2>/dev/null
+    if node -e '
+      const fs = require("fs");
+      try {
+        const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        process.stdout.write((p.destructive_commands || []).join("\n"));
+      } catch (e) {
+        // 1.2.9: write a fallback sentinel so /ijfw doctor can flag that the
+        // hook is running on the inline 3-pattern fallback instead of the
+        // full 17-pattern catalog. Without this, a corrupted patterns.json
+        // silently degraded destructive-command detection.
+        try {
+          const path = require("path");
+          const home = process.env.HOME || "";
+          if (home) {
+            fs.mkdirSync(path.join(home, ".ijfw"), { recursive: true });
+            fs.writeFileSync(path.join(home, ".ijfw", ".patterns-fallback-active"),
+              new Date().toISOString() + " " + (e.message || String(e)).slice(0, 200) + "\n");
+          }
+        } catch { /* sentinel is best-effort */ }
+        process.exit(0);
+      }
+    ' "$PATTERNS_JSON" >"$CACHE_FILE.tmp.$$" 2>/dev/null; then
+      mv -f "$CACHE_FILE.tmp.$$" "$CACHE_FILE" 2>/dev/null && USE_CACHE=1
+      # Only stamp when mtime is known; an empty stamp would pin a cache we
+      # can never invalidate.
+      if [ "$USE_CACHE" = "1" ] && [ -n "$_mtime" ]; then
+        printf '%s' "$_want_stamp" >"$CACHE_STAMP" 2>/dev/null
       fi
-    done <<EOF
-$PATTERNS
-EOF
+    fi
+    rm -f "$CACHE_FILE.tmp.$$" 2>/dev/null
+  fi
+fi
+
+if [ "$USE_CACHE" = "1" ]; then
+  # Single grep applies the whole catalog. An empty cache (extraction failed,
+  # sentinel written above) matches nothing -- same as the old behavior.
+  if [ -s "$CACHE_FILE" ] && printf '%s' "$INPUT" | grep -Eiq -f "$CACHE_FILE" 2>/dev/null; then
+    DETECTED="${DETECTED}- Potentially destructive command matched. Verify intent before proceeding.\n"
   fi
 else
   # Fallback: inline patterns when patterns.json or node is unavailable.
