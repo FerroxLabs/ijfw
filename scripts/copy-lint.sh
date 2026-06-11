@@ -29,7 +29,6 @@ TARGETS=(
   "mcp-server/src/compute/runner.js"
   "wayland-plugin/__init__.py"
   "wayland-plugin/ijfw_skills.py"
-  "scripts/dashboard/index.html"
   # M6: hook scripts and platform plugin entry points -- user-visible copy.
   "gemini/extensions/ijfw/hooks/**/*.sh"
   "claude/hooks/scripts/**/*.sh"

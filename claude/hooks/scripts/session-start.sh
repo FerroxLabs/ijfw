@@ -556,11 +556,15 @@ fi
 # Zero overhead: separate OS process, no context cost, no token usage.
 DASH_PORT_FILE="$HOME/.ijfw/dashboard.port"
 DASH_PID_FILE="$HOME/.ijfw/dashboard.pid"
+# Canonical HTTP dashboard -- the SAME server `ijfw dashboard start` launches
+# (mcp-server/src/dashboard-server.js). The old scripts/dashboard/server.js was a
+# divergent second server; session-start now starts the one canonical server so
+# there is a single implementation.
 DASH_SERVER=""
 for _cand in \
-    "${CLAUDE_PLUGIN_ROOT:-}/../scripts/dashboard/server.js" \
-    "$HOME/.ijfw/scripts/dashboard/server.js" \
-    "$(pwd)/scripts/dashboard/server.js"; do
+    "${CLAUDE_PLUGIN_ROOT:-}/../mcp-server/src/dashboard-server.js" \
+    "$HOME/.ijfw/mcp-server/src/dashboard-server.js" \
+    "$(pwd)/mcp-server/src/dashboard-server.js"; do
   [ -f "$_cand" ] && { DASH_SERVER="$_cand"; break; }
 done
 
@@ -580,9 +584,11 @@ if [ "$DASH_RUNNING" -eq 1 ] && [ -f "$DASH_PORT_FILE" ]; then
   DASH_PORT=$(cat "$DASH_PORT_FILE" 2>/dev/null)
   [ -n "$DASH_PORT" ] && printf '[ijfw] Dashboard: http://localhost:%s\n' "$DASH_PORT"
 elif [ "$IJFW_MIN" != "1" ] && [ -n "$DASH_SERVER" ] && [ -n "$_NODE" ]; then
-  # Detached daemon -- crashes surface in ~/.ijfw/logs/dashboard.log.
+  # Detached daemon -- crashes surface in ~/.ijfw/logs/dashboard.log. The
+  # canonical server self-daemonizes on `--daemon`, writing the same
+  # ~/.ijfw/dashboard.{pid,port} files this hook reads below.
   mkdir -p "$HOME/.ijfw/logs" 2>/dev/null
-  IJFW_DAEMON=1 "$_NODE" "$DASH_SERVER" </dev/null >>"$HOME/.ijfw/logs/dashboard.log" 2>&1 &
+  "$_NODE" "$DASH_SERVER" --daemon </dev/null >>"$HOME/.ijfw/logs/dashboard.log" 2>&1 &
   disown $! 2>/dev/null || true
   # Poll up to ~200ms (10 x 20ms) for the port file instead of a hard 500ms
   # sleep on the hot path -- usually written in the first tick or two.
