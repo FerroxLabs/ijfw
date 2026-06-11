@@ -1,6 +1,6 @@
 // @ijfw/install -- reverse install. Preserves ~/.ijfw/memory/ unless --purge.
 
-import { existsSync, rmSync, cpSync, mkdtempSync, readFileSync, writeFileSync, renameSync, unlinkSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, rmSync, cpSync, mkdtempSync, readFileSync, writeFileSync, renameSync, unlinkSync, readdirSync, realpathSync, statSync, chmodSync } from 'node:fs';
 import { resolve, join, dirname, basename } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -59,11 +59,17 @@ function resolveAiderTemplate(name, repoRoot) {
 
 // Atomic write: write to a temp sibling, then rename into place.
 // Prevents mid-write truncation from leaving a half-written config.
+// Preserves the target's existing file mode (default 0o600 -- these configs
+// can carry secrets; a bare writeFileSync would loosen 0600 to the umask
+// default because rename carries the tmp file's mode onto the target).
 function writeAtomic(target, content) {
+  let mode = 0o600;
+  try { mode = statSync(target).mode & 0o777; } catch { /* new file -> 0600 */ }
   const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync(tmp, content);
+  writeFileSync(tmp, content, { mode });
   try {
     renameSync(tmp, target);
+    try { chmodSync(target, mode); } catch { /* best-effort re-assert */ }
   } catch (err) {
     try { unlinkSync(tmp); } catch {}
     throw new Error(`atomic write failed for ${target}: ${err.message}`);
@@ -190,32 +196,50 @@ function stripMarkerFile(p, opts = {}) {
     }
     writeAtomic(p, stripped);
     return `${opts.label || p}  (stripped IJFW marker regions, user content preserved)`;
-  } catch {
-    return null;
+  } catch (err) {
+    // A backup/strip/write FAILURE is not "nothing to do" -- the IJFW regions
+    // are still in the file. Report it honestly instead of staying silent.
+    return `${opts.label || p}  (KEPT -- IJFW region strip FAILED: ${err && err.message ? err.message : err}; remove the IJFW marker regions manually)`;
   }
 }
 
-// Remove [mcp_servers.ijfw-memory] section from a TOML file.
+// Remove [mcp_servers.ijfw-memory] section from a TOML file. No-op (returns
+// false, no backup, no rewrite) when the section is absent -- a repeat
+// uninstall must not keep mutating a config that has no IJFW content.
 function removeTomlSection(p) {
   if (!existsSync(p)) return false;
-  backupFile(p);
   const lines = readFileSync(p, 'utf8').split('\n');
   const out = [];
   let skip = false;
+  let changed = false;
   for (const line of lines) {
-    if (/^\[mcp_servers\.ijfw-memory\]\s*$/.test(line)) { skip = true; continue; }
+    if (/^\[mcp_servers\.ijfw-memory\]\s*$/.test(line)) { skip = true; changed = true; continue; }
     if (skip && line.startsWith('[') && !line.startsWith('[mcp_servers.ijfw-memory]')) skip = false;
     if (!skip) out.push(line);
   }
-  writeAtomic(p, out.join('\n') + '\n');
+  if (!changed) return false;
+  backupFile(p);
+  // join() already ends in '\n' when the source had a trailing newline (the
+  // split leaves a trailing '' element); only append one when missing, so
+  // repeated runs cannot grow the file.
+  let text = out.join('\n');
+  if (!text.endsWith('\n')) text += '\n';
+  writeAtomic(p, text);
   return true;
 }
 
 // Remove ijfw-memory key from a JSON mcpServers object.
+// Returns true (removed), false (nothing to do), or the sentinel
+// 'parse-failed' when the file still references ijfw-memory but cannot be
+// parsed -- a corrupt config is NOT the same as a clean one, and silently
+// returning false would leave a dangling registration with no warning.
 function removeJsonMcpEntry(p) {
   if (!existsSync(p)) return false;
+  let raw;
+  try { raw = readFileSync(p, 'utf8'); } catch { return false; }
   let doc;
-  try { doc = JSON.parse(readFileSync(p, 'utf8')); } catch { return false; }
+  try { doc = JSON.parse(raw); }
+  catch { return /\bijfw-memory\b/.test(raw) ? 'parse-failed' : false; }
   if (!doc || typeof doc !== 'object') return false;
   let changed = false;
   if (doc.mcpServers && doc.mcpServers['ijfw-memory']) {
@@ -379,6 +403,11 @@ function removeYamlMcpEntry(p) {
   const raw = readFileSync(p, 'utf8');
   if (!/\bijfw-memory\b/.test(raw)) return false;
 
+  // Back up BEFORE any rewrite -- the python branch edits in place via
+  // os.replace, so a post-edit backup would capture the already-normalized
+  // file (comments/anchors destroyed) instead of the original.
+  const bak = backupFile(p);
+
   // Try python3+PyYAML first.
   const py = spawnSync('python3', ['-c', `
 import sys, yaml
@@ -392,9 +421,11 @@ del srv["ijfw-memory"]
 if not srv: del doc["mcp_servers"]
 with open(p + ".tmp", "w") as f:
     yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)
-import os; os.replace(p + ".tmp", p)
+import os, stat
+os.chmod(p + ".tmp", stat.S_IMODE(os.stat(p).st_mode))
+os.replace(p + ".tmp", p)
 `, p], { encoding: 'utf8' });
-  if (py.status === 0) { backupFile(p); return true; }
+  if (py.status === 0) return true;
 
   // Fallback: regex-strip the ijfw-memory block under mcp_servers.
   // Matches 2-space indented key plus its 4-space indented body until the next
@@ -408,8 +439,11 @@ import os; os.replace(p + ".tmp", p)
     /# IJFW-MCP-BEGIN ijfw-memory\n(?:.*\n)*?# IJFW-MCP-END ijfw-memory\n/,
     ''
   );
-  if (stripped === raw) return false;
-  backupFile(p);
+  if (stripped === raw) {
+    // Neither branch changed the file -- drop the speculative backup.
+    if (bak) { try { rmSync(bak, { force: true }); } catch { /* leave it */ } }
+    return false;
+  }
   writeAtomic(p, stripped);
   return true;
 }
@@ -439,6 +473,10 @@ function removeHermesIjfwWiring(p) {
   if (!existsSync(p)) return false;
   const raw = readFileSync(p, 'utf8');
   if (!/\bijfw\b/i.test(raw)) return false;
+
+  // Back up BEFORE any rewrite (see removeYamlMcpEntry): the python branch
+  // edits in place, so the backup must be the true pre-edit original.
+  const bak = backupFile(p);
 
   const py = spawnSync('python3', ['-c', `
 import sys, yaml
@@ -471,9 +509,11 @@ if not changed: sys.exit(3)
 with open(p + '.tmp', 'w') as f:
     if doc: yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)
     else: f.write('')
-import os; os.replace(p + '.tmp', p)
+import os, stat
+os.chmod(p + '.tmp', stat.S_IMODE(os.stat(p).st_mode))
+os.replace(p + '.tmp', p)
 `, p], { encoding: 'utf8' });
-  if (py.status === 0) { backupFile(p); return true; }
+  if (py.status === 0) return true;
 
   // Regex fallback (no python3 / PyYAML). Strip the sentinel blocks and the real
   // YAML entries the installer wrote. [\s\S]*? (star height 1) is used instead of
@@ -488,8 +528,11 @@ import os; os.replace(p + '.tmp', p)
     .replace(/^[ \t]*-[ \t]+ijfw[ \t]*\n/gm, '')
     // a pre_tool_use hook entry's script line referencing plugins/ijfw
     .replace(/^[ \t]*-[ \t]+script:[ \t]*["']?plugins\/ijfw\/[^\n]*\n/gm, '');
-  if (out === raw) return false;
-  backupFile(p);
+  if (out === raw) {
+    // Neither branch changed the file -- drop the speculative backup.
+    if (bak) { try { rmSync(bak, { force: true }); } catch { /* leave it */ } }
+    return false;
+  }
   writeAtomic(p, out);
   return true;
 }
@@ -564,7 +607,13 @@ function removeCodexHookFiles(hooksDir) {
     const p = join(hooksDir, e.name);
     let body = '';
     try { body = readFileSync(p, 'utf8'); } catch { continue; }
-    if (/\bIJFW\b/.test(body) || /\bijfw\b/.test(body)) {
+    // Provenance, not mention: every IJFW-shipped hook carries a '# IJFW ...'
+    // banner in its header. A user's OWN hook that merely references ijfw
+    // (calls the CLI, touches ~/.ijfw, mentions it in a comment) must never
+    // be deleted, so a whole-body substring match is not enough.
+    const header = body.split('\n', 4).slice(0, 4);
+    if (header.some((l) => /^#\s*IJFW\b/.test(l))) {
+      backupFile(p);
       rmSync(p, { force: true });
       count++;
     }
@@ -605,10 +654,23 @@ function cleanPlatforms(opts = {}) {
   const repoRoot = opts.repoRoot || REPO_ROOT;
   const removed = [];
 
+  // removeJsonMcpEntry returns true / false / 'parse-failed'. The sentinel is
+  // truthy, so every call goes through this wrapper: report a corrupt config
+  // that still references ijfw-memory honestly instead of conflating it with
+  // "no entry present" (which would leave a dangling registration silently).
+  const rmJsonEntry = (p, label) => {
+    const r = removeJsonMcpEntry(p);
+    if (r === 'parse-failed') {
+      removed.push(`${label}  (KEPT -- file is not valid JSON but still references ijfw-memory; remove the entry manually)`);
+      return false;
+    }
+    return r === true;
+  };
+
   // Claude: plugin registry leftover (issue #17). settings.json marketplace
   // keys are handled by unmergeMarketplace() in main(); the mcpServers entry
   // and the known_marketplaces.json pointer were not.
-  if (removeJsonMcpEntry(join(home, '.claude', 'settings.json'))) {
+  if (rmJsonEntry(join(home, '.claude', 'settings.json'), '~/.claude/settings.json')) {
     removed.push('~/.claude/settings.json  (removed ijfw-memory mcp entry)');
   }
   if (removeKnownMarketplacesEntry(join(home, '.claude', 'plugins', 'known_marketplaces.json'))) {
@@ -639,7 +701,7 @@ function cleanPlatforms(opts = {}) {
   if (codexHookFiles > 0) removed.push(`~/.codex/hooks/  (removed ${codexHookFiles} IJFW hook scripts)`);
 
   // Gemini: settings.json MCP entry
-  if (removeJsonMcpEntry(join(home, '.gemini', 'settings.json'))) {
+  if (rmJsonEntry(join(home, '.gemini', 'settings.json'), '~/.gemini/settings.json')) {
     removed.push('~/.gemini/settings.json  (removed ijfw-memory)');
   }
   // Gemini: extension dir
@@ -651,16 +713,20 @@ function cleanPlatforms(opts = {}) {
 
   // Cursor: project .cursor/mcp.json
   const cursorMcp = join(cwd, '.cursor', 'mcp.json');
-  if (removeJsonMcpEntry(cursorMcp)) removed.push('.cursor/mcp.json  (removed ijfw-memory)');
+  if (rmJsonEntry(cursorMcp, '.cursor/mcp.json')) removed.push('.cursor/mcp.json  (removed ijfw-memory)');
 
   // Windsurf: global mcp_config.json
-  if (removeJsonMcpEntry(join(home, '.codeium', 'windsurf', 'mcp_config.json'))) {
+  if (rmJsonEntry(join(home, '.codeium', 'windsurf', 'mcp_config.json'), '~/.codeium/windsurf/mcp_config.json')) {
     removed.push('~/.codeium/windsurf/mcp_config.json  (removed ijfw-memory)');
   }
 
-  // Copilot / VS Code: project .vscode/mcp.json
+  // Copilot / VS Code: project .vscode/mcp.json. The installer writes the
+  // VS Code schema key `servers`; older IJFW versions wrote `mcpServers`.
+  // Check both so uninstall finds the entry regardless of install vintage.
   const vscodeMcp = join(cwd, '.vscode', 'mcp.json');
-  if (removeJsonMcpEntry(vscodeMcp)) removed.push('.vscode/mcp.json  (removed ijfw-memory)');
+  const vscodeLegacy = rmJsonEntry(vscodeMcp, '.vscode/mcp.json');
+  const vscodeServers = removeNestedMcpEntry(vscodeMcp, ['servers']);
+  if (vscodeLegacy || vscodeServers) removed.push('.vscode/mcp.json  (removed ijfw-memory)');
 
   // Hermes: config.yaml -- remove mcp_servers + plugins.enabled[ijfw] + hook
   // wiring (issue #17, all three surfaces) + skills + context file.
@@ -701,20 +767,20 @@ function cleanPlatforms(opts = {}) {
   // ---- Platforms 8-15 (P3 completeness) -------------------------------------
 
   // Qwen Code: ~/.qwen/settings.json -- flat mcpServers.
-  if (removeJsonMcpEntry(join(home, '.qwen', 'settings.json'))) {
+  if (rmJsonEntry(join(home, '.qwen', 'settings.json'), '~/.qwen/settings.json')) {
     removed.push('~/.qwen/settings.json  (removed ijfw-memory)');
   }
 
   // Kimi Code: ~/.kimi/mcp.json -- flat mcpServers.
-  if (removeJsonMcpEntry(join(home, '.kimi', 'mcp.json'))) {
+  if (rmJsonEntry(join(home, '.kimi', 'mcp.json'), '~/.kimi/mcp.json')) {
     removed.push('~/.kimi/mcp.json  (removed ijfw-memory)');
   }
 
   // Antigravity: two surfaces, both flat mcpServers (IDE + CLI `agy`).
-  if (removeJsonMcpEntry(join(home, '.gemini', 'antigravity', 'mcp_config.json'))) {
+  if (rmJsonEntry(join(home, '.gemini', 'antigravity', 'mcp_config.json'), '~/.gemini/antigravity/mcp_config.json')) {
     removed.push('~/.gemini/antigravity/mcp_config.json  (removed ijfw-memory)');
   }
-  if (removeJsonMcpEntry(join(home, '.gemini', 'config', 'mcp_config.json'))) {
+  if (rmJsonEntry(join(home, '.gemini', 'config', 'mcp_config.json'), '~/.gemini/config/mcp_config.json')) {
     removed.push('~/.gemini/config/mcp_config.json  (removed ijfw-memory)');
   }
 
@@ -752,7 +818,7 @@ function cleanPlatforms(opts = {}) {
   // storage isn't discoverable we say so honestly rather than claim it's clean.
   const clineSettings = resolveClineSettingsPath(home);
   if (clineSettings) {
-    if (removeJsonMcpEntry(clineSettings)) {
+    if (rmJsonEntry(clineSettings, clineSettings)) {
       removed.push(`${clineSettings}  (removed ijfw-memory)`);
     }
   } else {
@@ -879,23 +945,38 @@ function assertSafePurgeTarget(target) {
   try { real = realpathSync(target); } catch { /* absent or not a link */ }
   let home = homedir();
   try { home = realpathSync(home); } catch { /* fall back to raw */ }
-  if (!real || real === '/' || real === home) {
+  // Recognize both the POSIX root and Windows drive roots ('C:', 'C:\', 'C:/').
+  const isFsRoot = (p) => p === '/' || /^[A-Za-z]:[\\/]?$/.test(p);
+  if (!real || isFsRoot(real) || real === home) {
     throw new Error(`refusing to delete '${target}': it resolves to the home or filesystem root.`);
   }
-  // Floor: never delete a path fewer than 2 segments below root.
-  if (real.split('/').filter(Boolean).length < 2) {
+  // Floor: never delete a path fewer than 2 segments below root. Split on both
+  // separators (realpathSync returns backslashes on Windows -- splitting on
+  // '/' alone would yield one segment and refuse every legitimate target) and
+  // drop the drive-letter segment so depth means the same on every platform.
+  const segs = real.split(/[\\/]+/).filter((s) => s && !/^[A-Za-z]:$/.test(s));
+  if (segs.length < 2) {
     throw new Error(`refusing to delete shallow path '${real}'.`);
   }
-  // Must look like an IJFW install -- a `.ijfw` basename or a known IJFW
-  // artifact inside it. Prevents nuking an arbitrary user dir.
+  // Must be PROVABLY an IJFW install: a `.ijfw` basename or an IJFW-unique
+  // artifact. Generic names (memory/, mcp-server/, a bare state.json) are
+  // common in exactly the agent projects this tool's users have, so accepting
+  // their mere existence would let a stray `--dir ~/my-agent-project` pass;
+  // state.json only counts when it parses and carries the installer's own
+  // schema keys.
+  const hasIjfwState = () => {
+    try {
+      const doc = JSON.parse(readFileSync(join(real, 'state.json'), 'utf8'));
+      return !!doc && typeof doc === 'object'
+        && ('install_method' in doc || 'installed_version' in doc);
+    } catch { return false; }
+  };
   const looksIjfw = basename(real) === '.ijfw'
-    || existsSync(join(real, 'state.json'))
     || existsSync(join(real, 'install-method'))
     || existsSync(join(real, 'install-ledger.json'))
-    || existsSync(join(real, 'mcp-server'))
-    || existsSync(join(real, 'memory'));
+    || hasIjfwState();
   if (!looksIjfw) {
-    throw new Error(`refusing to delete '${target}': it does not look like an IJFW install (no state.json / install-method / mcp-server). Aborting.`);
+    throw new Error(`refusing to delete '${target}': it does not look like an IJFW install (no .ijfw basename / install-method / install-ledger.json / IJFW state.json). Aborting.`);
   }
 }
 
@@ -919,6 +1000,13 @@ async function main() {
   const opts = parseArgs(process.argv);
   const target = resolveTarget(opts);
 
+  // Canonical-install check, computed on REALPATHS and BEFORE the target is
+  // deleted (realpath throws on a deleted dir): a symlinked IJFW_HOME / --dir
+  // that resolves to the real ~/.ijfw IS the canonical install, and skipping
+  // platform cleanup for it would leave every agent wired to a dead server.
+  const realOrSelf = (p) => { try { return realpathSync(p); } catch { return p; } };
+  const isCanonical = realOrSelf(target) === realOrSelf(join(HOME, '.ijfw'));
+
   // Read the created-dir ledger BEFORE the target dir is deleted (the ledger
   // lives inside it). Used after platform cleanup to remove dirs IJFW created.
   const ledgerCreatedDirs = existsSync(target) ? readLedger(target).createdDirs : [];
@@ -931,9 +1019,15 @@ async function main() {
 
   // Confirmation gate (R4-MED): `ijfw off` / `ijfw uninstall` are destructive.
   // Prompt for explicit confirmation unless --yes/-y is passed. When stdin is
-  // not a TTY (scripted / piped use) the prompt would hang, so we skip it but
-  // the warning above is always printed -- the user is never surprised.
-  if (!opts.yes && process.stdin.isTTY) {
+  // not a TTY (scripted / piped use) the prompt cannot be answered, so we fail
+  // CLOSED: a non-interactive caller must opt in explicitly with --yes rather
+  // than getting a silent assume-yes on a destructive operation.
+  if (!opts.yes) {
+    if (!process.stdin.isTTY) {
+      console.error('Refusing to proceed: stdin is not a TTY, so the confirmation prompt cannot be answered.');
+      console.error('Non-interactive uninstall requires an explicit --yes (or -y). Nothing was changed.');
+      process.exit(1);
+    }
     const ok = await confirm('Proceed with IJFW uninstall? [y/N] ');
     if (!ok) {
       console.log('Uninstall cancelled. Nothing was changed.');
@@ -969,9 +1063,7 @@ async function main() {
   // Scope guard: only mutate the user's real Claude marketplace and platform
   // configs when uninstalling the canonical install. A scratch/custom-dir
   // uninstall (--dir <other>) MUST NOT strip ~/.codex, ~/.gemini, etc.
-  const canonicalDir = join(HOME, '.ijfw');
-  const isCanonical = target === canonicalDir;
-
+  // (isCanonical was computed up top, pre-delete, on realpaths.)
   if (isCanonical && !opts.noMarketplace) {
     const settingsPath = claudeSettingsPath();
     if (existsSync(settingsPath)) {
@@ -1023,6 +1115,11 @@ export {
   stripIjfwRegions,
   stripMarkerFile,
   cleanPlatforms,
+  removeTomlSection,
+  removeJsonMcpEntry,
+  removeYamlMcpEntry,
+  removeCodexHookFiles,
+  assertSafePurgeTarget,
   stripRegisteredProjectBlocks,
   parseRegistryPaths,
   removeNestedMcpEntry,
