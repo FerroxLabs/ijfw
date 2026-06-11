@@ -61,7 +61,7 @@ export const EXEMPLAR_TEXT_MAX = 600;
  * Max bytes we will read from the on-disk JSONL. The store is bounded by
  * MAX_EXEMPLARS short records, so a file larger than this is a corrupt/hand-
  * edited artifact; refusing to slurp it whole avoids an OOM. ~2 MiB is orders
- * of magnitude above any legitimate exemplar set (200 × 600 chars ≈ 120 KiB).
+ * of magnitude above any legitimate exemplar set (200 x 600 chars ≈ 120 KiB).
  */
 const MAX_STORE_BYTES = 2 * 1024 * 1024;
 

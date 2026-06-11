@@ -35,7 +35,7 @@ ship don't reach commit.
    - Stated risk section (or its absence)
 
 2. **Feasibility-math check**:
-   - Growth rate vs declared mechanism: if revenue grows ≥2× and no
+   - Growth rate vs declared mechanism: if revenue grows ≥2x and no
      proportional change in funnel, headcount, or pricing is
      described → `UNEXPLAINED_GROWTH` HIGH.
    - Conversion-rate assumptions inside the realistic band for the

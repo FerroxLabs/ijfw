@@ -63,7 +63,7 @@ weight on top of an insufficient background.
 Run the audit before claiming shippable (WCAG 2.1 AA). Check: does each
 surface declare exactly one primary action? Are heading levels monotonic and
 skip-free? Do all interactive elements have a declared focus state? Are
-tap targets at least 24×24px? Is every animation paired with a
+tap targets at least 24x24px? Is every animation paired with a
 prefers-reduced-motion fallback? Never report "design complete" based on a
 visually appealing mockup alone — conformance is measurable, not impressionistic.
 

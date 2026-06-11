@@ -218,7 +218,7 @@ export async function runGateBProduction(opts = {}) {
   //     budget-guarded cloud transport here: the allowed-set is the closed set of EVERY brief
   //     the pool's own personas + foreigner-pool produce (baseline '' + derived + fewShotOracle
   //     + register-echo) — foreign prose is never a target, only a fingerprint. The budget is
-  //     sized from arms × pool × probes × (pilot + confirmatory) with headroom.
+  //     sized from arms x pool x probes x (pilot + confirmatory) with headroom.
   const poolForGuard = [...personas, ...foreigners];
   const budget = opts.budget || {
     calls: 0,
@@ -328,7 +328,7 @@ export function buildAllowedSys(personas, cfg = {}) {
   return sys;
 }
 
-// Estimate the cloud-call budget: arms × subjects × probes, per spend phase.
+// Estimate the cloud-call budget: arms x subjects x probes, per spend phase.
 export function estimateCalls({
   nArms = 4, nSubjects, nProbes,
 }) {

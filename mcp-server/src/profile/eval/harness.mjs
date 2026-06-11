@@ -225,7 +225,7 @@ export function cohenKappa(raterA = [], raterB = []) {
 
 // ---------------------------------------------------------------------------
 // ECE — Expected Calibration Error on the profile's `confidence` field. Bins
-// (confidence, correctness) pairs and measures |avg-confidence − accuracy| per
+// (confidence, correctness) pairs and measures |avg-confidence - accuracy| per
 // bin, weighted by bin mass. A well-calibrated profile that says "0.7 confident"
 // is right ~70% of the time. This is what makes `confidence` an honest number
 // instead of decoration.

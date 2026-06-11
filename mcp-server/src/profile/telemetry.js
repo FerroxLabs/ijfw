@@ -3,8 +3,8 @@
  *
  * The NO-JUDGE behavioral metric (design spec §"The honest bar", claim 2):
  * "Repeat-correction-rate drop — how often you re-issue the SAME correction,
- * bucketed by session age. A working system bends the curve down (3× in week 1
- * -> 0× by week 4). The most honest single number."
+ * bucketed by session age. A working system bends the curve down (3x in week 1
+ * -> 0x by week 4). The most honest single number."
  *
  * This module records, per preference SLUG, every time the user RE-ISSUES a
  * correction that the profile should already have learned, and computes the drop

@@ -1,7 +1,7 @@
 // wrong-target-control.mjs — Gate B v2, Task T5. THE discriminator.
 //
 // For each subject P and arm, the margin is:
-//     m_P = distance(output, NEAREST same-register foreigner) − distance(output, OWN test)
+//     m_P = distance(output, NEAREST same-register foreigner) - distance(output, OWN test)
 // m_P > 0 means the styled output landed closer to P's OWN held-out fingerprint than to
 // the CLOSEST same-register stranger. A generic register-obeyer is ~equidistant from all
 // same-register targets ⇒ m≈0 ⇒ NULL. Only idiosyncratic voice capture wins.
@@ -118,7 +118,7 @@ export function wrongTargetControl(harnessOut, personas, opts = {}) {
     }
     const ownLoss = margins.map((m) => (m < 0 ? 1 : 0));
     const ci = bootstrapCI(margins, { iters: cfg.bootstrapIters, alpha: cfg.alpha, seed: cfg.seed });
-    // zeros-vs-wins sign test: b = #(margin>0), c = #(margin<0); two-sided p on |b−c|.
+    // zeros-vs-wins sign test: b = #(margin>0), c = #(margin<0); two-sided p on |b-c|.
     const sign = mcnemar(ownLoss, ownWin);
     perArm[arm] = {
       arm,
@@ -141,7 +141,7 @@ export function wrongTargetControl(harnessOut, personas, opts = {}) {
   for (const arm of harnessOut.arms) {
     if (arm === 'baseline' || !perArm.baseline) continue;
     const m = mcnemar(perArm.baseline.ownWin, perArm[arm].ownWin);
-    // mcnemar.pValue is TWO-SIDED (|b−c|), so the direction guard m.b > m.c is mandatory:
+    // mcnemar.pValue is TWO-SIDED (|b-c|), so the direction guard m.b > m.c is mandatory:
     // the arm must FLIP MORE subjects to own-match than baseline does, not merely differ.
     perArm[arm].vsBaseline = {
       b: m.b, c: m.c, pValue: m.pValue, beatsBaseline: significantAt(m.pValue, cfg.perTestAlpha) && m.b > m.c,

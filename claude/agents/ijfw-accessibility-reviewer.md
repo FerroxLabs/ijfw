@@ -66,7 +66,7 @@ engineering-side one (a build-time audit). The two coexist by design.
      `KEYBOARD_INACCESSIBLE`.
 
 6. **Touch / tap targets**:
-   - WCAG 2.2 SC 2.5.8: interactive elements ≥24×24 px. Below →
+   - WCAG 2.2 SC 2.5.8: interactive elements ≥24x24 px. Below →
      `TAP_TARGET_SMALL`.
 
 7. **Motion & reduced-motion**:

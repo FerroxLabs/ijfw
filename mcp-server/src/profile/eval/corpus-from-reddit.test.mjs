@@ -42,7 +42,7 @@ function writeJson(rows) {
   return p;
 }
 
-// 10 authors × 6 long docs each — comfortably over the floors.
+// 10 authors x 6 long docs each — comfortably over the floors.
 function tenAuthors() {
   const rows = [];
   for (let a = 0; a < 10; a += 1) rows.push(...makeAuthorRows(`u${a}`, 6));

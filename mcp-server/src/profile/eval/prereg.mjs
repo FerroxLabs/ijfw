@@ -52,7 +52,7 @@ export function bonferroniAlpha(familyAlpha, verdictArms) {
 }
 
 // Measured-scale floor: the minimum mean margin that counts as a real effect, expressed
-// in the instrument's OWN units = floorK * (betweenMean − withinMean) from validateInstrument.
+// in the instrument's OWN units = floorK * (betweenMean - withinMean) from validateInstrument.
 // This REPLACES the blind absolute constant (the prior attempt's failure class). Frozen
 // before any cloud spend (floorK is hashed; the derived value is recorded in the run).
 export function deriveMinMeanMargin(validation, floorK) {
