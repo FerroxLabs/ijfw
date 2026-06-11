@@ -103,6 +103,19 @@ jobs:
         working-directory: installer
         run: npm run build
 
+      # npm publish triggers prepublishOnly, which re-runs the full preflight
+      # INSIDE this job -- including the fail-closed gitleaks gate. The gate
+      # jobs above install gitleaks for themselves; this job needs it too or
+      # the publish dies at prepublishOnly (v1.6.2's first run did exactly
+      # that). Keep the version pinned in lockstep with the other two installs.
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
       - name: Derive dist-tag from tag name
         id: tag
         env:
