@@ -78,6 +78,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
+      # check-all.sh runs the mcp-server suite, which needs better-sqlite3 +
+      # chokidar. Without installing them the fresh checkout failed ~129
+      # MODULE_NOT_FOUND tests.
+      - name: Install mcp-server deps
+        working-directory: mcp-server
+        run: npm ci
       - name: Run check-all
         run: bash scripts/check-all.sh
 
