@@ -467,7 +467,7 @@ test('extensionAuditBrief produces a string summary containing name + permission
 import { promptUntrustedConfirmation } from './src/extension-installer.js';
 
 test('B11: promptUntrustedConfirmation resolves true when correct suffix typed', async () => {
-  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'; // gitleaks:allow -- synthetic key-id fixture
   const expected = keyId.slice(-8); // '23456789'
   // Mock readline by replacing stdin with a Readable that emits the correct suffix.
   const { Readable } = await import('node:stream');
@@ -490,7 +490,7 @@ test('B11: promptUntrustedConfirmation resolves true when correct suffix typed',
 });
 
 test('B11: promptUntrustedConfirmation resolves false when wrong suffix typed', async () => {
-  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'; // gitleaks:allow -- synthetic key-id fixture
   const { Readable } = await import('node:stream');
   const fakeStdin = new Readable({ read() {} });
   const origStdin = process.stdin;
@@ -506,7 +506,7 @@ test('B11: promptUntrustedConfirmation resolves false when wrong suffix typed', 
 });
 
 test('B11: promptUntrustedConfirmation resolves false on EOF (ctrl-D)', async () => {
-  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+  const keyId = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'; // gitleaks:allow -- synthetic key-id fixture
   const { Readable } = await import('node:stream');
   const fakeStdin = new Readable({ read() {} });
   const origStdin = process.stdin;

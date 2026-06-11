@@ -128,7 +128,7 @@ test('D2 -- extractEntities flags redacted entities, preserves file paths', () =
   // A token that matches a known secret pattern (e.g. fake stripe key)
   // gets flagged redacted=1 -- but only if it matches the FULL value.
   const body =
-    'src/auth/login.js loaded; sk_live_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456 ' +
+    'src/auth/login.js loaded; sk_live_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456 ' + // gitleaks:allow -- synthetic redactor fixture
     'is the live key; another file at src/lib/helper.js';
   const ents = extractEntities(body, { minMentions: 1 });
   // file paths preserved (not redacted)
@@ -147,7 +147,7 @@ test('D2 -- redactor ordering: secret-shaped value classified redacted', async (
   // directly here: a full-string secret-shaped value classifies as
   // not-clean; a file path classifies as clean.
   const { classify } = await import('./src/redactor.js');
-  const stripe = classify('sk_live_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456');
+  const stripe = classify('sk_live_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456'); // gitleaks:allow -- synthetic redactor fixture
   assert.equal(stripe.clean, false, 'stripe-shaped value classified as redacted');
   assert.equal(stripe.redacted_kind, 'stripe', 'redacted_kind is stripe');
 
