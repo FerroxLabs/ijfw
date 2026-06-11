@@ -136,6 +136,9 @@ test('install.js --help prints usage and exits 0', () => {
 // --- Test 5: uninstall preserves memory dir (logic test via direct invocation) ---
 test('uninstall preserves memory/ without --purge', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ijfw-home-'));
+  // The real installer writes install-method; the uninstall safety guard
+  // refuses dirs without an IJFW marker, so the fixture must carry one.
+  writeFileSync(join(dir, 'install-method'), 'git\n');
   mkdirSync(join(dir, 'memory'), { recursive: true });
   writeFileSync(join(dir, 'memory', 'canary.md'), 'keep-me');
   mkdirSync(join(dir, 'claude'), { recursive: true });
@@ -144,7 +147,7 @@ test('uninstall preserves memory/ without --purge', () => {
   // Point HOME elsewhere so we don't touch the real settings.json.
   const tmpHome = mkdtempSync(join(tmpdir(), 'ijfw-fakehome-'));
   const res = spawnSync(process.execPath, [
-    join(HERE, 'src', 'uninstall.js'), '--dir', dir, '--no-marketplace',
+    join(HERE, 'src', 'uninstall.js'), '--dir', dir, '--no-marketplace', '--yes',
   ], { encoding: 'utf8', env: { ...process.env, HOME: tmpHome } });
   assert.equal(res.status, 0, res.stderr);
   assert.ok(existsSync(join(dir, 'memory', 'canary.md')), 'memory preserved');
@@ -157,12 +160,13 @@ test('uninstall preserves memory/ without --purge', () => {
 // --- Test 6: uninstall --purge removes memory ---
 test('uninstall --purge removes memory/', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ijfw-home-'));
+  writeFileSync(join(dir, 'install-method'), 'git\n');
   mkdirSync(join(dir, 'memory'), { recursive: true });
   writeFileSync(join(dir, 'memory', 'canary.md'), 'bye');
 
   const tmpHome = mkdtempSync(join(tmpdir(), 'ijfw-fakehome-'));
   const res = spawnSync(process.execPath, [
-    join(HERE, 'src', 'uninstall.js'), '--dir', dir, '--purge', '--no-marketplace',
+    join(HERE, 'src', 'uninstall.js'), '--dir', dir, '--purge', '--no-marketplace', '--yes',
   ], { encoding: 'utf8', env: { ...process.env, HOME: tmpHome } });
   assert.equal(res.status, 0, res.stderr);
   assert.ok(!existsSync(dir), 'dir fully removed');

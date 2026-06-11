@@ -29,6 +29,8 @@ import {
   opencodeMerge,
   openclawMerge,
   clineMerge,
+  requireBackup,
+  writeAtomic,
   printOk,
   printInfo,
   guardProjectWrite,
@@ -70,12 +72,50 @@ function commandExists(name) {
   return r.status === 0;
 }
 
+// VS Code workspace MCP config (.vscode/mcp.json) uses a top-level `servers`
+// object -- NOT the `mcpServers` key the generic mergeJson writes (that shape
+// is the Cursor/Claude-Desktop convention; VS Code ignores unknown keys, so
+// the server silently never registered for Copilot). Writes the correct key
+// and migrates our entry out of a wrong `mcpServers` key left by earlier
+// IJFW versions. Preserves existing `servers`/`inputs` content.
+function vscodeMcpMerge(dst, serverJs, ts) {
+  ensureDir(path.dirname(dst));
+  // V155-009: refuse to rewrite an existing config without a verified backup.
+  requireBackup(dst, ts);
+
+  let doc = {};
+  try {
+    if (fs.existsSync(dst)) {
+      let raw = fs.readFileSync(dst, 'utf8');
+      // Strip a UTF-8 BOM -- JSON.parse rejects BOM-prefixed input.
+      if (raw && raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+      if (raw.trim() !== '') {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) doc = parsed;
+      }
+    }
+  } catch {
+    // Corrupt existing file: requireBackup above preserved a copy, so a
+    // fresh start here is recoverable.
+    doc = {};
+  }
+
+  if (!doc.servers || typeof doc.servers !== 'object') doc.servers = {};
+  if (doc.mcpServers && typeof doc.mcpServers === 'object') {
+    delete doc.mcpServers['ijfw-memory'];
+    if (Object.keys(doc.mcpServers).length === 0) delete doc.mcpServers;
+  }
+  doc.servers['ijfw-memory'] = { type: 'stdio', command: 'node', args: [serverJs] };
+
+  writeAtomic(dst, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 });
+}
+
 // ---------------------------------------------------------------------------
 // 8. Copilot (VS Code) -- install.sh:1364-1385
 // ---------------------------------------------------------------------------
 //
 // Project-scoped install:
-//   - ./.vscode/mcp.json  (mergeJson)
+//   - ./.vscode/mcp.json  (vscodeMcpMerge -- VS Code `servers` schema)
 //   - ./.github/copilot-instructions.md  (only if missing)
 //
 // Custom-dir does NOT skip Copilot in install.sh -- only the IJFW source-tree
@@ -110,7 +150,7 @@ export function installCopilot(ctx) {
 
   const dst = path.join(cwd, '.vscode', 'mcp.json');
   ensureDir(path.dirname(dst));
-  mergeJson(dst, ctx.serverJsNative || ctx.serverJs);
+  vscodeMcpMerge(dst, ctx.serverJsNative || ctx.serverJs, ctx.ts);
 
   const rulesDst = path.join(cwd, '.github', 'copilot-instructions.md');
   const rulesSrc = path.join(ctx.repoRoot, 'copilot', 'copilot-instructions.md');
@@ -141,7 +181,7 @@ export function installOpencode(ctx) {
 
   const dst = path.join(ctx.home, '.config', 'opencode', 'opencode.json');
   ensureDir(path.dirname(dst));
-  opencodeMerge(dst, ctx.serverJsNative || ctx.serverJs);
+  opencodeMerge(dst, ctx.serverJsNative || ctx.serverJs, ctx.ts);
   printOk(`Merged MCP into ${dst} (opencode mcp.local schema)`);
   return { status: 'ok' };
 }
@@ -161,7 +201,7 @@ export function installQwen(ctx) {
 
   const dst = path.join(ctx.home, '.qwen', 'settings.json');
   ensureDir(path.dirname(dst));
-  mergeJson(dst, ctx.serverJsNative || ctx.serverJs);
+  mergeJson(dst, ctx.serverJsNative || ctx.serverJs, ctx.ts);
   printOk(`Merged MCP into ${dst}`);
   return { status: 'ok' };
 }
@@ -181,7 +221,7 @@ export function installCline(ctx) {
     return { status: 'noop' };
   }
 
-  const dst = clineMerge(ctx.serverJsNative || ctx.serverJs, ctx.home);
+  const dst = clineMerge(ctx.serverJsNative || ctx.serverJs, ctx.home, ctx.ts);
   printOk(`Merged MCP into ${dst} (cline globalStorage schema)`);
   return { status: 'ok' };
 }
@@ -201,7 +241,7 @@ export function installKimi(ctx) {
 
   const dst = path.join(ctx.home, '.kimi', 'mcp.json');
   ensureDir(path.dirname(dst));
-  mergeJson(dst, ctx.serverJsNative || ctx.serverJs);
+  mergeJson(dst, ctx.serverJsNative || ctx.serverJs, ctx.ts);
   printOk(`Merged MCP into ${dst}`);
   return { status: 'ok' };
 }
@@ -248,7 +288,7 @@ export function installOpenclaw(ctx) {
   }
 
   ensureDir(path.dirname(dst));
-  openclawMerge(dst, serverJs);
+  openclawMerge(dst, serverJs, ctx.ts);
   if (cliRegistered) {
     printOk(`Registered ijfw-memory via 'openclaw mcp set' AND file-write merge (${dst})`);
   } else {
@@ -322,13 +362,13 @@ export function installAntigravity(ctx) {
   // Surface 1 -- Antigravity IDE.
   const ideDst = path.join(ctx.home, '.gemini', 'antigravity', 'mcp_config.json');
   ensureDir(path.dirname(ideDst));
-  mergeJson(ideDst, serverJs);
+  mergeJson(ideDst, serverJs, ctx.ts);
 
   // Surface 2 -- Antigravity CLI (`agy`). Reads from a different path; ships
   // mcp_config.json as a 0-byte file -- mergeJson treats empty files as {}.
   const cliDst = path.join(ctx.home, '.gemini', 'config', 'mcp_config.json');
   ensureDir(path.dirname(cliDst));
-  mergeJson(cliDst, serverJs);
+  mergeJson(cliDst, serverJs, ctx.ts);
 
   printOk(`Merged MCP into ${ideDst} + ${cliDst} (Antigravity IDE + CLI)`);
   return { status: 'ok' };

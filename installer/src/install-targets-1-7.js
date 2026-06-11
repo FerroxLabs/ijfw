@@ -44,10 +44,9 @@ import { platform } from 'node:os';
 import {
   mergeJson,
   mergeToml,
-  mergeYamlMcp,
   mergeYamlPluginsEnabled,
   mergeYamlHook,
-  backup,
+  requireBackup,
   installHook,
   writeAtomic,
   isLive,
@@ -62,6 +61,12 @@ import {
 
 function ensureDir(p) {
   try { mkdirSync(p, { recursive: true }); } catch { /* best-effort */ }
+}
+
+// Strip a UTF-8 BOM. Windows editors (Notepad, some PowerShell redirects)
+// commonly emit one, and JSON.parse rejects BOM-prefixed input.
+function stripBom(s) {
+  return s && s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s;
 }
 
 // Copy file only if destination is absent. Mirrors `[ ! -f "$dst" ] && cp`.
@@ -159,15 +164,27 @@ export async function installClaude(ctx) {
 
   ensureDir(join(ctx.home, '.claude', 'plugins'));
 
-  // Backup before mutating.
-  backup(claudeSettings, ctx.ts);
+  // Backup before mutating. requireBackup throws if an existing
+  // settings.json cannot be backed up -- never rewrite without a recovery
+  // copy (the bare backup() return was previously ignored).
+  const settingsBak = requireBackup(claudeSettings, ctx.ts);
 
   // --- settings.json: enabledPlugins + extraKnownMarketplaces ---
   let settings = {};
   if (existsSync(claudeSettings)) {
     try {
-      settings = JSON.parse(readFileSync(claudeSettings, 'utf8') || '{}');
-    } catch { settings = {}; }
+      settings = JSON.parse(stripBom(readFileSync(claudeSettings, 'utf8')) || '{}');
+    } catch {
+      // A corrupt settings.json must NOT be silently replaced with an
+      // IJFW-only file -- that would drop the user's permissions allowlist,
+      // hooks, env, statusLine and model config. Refuse loudly instead.
+      ctx.log.warn('~/.claude/settings.json could not be parsed as JSON -- IJFW will not modify it.');
+      if (settingsBak) {
+        ctx.log.warn(`A copy of the current file was preserved at ${settingsBak}.`);
+      }
+      ctx.log.warn('Fix the JSON syntax error and re-run `ijfw install`.');
+      return { status: 'noop' };
+    }
   }
   if (!settings || typeof settings !== 'object') settings = {};
   settings.enabledPlugins = settings.enabledPlugins || {};
@@ -182,7 +199,7 @@ export async function installClaude(ctx) {
   let mp = {};
   if (existsSync(claudeMarketplaces)) {
     try {
-      mp = JSON.parse(readFileSync(claudeMarketplaces, 'utf8') || '{}');
+      mp = JSON.parse(stripBom(readFileSync(claudeMarketplaces, 'utf8')) || '{}');
     } catch { mp = {}; }
   }
   if (!mp || typeof mp !== 'object') mp = {};
@@ -261,7 +278,7 @@ export async function installCodex(ctx) {
   // 1. config.toml -- MCP block.
   const configToml = join(ctx.home, '.codex', 'config.toml');
   ensureDir(dirname(configToml));
-  mergeToml(configToml, ctx.serverJsNative);
+  mergeToml(configToml, ctx.serverJsNative, ctx.ts);
 
   // 2. hooks.json -- idempotent IJFW matcher-group merge.
   const hooksDst = join(ctx.home, '.codex', 'hooks.json');
@@ -445,7 +462,7 @@ export async function installGemini(ctx) {
   // 1. MCP merge into settings.json.
   const dst = join(ctx.home, '.gemini', 'settings.json');
   ensureDir(dirname(dst));
-  mergeJson(dst, ctx.serverJsNative);
+  mergeJson(dst, ctx.serverJsNative, ctx.ts);
 
   // 2. Extension bundle.
   const extDst = join(ctx.home, '.gemini', 'extensions', 'ijfw');
@@ -454,13 +471,33 @@ export async function installGemini(ctx) {
     ensureDir(join(extDst, sub));
   }
 
-  // Manifest, context file, hooks.json, policy -- copy if absent.
-  for (const rel of [
-    'gemini-extension.json',
-    'IJFW.md',
-    'hooks/hooks.json',
-    'policies/ijfw.toml',
-  ]) {
+  // Manifest + hook registration -- refresh on every install with
+  // installHook semantics: expand {{extensionPath}} in memory, skip when
+  // identical, back up a user-modified copy, then overwrite. Copy-if-absent
+  // froze these at first-install state, so hooks added in later releases
+  // shipped their .sh scripts (step 4 force-refreshes those) but were never
+  // registered in the user's hooks.json.
+  for (const rel of ['gemini-extension.json', 'hooks/hooks.json']) {
+    const srcFile = join(extSrc, rel);
+    if (!existsSync(srcFile)) continue;
+    let desired = '';
+    try { desired = readFileSync(srcFile, 'utf8'); } catch { continue; }
+    desired = desired.split('{{extensionPath}}').join(extDst);
+    const dstFile = join(extDst, rel);
+    let current = null;
+    try { current = existsSync(dstFile) ? readFileSync(dstFile, 'utf8') : null; }
+    catch { current = null; }
+    if (current === desired) continue;
+    if (current !== null) {
+      try { copyFileSync(dstFile, `${dstFile}.bak.${ctx.ts}`); } catch { /* best-effort */ }
+      ctx.log.note(`Updated ${rel} (previous copy backed up to ${rel}.bak.${ctx.ts})`);
+    }
+    ensureDir(dirname(dstFile));
+    writeAtomic(dstFile, desired);
+  }
+
+  // Context file + policy -- copy if absent (user-tunable surfaces).
+  for (const rel of ['IJFW.md', 'policies/ijfw.toml']) {
     const dstFile = join(extDst, rel);
     if (!existsSync(dstFile)) {
       ensureDir(dirname(dstFile));
@@ -642,13 +679,129 @@ function renderWaylandPluginToml(ctx) {
 // 5. Hermes -- install.sh:1386-1420
 // ----------------------------------------------------------------------
 
+const HERMES_MCP_BEGIN = '# IJFW-MCP-BEGIN ijfw-memory';
+const HERMES_MCP_END = '# IJFW-MCP-END ijfw-memory';
+
+// Local copy of the helper-private sentinel stripper (install-helpers.js
+// does not export it).
+function stripSentinelLines(text, beginMark, endMark) {
+  const lines = text.split('\n');
+  const out = [];
+  let skip = false;
+  for (const line of lines) {
+    if (line === beginMark) { skip = true; continue; }
+    if (line === endMark) { skip = false; continue; }
+    if (skip) continue;
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+// Hermes config.yaml MCP merge. Supersedes install-helpers.mergeYamlMcp for
+// this target with two corrections:
+//   1. Anchoring: the shared helper appended the indented `ijfw-memory:`
+//      mapping at EOF whenever `mcp_servers:` existed anywhere in the file.
+//      On a re-install the plugins:/hooks: blocks from the previous run sit
+//      between `mcp_servers:` and EOF, so the mapping re-attached to the
+//      wrong parent and mcp_servers parsed as null. We splice the block
+//      immediately below the `mcp_servers:` line instead.
+//   2. Escaping: backslash IS the escape character inside a YAML
+//      double-quoted scalar, so an unescaped Windows path (C:\Users\...)
+//      made the whole config.yaml unparseable. Escape backslashes first,
+//      same as mergeToml.
+// Returns true if the file was written.
+function hermesMergeYamlMcp(ctx, dst, serverJs) {
+  ensureDir(dirname(dst));
+  // V155-009: refuse to rewrite an existing config without a verified backup.
+  requireBackup(dst, ctx.ts);
+
+  let text = '';
+  try { text = existsSync(dst) ? stripBom(readFileSync(dst, 'utf8')) : ''; }
+  catch { text = ''; }
+
+  text = stripSentinelLines(text, HERMES_MCP_BEGIN, HERMES_MCP_END);
+
+  const escaped = String(serverJs).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const block = [
+    HERMES_MCP_BEGIN,
+    '  ijfw-memory:',
+    '    command: "node"',
+    `    args: ["${escaped}"]`,
+    '    enabled: true',
+    HERMES_MCP_END,
+  ];
+
+  const lines = text.split('\n');
+  let anchorIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric index into this function's own split() output.
+    const line = lines[i];
+    // String ops, not regex: eslint-security flags \s*(?:#.*)? shapes as
+    // potentially-unsafe backtracking. Anchor key, then classify the rest.
+    if (line.startsWith('mcp_servers:')) {
+      const rest = line.slice('mcp_servers:'.length).trim();
+      if (rest === '' || rest.startsWith('#')) { anchorIdx = i; break; }
+      // Empty inline map ({} with optional inner space / trailing comment) --
+      // convert to block form so we can attach a child.
+      const beforeComment = rest.split('#')[0].replace(/\s/g, '');
+      if (beforeComment === '{}') {
+        // eslint-disable-next-line security/detect-object-injection -- same bounded index.
+        lines[i] = 'mcp_servers:';
+        anchorIdx = i;
+        break;
+      }
+    }
+  }
+
+  let merged;
+  if (anchorIdx >= 0) {
+    lines.splice(anchorIdx + 1, 0, ...block);
+    merged = lines.join('\n');
+  } else if (/^mcp_servers:/m.test(text)) {
+    // Non-empty inline map (mcp_servers: {...}) -- a spliced block child
+    // would corrupt the file. Fail safe: leave the user's config untouched.
+    ctx.log.warn('Hermes config.yaml uses an inline mcp_servers map -- cannot merge safely.');
+    ctx.log.warn('Add an "ijfw-memory" entry to mcp_servers manually (command: node, args: [server.js path]).');
+    return false;
+  } else {
+    const prefix = text.trim() === ''
+      ? ''
+      : (text.endsWith('\n') ? text : `${text}\n`) + '\n';
+    merged = `${prefix}mcp_servers:\n${block.join('\n')}`;
+  }
+  if (!merged.endsWith('\n')) merged += '\n';
+  writeAtomic(dst, merged, { mode: 0o600 });
+  return true;
+}
+
+// True when plugins.enabled in `dst` is an inline list that already names
+// `pluginName`. mergeYamlPluginsEnabled only detects the multi-line "- name"
+// form, so without this guard an inline list gains a duplicate per re-install.
+function hermesInlineEnabledHas(dst, pluginName) {
+  let text = '';
+  try { text = existsSync(dst) ? readFileSync(dst, 'utf8') : ''; }
+  catch { return false; }
+  const esc = pluginName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // eslint-disable-next-line security/detect-non-literal-regexp -- pluginName is escaped above.
+  const nameRe = new RegExp(`[\\[,]\\s*["']?${esc}["']?\\s*[,\\]]`);
+  let inPlugins = false;
+  for (const line of text.split('\n')) {
+    if (/^plugins:\s*$/.test(line)) { inPlugins = true; continue; }
+    if (inPlugins && /^\S/.test(line) && line.trim() !== '') inPlugins = false;
+    if (inPlugins && /^\s+enabled:\s*\[.+\]\s*$/.test(line) && nameRe.test(line)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Install IJFW into Hermes CLI.
  *
  * Ports install.sh:1386-1420.
  *
  * Writes:
- *   - $HOME/.hermes/config.yaml (mergeYamlMcp + mergeYamlPluginsEnabled)
+ *   - $HOME/.hermes/config.yaml (hermesMergeYamlMcp + mergeYamlPluginsEnabled)
  *   - $HOME/.hermes/HERMES.md (if absent)
  *   - $HOME/.hermes/skills/* (per-skill copy-if-absent from shared/skills/)
  *   - $HOME/.hermes/plugins/ijfw/* (plugin tree, excluding __pycache__)
@@ -665,7 +818,7 @@ export async function installHermes(ctx) {
 
   const dst = join(ctx.home, '.hermes', 'config.yaml');
   ensureDir(dirname(dst));
-  mergeYamlMcp(dst, ctx.serverJsNative);
+  hermesMergeYamlMcp(ctx, dst, ctx.serverJsNative);
 
   // HERMES.md (copy if absent).
   ensureDir(join(ctx.home, '.hermes'));
@@ -690,41 +843,54 @@ export async function installHermes(ctx) {
     let readdirErr = null;
     try { entries = readdirSync(pluginSrc); } catch (err) { entries = []; readdirErr = err; }
     if (readdirErr) {
+      // Skip the mirror entirely: with an empty entries list the dst-only
+      // removal below would wipe the user's working plugin tree because of
+      // a transient read error on the source.
       ctx.log.warn(`Hermes plugin tree readdir failed: ${readdirErr.message || readdirErr}`);
-    }
-    // V155-031: mirror semantics — remove dst-only files before copy.
-    const srcNames = new Set(entries.filter((n) => n !== '__pycache__'));
-    let dstEntries = [];
-    try { dstEntries = readdirSync(pluginDst); } catch { /* fresh dir */ }
-    for (const name of dstEntries) {
-      if (name === '__pycache__') continue;
-      if (!srcNames.has(name)) {
-        try { rmSync(join(pluginDst, name), { recursive: true, force: true }); }
-        catch (err) {
-          ctx.log.warn(`Hermes plugin: could not remove stale ${name}: ${err.message || err}`);
+      ctx.log.warn('Leaving the installed Hermes plugin tree untouched.');
+    } else {
+      // V155-031: mirror semantics -- remove dst-only files before copy.
+      const srcNames = new Set(entries.filter((n) => n !== '__pycache__'));
+      let dstEntries = [];
+      try { dstEntries = readdirSync(pluginDst); } catch { /* fresh dir */ }
+      for (const name of dstEntries) {
+        if (name === '__pycache__') continue;
+        if (!srcNames.has(name)) {
+          try { rmSync(join(pluginDst, name), { recursive: true, force: true }); }
+          catch (err) {
+            ctx.log.warn(`Hermes plugin: could not remove stale ${name}: ${err.message || err}`);
+          }
         }
       }
-    }
-    for (const name of entries) {
-      if (name === '__pycache__') continue;
-      const src = join(pluginSrc, name);
-      const dstEntry = join(pluginDst, name);
-      try {
-        const st = statSync(src);
-        if (st.isDirectory()) {
-          cpSync(src, dstEntry, { recursive: true, force: true });
-        } else if (st.isFile()) {
-          copyFileSync(src, dstEntry);
-        }
-      } catch { /* skip */ }
+      for (const name of entries) {
+        if (name === '__pycache__') continue;
+        const src = join(pluginSrc, name);
+        const dstEntry = join(pluginDst, name);
+        try {
+          const st = statSync(src);
+          if (st.isDirectory()) {
+            cpSync(src, dstEntry, { recursive: true, force: true });
+          } else if (st.isFile()) {
+            copyFileSync(src, dstEntry);
+          }
+        } catch { /* skip */ }
+      }
     }
   }
 
-  // Hermes is opt-in -- add "ijfw" to plugins.enabled[].
-  mergeYamlPluginsEnabled(dst, 'ijfw');
+  // Hermes is opt-in -- add "ijfw" to plugins.enabled[]. Skip when an inline
+  // enabled list already names ijfw (the helper only detects the multi-line
+  // "- ijfw" form and would append a duplicate per re-install).
+  //
+  // ts is deliberately NOT passed to the two merges below: the pre-run
+  // backup of config.yaml was already taken by hermesMergeYamlMcp above, and
+  // a second backup at the same ts would overwrite it with mid-run state.
+  if (!hermesInlineEnabledHas(dst, 'ijfw')) {
+    mergeYamlPluginsEnabled(dst, 'ijfw');
+  }
 
   // B7: wire tier-2 hook registration into config.yaml.
-  mergeYamlHook(dst, 'plugins/ijfw/hooks/pre_tool_use_extension_check.py', ctx.ts);
+  mergeYamlHook(dst, 'plugins/ijfw/hooks/pre_tool_use_extension_check.py');
 
   ctx.log.ok('Installed Hermes bundle: MCP + HERMES.md + skills + plugin + tier-2 hook');
   return { status: 'ok' };
@@ -779,14 +945,16 @@ export async function installCursor(ctx) {
   }
   const dst = join(cwd, '.cursor', 'mcp.json');
   ensureDir(dirname(dst));
-  mergeJson(dst, ctx.serverJsNative);
+  mergeJson(dst, ctx.serverJsNative, ctx.ts);
 
-  // Rules file.
+  // Rules file. installHook semantics: skip when identical, back up a
+  // user-modified copy before overwriting (a raw copy silently destroyed
+  // per-project .mdc frontmatter edits on every re-install).
   const rulesDir = join(cwd, '.cursor', 'rules');
   ensureDir(rulesDir);
   const ruleSrc = join(ctx.repoRoot, 'cursor', '.cursor', 'rules', 'ijfw.mdc');
   if (existsSync(ruleSrc)) {
-    try { copyFileSync(ruleSrc, join(rulesDir, 'ijfw.mdc')); }
+    try { installHook(ruleSrc, join(rulesDir, 'ijfw.mdc'), ctx.ts); }
     catch { /* best-effort */ }
   }
 
@@ -821,7 +989,7 @@ export async function installWindsurf(ctx) {
 
   const dst = join(ctx.home, '.codeium', 'windsurf', 'mcp_config.json');
   ensureDir(dirname(dst));
-  mergeJson(dst, ctx.serverJsNative);
+  mergeJson(dst, ctx.serverJsNative, ctx.ts);
 
   // .windsurfrules in project root (only if absent). This is the ONLY
   // project-scoped write here -- the MCP config above is home-scoped (correct

@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.js",
-    "test": "node --test test.js test/uninstall-completeness.test.mjs test/project-write-guard.test.mjs",
+    "test": "node --test test.js test/*.test.mjs",
     "test:hub-extension": "node --test test/test-pack-hub-extension.js",
     "test:uninstall-completeness": "node --test test/uninstall-completeness.test.mjs",
     "preflight": "node dist/ijfw.js preflight",

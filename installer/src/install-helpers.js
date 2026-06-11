@@ -450,21 +450,53 @@ export function prettyName(targetId) {
 // in dst.bak.ts even on idempotent reruns. Atomic writes via writeAtomic.
 // ============================================================================
 
+// YYYYMMDD-HHmmss, mirrors install-flow.js timestamp(). Used when a merge is
+// invoked without a caller-supplied ts so the backup gate still fires.
+export function backupTimestamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
 function readJsonOrEmpty(path) {
   if (!existsSync(path)) return {};
+  let raw;
   try {
-    const raw = readFileSync(path, 'utf8');
-    // Treat an empty or whitespace-only file as an empty object. Some tools
-    // (e.g. the Antigravity CLI `agy`) ship mcp_config.json as a 0-byte file;
-    // JSON.parse on '' or '   \n' throws "unexpected end of JSON input".
-    if (!raw || raw.trim() === '') return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return parsed;
-  } catch {
-    // Corrupt existing config -- caller already wrote a backup, start fresh.
-    return {};
+    raw = readFileSync(path, 'utf8');
+  } catch (err) {
+    // Unreadable EXISTING file (EACCES, transient IO): replacing it would
+    // silently destroy whatever it holds. Abort the merge instead; the
+    // per-target loop reports the platform as failed.
+    const msg = err && err.message ? err.message : String(err);
+    throw new Error(`cannot read existing config at ${path} (${msg}) -- fix permissions and re-run.`);
   }
+  // Strip a UTF-8 BOM before parsing: Windows editors prepend one, and
+  // JSON.parse throws on it -- which would route a perfectly valid user
+  // config into the corrupt-config replacement path below.
+  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+  // Treat an empty or whitespace-only file as an empty object. Some tools
+  // (e.g. the Antigravity CLI `agy`) ship mcp_config.json as a 0-byte file;
+  // JSON.parse on '' or '   \n' throws "unexpected end of JSON input".
+  if (!raw || raw.trim() === '') return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch { /* fall through to the corrupt-config path below */ }
+  // Corrupt (or non-object) existing config: the merge will rewrite this
+  // file with IJFW-only content. Preserve the original bytes first and say
+  // so out loud; if even the preservation copy fails, refuse to proceed.
+  const bak = `${path}.corrupt-${backupTimestamp()}.bak`;
+  try {
+    copyFileSync(path, bak);
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    throw new Error(
+      `existing config at ${path} is not valid JSON and a safety copy could not be written (${msg}) -- ` +
+      `fix or move the file, then re-run.`,
+    );
+  }
+  printWarn(`existing config at ${path} is not valid JSON -- original saved to ${bak}; starting fresh with the IJFW entry only`);
+  return {};
 }
 
 /**
@@ -479,7 +511,10 @@ function readJsonOrEmpty(path) {
 export function mergeJson(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
   // V155-009: refuse to overwrite an existing config without a verified backup.
-  requireBackup(dst, ts);
+  // Audit fix: every production call site passed only two args, and
+  // requireBackup no-ops without a ts -- the gate never fired. Default the
+  // timestamp internally so the backup always happens.
+  requireBackup(dst, ts || backupTimestamp());
 
   const doc = readJsonOrEmpty(dst);
   if (!doc.mcpServers || typeof doc.mcpServers !== 'object') doc.mcpServers = {};
@@ -521,7 +556,8 @@ export function mergeJson(dst, serverJs, ts) {
 export function mergeToml(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
   // V155-009: refuse to overwrite an existing config without a verified backup.
-  requireBackup(dst, ts);
+  // Audit fix: default the timestamp internally (see mergeJson).
+  requireBackup(dst, ts || backupTimestamp());
 
   let text = '';
   try { text = existsSync(dst) ? readFileSync(dst, 'utf8') : ''; }
@@ -757,7 +793,7 @@ function isIndentedEnabledLine(line) {
  */
 export function opencodeMerge(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
-  if (ts) backup(dst, ts);
+  backup(dst, ts || backupTimestamp());
 
   const doc = readJsonOrEmpty(dst);
   if (!doc.mcp || typeof doc.mcp !== 'object') doc.mcp = {};
@@ -772,7 +808,7 @@ export function opencodeMerge(dst, serverJs, ts) {
  */
 export function openclawMerge(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
-  if (ts) backup(dst, ts);
+  backup(dst, ts || backupTimestamp());
 
   const doc = readJsonOrEmpty(dst);
   if (!doc.mcp || typeof doc.mcp !== 'object') doc.mcp = {};
@@ -829,7 +865,7 @@ export function clineMerge(serverJs, home, ts) {
 
   const dst = join(userDir, 'globalStorage', ext, 'settings', 'cline_mcp_settings.json');
   mkdirSync(dirname(dst), { recursive: true });
-  if (ts) backup(dst, ts);
+  backup(dst, ts || backupTimestamp());
 
   const doc = readJsonOrEmpty(dst);
   if (!doc.mcpServers || typeof doc.mcpServers !== 'object') doc.mcpServers = {};

@@ -59,11 +59,20 @@ export function snapshotPreExistingDirs(home) {
 // (i.e. IJFW created them). Written 0o600 inside ijfwHome.
 export function writeLedger({ home, ijfwHome, preExisting }) {
   const preSet = new Set(preExisting || []);
+  const owned = allOwnedDirs();
   const created = [];
-  for (const rel of allOwnedDirs()) {
+  for (const rel of owned) {
     if (!preSet.has(rel) && existsSync(join(home, rel))) created.push(rel);
   }
-  const ledger = { version: 1, createdDirs: created };
+  // Merge with the existing ledger (issue #17 regression guard): on an
+  // upgrade, dirs IJFW created during the FIRST install are seen as
+  // pre-existing by this run's snapshot, so without the union every re-run
+  // rewrote createdDirs as [] and --purge stopped tracking them. Prior
+  // entries are kept only while they are still known owned dirs that exist.
+  const prev = readLedger(ijfwHome).createdDirs.filter(
+    (rel) => owned.includes(rel) && existsSync(join(home, rel)),
+  );
+  const ledger = { version: 1, createdDirs: [...new Set([...prev, ...created])] };
   try {
     mkdirSync(ijfwHome, { recursive: true, mode: 0o700 });
     writeFileSync(ledgerPath(ijfwHome), JSON.stringify(ledger, null, 2) + '\n', { mode: 0o600 });
@@ -121,6 +130,12 @@ export const INSTALL_PLAN = {
   qwen: [['~/.qwen/settings.json', 'm', 'mcpServers.ijfw-memory']],
   kimi: [['~/.kimi/mcp.json', 'm', 'mcpServers.ijfw-memory']],
   opencode: [['~/.config/opencode/opencode.json', 'm', 'mcp.ijfw-memory']],
+  cline: [['VS Code globalStorage <Code|VSCodium>/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json', 'm', 'mcpServers.ijfw-memory']],
+  antigravity: [
+    ['~/.gemini/antigravity/mcp_config.json', 'm', 'mcpServers.ijfw-memory (IDE)'],
+    ['~/.gemini/config/mcp_config.json', 'm', 'mcpServers.ijfw-memory (CLI agy)'],
+  ],
+  pi: [['~/.pi/agent/AGENTS.md', 'c', 'context file (rules-only, no MCP)']],
   cursor: [['./.cursor/mcp.json + rules/ijfw.mdc', 'mc', 'project-scoped MCP + rule']],
   windsurf: [
     ['~/.codeium/windsurf/mcp_config.json', 'm', 'mcpServers.ijfw-memory'],

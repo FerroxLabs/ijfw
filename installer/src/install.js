@@ -3,7 +3,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync, mkdirSync, realpathSync, renameSync, readdirSync, cpSync } from 'node:fs';
-import { resolve, join, dirname } from 'node:path';
+import { resolve, join, dirname, basename } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { mergeMarketplace, claudeSettingsPath } from './marketplace.js';
@@ -22,14 +22,25 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--yes' || a === '-y') out.yes = true;
-    else if (a === '--dir') out.dir = argv[++i];
+    else if (a === '--dir') out.dir = requireFlagValue('--dir', 'a path', argv[++i]);
     else if (a === '--no-marketplace') out.noMarketplace = true;
-    else if (a === '--branch') { out.branch = argv[++i]; out.branchExplicit = true; }
+    else if (a === '--branch') { out.branch = requireFlagValue('--branch', 'a name', argv[++i]); out.branchExplicit = true; }
     else if (a === '--purge') out.purge = true;
     else if (a === '--dry-run' || a === '--print-plan') out.dryRun = true;
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
   }
   return out;
+}
+
+// A forgotten flag value would otherwise consume the NEXT flag (or undefined)
+// as the value -- e.g. `--dir --yes` would create ./--yes and drop --yes, and
+// a bare `--dir` would silently fall through to the canonical ~/.ijfw install.
+function requireFlagValue(flag, what, value) {
+  if (value == null || value.startsWith('-')) {
+    console.error(`${flag} requires ${what} argument`);
+    process.exit(1);
+  }
+  return value;
 }
 
 // IJFW_SKIP_NETWORK=1 is the contract the upgrade-smoke preflight gate sets
@@ -174,6 +185,24 @@ function runCheck(cmd, args, opts) {
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', spawnError: r.error?.code, signal: r.signal };
 }
 
+// Markers identifying a directory as an IJFW install or repo checkout.
+// cloneOrPull's upgrade paths run destructive operations (git checkout -f,
+// rename + re-clone) against whatever --dir / IJFW_HOME resolves to; this is
+// the install-side analogue of uninstall.js's assertSafePurgeTarget so a
+// stray `IJFW_HOME=$HOME` or `--dir ~/Documents` is refused instead of
+// renamed/force-checked-out. Markers are deliberately IJFW-specific: the
+// canonical basename, ledger/method files only IJFW writes, or the shape of
+// an IJFW repo checkout (mcp-server/src/server.js next to claude/).
+export function looksLikeIjfwInstall(dir) {
+  try {
+    if (basename(resolve(dir)) === '.ijfw') return true;
+    if (existsSync(join(dir, 'install-ledger.json'))) return true;
+    if (existsSync(join(dir, 'install-method'))) return true;
+    if (existsSync(join(dir, 'mcp-server', 'src', 'server.js')) && existsSync(join(dir, 'claude'))) return true;
+  } catch { /* unreadable target: treat as not-IJFW (refuse destructive ops) */ }
+  return false;
+}
+
 function cloneOrPull(dir, branch) {
   // TR-001: honor IJFW_SKIP_NETWORK=1. The upgrade-smoke preflight gate
   // spawns this installer with that env var set, expecting the network
@@ -235,6 +264,19 @@ function cloneOrPull(dir, branch) {
           console.log(`  origin migration: ${currentOrigin} -> ${DEFAULT_REPO}`);
         }
       }
+      // Guard: `git checkout -f FETCH_HEAD` discards uncommitted work in
+      // whatever repo `dir` is. Only proceed when the origin is the IJFW
+      // repo (canonical or known-stale) or the tree carries IJFW markers --
+      // never force-checkout an unrelated repository a stray --dir or
+      // IJFW_HOME happened to point at.
+      const CANONICAL_PATTERN = /^https:\/\/github\.com\/ferroxlabs\/ijfw(\.git)?\/?$/i;
+      const isIjfwOrigin = CANONICAL_PATTERN.test(currentOrigin) || STALE_PATTERNS.some((re) => re.test(currentOrigin));
+      if (!isIjfwOrigin && !looksLikeIjfwInstall(dir)) {
+        throw new Error(
+          `Refusing to update ${dir}: it is a git checkout of "${currentOrigin}", not an IJFW install. ` +
+          `Check your --dir / IJFW_HOME setting, or remove the directory and retry.`,
+        );
+      }
       // fetch + hard checkout avoids ff-only failures from local divergence.
       const fetch = spawnSync('git', ['-C', dir, 'fetch', '--depth', '1', 'origin', branch], { stdio: 'inherit' });
       if (fetch.status !== 0) throw new Error(`IJFW fetch did not complete (exit ${fetch.status}) -- check network access and retry.`);
@@ -264,42 +306,66 @@ function cloneOrPull(dir, branch) {
     'run',           // runtime lock files / pid markers
     '.ijfw',         // internal — recall counter, indexes, layout version
   ];
+  // Guard: this path renames `dir` aside and re-clones IJFW into its place.
+  // Without a marker check, `IJFW_HOME=$HOME` or `--dir ~/Documents` would
+  // rename the user's entire home/project directory out from under them.
+  // An empty existing dir is harmless -- clone straight into it.
+  if (!looksLikeIjfwInstall(dir)) {
+    let entries = null;
+    try { entries = readdirSync(dir); } catch { /* unreadable: refuse below */ }
+    if (entries && entries.length === 0) {
+      const r = spawnSync('git', ['clone', '--depth', '1', '--branch', branch, DEFAULT_REPO, dir], { stdio: 'inherit' });
+      if (r.status !== 0) throw new Error(`IJFW repo fetch did not complete (exit ${r.status}) -- check network access and retry.`);
+      return 'cloned';
+    }
+    throw new Error(
+      `Refusing to replace ${dir}: it exists but does not look like an IJFW install ` +
+      `(no install ledger, install-method file, or IJFW checkout markers). ` +
+      `Check your --dir / IJFW_HOME setting, or move the directory aside and retry.`,
+    );
+  }
   const backupDir = dir + '.bak.' + Date.now();
   renameSync(dir, backupDir);
   try {
     const r = spawnSync('git', ['clone', '--depth', '1', '--branch', branch, DEFAULT_REPO, dir], { stdio: 'inherit' });
     if (r.status !== 0) throw new Error(`IJFW repo fetch did not complete (exit ${r.status}) -- check network access and retry.`);
-    let restoredCount = 0;
+    // TR-005 (v1.5.5 Trident): cpSync (copy semantics — works across
+    // filesystems) instead of renameSync, which throws EXDEV across mounts.
+    // Transactional restore (audit): the backup sources are NOT deleted
+    // inside the copy loop. If they were, a later item's cpSync failure
+    // would leave earlier items existing ONLY inside `dir`, which the outer
+    // catch then rmSync's — permanently destroying already-restored data
+    // (memory/ is item one). Instead: copy everything first, and only after
+    // ALL copies succeed delete the copied sources from the backup. On any
+    // failure the backup tree is still complete and the rollback is lossless.
+    const restoredItems = [];
     for (const item of RESTORE_ALLOWLIST) {
       const src = join(backupDir, item);
       if (existsSync(src)) {
         const dst = join(dir, item);
-        // TR-005 (v1.5.5 Trident): the prior shape was `rmSync(dst); renameSync(src, dst)`.
-        // renameSync across filesystems throws EXDEV; on that throw the dst is
-        // ALREADY gone AND src is still under .bak — net data loss for the
-        // operator, and (because the outer catch then rmSync's `dir`) any
-        // already-restored allowlist entries are gone too. Switch to
-        // cpSync (copy semantics — works across filesystems) followed by an
-        // explicit rmSync of the .bak source AFTER copy succeeds. If cpSync
-        // throws, the backup tree is fully intact and recoverable: we surface
-        // the path on the way up to the outer catch (line below) so the
-        // operator sees where their data still lives.
-        if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
         try {
+          if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
           cpSync(src, dst, { recursive: true, dereference: false });
-          rmSync(src, { recursive: true, force: true });
-          restoredCount++;
+          restoredItems.push(item);
         } catch (cpErr) {
           // Surface the backup location verbatim so the operator can recover.
           // Throw upward; the outer try/catch handles overall restoration.
           const msg = cpErr && cpErr.message ? cpErr.message : String(cpErr);
           throw new Error(
-            `IJFW restore: cpSync failed for "${item}" (${msg}). ` +
+            `IJFW restore: copy failed for "${item}" (${msg}). ` +
             `Your data is still intact under: ${backupDir}. ` +
-            `Move it back into ${dir} manually after diagnosing the copy failure.`,
+            `The previous state of ${dir} will be restored from it.`,
           );
         }
       }
+    }
+    const restoredCount = restoredItems.length;
+    // Every copy succeeded -- now (and only now) drop the copied sources so
+    // the residual check below sees only data we did NOT know how to restore.
+    for (const item of restoredItems) {
+      try {
+        rmSync(join(backupDir, item), { recursive: true, force: true });
+      } catch { /* leftover source is covered by the residual warning below */ }
     }
     // Only delete the backup AFTER restore has completed.
     // Leave .bak directory in place if anything still exists inside it — that's
@@ -319,8 +385,20 @@ function cloneOrPull(dir, branch) {
     }
     return 'updated';
   } catch (err) {
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-    renameSync(backupDir, dir);
+    // Rollback: the backup tree is complete at this point (sources are only
+    // deleted after every copy succeeded), so this restores the exact prior
+    // state. If the rollback itself fails, NEVER delete the backup -- tell
+    // the operator where their data lives instead.
+    try {
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+      renameSync(backupDir, dir);
+    } catch (rollbackErr) {
+      const msg = rollbackErr && rollbackErr.message ? rollbackErr.message : String(rollbackErr);
+      console.error(
+        `  [!] rollback failed (${msg}). Your original data is preserved at: ${backupDir}. ` +
+        `Move it back to ${dir} manually.`,
+      );
+    }
     throw err;
   }
 }
@@ -365,7 +443,22 @@ async function main() {
 
   const createdThisRun = !existsSync(target);
 
+  // Once runInstallScript starts merging MCP entries into platform configs
+  // (~/.codex/config.toml, ~/.gemini/settings.json, ...), deleting the target
+  // dir on Ctrl-C would leave every already-configured platform pointing at a
+  // server path that no longer exists. After that point, keep the partial
+  // install and tell the user how to finish or revert it instead.
+  let platformConfigPhase = false;
+
   const sigint = () => {
+    if (platformConfigPhase) {
+      console.warn(
+        `\n  [!] install interrupted while platform configs were being written. ` +
+        `Some platform configs may already reference ${target} -- the partial install was kept so they keep working. ` +
+        `Rerun \`npx -p @ijfw/install ijfw-install\` to complete it, or \`ijfw-uninstall\` to remove IJFW from all platform configs.`,
+      );
+      process.exit(130);
+    }
     if (createdThisRun && existsSync(target)) {
       try {
         rmSync(target, { recursive: true, force: true });
@@ -391,6 +484,7 @@ async function main() {
   const action = cloneOrPull(target, ref);
   console.log(`  repo ${action}`);
 
+  platformConfigPhase = true;
   await runInstallScript(target);
   console.log('  platform configs applied');
 
