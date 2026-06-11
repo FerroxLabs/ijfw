@@ -1,5 +1,84 @@
 # Changelog
 
+## [1.6.2] - 2026-06-11 - Full-audit correctness sweep
+
+A 14-angle audit of the entire codebase (every finding adversarially verified
+against the live code before it made the fix list) surfaced 57 confirmed
+issues. All are fixed in this release. The headline themes: enforcement
+surfaces that looked alive but never blocked, config writes that could lose
+user data, and hot-path costs that grew with session length.
+
+### Changed (scriptable behavior -- read these three if you automate IJFW)
+
+- **`ijfw uninstall --purge` from a non-TTY now requires `--yes`.** Piped or
+  scripted invocations used to skip the confirmation prompt silently; an
+  irreversible purge now needs the explicit flag when there is no terminal to
+  ask. Interactive behavior is unchanged.
+- **`ijfw cross` exits 3 (INCONCLUSIVE) when zero auditors fire.** It used to
+  exit 0, which let CI treat "no audit happened" as "audit passed." If your
+  pipeline gates on it, treat 0 as pass, 3 as no-auditors-reachable.
+- **Copilot / VS Code MCP registration moved to the `servers` key.** IJFW
+  wrote `mcpServers` into `.vscode/mcp.json`, but VS Code's schema reads
+  `servers` -- the registration was never loaded. Re-install migrates the old
+  key automatically.
+
+### Fixed
+
+- **The extension permission sandbox now actually blocks.** Every deny path in
+  the PreToolUse hook exited with code 1, but the hook contract only blocks a
+  tool call on exit 2 -- so undeclared tools ran anyway while the hook printed
+  a denial message. Deny paths now exit 2 and emit the structured
+  `permissionDecision` envelope, on Claude, Codex, and Gemini. The runtime
+  mediator also gates all MCP tools now (4, including write-capable
+  `ijfw_state` and `ijfw_brain`, used to bypass permission and quota checks).
+- **Hook timeouts are now real.** `hooks.json` values were authored in
+  milliseconds but the platform reads seconds -- the intended 15s session-start
+  watchdog was actually 4.2 hours. All values converted; a check-all gate caps
+  every hook at 60s.
+- **`ijfw_metrics` token/cost totals are accurate.** The Stop hook fires after
+  every turn and appended cumulative rows that the aggregator then summed,
+  overcounting roughly quadratically with session length. Rows now carry a
+  session id and the aggregator dedupes last-row-wins; the transcript is read
+  incrementally via a byte cursor instead of fully re-parsed every turn.
+- **Installer and uninstaller close every found data-loss path.** Re-clone
+  restore is transactional (a mid-restore crash can no longer destroy restored
+  memory); `--dir`/`IJFW_HOME` targets must look like an IJFW install before
+  any destructive git op; every platform-config rewrite takes a backup first
+  (the old backup gate was dead code); corrupt configs are preserved to a
+  timestamped `.bak` and announced instead of silently replaced with IJFW-only
+  content; BOM-prefixed valid configs parse instead of being treated as
+  corrupt; uninstall deletes only hook files IJFW created, takes YAML backups
+  before rewriting, preserves file modes, and its purge guard requires a real
+  IJFW marker (and works on Windows).
+- **Memory engine correctness.** Warm-tier auto-indexing now routes content
+  through the same secret-redaction scrub as ingest; `LIKE` escapes carry the
+  `ESCAPE` clause in both staleness engines (snake_case symbol flagging
+  silently matched nothing); `PRAGMA quick_check` moved from every single-row
+  insert to a throttled cadence in both FTS tiers -- the corruption tripwire
+  stays, the per-write full-database scan goes.
+- **Hot paths trimmed.** Per-tool-call node spawn eliminated (pattern cache),
+  per-prompt spawns consolidated, the observation ledger appends without
+  re-reading the whole file, and session start no longer blocks on a
+  synchronous dashboard render.
+- **Hermes re-install no longer corrupts `config.yaml`** (the MCP block landed
+  under `plugins:` and emptied `mcp_servers`); Gemini upgrades refresh hook
+  registration; YAML scalars escape Windows backslashes; plugin lists dedupe.
+- **Windows:** update check, auditor probe, recovery verification, codex cost
+  reader, design preview, and the dashboard browser-opener all spawn
+  platform-appropriate binaries; Claude-native memory path encoding handles
+  drive letters.
+- **Release pipeline honesty.** `publish.yml` now runs `check-all.sh` as a
+  blocking job before npm publish, and the gitleaks gate fails (instead of
+  warning) in CI when the binary is missing -- with the workflow installing
+  it, the secret scan runs for real. The e2e scope-leak gate covers all 17
+  written platform configs. The flaky dream-trigger/cold-scan tests are fixed
+  at the root: the poll busy-spun a CPU core and starved the detached runner
+  it was waiting for; it now sleeps via `Atomics.wait` with a generous
+  ceiling (verified 8/8 green with all cores saturated).
+- **Indexer privacy parity with `ijfw init`:** refuses any filesystem root and
+  ancestors of `$HOME`, writes into the validated root (not the cwd), and
+  announces truncation.
+
 ## [1.6.1] - 2026-06-11 - Privacy and uninstall hardening
 
 A focused patch closing two community-reported bugs (#16, #17) and a sweep of
