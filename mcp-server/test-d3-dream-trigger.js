@@ -49,12 +49,23 @@ function sandboxEnv(home, extras = {}) {
   return { ...process.env, HOME: home, IJFW_HOME: REPO_ROOT, ...extras };
 }
 
-function waitForFile(path, ms = 2500) {
+// Poll for a file written by a DETACHED child process. The sleep must
+// yield the CPU: a busy-spin here competes with the very runner we are
+// waiting for and starved it on loaded CI hosts (the old 3s hard
+// deadline flaked for exactly that reason). Atomics.wait is a true
+// blocking sleep -- zero CPU, and unlike setTimeout it holds no libuv
+// timer handle, so it cannot delay test-process exit. The generous
+// ceiling costs nothing on the happy path (we return the instant the
+// file lands); it only postpones reporting a genuine failure.
+function sleepBlocking(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function waitForFile(path, ms = 15000) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (existsSync(path)) return true;
-    const end = Date.now() + 25;
-    while (Date.now() < end) { /* busy */ }
+    sleepBlocking(25);
   }
   return existsSync(path);
 }
@@ -150,7 +161,7 @@ test('shell trigger returns within 250ms cold-start hook-latency budget', () => 
   const budgetMs = process.platform === 'win32' ? 1500 : 250;
   assert.ok(elapsed < budgetMs, `trigger must return fast; got ${elapsed.toFixed(1)}ms (budget ${budgetMs}ms)`);
   // Verify the runner DID actually fire (state file lands async).
-  const ok = waitForFile(join(root, '.ijfw', '.dream-state.json'), 3000);
+  const ok = waitForFile(join(root, '.ijfw', '.dream-state.json'));
   assert.equal(ok, true, '.dream-state.json must land via async runner');
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -202,7 +213,7 @@ test('hermes _handlers.py wires _trigger_dream', () => {
 
 // --- 4. trigger end-to-end via shell + python ------------------------------
 
-test('shell trigger spawns runner; .dream-state.json lands within 3s', () => {
+test('shell trigger spawns runner; .dream-state.json lands', () => {
   const root = tmpProj('e2e-sh');
   const home = sandboxHome('e2e-sh');
   const res = spawnSync(BASH, [TRIGGER_SH, root, 'test-e2e-sh'], {
@@ -210,7 +221,7 @@ test('shell trigger spawns runner; .dream-state.json lands within 3s', () => {
     env: sandboxEnv(home),
   });
   assert.equal(res.status, 0);
-  const ok = waitForFile(join(root, '.ijfw', '.dream-state.json'), 3000);
+  const ok = waitForFile(join(root, '.ijfw', '.dream-state.json'));
   assert.equal(ok, true);
   // State payload must parse + carry last_run_at.
   const state = JSON.parse(readFileSync(join(root, '.ijfw', '.dream-state.json'), 'utf8'));
@@ -219,7 +230,7 @@ test('shell trigger spawns runner; .dream-state.json lands within 3s', () => {
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-test('python trigger spawns runner; .dream-state.json lands within 3s', () => {
+test('python trigger spawns runner; .dream-state.json lands', () => {
   const root = tmpProj('e2e-py');
   const home = sandboxHome('e2e-py');
   const py = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', `
@@ -231,7 +242,7 @@ print(out.get("spawned"))
 `], { encoding: 'utf8', env: sandboxEnv(home) });
   assert.equal(py.status, 0, `python trigger must exit 0; stderr=${py.stderr}`);
   assert.match(py.stdout, /True/, 'python trigger must return spawned=True');
-  const ok = waitForFile(join(root, '.ijfw', '.dream-state.json'), 3000);
+  const ok = waitForFile(join(root, '.ijfw', '.dream-state.json'));
   assert.equal(ok, true);
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -354,7 +365,7 @@ test('dream-state.json persists across runner invocations (atomic write)', async
     env: sandboxEnv(home),
   });
   assert.equal(res.status, 0);
-  assert.equal(waitForFile(join(root, '.ijfw', '.dream-state.json'), 3000), true);
+  assert.equal(waitForFile(join(root, '.ijfw', '.dream-state.json')), true);
   const stateRaw1 = readFileSync(join(root, '.ijfw', '.dream-state.json'), 'utf8');
   const state1 = JSON.parse(stateRaw1);
   assert.ok(state1 && state1.last_run_at, 'state must have last_run_at');

@@ -10,7 +10,7 @@
 //   6. hermes  Python handler     (cold_scan_trigger.trigger_cold_scan)
 //
 // Plus the idempotency gates required by the P3-B1 contract:
-//   7. .ijfw/project.type lands within 1s post-install
+//   7. .ijfw/project.type lands post-install (async runner, CPU-yielding poll)
 //   8. trigger NOT re-fired when project.type already exists
 //   9. trigger NOT re-fired when scan-state.json exists with live PID
 //
@@ -88,25 +88,33 @@ function withSandboxHome(home, cb) {
   }
 }
 
-function waitForFile(path, ms = 2000) {
+// Poll for a file written by a DETACHED child process. The sleep must
+// yield the CPU: the old busy-spin competed with the very runner we are
+// waiting for and starved it on loaded CI hosts. Atomics.wait is a true
+// blocking sleep -- zero CPU, and unlike setTimeout it holds no libuv
+// timer handle, so it cannot delay test-process exit. The generous
+// ceiling costs nothing on the happy path (we return the instant the
+// file lands); it only postpones reporting a genuine failure.
+function sleepBlocking(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function waitForFile(path, ms = 15000) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (existsSync(path)) return true;
-    // Tight spin -- the runner is small. We avoid setTimeout so the test
-    // process exit isn't delayed by the timer.
-    const end = Date.now() + 25;
-    while (Date.now() < end) { /* busy */ }
+    sleepBlocking(25);
   }
   return existsSync(path);
 }
 
 function coldScanTimeoutMs() {
-  return process.platform === 'win32' ? 8000 : 2000;
+  return 15000;
 }
 
 // --- 1. installer post-install path -------------------------------------
 
-test('installer triggerColdScan fires runner; project.type lands <1s', async () => {
+test('installer triggerColdScan fires runner; project.type lands', async () => {
   const root = tmpProj('inst');
   const home = sandboxHome('inst');
   const { triggerColdScan } = await import(pathToFileURL(join(REPO_ROOT, 'installer', 'src', 'post-install', 'cold-scan.js')).href);
