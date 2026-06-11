@@ -13,11 +13,11 @@ jobs:
     name: Preflight (ubuntu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.x'
           cache: npm
@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload preflight report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: preflight-report-ubuntu
           path: installer/preflight-report.json
@@ -47,9 +47,9 @@ jobs:
     name: Preflight (windows -- PSScriptAnalyzer)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.x'
 
@@ -71,11 +71,11 @@ jobs:
     name: check-all.sh
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Pin Node 22.x (matches the other jobs). Without this, check-all ran on the
       # runner's default Node, where node:sqlite is unavailable/partial and the
       # mcp-server suite failed ~129 sqlite-backed tests.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.x'
       # check-all.sh runs the mcp-server suite, which needs better-sqlite3 +
@@ -91,7 +91,7 @@ jobs:
     name: Plugin manifest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate plugin manifest JSON
         run: node -e "JSON.parse(require('fs').readFileSync('claude/.claude-plugin/plugin.json','utf8'))"
       - name: Required plugin manifest fields
@@ -108,9 +108,9 @@ jobs:
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.x'
 
