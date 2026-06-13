@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.6.3] - 2026-06-13 - Smart-detect seed gate (stop littering scratch dirs)
+
+IJFW used to write its project files into every directory a session started in,
+including throwaway scratch dirs and ephemeral "temporary spaces" (e.g. Wayland).
+A one-shot chat in a temp space got `ijfw/`, `AGENTS.md`, and `CLAUDE.md` it never
+asked for. This release gates all on-disk writes behind a single rule.
+
+### Changed (behavior)
+
+- **IJFW now only materializes project files in a real project.** "Real project"
+  means the directory carries a recognized marker (a VCS dir like `.git`, or a
+  language manifest like `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml`
+  / `tsconfig.json` and friends), or you explicitly ran `ijfw init` (which drops
+  `.ijfw/project`). With no marker, memory recall still works in-session, but
+  nothing is written to disk. This is the same rule the codebase indexer already
+  enforced (issue #16), now applied to every write surface: the visible `ijfw/`
+  brain layer (dream pipeline), `AGENTS.md`, `CLAUDE.md` / `GEMINI.md`, and the
+  `.ijfw/project.type` cold scan.
+- `ijfw init` is the one-command override for a real project that lacks a VCS dir
+  or manifest.
+
+### Fixed
+
+- **Codex and Gemini session-start hooks gained the `$HOME` / filesystem-root
+  refusal** they never had. The shared seed gate refuses to author config in the
+  home directory, its ancestors, or the filesystem root, closing a latent
+  global-config-bleed path on those two platforms (Claude already had this guard).
+- **Release-gate flake:** the `gitleaks` preflight gate runs `detect --no-git`,
+  which walks `node_modules` (~95 MB) and could exceed the gate's 30s spawn
+  timeout, killing a clean scan mid-flight and reporting a false FAIL. The spawn
+  timeout is now 120s, and `node_modules` / `dist` / `.git` are allowlisted so a
+  third-party fixture cannot itself flag the gate.
+- **`esbuild` bumped to 0.28.1** (build-only devDep) to clear advisory
+  GHSA-gv7w-rqvm-qjhr. Not shipped to users; build tooling only.
+
+The seed rule lives once per language surface (`seed-gate.js`, `seed-gate.sh`, and
+the indexer guard) and the three marker lists are locked together by a drift test.
+
 ## [1.6.2] - 2026-06-11 - Full-audit correctness sweep
 
 A 14-angle audit of the entire codebase (every finding adversarially verified

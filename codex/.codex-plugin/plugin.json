@@ -1,13 +1,21 @@
 {
   "name": "ijfw",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "IJFW -- AI efficiency layer for Codex. 19 workflow skills, 22 command aliases, 6 hook events, persistent project memory via MCP, project teams, swarm orchestration, and design intelligence. One install layer across 15 AI coding platforms.",
   "author": "Sean Donahoe",
-  "contributors": ["Ferrox Labs (https://ferroxlabs.com)"],
+  "contributors": [
+    "Ferrox Labs (https://ferroxlabs.com)"
+  ],
   "homepage": "https://github.com/FerroxLabs/ijfw",
   "license": "MIT",
   "marketplace_category": "productivity",
-  "keywords": ["workflow", "memory", "audit", "trident", "efficiency"],
+  "keywords": [
+    "workflow",
+    "memory",
+    "audit",
+    "trident",
+    "efficiency"
+  ],
   "min_codex_version": "0.99.0",
   "skills_dir": "skills",
   "commands_dir": "commands",
