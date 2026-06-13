@@ -36,6 +36,9 @@ import { writeLayoutVersion } from './src/brain/layout-sentinel.js';
 function freshRoot() {
   const r = mkdtempSync(join(tmpdir(), 'v155-dream-'));
   mkdirSync(join(r, '.ijfw'), { recursive: true });
+  // Bless the fixture as a real project so the dream-pipeline seed gate
+  // (shouldSeedProject) lets it run. `.ijfw/project` is the `ijfw init` marker.
+  writeFileSync(join(r, '.ijfw', 'project'), '# test fixture: blessed project');
   writeLayoutVersion(r, 2);
   return r;
 }
