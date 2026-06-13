@@ -27,10 +27,19 @@ export async function run(ctx) {
     };
   }
 
+  // `--no-git` scans the working tree as raw files and does NOT honor
+  // .gitignore, so it walks node_modules + dist too. A full-tree scan of this
+  // repo reads ~95 MB and takes ~30-35s on a dev machine -- the prior 30s
+  // spawn timeout sat right on that boundary and would intermittently kill a
+  // CLEAN scan mid-flight, reporting a false FAIL (a fresh `npm install` that
+  // grows node_modules was enough to tip it over). The scan itself is correct;
+  // it just needs headroom. 120s is generous for both local and CI runners.
+  // (False-positive findings inside node_modules/dist are separately suppressed
+  // by the build-dir allowlist in .gitleaks.toml.)
   const res = spawnSync(
     'gitleaks',
     ['detect', '--no-git', '--source', ctx.repoRoot, '--gitleaks-ignore-path', '.gitleaksignore', '-v', '--exit-code', '1'],
-    { encoding: 'utf8', cwd: ctx.repoRoot, timeout: 30_000 },
+    { encoding: 'utf8', cwd: ctx.repoRoot, timeout: 120_000 },
   );
 
   const durationMs = Date.now() - t0;

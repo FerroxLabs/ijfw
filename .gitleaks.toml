@@ -41,3 +41,11 @@ description = "IJFW profile-derive cursor state. Runtime-only, gitignored; the k
 paths = [
   '''\.ijfw/\.profile-derive-cursor\.json''',
 ]
+
+[[allowlists]]
+description = "Build + dependency directories. The preflight gitleaks gate runs `detect --no-git`, which scans the working tree as raw files and does NOT honor .gitignore -- so it also walks node_modules / dist (third-party or generated, never published from this repo). This allowlist suppresses any key-shaped FINDINGS inside those dirs so a third-party fixture cannot flake the gate to a false FAIL. (It does not shorten the walk itself; the gate's spawn timeout was raised to cover the full-tree scan duration.)"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.git/''',
+  '''(^|/)dist/''',
+]

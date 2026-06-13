@@ -33,7 +33,7 @@
     "prepublishOnly": "npm run build && npm run preflight && npm run pack:check"
   },
   "devDependencies": {
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "marked": "^18.0.2"
   },
   "engines": {
