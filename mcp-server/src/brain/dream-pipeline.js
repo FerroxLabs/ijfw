@@ -21,6 +21,7 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { resolveBrainPaths } from './paths.js';
+import { shouldSeedProject } from './seed-gate.js';
 import { scanInbox, writeManifest, commitProcessed, isProcessed } from './dump-ingest.js';
 import { extractFile } from './extractors/index.js';
 import { BudgetGuard } from './budget-guard.js';
@@ -217,9 +218,24 @@ function isProcessedDouble(db, processedDir, fileName) {
 export async function runDreamCycle({ db, repoRoot, env = process.env, cycleId, extractFacts } = {}) {
   if (!db) throw new Error('dream-pipeline: db required');
   if (!repoRoot) throw new Error('dream-pipeline: repoRoot required');
+  // Seed gate: the dream cycle materializes the VISIBLE `ijfw/` layer
+  // (dump/inbox, dump/processed, wiki/...). Do not create it in a directory
+  // that is not a real project -- a throwaway scratch dir or an ephemeral
+  // "temporary space" (Wayland) running a one-shot chat should stay clean.
+  // A project marker (.git, a manifest) or an explicit `ijfw init` re-enables
+  // it. Memory recall still works in-session; only the on-disk content layer
+  // is withheld. Honest no-op return so callers/receipts see why nothing ran.
+  const cid0 = cycleId || `cycle-${Date.now()}`;
+  if (!shouldSeedProject(repoRoot)) {
+    return {
+      processed: 0, pagesCompiled: 0, factsInserted: 0,
+      budgetExhausted: false, cycleId: cid0, errors: [],
+      skipped: 'no-project-marker',
+    };
+  }
   ensureFactsTable(db);
   const paths = resolveBrainPaths(repoRoot);
-  const cid = cycleId || `cycle-${Date.now()}`;
+  const cid = cid0;
   // Parse budget caps from env explicitly so zero is respected (Number('0')||default
   // would silently fall back to the default; we need the caller's $0 to mean $0).
   const cycleUsdRaw = env.IJFW_DREAM_BUDGET_USD != null ? Number(env.IJFW_DREAM_BUDGET_USD) : undefined;

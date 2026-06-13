@@ -59,6 +59,39 @@ def _agents_md_scripts_dir(ctx):
     return None
 
 
+def _should_seed(ctx, project_root):
+    """Seed gate (smart-detect): may IJFW materialize on-disk content here?
+
+    True only when project_root is a real project -- one carrying a VCS dir /
+    language manifest, or blessed with `ijfw init`. A throwaway scratch dir or
+    an ephemeral "temporary space" running a one-shot chat must stay clean (no
+    AGENTS.md, no cold-scan). Delegates to the shared seed-gate.sh (exit 0 =
+    seed, 1 = skip) so the marker list has a single source of truth across the
+    product. ijfw_should_seed inside the script also refuses $HOME / its
+    ancestors / the filesystem root.
+
+    Fail-open (return True) when the script is unavailable so an older or
+    partial install never silently loses AGENTS.md on a real project.
+    """
+    try:
+        scripts_dir = _agents_md_scripts_dir(ctx)
+        if scripts_dir is None:
+            return True
+        gate = scripts_dir / "seed-gate.sh"
+        if not gate.is_file():
+            return True
+        res = subprocess.run(
+            ["bash", str(gate), str(project_root)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return res.returncode == 0
+    except Exception:
+        return True
+
+
 def _build_agents_md_blocks(project_root):
     """Construct (memory_block, agents_block) via the shared build_blocks.py.
 
@@ -103,6 +136,10 @@ def _trigger_cold_scan(ctx, project_root):
     Fire-and-forget; never blocks the on_session_start hook.
     """
     import sys
+    # Seed gate: do not classify / cold-scan a non-project dir (scratch /
+    # temporary space) or $HOME. See _should_seed.
+    if not _should_seed(ctx, project_root):
+        return
     scripts_dir = _agents_md_scripts_dir(ctx)
     if scripts_dir is None:
         return
@@ -183,6 +220,10 @@ def _merge_agents_md(ctx, project_root):
     P2-B2: hoist-frontmatter runs after the merge.
     P2-M4: log file open via `with` block; Popen dups the fd, parent closes.
     """
+    # Seed gate: never author AGENTS.md in a non-project dir (scratch / temporary
+    # space) or in $HOME. See _should_seed.
+    if not _should_seed(ctx, project_root):
+        return
     scripts_dir = _agents_md_scripts_dir(ctx)
     if scripts_dir is None:
         return

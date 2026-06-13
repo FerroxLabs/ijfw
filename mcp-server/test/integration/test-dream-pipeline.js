@@ -11,6 +11,9 @@ import { isProcessed, readManifest } from '../../src/brain/dump-ingest.js';
 function freshRoot() {
   const r = mkdtempSync(join(tmpdir(), 'brain-dream-'));
   mkdirSync(join(r, '.ijfw'), { recursive: true });
+  // Bless the fixture as a real project so the dream-pipeline seed gate
+  // (shouldSeedProject) lets it run. `.ijfw/project` is the `ijfw init` marker.
+  writeFileSync(join(r, '.ijfw', 'project'), '# test fixture: blessed project');
   writeLayoutVersion(r, 2);
   return r;
 }
@@ -27,6 +30,25 @@ function seedFile(root, name, body) {
   mkdirSync(inboxDir, { recursive: true });
   writeFileSync(join(inboxDir, name), body);
 }
+
+test('runDreamCycle: SEED GATE -- signal-less dir is skipped, no visible ijfw/ created', async () => {
+  const db = freshDb();
+  // A bare scratch dir: .ijfw exists (hooks always make it) but NO project
+  // marker -- the throwaway "temporary space" case. Even with a file waiting
+  // in the inbox, the cycle must not materialize the visible ijfw/ layer.
+  const root = mkdtempSync(join(tmpdir(), 'brain-dream-bare-'));
+  try {
+    mkdirSync(join(root, '.ijfw'), { recursive: true });
+    writeLayoutVersion(root, 2);
+    seedFile(root, 'note.md', '# title\n\nbody.\n'); // creates ijfw/dump/inbox for setup
+    rmSync(join(root, 'ijfw'), { recursive: true, force: true }); // remove it; the cycle must not recreate
+    const r = await runDreamCycle({ db, repoRoot: root });
+    assert.equal(r.skipped, 'no-project-marker');
+    assert.equal(r.processed, 0);
+    assert.equal(r.factsInserted, 0);
+    assert.equal(existsSync(join(root, 'ijfw')), false, 'visible ijfw/ must NOT be created in a signal-less dir');
+  } finally { rmSync(root, { recursive: true, force: true }); db.close(); }
+});
 
 test('runDreamCycle: empty inbox -> processed=0, no error', async () => {
   const db = freshDb();

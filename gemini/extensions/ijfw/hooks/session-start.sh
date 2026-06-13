@@ -117,6 +117,7 @@ fi
 _AGENTS_LOCK=""
 _AGENTS_BUILD=""
 _AGENTS_HOIST=""
+_AGENTS_SCRIPTS_DIR=""
 for _cand in \
     "$HOME/.ijfw/claude/skills/ijfw-agents-md/scripts" \
     "$(dirname "$0")/../../../../claude/skills/ijfw-agents-md/scripts"; do
@@ -124,10 +125,27 @@ for _cand in \
     _AGENTS_LOCK="$_cand/lock.sh"
     _AGENTS_BUILD="$_cand/build-blocks.sh"
     _AGENTS_HOIST="$_cand/hoist-frontmatter.sh"
+    _AGENTS_SCRIPTS_DIR="$_cand"
     break
   fi
 done
-if [ -n "$_AGENTS_LOCK" ] && [ -n "$_AGENTS_BUILD" ]; then
+# Seed gate (smart-detect): only author AGENTS.md in a real project -- one with
+# a VCS dir / manifest, or blessed via `ijfw init`. A throwaway scratch dir or
+# ephemeral "temporary space" running a one-shot chat stays clean. ijfw_should_seed
+# also refuses $HOME / its ancestors / the filesystem root, closing the
+# global-config bleed this hook never guarded against. Missing seed-gate.sh =>
+# old behavior (it ships beside lock.sh, so that is a partial-install edge).
+if [ -n "$_AGENTS_SCRIPTS_DIR" ] && [ -f "$_AGENTS_SCRIPTS_DIR/seed-gate.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_AGENTS_SCRIPTS_DIR/seed-gate.sh"
+fi
+_ijfw_seed_ok() {
+  if command -v ijfw_should_seed >/dev/null 2>&1; then
+    ijfw_should_seed "$1"; return $?
+  fi
+  return 0
+}
+if [ -n "$_AGENTS_LOCK" ] && [ -n "$_AGENTS_BUILD" ] && _ijfw_seed_ok "$(pwd -P 2>/dev/null)"; then
   _AGENTS_TARGET="$(pwd -P 2>/dev/null)/AGENTS.md"
   _AGENTS_PROJECT_ROOT="$(pwd -P 2>/dev/null)"
   {

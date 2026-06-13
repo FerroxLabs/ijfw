@@ -92,9 +92,54 @@ test('static: cwd guard helper exists and gates both CLAUDE.md and AGENTS.md wri
     !/\nif true; then\n\s*# Belt-and-suspenders/.test(src),
     'CLAUDE.md write must no longer be gated by `if true;`',
   );
-  assert.match(src, /if ijfw_is_project_writable/, 'CLAUDE.md write must be gated by ijfw_is_project_writable');
+  // The CLAUDE.md + AGENTS.md writes are gated by ijfw_seed_ok, which combines
+  // the home/root guard (ijfw_is_project_writable) with the project-marker gate
+  // (ijfw_should_seed, sourced from seed-gate.sh).
+  assert.match(src, /ijfw_seed_ok\s*\(\)/, 'expected a ijfw_seed_ok() helper definition');
+  assert.match(src, /if ijfw_seed_ok "\$IJFW_WRITE_ROOT"/, 'CLAUDE.md write must be gated by ijfw_seed_ok');
+  assert.match(src, /ijfw_seed_ok "\$\(pwd -P 2>\/dev\/null\)"/, 'AGENTS.md merge must be gated by ijfw_seed_ok');
+  // ijfw_seed_ok must still call the home/root guard internally.
+  assert.match(src, /ijfw_seed_ok\(\)\s*\{[\s\S]*?ijfw_is_project_writable/, 'ijfw_seed_ok must call ijfw_is_project_writable');
   // The guard must compare against the physical $HOME so cwd==$HOME is refused.
   assert.match(src, /IJFW_HOME_PHYS/, 'expected a resolved physical-$HOME variable for the guard');
+});
+
+test('runtime SEED GATE: signal-less project dir (no marker) writes NO CLAUDE.md / AGENTS.md', { skip: skipOnWin }, async () => {
+  const home = await mkTmp('ijfw-seed-home-');
+  await fs.mkdir(path.join(home, '.ijfw'), { recursive: true });
+  // A bare scratch dir: .ijfw exists (the hook always makes it) but NO project
+  // marker -- the throwaway "temporary space" case. The hook must NOT litter it.
+  const scratch = await mkTmp('ijfw-seed-scratch-');
+  await fs.mkdir(path.join(scratch, '.ijfw'), { recursive: true });
+
+  const code = await runHook(scratch, envFor(home, scratch));
+  assert.equal(code, 0, 'session-start.sh should exit 0');
+
+  assert.ok(
+    !existsSync(path.join(scratch, 'CLAUDE.md')),
+    'SPAM: a CLAUDE.md was authored in a signal-less scratch dir',
+  );
+  assert.ok(
+    !existsSync(path.join(scratch, 'AGENTS.md')),
+    'SPAM: an AGENTS.md was authored in a signal-less scratch dir',
+  );
+});
+
+test('runtime SEED GATE: `ijfw init` marker (.ijfw/project) re-enables the write', { skip: skipOnWin }, async () => {
+  const home = await mkTmp('ijfw-seed-home3-');
+  await fs.mkdir(path.join(home, '.ijfw'), { recursive: true });
+  const blessed = await mkTmp('ijfw-seed-blessed-');
+  await fs.mkdir(path.join(blessed, '.ijfw'), { recursive: true });
+  // No git / manifest -- only the explicit `ijfw init` bless marker.
+  await fs.writeFile(path.join(blessed, '.ijfw', 'project'), '# blessed');
+
+  const code = await runHook(blessed, envFor(home, blessed));
+  assert.equal(code, 0, 'session-start.sh should exit 0');
+
+  assert.ok(
+    existsSync(path.join(blessed, 'CLAUDE.md')),
+    '`ijfw init`-blessed dir must get a CLAUDE.md (override works)',
+  );
 });
 
 // ---------------------------------------------------------------------------

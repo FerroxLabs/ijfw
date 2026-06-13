@@ -30,6 +30,21 @@ if [ ! -d "$PROJECT_ROOT" ] && command -v cygpath >/dev/null 2>&1; then
 fi
 [ -d "$PROJECT_ROOT" ] || exit 0
 
+# Seed gate: do not classify / cold-scan a directory that is not a real project
+# (no VCS dir, no manifest, no `ijfw init`). A throwaway scratch dir or an
+# ephemeral "temporary space" running a one-shot chat must stay clean -- no
+# `.ijfw/project.type`, no cold-scan spawn. Sourced from the co-located
+# seed-gate.sh; if it is missing we fall through (old behavior) rather than
+# crash the session-start hook.
+_ijfw_cst_dir="$(cd -P "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ -n "$_ijfw_cst_dir" ] && [ -f "$_ijfw_cst_dir/seed-gate.sh" ]; then
+  # shellcheck source=seed-gate.sh
+  . "$_ijfw_cst_dir/seed-gate.sh"
+  if command -v ijfw_should_seed >/dev/null 2>&1; then
+    ijfw_should_seed "$PROJECT_ROOT" || exit 0
+  fi
+fi
+
 IJFW_HOME_UNIX="${IJFW_HOME:-}"
 if [ -n "$IJFW_HOME_UNIX" ] && [ ! -d "$IJFW_HOME_UNIX" ] && command -v cygpath >/dev/null 2>&1; then
   _IJFW_HOME_UNIX="$(cygpath -u "$IJFW_HOME_UNIX" 2>/dev/null || true)"

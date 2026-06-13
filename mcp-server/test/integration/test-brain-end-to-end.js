@@ -32,6 +32,9 @@ test('E2E: migration 010 -> dump ingest -> wiki compile -> MCP query', async () 
   try {
     // === 1. Scaffold legacy .ijfw/memory/ + seed a knowledge file ===
     mkdirSync(join(root, '.ijfw', 'memory'), { recursive: true });
+    // Bless as a real project so the dream-pipeline seed gate runs (the E2E
+    // exercises dump ingest -> wiki compile, which materializes visible ijfw/).
+    writeFileSync(join(root, '.ijfw', 'project'), '# test fixture: blessed project');
     const legacyKnowledge = join(root, '.ijfw', 'memory', 'knowledge.md');
     writeFileSync(legacyKnowledge, '# Legacy knowledge\n\nseen by v1 readers.\n');
     ageMtime(legacyKnowledge, 60); // ensure freshness gate passes

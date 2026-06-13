@@ -787,9 +787,37 @@ ijfw_inject_enabled() {
   return 0
 }
 
+# Seed gate (smart-detect): IJFW only authors CLAUDE.md / AGENTS.md in a real
+# project -- one carrying a VCS dir / language manifest, or blessed with
+# `ijfw init`. A throwaway scratch dir or an ephemeral "temporary space"
+# running a one-shot chat must stay clean (the #1 obtrusiveness complaint).
+# Resolve + source the shared seed-gate.sh; when it is unavailable (older
+# install) fall back to the home/root guard alone so behavior never regresses.
+IJFW_SEED_GATE=""
+for _cand in \
+    "${CLAUDE_PLUGIN_ROOT:-}/skills/ijfw-agents-md/scripts/seed-gate.sh" \
+    "$HOME/.ijfw/claude/skills/ijfw-agents-md/scripts/seed-gate.sh" \
+    "$IJFW_HOOK_DIR/../../skills/ijfw-agents-md/scripts/seed-gate.sh"; do
+  if [ -f "$_cand" ]; then IJFW_SEED_GATE="$_cand"; break; fi
+done
+if [ -n "$IJFW_SEED_GATE" ]; then
+  # shellcheck source=/dev/null
+  . "$IJFW_SEED_GATE"
+fi
+# ijfw_seed_ok <dir> -- full seed decision: the home/root guard AND (when the
+# shared gate is present) a project marker. Missing seed-gate.sh => old behavior.
+ijfw_seed_ok() {
+  ijfw_is_project_writable "$1" || return 1
+  if command -v ijfw_should_seed >/dev/null 2>&1; then
+    ijfw_should_seed "$1" || return 1
+  fi
+  return 0
+}
+
 # CLAUDE.md management runs regardless of memory state -- we want to auto-generate
 # a project context file on session 1 of a new project even if no memory exists yet.
-if ijfw_is_project_writable "$IJFW_WRITE_ROOT" && ijfw_inject_enabled; then
+# Gated on ijfw_seed_ok: only real projects (marker or `ijfw init`) get a CLAUDE.md.
+if ijfw_seed_ok "$IJFW_WRITE_ROOT" && ijfw_inject_enabled; then
   # Belt-and-suspenders: inject memory into CLAUDE.md at a managed section.
   # Claude Code ALWAYS loads CLAUDE.md -- this is the one guaranteed visibility
   # path. We use markers so we never touch user-authored content; only the
@@ -1012,7 +1040,7 @@ for _cand in \
     break
   fi
 done
-if [ "$IJFW_MIN" != "1" ] && [ -n "$AGENTS_MD_LOCK" ] && [ -n "$AGENTS_MD_BUILD" ] && ijfw_is_project_writable "$(pwd -P 2>/dev/null)" && ijfw_inject_enabled; then
+if [ "$IJFW_MIN" != "1" ] && [ -n "$AGENTS_MD_LOCK" ] && [ -n "$AGENTS_MD_BUILD" ] && ijfw_seed_ok "$(pwd -P 2>/dev/null)" && ijfw_inject_enabled; then
   AGENTS_MD_TARGET="$(pwd -P 2>/dev/null)/AGENTS.md"
   AGENTS_MD_PROJECT_ROOT="$(pwd -P 2>/dev/null)"
   # Background the merge so the hook stays under budget. Inside the
