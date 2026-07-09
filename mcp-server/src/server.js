@@ -20,6 +20,9 @@ import {
   accessSync, constants as fsConstants
 } from 'fs';
 import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
+import {
+  isBundleInternalPath, safeProjectDir, vetProjectRoot,
+} from './lib/project-root-guard.js';
 import { resolveBrainPaths } from './brain/paths.js';
 import { migrateFactsInternalOnce } from './brain/migrate-facts-internal-once.js';
 // v1.5.2.1 F3: fs-layout migrations live in their own directory with their
@@ -297,86 +300,13 @@ const VALID_MEMORY_TYPES = ['decision', 'observation', 'pattern', 'handoff', 'pr
 // Picking a writable root at startup eliminates the EACCES-on-mkdir failure
 // mode that corrupts the MCP stdio handshake (any stderr byte during init
 // can make the client mark the server as failed).
-function validatePath(raw) {
-  if (!raw) return null;
-  const resolved = resolve(raw);
-  const normalized = normalize(resolved);
-  if (!isAbsolute(normalized)) return null;
-  const parts = normalized.split(/[\\/]+/);
-  if (parts.includes('..')) return null;
-  return normalized;
-}
-
-// Bundle-internal path rejection (hardens against FerroxLabs/wayland#755).
-// When a host app spawns this server with cwd inside its own signed bundle
-// (e.g. Wayland.app/Contents/Resources/app.asar.unpacked/...), the cwd IS
-// writable, so the old writability-only check accepted it as project root.
-// The layout migration then wrote .ijfw/.layout-version INSIDE the bundle,
-// breaking the macOS codesign seal and blocking every child process the app
-// spawned afterwards. A bundle interior is never a legitimate project root,
-// no matter how the candidate arrived (env var, CLAUDE_PROJECT_DIR, or cwd).
-// Segment matching (not exact-match) so any depth inside the bundle is
-// rejected: <anything>.asar / <anything>.asar.unpacked segments (Electron
-// archives), and any *.app segment immediately followed by Contents (macOS
-// bundle layout). Case-insensitive: macOS/Windows filesystems are.
-function isBundleInternalPath(p) {
-  if (!p || typeof p !== 'string') return false;
-  const segs = normalize(p).split(/[\\/]+/).filter(Boolean);
-  for (let i = 0; i < segs.length; i++) {
-    const s = segs[i].toLowerCase();
-    if (/\.asar(\.unpacked)?$/.test(s)) return true;
-    if (s.endsWith('.app') && i + 1 < segs.length && segs[i + 1].toLowerCase() === 'contents') {
-      return true;
-    }
-  }
-  return false;
-}
-
-function isWritable(dir) {
-  try {
-    if (!existsSync(dir)) {
-      // Try to create it; if mkdir fails, treat as non-writable.
-      mkdirSync(dir, { recursive: true });
-      return true;
-    }
-    // v1.5.2.1 H-1 (Lens 1): previously wrote+unlinked a probe file
-    // (`.ijfw-probe-<pid>-<ts>`). That broke the "importing server.js
-    // produces ZERO filesystem artifacts" contract: the probe leaked
-    // under inotify/fswatch even when self-tests in tmpdir saw nothing.
-    // accessSync(W_OK) gives the same writability signal with no I/O.
-    accessSync(dir, fsConstants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function safeProjectDir() {
-  // Every candidate must pass BOTH gates: not bundle-internal (wayland#755)
-  // AND writable. A rejected candidate falls through to the next-safest
-  // option; the HOME fallback guarantees we never crash the server (any
-  // stderr byte during MCP init makes the client mark the server failed).
-
-  // 1. Explicit IJFW_PROJECT_DIR wins (user or installer set it deliberately).
-  //    Still validated: even an explicit signal must not point inside a
-  //    signed app bundle.
-  const fromIjfw = validatePath(process.env.IJFW_PROJECT_DIR);
-  if (fromIjfw && !isBundleInternalPath(fromIjfw) && isWritable(fromIjfw)) return fromIjfw;
-
-  // 2. CLAUDE_PROJECT_DIR (set by some Claude Code versions).
-  const fromClaude = validatePath(process.env.CLAUDE_PROJECT_DIR);
-  if (fromClaude && !isBundleInternalPath(fromClaude) && isWritable(fromClaude)) return fromClaude;
-
-  // 3. CWD if writable -- normal case for shell-invoked use and Claude Code
-  //    sessions rooted in a project. Hosts sometimes spawn MCP servers with
-  //    cwd inside their own bundle (wayland#755) -- never accept that.
-  const cwd = process.cwd();
-  if (!isBundleInternalPath(cwd) && isWritable(cwd)) return cwd;
-
-  // 4. HOME fallback -- always writable for the user. Memory becomes
-  //    user-global but we stay alive instead of crashing.
-  return homedir();
-}
+//
+// wayland#755 round 2: validatePath / isWritable / isBundleInternalPath /
+// safeProjectDir moved to lib/project-root-guard.js so the dispatch layer,
+// the fts5 modules, and the CLI runner share ONE vetting point instead of
+// hand-rolled `candidate || IJFW_PROJECT_DIR || process.cwd()` fallbacks.
+// vetProjectRoot() is the gate for caller-supplied roots (MCP tool args,
+// dispatch ctx). Re-exported at the bottom of this file for test back-compat.
 
 const PROJECT_DIR = safeProjectDir();
 const PROJECT_HASH = createHash('sha256').update(PROJECT_DIR).digest('hex').slice(0, 12);
@@ -2338,12 +2268,11 @@ function handleMessage(msg) {
               const { query } = await import('./orchestrator/state-sdk.js');
               const payload = (a.payload && typeof a.payload === 'object') ? a.payload : {};
               const ctx = {
-                // PROJECT_DIR fallback (not raw cwd): state-sdk writes under
-                // <root>/.ijfw, and an unvetted spawn cwd can sit inside an
-                // app bundle (wayland#755 defense-in-depth).
-                projectRoot: typeof a.projectRoot === 'string' && a.projectRoot.length > 0
-                  ? a.projectRoot
-                  : PROJECT_DIR,
+                // vetProjectRoot (not raw wire input): state-sdk writes under
+                // <root>/.ijfw, and BOTH an unvetted spawn cwd and a
+                // caller-supplied a.projectRoot can sit inside an app bundle
+                // (wayland#755 defense-in-depth, round 2).
+                projectRoot: vetProjectRoot(a.projectRoot, PROJECT_DIR),
               };
               if (typeof a.subagentId === 'string' && a.subagentId.length > 0) ctx.subagentId = a.subagentId;
               if (typeof a.homeDir === 'string' && a.homeDir.length > 0) ctx.homeDir = a.homeDir;
@@ -2509,7 +2438,9 @@ function handleMessage(msg) {
               : null;
             if (parsedQuery && (parsedQuery.namespace === 'compute' || parsedQuery.namespace === 'graph')) {
               const dispatched = await dispatchSearch(parsedQuery, {
-                projectRoot: searchArgs.projectRoot,
+                // wayland#755 round 2: wire-supplied root must pass the
+                // bundle gate before it can become an .ijfw write target.
+                projectRoot: vetProjectRoot(searchArgs.projectRoot, PROJECT_DIR),
                 limit: searchArgs.limit,
               });
               if (dispatched !== null) {
@@ -2570,7 +2501,12 @@ function handleMessage(msg) {
             const parsedRun = parseColonCommand(command);
             if (parsedRun) {
               const dispatched = await dispatchRun(parsedRun, {
-                projectRoot: cwd,
+                // wayland#755 round 2: the raw `cwd` tool arg was fed
+                // straight to the dispatch layer, whose fts5 openDb mkdirs
+                // <root>/.ijfw/index -- the exact bundle write this fix
+                // exists to prevent. runCommand below still executes in the
+                // caller's cwd (that is behavior, not a write root).
+                projectRoot: vetProjectRoot(cwd, PROJECT_DIR),
                 sessionId: process.env.IJFW_SESSION_ID,
               });
               if (dispatched !== null) {
@@ -2907,5 +2843,5 @@ export {
   MEMORY_DIR, FACTS_FILE, FACTS_DB_FILE,
   getFactsDb,
   paths,
-  isBundleInternalPath, safeProjectDir,
+  isBundleInternalPath, safeProjectDir, vetProjectRoot,
 };

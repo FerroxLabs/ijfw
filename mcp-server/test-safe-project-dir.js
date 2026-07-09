@@ -8,24 +8,30 @@
  * .ijfw/.layout-version inside the bundle, broke the codesign seal, and
  * macOS then blocked every child process the app spawned.
  *
- * Contract under test:
+ * Contract under test (lib/project-root-guard.js, re-exported by server.js):
  *   1. isBundleInternalPath(): segment-match rejection of *.asar,
- *      *.asar.unpacked, and *.app/Contents (case-insensitive) at any depth.
+ *      *.asar.unpacked, and *.app/Contents (case-insensitive) at any depth;
+ *      plus the fs-backed pass -- a *.app level with a REAL Contents dir on
+ *      disk is a live bundle even when "Contents" never appears in the path
+ *      string (bundle ROOT, bundle-internal sibling of Contents).
  *   2. safeProjectDir(): every candidate (IJFW_PROJECT_DIR,
- *      CLAUDE_PROJECT_DIR, cwd) passes the bundle gate; rejection falls
- *      through to the next-safest option and never throws; HOME is the
- *      terminal fallback.
+ *      CLAUDE_PROJECT_DIR, cwd) passes the bundle gate -- including through
+ *      a symlink (realpath defense); rejection falls through to the
+ *      next-safest option and never throws; HOME is the terminal fallback.
  *   3. Rejection happens BEFORE the writability probe, so a rejected
  *      candidate directory is never created as a side-effect.
+ *   4. vetProjectRoot(): caller-supplied roots (MCP tool args, dispatch
+ *      ctx, CLI flags) get the same gate; a rejected candidate falls back,
+ *      never throws, never yields a bundle interior.
  */
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, mkdirSync, existsSync, rmSync, symlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import os from 'node:os';
 
-import { isBundleInternalPath, safeProjectDir } from './src/server.js';
+import { isBundleInternalPath, safeProjectDir, vetProjectRoot } from './src/server.js';
 
 // --- env/cwd isolation ------------------------------------------------------
 
@@ -116,12 +122,14 @@ test('null/empty/non-string input is safely false, never a throw', () => {
 
 test('IJFW_PROJECT_DIR is the highest-priority signal when valid', () => {
   const dir = mkTmp();
+  const claudeDir = mkTmp(); // present but must lose
   try {
     process.env.IJFW_PROJECT_DIR = dir;
-    process.env.CLAUDE_PROJECT_DIR = mkTmp(); // present but must lose
+    process.env.CLAUDE_PROJECT_DIR = claudeDir;
     assert.equal(safeProjectDir(), dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(claudeDir, { recursive: true, force: true });
   }
 });
 
@@ -188,4 +196,129 @@ test('normal writable cwd is still accepted when no env candidates exist', () =>
     process.chdir(ORIG_CWD);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- Round 2: fs-backed bundle ROOT rejection ---------------------------------
+
+test('bundle ROOT (terminal *.app with a real Contents dir) is rejected', () => {
+  const tmp = mkTmp();
+  try {
+    const appRoot = join(tmp, 'Fake.app');
+    mkdirSync(join(appRoot, 'Contents'), { recursive: true });
+    assert.equal(isBundleInternalPath(appRoot), true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('bundle-internal SIBLING of Contents is rejected via the fs walk', () => {
+  const tmp = mkTmp();
+  try {
+    // Lexically clean ("Contents" never appears in the candidate string),
+    // but the ancestor Fake.app has a real Contents dir -> live bundle.
+    const appRoot = join(tmp, 'Fake.app');
+    mkdirSync(join(appRoot, 'Contents'), { recursive: true });
+    assert.equal(isBundleInternalPath(join(appRoot, 'Resources', 'srv')), true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('a real directory named *.app WITHOUT a Contents dir stays accepted', () => {
+  const tmp = mkTmp();
+  try {
+    const projDir = join(tmp, 'my.app');
+    mkdirSync(join(projDir, 'src'), { recursive: true });
+    assert.equal(isBundleInternalPath(projDir), false);
+    assert.equal(isBundleInternalPath(join(projDir, 'src')), false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('bundle-ROOT cwd is skipped by safeProjectDir', () => {
+  const tmp = mkTmp();
+  try {
+    const appRoot = join(tmp, 'Fake.app');
+    mkdirSync(join(appRoot, 'Contents'), { recursive: true });
+    process.chdir(appRoot);
+    const result = safeProjectDir();
+    assert.notEqual(resolve(result), resolve(process.cwd()), 'must not adopt the bundle root cwd');
+    assert.equal(result, os.homedir());
+  } finally {
+    process.chdir(ORIG_CWD);
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// --- Round 2: symlink (realpath) defense ---------------------------------------
+
+test('IJFW_PROJECT_DIR symlinked INTO a bundle is rejected (realpath defense)', () => {
+  const tmp = mkTmp();
+  const cwdDir = mkTmp();
+  try {
+    const bundleInner = join(tmp, 'Real.app', 'Contents', 'Resources', 'app.asar.unpacked');
+    mkdirSync(bundleInner, { recursive: true });
+    const link = join(tmp, 'innocent-project');
+    symlinkSync(bundleInner, link, 'dir');
+
+    process.env.IJFW_PROJECT_DIR = link; // lexically clean, physically a bundle
+    process.chdir(cwdDir);
+    const result = safeProjectDir();
+    assert.notEqual(result, link, 'must not adopt the symlinked bundle candidate');
+    // Falls through to the (clean, writable) cwd.
+    assert.equal(result, process.cwd());
+  } finally {
+    process.chdir(ORIG_CWD);
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(cwdDir, { recursive: true, force: true });
+  }
+});
+
+// --- Round 2: vetProjectRoot (caller-supplied roots) ---------------------------
+
+test('vetProjectRoot returns a clean caller-supplied root resolved', () => {
+  const dir = mkTmp();
+  try {
+    assert.equal(vetProjectRoot(dir, '/fallback'), resolve(dir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('vetProjectRoot rejects a bundle-internal caller root and uses the fallback', () => {
+  const fallback = os.homedir();
+  assert.equal(
+    vetProjectRoot('/Applications/Wayland.app/Contents/Resources/app.asar.unpacked/srv', fallback),
+    fallback,
+  );
+});
+
+test('vetProjectRoot without an explicit fallback still never yields a bundle interior', () => {
+  const result = vetProjectRoot('/opt/x/app.asar/inner');
+  assert.equal(isBundleInternalPath(result), false);
+});
+
+test('vetProjectRoot rejects a symlink into a bundle', () => {
+  const tmp = mkTmp();
+  try {
+    const bundleInner = join(tmp, 'Real.app', 'Contents', 'Resources', 'app.asar.unpacked');
+    mkdirSync(bundleInner, { recursive: true });
+    const link = join(tmp, 'looks-clean');
+    symlinkSync(bundleInner, link, 'dir');
+    const fallback = os.homedir();
+    assert.equal(vetProjectRoot(link, fallback), fallback);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('vetProjectRoot handles null/empty/relative-traversal input without throwing', () => {
+  const fallback = os.homedir();
+  assert.equal(vetProjectRoot(null, fallback), fallback);
+  assert.equal(vetProjectRoot('', fallback), fallback);
+  assert.equal(vetProjectRoot(undefined, fallback), fallback);
+  let result;
+  assert.doesNotThrow(() => { result = vetProjectRoot('/opt/foo/app.asar/x'); });
+  assert.equal(isBundleInternalPath(result), false);
 });
