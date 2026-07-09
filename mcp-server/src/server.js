@@ -307,6 +307,31 @@ function validatePath(raw) {
   return normalized;
 }
 
+// Bundle-internal path rejection (hardens against FerroxLabs/wayland#755).
+// When a host app spawns this server with cwd inside its own signed bundle
+// (e.g. Wayland.app/Contents/Resources/app.asar.unpacked/...), the cwd IS
+// writable, so the old writability-only check accepted it as project root.
+// The layout migration then wrote .ijfw/.layout-version INSIDE the bundle,
+// breaking the macOS codesign seal and blocking every child process the app
+// spawned afterwards. A bundle interior is never a legitimate project root,
+// no matter how the candidate arrived (env var, CLAUDE_PROJECT_DIR, or cwd).
+// Segment matching (not exact-match) so any depth inside the bundle is
+// rejected: <anything>.asar / <anything>.asar.unpacked segments (Electron
+// archives), and any *.app segment immediately followed by Contents (macOS
+// bundle layout). Case-insensitive: macOS/Windows filesystems are.
+function isBundleInternalPath(p) {
+  if (!p || typeof p !== 'string') return false;
+  const segs = normalize(p).split(/[\\/]+/).filter(Boolean);
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i].toLowerCase();
+    if (/\.asar(\.unpacked)?$/.test(s)) return true;
+    if (s.endsWith('.app') && i + 1 < segs.length && segs[i + 1].toLowerCase() === 'contents') {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isWritable(dir) {
   try {
     if (!existsSync(dir)) {
@@ -327,18 +352,26 @@ function isWritable(dir) {
 }
 
 function safeProjectDir() {
+  // Every candidate must pass BOTH gates: not bundle-internal (wayland#755)
+  // AND writable. A rejected candidate falls through to the next-safest
+  // option; the HOME fallback guarantees we never crash the server (any
+  // stderr byte during MCP init makes the client mark the server failed).
+
   // 1. Explicit IJFW_PROJECT_DIR wins (user or installer set it deliberately).
+  //    Still validated: even an explicit signal must not point inside a
+  //    signed app bundle.
   const fromIjfw = validatePath(process.env.IJFW_PROJECT_DIR);
-  if (fromIjfw && isWritable(fromIjfw)) return fromIjfw;
+  if (fromIjfw && !isBundleInternalPath(fromIjfw) && isWritable(fromIjfw)) return fromIjfw;
 
   // 2. CLAUDE_PROJECT_DIR (set by some Claude Code versions).
   const fromClaude = validatePath(process.env.CLAUDE_PROJECT_DIR);
-  if (fromClaude && isWritable(fromClaude)) return fromClaude;
+  if (fromClaude && !isBundleInternalPath(fromClaude) && isWritable(fromClaude)) return fromClaude;
 
   // 3. CWD if writable -- normal case for shell-invoked use and Claude Code
-  //    sessions rooted in a project.
+  //    sessions rooted in a project. Hosts sometimes spawn MCP servers with
+  //    cwd inside their own bundle (wayland#755) -- never accept that.
   const cwd = process.cwd();
-  if (isWritable(cwd)) return cwd;
+  if (!isBundleInternalPath(cwd) && isWritable(cwd)) return cwd;
 
   // 4. HOME fallback -- always writable for the user. Memory becomes
   //    user-global but we stay alive instead of crashing.
@@ -1447,7 +1480,9 @@ async function handleRecall({ context_hint, detail_level = 'standard', from_proj
 async function indexStoredEntryToFts5({ body, source, sessionId }) {
   if (typeof body !== 'string' || body.length === 0) return null;
   const fts5Mod = await import('./memory/fts5.js');
-  const root = process.env.IJFW_PROJECT_DIR || PROJECT_DIR;
+  // PROJECT_DIR already gives validated IJFW_PROJECT_DIR highest priority
+  // (safeProjectDir); raw env here would bypass the bundle/writability gates.
+  const root = PROJECT_DIR;
   const db = await fts5Mod.openDb(root);
   try {
     // indexEntry runs the ingest scrub gate + M1 indexObsidianRelations +
@@ -1727,7 +1762,9 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
     const { topKSuccessfulSkills } = await import('./orchestrator/skill-telemetry.js');
     const Database = (await import('better-sqlite3')).default;
     const { join: joinP } = await import('node:path');
-    const root = process.env.IJFW_PROJECT_DIR || process.cwd();
+    // PROJECT_DIR, not raw env/cwd: a cwd inside an app bundle must never
+    // become a .ijfw root (wayland#755 defense-in-depth).
+    const root = PROJECT_DIR;
     const dbPath = joinP(root, '.ijfw', 'index', 'memory.db');
     if (existsSync(dbPath)) {
       const db = new Database(dbPath, { readonly: true });
@@ -1965,7 +2002,10 @@ async function handleSearch({ query, limit = 10, scope = 'project', label }) {
       const body = query.slice(3).trim();
       const dvMod = await import('./memory/query-dataview.js');
       const fts5Mod = await import('./memory/fts5.js');
-      const root = process.env.IJFW_PROJECT_DIR || process.cwd();
+      // PROJECT_DIR, not raw env/cwd: openDb() mkdirs .ijfw/index under the
+      // root it is given, so an unvetted cwd could write inside an app
+      // bundle (wayland#755 defense-in-depth).
+      const root = PROJECT_DIR;
       const db = await fts5Mod.openDb(root);
       try {
         const parsed = dvMod.parseDataviewQuery(body);
@@ -2298,9 +2338,12 @@ function handleMessage(msg) {
               const { query } = await import('./orchestrator/state-sdk.js');
               const payload = (a.payload && typeof a.payload === 'object') ? a.payload : {};
               const ctx = {
+                // PROJECT_DIR fallback (not raw cwd): state-sdk writes under
+                // <root>/.ijfw, and an unvetted spawn cwd can sit inside an
+                // app bundle (wayland#755 defense-in-depth).
                 projectRoot: typeof a.projectRoot === 'string' && a.projectRoot.length > 0
                   ? a.projectRoot
-                  : process.cwd(),
+                  : PROJECT_DIR,
               };
               if (typeof a.subagentId === 'string' && a.subagentId.length > 0) ctx.subagentId = a.subagentId;
               if (typeof a.homeDir === 'string' && a.homeDir.length > 0) ctx.homeDir = a.homeDir;
@@ -2373,7 +2416,8 @@ function handleMessage(msg) {
                 maxIterations: typeof a.maxIterations === 'number' ? a.maxIterations : 3,
                 lenses: Array.isArray(a.lenses) && a.lenses.length > 0 ? a.lenses : undefined,
                 dispatch: defaultConvergeDispatch,
-                projectRoot: process.cwd(),
+                // wayland#755 defense-in-depth: PROJECT_DIR, never raw cwd.
+                projectRoot: PROJECT_DIR,
                 // v1.5.1 R4-H4 — opt-in consensus auto-fix (T27). Threaded
                 // from the tool schema so the code-fixer can genuinely fire;
                 // default false so the audit stays non-mutating unless the
@@ -2420,7 +2464,8 @@ function handleMessage(msg) {
                     },
                     remediation: [],
                   },
-                  { projectRoot: process.cwd() },
+                  // wayland#755 defense-in-depth: PROJECT_DIR, never raw cwd.
+                  { projectRoot: PROJECT_DIR },
                 );
                 // emitGateResult returns the fenced block as a string; the
                 // formatter validates it back into an object before append.
@@ -2862,4 +2907,5 @@ export {
   MEMORY_DIR, FACTS_FILE, FACTS_DB_FILE,
   getFactsDb,
   paths,
+  isBundleInternalPath, safeProjectDir,
 };
