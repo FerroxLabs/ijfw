@@ -284,11 +284,14 @@ test('audit-H4.1: in-range maxIterations is NOT clamped or warned', async () => 
 
 test('audit-H4.2: defaultConvergeDispatch source places commitRange before cycleSummary', () => {
   const src = readFileSync('./src/cross-orchestrator.js', 'utf8');
-  // Find the target = (...) ? ... : commitRange; block.
-  // The template must look like `${commitRange}\n\n---\n\n${cycleSummary}`,
-  // not `${cycleSummary}\n\n---\n\n${commitRange}`.
-  const goodPattern = /`\$\{commitRange\}\\n\\n---\\n\\n\$\{cycleSummary\}`/;
-  const badPattern  = /`\$\{cycleSummary\}\\n\\n---\\n\\n\$\{commitRange\}`/;
+  // Find the target = (...) ? ... : baseTarget; block.
+  // Issue #20 renamed the cacheable prefix from commitRange to baseTarget
+  // (the range is now MATERIALIZED to diff text before dispatch — lenses are
+  // repo-blind). baseTarget is still iteration-stable for a given range, so
+  // the cache_control invariant is unchanged: stable prefix FIRST, iteration-
+  // varying cycleSummary AFTER.
+  const goodPattern = /`\$\{baseTarget\}\\n\\n---\\n\\n\$\{cycleSummary\}`/;
+  const badPattern  = /`\$\{cycleSummary\}\\n\\n---\\n\\n\$\{(?:baseTarget|commitRange)\}`/;
   assert.ok(
     goodPattern.test(src),
     'expected commitRange-then-cycleSummary ordering (cache_control-ready prefix)'

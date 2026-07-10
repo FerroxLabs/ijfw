@@ -35,9 +35,10 @@ import { join } from 'node:path';
 
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
+import { devNull } from 'node:os';
 
 import { ROSTER, _installedCache } from './src/audit-roster.js';
-import { runCrossOp } from './src/cross-orchestrator.js';
+import { runCrossOp, buildSpawnEnv, defaultConvergeDispatch } from './src/cross-orchestrator.js';
 import { parseResponse } from './src/cross-dispatcher.js';
 import { translateAuditorError, resolveGitRange, resolveTarget } from './src/cross-orchestrator-cli.js';
 
@@ -414,12 +415,15 @@ test('issue #20: auditor spawns in a neutral cwd with no GIT_* env, even when di
 });
 
 // Helper: a throwaway git repo with two commits so ranges resolve.
+// Hermetic against the operator's global/system git config (commit.gpgsign,
+// init.templateDir shipping hooks, etc.) — adversarial-review finding 3.
 function makeTempGitRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'xa-repo-'));
   const g = (...args) => {
     const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: {
       ...process.env,
       GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
+      GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_SYSTEM: devNull,
     } });
     assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   };
@@ -475,6 +479,65 @@ test('issue #20: resolveTarget routes range-shaped non-file targets through reso
   // Non-range, non-file: unchanged passthrough (old behavior preserved).
   assert.equal(resolveTarget('some-topic-string', { cwd: repo }), 'some-topic-string');
   rmSync(repo, { recursive: true, force: true });
+});
+
+test('issue #20: buildSpawnEnv scrubs every repo-locating var (GIT_*, PWD, OLDPWD, INIT_CWD)', () => {
+  // Node's spawn `cwd` option does NOT rewrite the PWD env var — the repo
+  // path would still reach the child environment through it (adversarial-
+  // review finding 2). Pin the scrub at the unit level: a bash fake auditor
+  // can't detect this (bash recomputes PWD on startup).
+  const repo = '/Users/someone/dev/some-repo';
+  const env = buildSpawnEnv({ id: 'codex' }, {
+    PATH: '/usr/bin', HOME: '/Users/someone',
+    PWD: repo, OLDPWD: repo, INIT_CWD: repo,
+    GIT_DIR: `${repo}/.git`, GIT_WORK_TREE: repo, GIT_INDEX_FILE: `${repo}/.git/index`,
+    GIT_AUTHOR_NAME: 'x', GIT_SSH_COMMAND: 'ssh -i key',
+  });
+  for (const key of Object.keys(env)) {
+    assert.ok(!key.startsWith('GIT_'), `GIT_* var leaked into auditor env: ${key}`);
+  }
+  assert.equal(env.PWD, undefined, 'PWD must be scrubbed');
+  assert.equal(env.OLDPWD, undefined, 'OLDPWD must be scrubbed');
+  assert.equal(env.INIT_CWD, undefined, 'INIT_CWD must be scrubbed');
+  assert.equal(env.PATH, '/usr/bin', 'non-sensitive vars survive');
+  assert.equal(env.HOME, '/Users/someone', 'HOME survives (CLI auth/config discovery)');
+});
+
+test('issue #20: defaultConvergeDispatch materializes the commit range for repo-blind lenses', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'xa-conv-'));
+  const repo = makeTempGitRepo();
+  const argvFile = join(dir, 'argv.txt');
+  const stdinFile = join(dir, 'stdin.txt');
+  const scriptPath = makeFakeAuditor(dir, {
+    name: 'xa-conv-lens', argvFile, stdinFile,
+    items: [{ severity: 'low', dimension: 'x', location: 'a:1', issue: 'CONV_PROBE', whyItMatters: '', fix: '' }],
+  });
+  const fake = {
+    id: 'xaconv', family: 'oss', model: '', name: 'XA Converge Lens',
+    invoke: `${scriptPath} --lens`, note: '', detect: () => false, apiFallback: null,
+  };
+
+  const result = await withFakeRoster([fake], () =>
+    defaultConvergeDispatch({ lens: 'xaconv', commitRange: 'HEAD~1..HEAD', iteration: 1, cycleSummary: '', projectRoot: repo })
+  );
+  assert.notEqual(result.verdict, 'UNREACHABLE', `lens fired (got: ${JSON.stringify(result)})`);
+  const prompt = readFileSync(stdinFile, 'utf8');
+  assert.match(prompt, /Git range: HEAD~1\.\.HEAD/, 'lens received the materialized range header');
+  assert.match(prompt, /RANGE_SENTINEL/, 'lens received the actual diff text, not a bare revspec');
+
+  // A range that CANNOT materialize must fail loud, not vacuous-PASS: a lens
+  // with no repo access returning zero findings on a meaningless string would
+  // otherwise classify as PASS on a release-gating audit.
+  const bare = mkdtempSync(join(tmpdir(), 'xa-conv-norepo-'));
+  const loud = await withFakeRoster([fake], () =>
+    defaultConvergeDispatch({ lens: 'xaconv', commitRange: 'HEAD~1..HEAD', iteration: 1, cycleSummary: '', projectRoot: bare })
+  );
+  assert.equal(loud.verdict, 'UNREACHABLE', 'unmaterializable range → UNREACHABLE, never a vacuous PASS');
+  assert.match(loud.error || '', /could not be materialized/);
+
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(repo, { recursive: true, force: true });
+  rmSync(bare, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
