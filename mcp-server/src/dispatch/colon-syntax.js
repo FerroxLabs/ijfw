@@ -44,6 +44,7 @@ import { dirname, join } from 'path';
 // keeps the old precedence (ctx.projectRoot, then IJFW_PROJECT_DIR, then
 // cwd) but rejects bundle-internal candidates at every step.
 import { vetProjectRoot } from '../lib/project-root-guard.js';
+import { shouldSeedProject } from '../brain/seed-gate.js';
 
 // Recognised namespaces -- gates dispatchRun against typos.
 // v1.4.0 (F7): added 'override', 'extension', 'domain-manifest' for the
@@ -452,7 +453,13 @@ async function dispatchDetect(parsed, { projectRoot, sessionId }) {
       maxFiles: flags.maxFiles || undefined,
       sessionId,
     });
-    try { writeProjectType(projectRoot, result); } catch { /* best-effort cache */ }
+    // issue #26: projectRoot is bundle-vetted here (vetProjectRoot upstream),
+    // but was NOT seed-gated -- an MCP `ijfw_run detect:project_type` in a
+    // marker-less scratch dir still materialized .ijfw/project.type. Detection
+    // still returns to the caller; only the on-disk cache is gated.
+    if (shouldSeedProject(projectRoot)) {
+      try { writeProjectType(projectRoot, result); } catch { /* best-effort cache */ }
+    }
     return { ok: true, mode: 'sync', result };
   } catch (err) {
     return {

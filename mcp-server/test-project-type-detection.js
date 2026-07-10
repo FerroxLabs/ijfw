@@ -190,12 +190,29 @@ function readFileNames(dir) {
 
 test('Test 8: scan_incomplete=true + scan-state present persists for prompt', () => {
   const root = tmpDir('incomp');
+  // issue #26: scan-state persistence is now gated on shouldSeedProject, so a
+  // real project marker is required for the checkpoint to be written (a real
+  // project being scanned always has one). Detection returns scan_incomplete
+  // regardless; only the on-disk checkpoint is seed-gated.
+  w(root, 'package.json', '{"name":"incomp","version":"0.0.0"}\n');
   for (let i = 1; i <= 20; i++) w(root, `src/f${i}.js`, '//\n');
   const r = detect(root, { maxFiles: 3, resume: false });
   assert.equal(r.scan_incomplete, true);
   const state = loadScanState(root);
   assert.ok(state, 'scan-state file must be present so downstream consumers prompt');
   assert.equal(state.incomplete, true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('issue #26: detect() does NOT persist scan-state in a marker-less dir', () => {
+  const root = tmpDir('nolitter');
+  // No project marker -> seed gate refuses. Force an incomplete walk (maxFiles
+  // low, >CHECKPOINT boundary) that WOULD checkpoint in a real project.
+  for (let i = 1; i <= 20; i++) w(root, `src/f${i}.js`, '//\n');
+  const r = detect(root, { maxFiles: 3, resume: false });
+  assert.equal(r.scan_incomplete, true, 'detection still runs + returns the incomplete flag');
+  assert.equal(loadScanState(root), null, 'no scan-state may be written in a marker-less dir');
+  assert.equal(existsSync(join(root, '.ijfw')), false, 'no .ijfw dir may be created as litter');
   rmSync(root, { recursive: true, force: true });
 });
 

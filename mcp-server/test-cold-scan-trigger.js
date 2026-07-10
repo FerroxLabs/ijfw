@@ -271,3 +271,56 @@ test('trigger does NOT re-fire when scan-state.json present', () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
+
+// ---------------------------------------------------------------------------
+// issue #26 — the JS cold-scan chokepoint must honor the seed gate + bundle
+// guard, matching the bash trigger (cold-scan-trigger.sh sources seed-gate.sh).
+// The installer and programmatic callers spawn the runner DIRECTLY, bypassing
+// that wrapper, so the gate has to live in the runner itself.
+// ---------------------------------------------------------------------------
+
+const NODE_BIN = process.execPath;
+
+test('issue #26: runner does NOT write project.type into a marker-less dir', () => {
+  const d = mkdtempSync(join(tmpdir(), 'ijfw-cs26-bare-'));
+  try {
+    // No project marker (.git/package.json/etc.) — the seed gate must refuse.
+    const r = spawnSync(NODE_BIN, [RUNNER, '--project-root', d], { encoding: 'utf8' });
+    assert.equal(r.status, 0, 'runner still exits 0 (silent skip)');
+    assert.equal(existsSync(join(d, '.ijfw', 'project.type')), false,
+      'no .ijfw/project.type may be materialized in a marker-less directory');
+  } finally {
+    rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test('issue #26: runner DOES write project.type in a real project (control)', () => {
+  const d = mkdtempSync(join(tmpdir(), 'ijfw-cs26-proj-'));
+  try {
+    writeFileSync(join(d, 'package.json'), '{"name":"p","version":"0.0.0"}\n');
+    const r = spawnSync(NODE_BIN, [RUNNER, '--project-root', d], { encoding: 'utf8' });
+    assert.equal(r.status, 0);
+    assert.equal(existsSync(join(d, '.ijfw', 'project.type')), true,
+      'a real project (has a marker) still gets its cached project.type');
+  } finally {
+    rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test('issue #26: runner refuses a signed-bundle interior even with a marker', () => {
+  const base = mkdtempSync(join(tmpdir(), 'ijfw-cs26-bundle-'));
+  try {
+    // Electron-style: <base>/App.app/Contents/... with a real Contents dir so
+    // the fs-backed bundle check fires, and a package.json marker inside.
+    mkdirSync(join(base, 'App.app', 'Contents'), { recursive: true });
+    const inner = join(base, 'App.app', 'Contents', 'Resources', 'app');
+    mkdirSync(inner, { recursive: true });
+    writeFileSync(join(inner, 'package.json'), '{"name":"electron","version":"1"}\n');
+    const r = spawnSync(NODE_BIN, [RUNNER, '--project-root', inner], { encoding: 'utf8' });
+    assert.equal(r.status, 0);
+    assert.equal(existsSync(join(inner, '.ijfw', 'project.type')), false,
+      'writing .ijfw inside a signed bundle would break the codesign seal (wayland#755)');
+  } finally {
+    rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

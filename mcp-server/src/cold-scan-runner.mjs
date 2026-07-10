@@ -10,6 +10,8 @@
 //   node cold-scan-runner.mjs --project-root <path> [--no-c9] [--max-files N]
 
 import { detect, writeProjectType } from './project-type-detector.js';
+import { shouldSeedProject } from './brain/seed-gate.js';
+import { isBundleInternalDeep } from './lib/project-root-guard.js';
 
 const argv = process.argv.slice(2);
 const opts = { projectRoot: null, c9Available: true, maxFiles: null };
@@ -21,6 +23,18 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 if (!opts.projectRoot) process.exit(0);
+
+// issue #26 — seed-gate + bundle guard at the JS chokepoint. The bash trigger
+// (cold-scan-trigger.sh) already sources seed-gate.sh, but the installer and
+// programmatic callers spawn THIS runner directly, bypassing that wrapper. So
+// materializing .ijfw/project.type here into a marker-less dir, $HOME, a
+// signed app bundle, or an attacker-chosen IJFW_PROJECT_DIR regressed the
+// issue-#16 privacy fix and the wayland#755 bundle protection. isBundleInternalDeep
+// catches a bundle that happens to carry a marker (e.g. an Electron app's
+// package.json); shouldSeedProject enforces the real-project / homedir rule.
+if (isBundleInternalDeep(opts.projectRoot) || !shouldSeedProject(opts.projectRoot)) {
+  process.exit(0);
+}
 
 try {
   const result = detect(opts.projectRoot, {
