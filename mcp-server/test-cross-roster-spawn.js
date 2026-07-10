@@ -535,6 +535,43 @@ test('issue #20: defaultConvergeDispatch materializes the commit range for repo-
   assert.equal(loud.verdict, 'UNREACHABLE', 'unmaterializable range → UNREACHABLE, never a vacuous PASS');
   assert.match(loud.error || '', /could not be materialized/);
 
+  // SINGLE revs are in the converge tool's validated vocabulary ("SHA,
+  // SHA..SHA, SHA...SHA, or branch/tag ref") and must materialize too —
+  // `commitRange: "HEAD"` bypassing the gate was the re-review MEDIUM.
+  const stdinFile2 = join(dir, 'stdin2.txt');
+  const script2 = makeFakeAuditor(dir, {
+    name: 'xa-conv-lens2', argvFile: join(dir, 'argv2.txt'), stdinFile: stdinFile2,
+    items: [{ severity: 'low', dimension: 'x', location: 'a:1', issue: 'CONV_PROBE2', whyItMatters: '', fix: '' }],
+  });
+  const fake2 = { ...fake, id: 'xaconv2', name: 'XA Converge Lens 2', invoke: `${script2} --lens` };
+  const single = await withFakeRoster([fake2], () =>
+    defaultConvergeDispatch({ lens: 'xaconv2', commitRange: 'HEAD', iteration: 1, cycleSummary: '', projectRoot: repo })
+  );
+  assert.notEqual(single.verdict, 'UNREACHABLE', `single-rev target fired (got: ${JSON.stringify(single)})`);
+  const prompt2 = readFileSync(stdinFile2, 'utf8');
+  assert.match(prompt2, /Git commit: HEAD/, 'single rev materialized via git show');
+  assert.match(prompt2, /RANGE_SENTINEL/, 'lens received the commit diff, not the literal string "HEAD"');
+
+  const loudRev = await withFakeRoster([fake2], () =>
+    defaultConvergeDispatch({ lens: 'xaconv2', commitRange: 'no-such-ref-xyz', iteration: 1, cycleSummary: '', projectRoot: repo })
+  );
+  assert.equal(loudRev.verdict, 'UNREACHABLE', 'unresolvable single-token rev → UNREACHABLE, never a vacuous PASS');
+
+  // INLINE BRIEFS (whitespace-containing targets) pass through verbatim —
+  // debug-trident-trigger dispatches a full evidence pack as the target.
+  const stdinFile3 = join(dir, 'stdin3.txt');
+  const script3 = makeFakeAuditor(dir, {
+    name: 'xa-conv-lens3', argvFile: join(dir, 'argv3.txt'), stdinFile: stdinFile3,
+    items: [{ severity: 'low', dimension: 'x', location: 'a:1', issue: 'CONV_PROBE3', whyItMatters: '', fix: '' }],
+  });
+  const fake3 = { ...fake, id: 'xaconv3', name: 'XA Converge Lens 3', invoke: `${script3} --lens` };
+  const BRIEF = '## Stalled debug investigation\n\nEvidence: INLINE_BRIEF_SENTINEL fails under load';
+  const inline = await withFakeRoster([fake3], () =>
+    defaultConvergeDispatch({ lens: 'xaconv3', commitRange: BRIEF, iteration: 1, cycleSummary: '', projectRoot: repo })
+  );
+  assert.notEqual(inline.verdict, 'UNREACHABLE', 'inline brief dispatches');
+  assert.match(readFileSync(stdinFile3, 'utf8'), /INLINE_BRIEF_SENTINEL/, 'inline brief passed through verbatim');
+
   rmSync(dir, { recursive: true, force: true });
   rmSync(repo, { recursive: true, force: true });
   rmSync(bare, { recursive: true, force: true });

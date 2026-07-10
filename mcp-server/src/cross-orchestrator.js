@@ -377,6 +377,42 @@ export function resolveGitRange(raw, opts = {}) {
   return `Git range: ${raw}\n\n${text}`;
 }
 
+// resolveGitTarget — the converge-path superset of resolveGitRange. The MCP
+// converge tool's validated vocabulary is "SHA, SHA..SHA, SHA...SHA, or
+// branch/tag ref" (server.js V155-022), so SINGLE revs must materialize too
+// or `commitRange: "HEAD"` reproduces the vacuous-PASS through repo-blind
+// lenses (adversarial re-review finding). Single revs materialize as
+// `git show` of that commit. Returns null when the target neither is a
+// resolvable range nor verifies as a commit.
+export function resolveGitTarget(raw, opts = {}) {
+  if (isGitRangeShaped(raw)) return resolveGitRange(raw, opts);
+  if (typeof raw !== 'string' || !raw || raw.startsWith('-') || /\s/.test(raw)) return null;
+
+  const cap = typeof opts.sizeCap === 'number' ? opts.sizeCap : GIT_RANGE_DIFF_CAP;
+  const gitCwd = typeof opts.cwd === 'string' ? opts.cwd : process.cwd();
+  const verify = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${raw}^{commit}`],
+    { cwd: gitCwd, encoding: 'utf8' });
+  if (verify.error || verify.status !== 0) return null;
+
+  const showArgs = ['-c', 'color.diff=false', '--no-pager', 'show', '--no-ext-diff'];
+  let show = spawnSync('git', [...showArgs, raw, '--'],
+    { cwd: gitCwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (show.error || show.status !== 0) {
+    show = spawnSync('git', [...showArgs, '--stat', raw, '--'],
+      { cwd: gitCwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    if (show.error || show.status !== 0) return null;
+    const stat = show.stdout.length > cap ? show.stdout.slice(0, cap) : show.stdout;
+    return `Git commit: ${raw} (stat only -- full diff too large to inline)\n\n${stat}`;
+  }
+
+  let text = show.stdout;
+  if (text.length > cap) {
+    text = text.slice(0, cap)
+      + `\n\n[... truncated: output is ${show.stdout.length} bytes, showing first ${cap} ...]`;
+  }
+  return `Git commit: ${raw}\n\n${text}`;
+}
+
 // spawnCli -- single-settlement guard + SIGKILL on timeout or abort signal.
 // Returns { stdout, stderr, exitCode, timedOut, aborted } or null on spawn error.
 function spawnCli(pick, request, timeoutMs, signal = null, env = process.env) {
@@ -1889,14 +1925,22 @@ export async function defaultConvergeDispatch({ lens, commitRange, iteration, cy
   // text here. Passing it verbatim post-#20 would make every lens review a
   // meaningless literal string, return zero findings, and classifyVerdict
   // would report a vacuous PASS on a release-gating audit. Fail LOUD
-  // (UNREACHABLE) when a range-shaped target cannot materialize.
+  // (UNREACHABLE) when a rev-shaped target cannot materialize.
+  //
+  // Target taxonomy (re-review finding): whitespace-containing targets are
+  // INLINE BRIEFS (debug-trident-trigger passes a full evidence pack here)
+  // and go through verbatim. Single-token targets on the converge path are
+  // always revs per the MCP tool's validated vocabulary (SHA, SHA..SHA,
+  // SHA...SHA, branch/tag ref — server.js V155-022) — ranges AND single
+  // revs both materialize or fail loud.
   let baseTarget = commitRange;
-  if (isGitRangeShaped(commitRange)) {
-    const materialized = resolveGitRange(commitRange, { cwd: projectRoot || process.cwd() });
+  const isInlineBrief = typeof commitRange !== 'string' || /\s/.test(commitRange);
+  if (!isInlineBrief) {
+    const materialized = resolveGitTarget(commitRange, { cwd: projectRoot || process.cwd() });
     if (!materialized) {
       return {
         lens, verdict: VERDICT_UNREACHABLE, findings: [],
-        error: `commit range "${commitRange}" could not be materialized to a diff (invalid range, or not a git repo at ${projectRoot || process.cwd()})`,
+        error: `commit range "${commitRange}" could not be materialized to a diff (unresolvable rev/range, or not a git repo at ${projectRoot || process.cwd()})`,
       };
     }
     baseTarget = materialized;
