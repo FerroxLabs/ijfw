@@ -1183,6 +1183,47 @@ const TARGET_FILE_SIZE_CAP = 64 * 1024; // 64 KB -- leaves prompt headroom
 const TARGET_FILE_SIZE_WARN = 32 * 1024;
 const TARGET_FILE_SIZE_MAX  = 256 * 1024; // beyond this, advise chunking explicitly
 
+// Issue #20 — materialize git ranges BEFORE dispatch, same contract as the
+// issue-#6 file fix above. Previously `ijfw cross critique "HEAD~1..HEAD"`
+// (the post-commit hook's exact invocation) passed the range string to the
+// auditors verbatim; an agentic CLI (codex) then explored the repo ITSELF
+// from its inherited cwd — and mutated it (`git reset` to a grafted foreign
+// ref, destroying the just-committed branch). The auditors now receive the
+// actual diff text inline and are spawned with no repo access at all (see
+// neutralSpawnCwd + the GIT_* scrub in cross-orchestrator.js).
+//
+// Conservative by design: only strings shaped like `<rev>..<rev>` /
+// `<rev>...<rev>` are attempted, git itself validates the range (read-only
+// `git diff`), and any failure falls through to the old passthrough.
+export function resolveGitRange(raw, opts = {}) {
+  const cap = typeof opts.sizeCap === 'number' ? opts.sizeCap : TARGET_FILE_SIZE_CAP;
+  if (typeof raw !== 'string' || !raw) return null;
+  // Range shape only, no whitespace; never let the target masquerade as a
+  // git option (`--upload-pack=...` style argument injection).
+  if (raw.startsWith('-') || !/^\S+\.\.\.?\S+$/.test(raw)) return null;
+
+  const gitCwd = typeof opts.cwd === 'string' ? opts.cwd : process.cwd();
+  const probe = spawnSync('git', ['rev-parse', '--is-inside-work-tree'],
+    { cwd: gitCwd, encoding: 'utf8' });
+  if (probe.status !== 0 || probe.stdout.trim() !== 'true') return null;
+
+  const diff = spawnSync('git', ['--no-pager', 'diff', raw, '--'],
+    { cwd: gitCwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (diff.status !== 0) return null; // invalid range → passthrough upstream
+
+  let text = diff.stdout;
+  if (!text.trim()) {
+    // Valid range, no changes. Materialize that fact so the auditor doesn't
+    // receive a bare revspec string and hallucinate content for it.
+    return `Git range: ${raw}\n\n(empty diff -- no changes in this range)`;
+  }
+  if (text.length > cap) {
+    text = text.slice(0, cap)
+      + `\n\n[... truncated: diff is ${diff.stdout.length} bytes, showing first ${cap} ...]`;
+  }
+  return `Git range: ${raw}\n\n${text}`;
+}
+
 export function resolveTarget(raw, opts = {}) {
   const cap = typeof opts.sizeCap === 'number' ? opts.sizeCap : TARGET_FILE_SIZE_CAP;
   if (typeof raw !== 'string' || !raw) return raw;
@@ -1194,7 +1235,7 @@ export function resolveTarget(raw, opts = {}) {
     return raw;
   }
 
-  if (!existsSync(absPath)) return raw;
+  if (!existsSync(absPath)) return resolveGitRange(raw, opts) ?? raw;
 
   let stat;
   try {

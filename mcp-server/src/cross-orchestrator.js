@@ -15,7 +15,8 @@
 
 import { spawn } from 'node:child_process';
 import * as readline from 'node:readline';
-import { readdirSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readdirSync, mkdirSync, mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pickAuditors, isReachable, ROSTER } from './audit-roster.js';
 import { loadSwarmConfig, DEFAULT_AUDITORS } from './swarm-config.js';
@@ -270,6 +271,17 @@ export function buildSpawnEnv(pick, baseEnv) {
     if (!allowedSet.has(key)) delete env[key];
   }
 
+  // Issue #20: strip all GIT_* vars. When the dispatch is fired from a git
+  // hook (the post-commit critique), git exports GIT_DIR / GIT_WORK_TREE /
+  // GIT_INDEX_FILE into the hook environment — a second vector (besides
+  // inherited cwd, closed in spawnCli) by which an agentic auditor CLI can
+  // locate and MUTATE the repo under critique. The dispatch contract is
+  // read-only and the prompt is fully inline on stdin; no auditor needs any
+  // git context.
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('GIT_')) delete env[key];
+  }
+
   // Issue #9-A guard remains: if gemini is the pick AND its own key is set,
   // also scrub gcloud project env vars so they don't silently override.
   if (pick && pick.id === 'gemini' && env.GEMINI_API_KEY) {
@@ -279,6 +291,28 @@ export function buildSpawnEnv(pick, baseEnv) {
     delete env.CLOUDSDK_CORE_PROJECT;
   }
   return env;
+}
+
+// Issue #20 — the codex clobber. External auditor CLIs are agentic: given a
+// cwd inside the repo under critique they explore it themselves, and some
+// MUTATE it (observed: codex `git reset` the just-committed branch to
+// refs/codex/curated-sync — a grafted foreign tree — seconds after every
+// commit via the post-commit hook dispatch; aider auto-commits by design).
+// The dispatch contract is read-only: the prompt arrives fully inline on
+// stdin (file targets and git ranges are materialized by resolveTarget /
+// resolveGitRange before dispatch), so the child needs no repo access at
+// all. Every auditor therefore spawns in a fresh EMPTY temp dir instead of
+// inheriting the caller's cwd. Paired with the GIT_* scrub in buildSpawnEnv,
+// an auditor has no path back to the caller's repo.
+let _neutralCwd = null;
+export function neutralSpawnCwd() {
+  if (_neutralCwd && existsSync(_neutralCwd)) return _neutralCwd;
+  try {
+    _neutralCwd = mkdtempSync(join(tmpdir(), 'ijfw-cross-'));
+  } catch {
+    _neutralCwd = tmpdir(); // still outside any user repo
+  }
+  return _neutralCwd;
 }
 
 // spawnCli -- single-settlement guard + SIGKILL on timeout or abort signal.
@@ -320,7 +354,9 @@ function spawnCli(pick, request, timeoutMs, signal = null, env = process.env) {
     let stderr = '';
 
     try {
-      proc = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSpawnEnv(pick, env) });
+      // Issue #20: cwd MUST be the neutral temp dir, never the caller's cwd
+      // (which is the repo under critique when fired from the post-commit hook).
+      proc = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSpawnEnv(pick, env), cwd: neutralSpawnCwd() });
     } catch {
       clearTimeout(timer);
       settle(null);

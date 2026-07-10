@@ -33,10 +33,13 @@ import { mkdtempSync, writeFileSync, readFileSync, chmodSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+
 import { ROSTER, _installedCache } from './src/audit-roster.js';
 import { runCrossOp } from './src/cross-orchestrator.js';
 import { parseResponse } from './src/cross-dispatcher.js';
-import { translateAuditorError } from './src/cross-orchestrator-cli.js';
+import { translateAuditorError, resolveGitRange, resolveTarget } from './src/cross-orchestrator-cli.js';
 
 // ---------------------------------------------------------------------------
 // 1. ROSTER invariants — pin the argv tokens whose absence broke the feature.
@@ -144,7 +147,7 @@ test('roster invariant: no installed auditor invoke is a bare interactive binary
 // in runCrossOp without any network or model call.
 // ---------------------------------------------------------------------------
 
-function makeFakeAuditor(dir, { name, argvFile, stdinFile, items }) {
+function makeFakeAuditor(dir, { name, argvFile, stdinFile, items, cwdFile, gitEnvFile }) {
   const scriptPath = join(dir, name);
   const json = JSON.stringify(items);
   // Prose intentionally wraps the fence on BOTH sides to prove the parser
@@ -154,6 +157,10 @@ function makeFakeAuditor(dir, { name, argvFile, stdinFile, items }) {
   const body = [
     '#!/usr/bin/env bash',
     `printf '%s\\n' "$@" > "${argvFile}"`,
+    // Issue #20 instrumentation: record where the auditor actually runs and
+    // which GIT_* vars leak through, so the neutral-cwd contract is testable.
+    ...(cwdFile ? [`printf '%s' "$PWD" > "${cwdFile}"`] : []),
+    ...(gitEnvFile ? [`env | grep '^GIT_' > "${gitEnvFile}"; true`] : []),
     `cat > "${stdinFile}"`,
     `cat <<'XAEOF'`,
     'Thanks for the target. Here is my adversarial review below.',
@@ -336,6 +343,138 @@ test('translateAuditorError maps the common spawn/auth/timeout signatures', () =
 
   const emptyProse = translateAuditorError('gemini', 'empty', '', null);
   assert.match(emptyProse, /no parseable findings|prose/i);
+});
+
+// ---------------------------------------------------------------------------
+// 6. Issue #20 — the codex clobber. The critique dispatch must NEVER give an
+//    auditor a path back to the repo under critique: no inherited cwd, no
+//    GIT_* env (git hooks export GIT_DIR/GIT_WORK_TREE into the dispatch),
+//    and git-range targets are materialized to diff text before dispatch.
+//    Root cause on record: the post-commit hook fired
+//    `ijfw cross critique "HEAD~1..HEAD"`; the range string passed through
+//    verbatim, codex spawned with cwd inside the repo, explored it itself,
+//    and `git reset` the just-committed branch to refs/codex/curated-sync
+//    (a grafted foreign tree) seconds after every commit.
+// ---------------------------------------------------------------------------
+
+test('issue #20: auditor spawns in a neutral cwd with no GIT_* env, even when dispatched from a git hook environment', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'xa-cwd-'));
+  const projectDir = mkdtempSync(join(tmpdir(), 'xa-proj20-'));
+  const argvFile = join(dir, 'argv.txt');
+  const stdinFile = join(dir, 'stdin.txt');
+  const cwdFile = join(dir, 'cwd.txt');
+  const gitEnvFile = join(dir, 'gitenv.txt');
+
+  const scriptPath = makeFakeAuditor(dir, {
+    name: 'xa-cwd-probe', argvFile, stdinFile, cwdFile, gitEnvFile,
+    items: [{ severity: 'low', dimension: 'x', location: 'a:1', issue: 'CWD_PROBE', whyItMatters: '', fix: '' }],
+  });
+
+  const fake = {
+    id: 'xacwd', family: 'oss', model: '', name: 'XA Cwd Probe',
+    invoke: `${scriptPath} --xa-mode audit`,
+    note: '', detect: () => false, apiFallback: null,
+  };
+
+  // Simulate the post-commit hook environment: git exports GIT_DIR (and
+  // often GIT_WORK_TREE / GIT_INDEX_FILE) to hook children. These MUST be
+  // scrubbed or the auditor can locate the repo even from a neutral cwd.
+  const env = {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    CLAUDECODE: '1',
+    IJFW_AUDIT_TIMEOUT_SEC: '15',
+    GIT_DIR: join(projectDir, '.git'),
+    GIT_WORK_TREE: projectDir,
+    GIT_INDEX_FILE: join(projectDir, '.git', 'index'),
+  };
+
+  const result = await withFakeRoster([fake], () =>
+    runCrossOp({ mode: 'audit', target: 'x', projectDir, only: 'xacwd', env, quiet: true })
+  );
+  assert.equal(result.picks.length, 1, 'the probe auditor fired');
+
+  // --- neutral cwd: NOT the caller's cwd, NOT the project dir ---
+  assert.ok(existsSync(cwdFile), 'probe recorded its cwd');
+  const recordedCwd = realpathSync(readFileSync(cwdFile, 'utf8').trim());
+  const callerCwd = realpathSync(process.cwd());
+  const projReal = realpathSync(projectDir);
+  assert.notEqual(recordedCwd, callerCwd, 'auditor must not inherit the caller cwd (the repo under critique)');
+  assert.ok(!recordedCwd.startsWith(projReal + '/') && recordedCwd !== projReal,
+    'auditor cwd must be outside the project dir');
+  assert.ok(recordedCwd.includes('ijfw-cross-') || recordedCwd === realpathSync(tmpdir()),
+    `auditor cwd is the neutral temp dir (got: ${recordedCwd})`);
+
+  // --- GIT_* scrub: nothing that locates a repo survives into the child ---
+  const gitEnv = existsSync(gitEnvFile) ? readFileSync(gitEnvFile, 'utf8').trim() : '';
+  assert.equal(gitEnv, '', `no GIT_* vars may reach the auditor (got: ${gitEnv || '(none)'})`);
+
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(projectDir, { recursive: true, force: true });
+});
+
+// Helper: a throwaway git repo with two commits so ranges resolve.
+function makeTempGitRepo() {
+  const repo = mkdtempSync(join(tmpdir(), 'xa-repo-'));
+  const g = (...args) => {
+    const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
+    } });
+    assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
+  };
+  g('init', '-q');
+  writeFileSync(join(repo, 'f.js'), 'function add(a,b){ return a + b; }\n');
+  g('add', '.');
+  g('commit', '-qm', 'one');
+  writeFileSync(join(repo, 'f.js'), 'function add(a,b){ return a - b; } // RANGE_SENTINEL\n');
+  g('add', '.');
+  g('commit', '-qm', 'two');
+  return repo;
+}
+
+test('issue #20: resolveGitRange materializes a revspec range into inline diff text', () => {
+  const repo = makeTempGitRepo();
+  const out = resolveGitRange('HEAD~1..HEAD', { cwd: repo });
+  assert.ok(out, 'range resolved');
+  assert.match(out, /^Git range: HEAD~1\.\.HEAD/, 'header names the raw range');
+  assert.match(out, /RANGE_SENTINEL/, 'the actual diff content is inline');
+  assert.match(out, /^-function add\(a,b\)\{ return a \+ b/m, 'diff minus-line present');
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('issue #20: resolveGitRange materializes an empty-but-valid range explicitly', () => {
+  const repo = makeTempGitRepo();
+  const out = resolveGitRange('HEAD..HEAD', { cwd: repo });
+  assert.ok(out, 'valid empty range still materializes');
+  assert.match(out, /empty diff/, 'auditor is told the range is empty rather than handed a bare revspec');
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('issue #20: resolveGitRange refuses non-ranges, option-shaped input, and non-repo cwds', () => {
+  const repo = makeTempGitRepo();
+  // Not range-shaped: topics and file names pass through (null).
+  assert.equal(resolveGitRange('memory-architecture', { cwd: repo }), null);
+  assert.equal(resolveGitRange('f.js', { cwd: repo }), null);
+  // Option-shaped: must never be handed to git as an argument.
+  assert.equal(resolveGitRange('--upload-pack=/bin/sh..HEAD', { cwd: repo }), null);
+  // Invalid range in a real repo: git rejects it, passthrough.
+  assert.equal(resolveGitRange('nonexistent-ref-xyz..HEAD', { cwd: repo }), null);
+  // Outside any repo entirely.
+  const bare = mkdtempSync(join(tmpdir(), 'xa-norepo-'));
+  assert.equal(resolveGitRange('HEAD~1..HEAD', { cwd: bare }), null);
+  rmSync(repo, { recursive: true, force: true });
+  rmSync(bare, { recursive: true, force: true });
+});
+
+test('issue #20: resolveTarget routes range-shaped non-file targets through resolveGitRange', () => {
+  const repo = makeTempGitRepo();
+  const out = resolveTarget('HEAD~1..HEAD', { cwd: repo });
+  assert.match(out, /^Git range: /, 'resolveTarget materialized the range');
+  assert.match(out, /RANGE_SENTINEL/);
+  // Non-range, non-file: unchanged passthrough (old behavior preserved).
+  assert.equal(resolveTarget('some-topic-string', { cwd: repo }), 'some-topic-string');
+  rmSync(repo, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
