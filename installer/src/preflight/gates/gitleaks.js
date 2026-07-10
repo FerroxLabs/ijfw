@@ -38,7 +38,15 @@ export async function run(ctx) {
   // by the build-dir allowlist in .gitleaks.toml.)
   const res = spawnSync(
     'gitleaks',
-    ['detect', '--no-git', '--source', ctx.repoRoot, '--gitleaks-ignore-path', '.gitleaksignore', '-v', '--exit-code', '1'],
+    // issue #27: `--redact` masks the literal secret VALUE in the -v output.
+    // Without it, a real finding's plaintext (`Secret: ghp_...`) was captured
+    // into the FAIL `details` below, serialized into preflight-report.json, and
+    // uploaded as a public-repo CI artifact (14-30d retention) -- so the scanner
+    // that flags a leak became its own amplifier, persisting the plaintext for
+    // weeks after a dev scrubbed it from history. --redact keeps the finding's
+    // location/rule/line (value shown as REDACTED), preserving the gate's
+    // diagnostic value without leaking the secret.
+    ['detect', '--no-git', '--source', ctx.repoRoot, '--gitleaks-ignore-path', '.gitleaksignore', '--redact', '-v', '--exit-code', '1'],
     { encoding: 'utf8', cwd: ctx.repoRoot, timeout: 120_000 },
   );
 
