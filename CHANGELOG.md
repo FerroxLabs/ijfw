@@ -1,6 +1,39 @@
 # Changelog
 
-## [1.6.3] - 2026-06-13 - Smart-detect seed gate (stop littering scratch dirs)
+## [1.6.4] - 2026-07-10 - Reject bundle-internal project roots (never write inside a signed app)
+
+IJFW could adopt a *writable* directory as its project root even when that
+directory lived inside another app's signed bundle. When Wayland spawned the
+IJFW MCP server with its working directory inside `Wayland.app` (an
+`app.asar.unpacked` path), `safeProjectDir()` accepted it and the layout
+migration wrote `.ijfw/.layout-version` inside the bundle — breaking the
+code-signature seal, which on hardened-runtime macOS makes the OS deny every
+child process the host app tries to spawn (FerroxLabs/wayland#755). This
+release refuses any bundle-internal root, everywhere a root can enter.
+
+### Fixed
+
+- **`safeProjectDir()` rejects bundle-internal candidates.** A new
+  `isBundleInternalPath` guard refuses any path containing an `*.asar` /
+  `*.asar.unpacked` segment or an `*.app` bundle interior (fs-backed check for
+  a sibling `Contents`), case-insensitive, both separator styles. The check
+  runs before the writability probe, and a rejected candidate falls through to
+  the next signal (`IJFW_PROJECT_DIR` → `CLAUDE_PROJECT_DIR` → cwd) and finally
+  to `homedir()` — never a crash.
+- **All entry points share one vetted resolver.** The guard was extracted to
+  `mcp-server/src/lib/project-root-guard.js` and applied at every site that
+  previously fell back to a raw `IJFW_PROJECT_DIR || process.cwd()`: the
+  colon-syntax dispatch layer (which feeds `fts5.openDb()` and would otherwise
+  `mkdir` `.ijfw/index` under an unvetted root), the memory/compute FTS5
+  openers, `cli-run`, the state-SDK path, and the `ijfw_run` / `ijfw_search`
+  caller-supplied roots.
+- **Symlinked roots can't smuggle a bundle path in.** Env- and caller-supplied
+  candidates are `realpath`-resolved before the bundle check.
+
+### Notes
+
+- Installed copies pick this up on the next `ijfw update` (or a fresh
+  `npx @ijfw/install`).
 
 IJFW used to write its project files into every directory a session started in,
 including throwaway scratch dirs and ephemeral "temporary spaces" (e.g. Wayland).

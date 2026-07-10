@@ -1,6 +1,6 @@
 {
   "name": "@ijfw/install",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "One-command installer for IJFW -- the AI efficiency layer. One install, every AI coding agent, zero config.",
   "type": "module",
   "bin": {
