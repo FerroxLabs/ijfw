@@ -13,9 +13,10 @@
 //
 // ESM, zero external deps.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as readline from 'node:readline';
-import { readdirSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readdirSync, mkdirSync, mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pickAuditors, isReachable, ROSTER } from './audit-roster.js';
 import { loadSwarmConfig, DEFAULT_AUDITORS } from './swarm-config.js';
@@ -270,6 +271,24 @@ export function buildSpawnEnv(pick, baseEnv) {
     if (!allowedSet.has(key)) delete env[key];
   }
 
+  // Issue #20: strip all GIT_* vars. When the dispatch is fired from a git
+  // hook (the post-commit critique), git exports GIT_DIR / GIT_WORK_TREE /
+  // GIT_INDEX_FILE into the hook environment — a second vector (besides
+  // inherited cwd, closed in spawnCli) by which an agentic auditor CLI can
+  // locate and MUTATE the repo under critique. The dispatch contract is
+  // read-only and the prompt is fully inline on stdin; no auditor needs any
+  // git context.
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('GIT_')) delete env[key];
+  }
+  // Same contract, third vector: Node's spawn `cwd` option does NOT rewrite
+  // the PWD env var, so the repo's absolute path would still reach the child
+  // environment (adversarial-review finding, issue #20). OLDPWD and npm's
+  // INIT_CWD leak it the same way.
+  delete env.PWD;
+  delete env.OLDPWD;
+  delete env.INIT_CWD;
+
   // Issue #9-A guard remains: if gemini is the pick AND its own key is set,
   // also scrub gcloud project env vars so they don't silently override.
   if (pick && pick.id === 'gemini' && env.GEMINI_API_KEY) {
@@ -279,6 +298,119 @@ export function buildSpawnEnv(pick, baseEnv) {
     delete env.CLOUDSDK_CORE_PROJECT;
   }
   return env;
+}
+
+// Issue #20 — the codex clobber. External auditor CLIs are agentic: given a
+// cwd inside the repo under critique they explore it themselves, and some
+// MUTATE it (observed: codex `git reset` the just-committed branch to
+// refs/codex/curated-sync — a grafted foreign tree — seconds after every
+// commit via the post-commit hook dispatch; aider auto-commits by design).
+// The dispatch contract is read-only: the prompt arrives fully inline on
+// stdin (file targets and git ranges are materialized by resolveTarget /
+// resolveGitRange before dispatch), so the child needs no repo access at
+// all. Every auditor therefore spawns in a fresh EMPTY temp dir instead of
+// inheriting the caller's cwd. Paired with the GIT_* scrub in buildSpawnEnv,
+// an auditor has no path back to the caller's repo.
+let _neutralCwd = null;
+export function neutralSpawnCwd() {
+  if (_neutralCwd && existsSync(_neutralCwd)) return _neutralCwd;
+  try {
+    _neutralCwd = mkdtempSync(join(tmpdir(), 'ijfw-cross-'));
+  } catch {
+    _neutralCwd = tmpdir(); // still outside any user repo
+  }
+  return _neutralCwd;
+}
+
+// Issue #20 — materialize git ranges BEFORE dispatch. Auditors spawn with no
+// repo access (neutral cwd + GIT_*/PWD scrub), so any revspec target must be
+// converted to inline diff text in OUR process (read-only) or the auditor
+// reviews a meaningless literal string. Lives here (not the CLI module) so
+// defaultConvergeDispatch can use it without a circular import; the CLI
+// re-exports it.
+//
+// Conservative by design: only strings shaped like `<rev>..<rev>` /
+// `<rev>...<rev>` are attempted, git itself validates the range, and any
+// failure returns null (caller decides passthrough vs fail-loud).
+const GIT_RANGE_DIFF_CAP = 64 * 1024; // matches TARGET_FILE_SIZE_CAP in the CLI
+
+export function isGitRangeShaped(raw) {
+  return typeof raw === 'string' && !raw.startsWith('-') && /^\S+\.\.\.?\S+$/.test(raw);
+}
+
+export function resolveGitRange(raw, opts = {}) {
+  const cap = typeof opts.sizeCap === 'number' ? opts.sizeCap : GIT_RANGE_DIFF_CAP;
+  // Range shape only, no whitespace; never let the target masquerade as a
+  // git option (`--upload-pack=...` style argument injection).
+  if (!isGitRangeShaped(raw)) return null;
+
+  const gitCwd = typeof opts.cwd === 'string' ? opts.cwd : process.cwd();
+  const probe = spawnSync('git', ['rev-parse', '--is-inside-work-tree'],
+    { cwd: gitCwd, encoding: 'utf8' });
+  if (probe.error || probe.status !== 0 || probe.stdout.trim() !== 'true') return null;
+
+  // --no-ext-diff + color off: a user's global diff.external / color.diff
+  // must not contaminate the materialized prompt text.
+  const diffArgs = ['-c', 'color.diff=false', '--no-pager', 'diff', '--no-ext-diff'];
+  let diff = spawnSync('git', [...diffArgs, raw, '--'],
+    { cwd: gitCwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (diff.error || diff.status !== 0) {
+    // ENOBUFS on enormous diffs (or other local failure): degrade to --stat
+    // rather than handing the auditor a bare revspec.
+    diff = spawnSync('git', [...diffArgs, '--stat', raw, '--'],
+      { cwd: gitCwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    if (diff.error || diff.status !== 0) return null; // invalid range → caller decides
+    const stat = diff.stdout.length > cap ? diff.stdout.slice(0, cap) : diff.stdout;
+    return `Git range: ${raw} (stat only -- full diff too large to inline)\n\n${stat}`;
+  }
+
+  let text = diff.stdout;
+  if (!text.trim()) {
+    // Valid range, no changes. Materialize that fact so the auditor doesn't
+    // receive a bare revspec string and hallucinate content for it.
+    return `Git range: ${raw}\n\n(empty diff -- no changes in this range)`;
+  }
+  if (text.length > cap) {
+    text = text.slice(0, cap)
+      + `\n\n[... truncated: diff is ${diff.stdout.length} bytes, showing first ${cap} ...]`;
+  }
+  return `Git range: ${raw}\n\n${text}`;
+}
+
+// resolveGitTarget — the converge-path superset of resolveGitRange. The MCP
+// converge tool's validated vocabulary is "SHA, SHA..SHA, SHA...SHA, or
+// branch/tag ref" (server.js V155-022), so SINGLE revs must materialize too
+// or `commitRange: "HEAD"` reproduces the vacuous-PASS through repo-blind
+// lenses (adversarial re-review finding). Single revs materialize as
+// `git show` of that commit. Returns null when the target neither is a
+// resolvable range nor verifies as a commit.
+export function resolveGitTarget(raw, opts = {}) {
+  if (isGitRangeShaped(raw)) return resolveGitRange(raw, opts);
+  if (typeof raw !== 'string' || !raw || raw.startsWith('-') || /\s/.test(raw)) return null;
+
+  const cap = typeof opts.sizeCap === 'number' ? opts.sizeCap : GIT_RANGE_DIFF_CAP;
+  const gitCwd = typeof opts.cwd === 'string' ? opts.cwd : process.cwd();
+  const verify = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${raw}^{commit}`],
+    { cwd: gitCwd, encoding: 'utf8' });
+  if (verify.error || verify.status !== 0) return null;
+
+  const showArgs = ['-c', 'color.diff=false', '--no-pager', 'show', '--no-ext-diff'];
+  let show = spawnSync('git', [...showArgs, raw, '--'],
+    { cwd: gitCwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (show.error || show.status !== 0) {
+    show = spawnSync('git', [...showArgs, '--stat', raw, '--'],
+      { cwd: gitCwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    if (show.error || show.status !== 0) return null;
+    const stat = show.stdout.length > cap ? show.stdout.slice(0, cap) : show.stdout;
+    return `Git commit: ${raw} (stat only -- full diff too large to inline)\n\n${stat}`;
+  }
+
+  let text = show.stdout;
+  if (text.length > cap) {
+    text = text.slice(0, cap)
+      + `\n\n[... truncated: output is ${show.stdout.length} bytes, showing first ${cap} ...]`;
+  }
+  return `Git commit: ${raw}\n\n${text}`;
 }
 
 // spawnCli -- single-settlement guard + SIGKILL on timeout or abort signal.
@@ -320,7 +452,9 @@ function spawnCli(pick, request, timeoutMs, signal = null, env = process.env) {
     let stderr = '';
 
     try {
-      proc = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSpawnEnv(pick, env) });
+      // Issue #20: cwd MUST be the neutral temp dir, never the caller's cwd
+      // (which is the repo under critique when fired from the post-commit hook).
+      proc = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSpawnEnv(pick, env), cwd: neutralSpawnCwd() });
     } catch {
       clearTimeout(timer);
       settle(null);
@@ -1786,9 +1920,35 @@ export async function defaultConvergeDispatch({ lens, commitRange, iteration, cy
   // goes LAST so it never busts the cache. The previous prefix layout would
   // invalidate the cache on every iteration ≥ 2. See ADJUDICATIONS.md
   // DISPUTED-1 (cache_control ordering invariant).
+  // Issue #20: lenses spawn with no repo access (neutral cwd + GIT_*/PWD
+  // scrub), so a revspec commitRange MUST be materialized to inline diff
+  // text here. Passing it verbatim post-#20 would make every lens review a
+  // meaningless literal string, return zero findings, and classifyVerdict
+  // would report a vacuous PASS on a release-gating audit. Fail LOUD
+  // (UNREACHABLE) when a rev-shaped target cannot materialize.
+  //
+  // Target taxonomy (re-review finding): whitespace-containing targets are
+  // INLINE BRIEFS (debug-trident-trigger passes a full evidence pack here)
+  // and go through verbatim. Single-token targets on the converge path are
+  // always revs per the MCP tool's validated vocabulary (SHA, SHA..SHA,
+  // SHA...SHA, branch/tag ref — server.js V155-022) — ranges AND single
+  // revs both materialize or fail loud.
+  let baseTarget = commitRange;
+  const isInlineBrief = typeof commitRange !== 'string' || /\s/.test(commitRange);
+  if (!isInlineBrief) {
+    const materialized = resolveGitTarget(commitRange, { cwd: projectRoot || process.cwd() });
+    if (!materialized) {
+      return {
+        lens, verdict: VERDICT_UNREACHABLE, findings: [],
+        error: `commit range "${commitRange}" could not be materialized to a diff (unresolvable rev/range, or not a git repo at ${projectRoot || process.cwd()})`,
+      };
+    }
+    baseTarget = materialized;
+  }
+
   const target = (iteration > 1 && cycleSummary)
-    ? `${commitRange}\n\n---\n\n${cycleSummary}`
-    : commitRange;
+    ? `${baseTarget}\n\n---\n\n${cycleSummary}`
+    : baseTarget;
 
   const request = buildRequest('audit', target, pick.id, 'general', null);
   const timeoutMs = timeoutForPick(pick, null);
@@ -1809,8 +1969,5 @@ export async function defaultConvergeDispatch({ lens, commitRange, iteration, cy
   } catch (err) {
     return { lens, verdict: VERDICT_UNREACHABLE, findings: [], error: err && err.message ? err.message : String(err) };
   }
-  /* projectRoot reserved for future per-project dispatcher overrides */
-  // eslint-disable-next-line no-unreachable
-  void projectRoot;
 }
 

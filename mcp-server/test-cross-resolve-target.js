@@ -22,13 +22,18 @@ test('resolveTarget: non-existent path passes through unchanged', () => {
   assert.equal(resolveTarget(topic), topic);
 });
 
-test('resolveTarget: git range passes through unchanged', () => {
+// Issue #20: valid git ranges no longer pass through verbatim — they are
+// materialized to inline diff text (read-only) so auditors never need repo
+// access. Materialization itself is covered in test-cross-roster-spawn.js;
+// here we pin the passthrough for ranges that CANNOT resolve.
+test('resolveTarget: git range passes through unchanged outside a git repo', () => {
   const range = 'HEAD~3..HEAD';
-  assert.equal(resolveTarget(range), range);
+  assert.equal(resolveTarget(range, { cwd: FIXTURES }), range,
+    'no repo at cwd → range cannot materialize → passthrough');
 });
 
-test('resolveTarget: sha range passes through unchanged', () => {
-  const range = 'abc1234..def5678';
+test('resolveTarget: unresolvable sha range passes through unchanged', () => {
+  const range = 'abc1234..def5678'; // refs that exist in no repo
   assert.equal(resolveTarget(range), range);
 });
 

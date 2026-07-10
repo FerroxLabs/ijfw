@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { writeAtomic } from './lib/atomic-io.js';
 // wayland#755 round 2: shared bundle gate for roots handed to dispatch.
 import { vetProjectRoot } from './lib/project-root-guard.js';
-import { runCrossOp } from './cross-orchestrator.js';
+import { runCrossOp, resolveGitRange, isGitRangeShaped } from './cross-orchestrator.js';
 import { chunkText, mergeFindings, CHUNKER_DEFAULTS } from './cross-audit-chunker.js';
 import { readReceipts, purgeReceipts } from './receipts.js';
 import { renderHeroLine } from './hero-line.js';
@@ -1183,6 +1183,18 @@ const TARGET_FILE_SIZE_CAP = 64 * 1024; // 64 KB -- leaves prompt headroom
 const TARGET_FILE_SIZE_WARN = 32 * 1024;
 const TARGET_FILE_SIZE_MAX  = 256 * 1024; // beyond this, advise chunking explicitly
 
+// Issue #20 — materialize git ranges BEFORE dispatch, same contract as the
+// issue-#6 file fix above. Previously `ijfw cross critique "HEAD~1..HEAD"`
+// (the post-commit hook's exact invocation) passed the range string to the
+// auditors verbatim; an agentic CLI (codex) then explored the repo ITSELF
+// from its inherited cwd — and mutated it (`git reset` to a grafted foreign
+// ref, destroying the just-committed branch). The auditors now receive the
+// actual diff text inline and are spawned with no repo access at all.
+// Implementation lives in cross-orchestrator.js (defaultConvergeDispatch
+// needs it too and importing from here would be circular); re-exported for
+// existing test/caller import paths.
+export { resolveGitRange, isGitRangeShaped };
+
 export function resolveTarget(raw, opts = {}) {
   const cap = typeof opts.sizeCap === 'number' ? opts.sizeCap : TARGET_FILE_SIZE_CAP;
   if (typeof raw !== 'string' || !raw) return raw;
@@ -1194,7 +1206,7 @@ export function resolveTarget(raw, opts = {}) {
     return raw;
   }
 
-  if (!existsSync(absPath)) return raw;
+  if (!existsSync(absPath)) return resolveGitRange(raw, opts) ?? raw;
 
   let stat;
   try {
