@@ -14,7 +14,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -167,6 +167,34 @@ test('dispatchRun detect:project_type returns real detection result', async () =
     assert.equal(typeof r.result.confidence, 'number');
     assert.equal(Array.isArray(r.result.secondary_types), true);
     assert.equal(typeof r.result.scan_incomplete, 'boolean');
+  } finally {
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+// issue #26: the MCP detect:project_type sync path must seed-gate the on-disk
+// cache. Detection still RETURNS to the caller in any dir; only the
+// .ijfw/project.type write is gated (matches the runner + bash trigger).
+test('issue #26: detect:project_type does NOT cache .ijfw/project.type in a marker-less dir', async () => {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'ijfw-colon-detect-bare-'));
+  try {
+    const r = await dispatchRun(parseColonCommand('detect:project_type'), { projectRoot });
+    assert.equal(r.ok, true, 'detection still returns a result');
+    assert.equal(existsSync(join(projectRoot, '.ijfw', 'project.type')), false,
+      'no on-disk cache may be written in a marker-less directory');
+  } finally {
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('issue #26: detect:project_type DOES cache in a real project (control)', async () => {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'ijfw-colon-detect-proj-'));
+  try {
+    writeFileSync(join(projectRoot, 'package.json'), '{"name":"p","version":"0.0.0"}\n');
+    const r = await dispatchRun(parseColonCommand('detect:project_type'), { projectRoot });
+    assert.equal(r.ok, true);
+    assert.equal(existsSync(join(projectRoot, '.ijfw', 'project.type')), true,
+      'a real project caches its project.type as before');
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }

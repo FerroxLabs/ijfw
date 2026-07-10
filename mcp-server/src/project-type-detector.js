@@ -53,6 +53,8 @@ import {
   clearScanState,
   acquireScanLock,
 } from './scan-resume.js';
+import { shouldSeedProject } from './brain/seed-gate.js';
+import { isBundleInternalDeep } from './lib/project-root-guard.js';
 
 // --- Tunables --------------------------------------------------------------
 
@@ -166,6 +168,15 @@ const FILENAME_PATTERNS = [
  */
 export function detect(projectRoot, options = {}) {
   const root = String(projectRoot || process.cwd());
+  // issue #26: detect()'s ONLY on-disk side effect is scan-state checkpointing
+  // (writeScanState/acquireScanLock on an incomplete walk). That is exactly the
+  // ".ijfw litter in a non-project dir" the seed gate exists to prevent, and it
+  // fired even when the caller gated only the project.type cache (the colon
+  // detect:project_type sync path) or didn't gate at all (domain-manifest,
+  // gate-result). Gate persistence here so every detect() caller is covered at
+  // once: detection still RETURNS its result in any dir; only the disk
+  // checkpoint is suppressed outside a real, non-bundle project.
+  const mayPersistScanState = shouldSeedProject(root) && !isBundleInternalDeep(root);
   // P3-M2: when the caller doesn't pass c9Available explicitly, run a
   // sync availability probe (existsSync of compute/fts5.js) so the
   // confidence cap auto-engages on installs that ship without the C9
@@ -209,7 +220,7 @@ export function detect(projectRoot, options = {}) {
 
   // --- Signal #4: file-tree walk (0.6 - 0.75 raw; capped 0.7 in fallback) -
   const timeBudgetMs = resolveTimeBudgetMs(options);
-  const walk = walkProject(root, { maxFiles, maxDepth: MAX_DEPTH, options, timeBudgetMs });
+  const walk = walkProject(root, { maxFiles, maxDepth: MAX_DEPTH, options, timeBudgetMs, mayPersist: mayPersistScanState });
   const treeHash = fileTreeHash(walk.fingerprint);
 
   // Manifest votes -- presence is a strong software signal.
@@ -308,7 +319,7 @@ export function detect(projectRoot, options = {}) {
   // attempts counter unsafely. If the lock is held by another live
   // writer, skip the persist -- their write covers the same forward
   // progress just as accurately.
-  if (scanIncomplete) {
+  if (scanIncomplete && mayPersistScanState) {
     const lock = acquireScanLock(root);
     if (lock) {
       try {
@@ -461,7 +472,7 @@ function readFrontmatterType(path) {
   return null;
 }
 
-function walkProject(root, { maxFiles, maxDepth, options, timeBudgetMs }) {
+function walkProject(root, { maxFiles, maxDepth, options, timeBudgetMs, mayPersist = true }) {
   const out = {
     filesScanned: 0,
     totalEstimate: 0,
@@ -602,7 +613,8 @@ function walkProject(root, { maxFiles, maxDepth, options, timeBudgetMs }) {
       // Periodic checkpoint write so a crash never loses more than
       // CHECKPOINT_EVERY files of progress. P3-H3: persist accumulated
       // partial state so the resumed walk can keep adding to it.
-      if (out.filesScanned % CHECKPOINT_EVERY === 0) {
+      // issue #26: suppressed outside a real project (no .ijfw litter).
+      if (mayPersist && out.filesScanned % CHECKPOINT_EVERY === 0) {
         try {
           writeScanState(root, {
             scan_id: newScanId(),
