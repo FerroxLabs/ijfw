@@ -4,8 +4,11 @@
 // small and dependency-free: tasks/claims are atomic JSON, notes are append-only
 // JSONL, and handoff is plain markdown.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import {
+  existsSync, mkdirSync, readFileSync, statSync, lstatSync,
+  realpathSync, openSync, writeSync, closeSync, constants as fsConstants,
+} from 'node:fs';
+import { join, resolve, relative, dirname, basename, isAbsolute } from 'node:path';
 import { writeAtomic, readSafe, withLock } from './lib/atomic-io.js';
 import { rotateJsonlIfNeeded } from './lib/jsonl-rotation.js';
 
@@ -48,8 +51,104 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// issue #25 — symlink/containment guard. blackboard.js wrote under
+// <repo>/.ijfw/blackboard/ with no containment check, unlike the brain layer
+// (brain/path-guard.js). A maliciously-cloned repo committing a symlink at
+// `.ijfw/blackboard` -> an outside dir (parent-dir vector) redirected EVERY
+// write (tasks.json/handoff/appends) out of the tree; a symlink at a leaf
+// like `notes.jsonl` (file vector) redirected the appends. Both reproduced.
+//
+// assertContainedDir realpaths the nearest existing ancestor of `paths.dir`
+// and refuses unless it stays under realpath(paths.root) — the same
+// deepest-existing-ancestor technique path-guard.js uses so macOS
+// /tmp->/private/tmp symlinks don't false-positive. This is the single
+// chokepoint for the parent-dir vector: ensureDir runs at the top of every
+// public writer. The leaf-file vector is closed separately by O_NOFOLLOW in
+// the append/create helpers below (writeAtomic already lstat-guards its own
+// final component).
+class BlackboardContainmentError extends Error {}
+
+function assertContainedDir(paths) {
+  let root;
+  try {
+    root = realpathSync(paths.root);
+  } catch {
+    // Project root doesn't resolve (not yet created / transient) — fall back
+    // to the lexical resolve so a legitimate first-write still proceeds; the
+    // dir is created under it below and re-checked on the next write.
+    root = resolve(paths.root);
+  }
+  // Walk up from paths.dir to the closest existing ancestor, realpath THAT,
+  // then re-attach the not-yet-created suffix (mirrors path-guard.js).
+  let ancestor = resolve(paths.dir);
+  const suffix = [];
+  for (let i = 0; i < 64; i++) {
+    try {
+      ancestor = realpathSync(ancestor);
+      break;
+    } catch {
+      const parent = dirname(ancestor);
+      if (parent === ancestor) break;
+      // basename, not slice(parent.length+1): when parent is '/' the slice
+      // drops a leading char ('/foo' -> 'oo'). (Fail-closed either way, but
+      // the mangled segment breaks the legit first-write-to-nonexistent-root.)
+      suffix.unshift(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+  const resolvedDir = suffix.length ? join(ancestor, ...suffix) : ancestor;
+  const rel = relative(root, resolvedDir);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new BlackboardContainmentError(
+      `blackboard: refusing to write ${paths.dir} -- resolves to ${resolvedDir}, ` +
+      `outside the project root ${root} (symlinked .ijfw/blackboard? issue #25).`,
+    );
+  }
+}
+
 function ensureDir(paths) {
+  assertContainedDir(paths);
   if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
+}
+
+// Symlink-safe append: O_NOFOLLOW makes openSync fail atomically (ELOOP) if
+// the final path component is a symlink, so a committed `notes.jsonl` /
+// `events.jsonl` symlink can't redirect the append out of the tree. Mirrors
+// dream-pipeline.js's wiki-log open.
+function appendLineNoFollow(path, line) {
+  const fd = openSync(
+    path,
+    fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    writeSync(fd, line);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Symlink-safe create-if-missing: O_EXCL|O_CREAT fails (EEXIST) on any
+// existing path INCLUDING a symlink (POSIX treats a symlink as existing under
+// O_EXCL, even a dangling one), and O_NOFOLLOW is belt-and-braces. Used for
+// the initBlackboard placeholder files.
+function createIfMissingNoFollow(path, content) {
+  let fd;
+  try {
+    fd = openSync(
+      path,
+      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (err) {
+    if (err && err.code === 'EEXIST') return; // already present (or a symlink we refuse to follow)
+    throw err;
+  }
+  try {
+    if (content) writeSync(fd, content);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function defaultTasks() {
@@ -98,22 +197,45 @@ function writeJson(path, data) {
 
 function readJsonl(path, limit = 5) {
   try {
-    if (!existsSync(path)) return [];
+    // issue #25 (read side): readFileSync follows symlinks, so a committed
+    // `notes.jsonl`/`events.jsonl` -> ~/.aws/credentials symlink would surface
+    // the outside file's tail into blackboardStatus / readBlackboard (and thence
+    // agent context). Refuse a symlinked leaf, same as the write guards.
+    if (lstatSync(path).isSymbolicLink()) return [];
     const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean);
     return lines.slice(-limit).map((line) => {
       try { return JSON.parse(line); } catch { return { malformed: true, raw: line }; }
     });
   } catch {
+    // ENOENT (leaf not yet created) and any other stat/read failure -> empty.
     return [];
   }
 }
 
 function appendJsonlUnlocked(path, entry) {
+  // issue #25: refuse a symlinked leaf BEFORE anything touches it. The
+  // O_NOFOLLOW append below and the lstat-guard inside rotateJsonlIfNeeded
+  // both close this too, but an explicit up-front check gives a clear,
+  // typed error instead of a raw ELOOP and defends even if a future refactor
+  // reorders the rotation/append. (Static cloned-repo threat model — no
+  // same-uid TOCTOU race is in scope.)
+  try {
+    if (lstatSync(path).isSymbolicLink()) {
+      throw new BlackboardContainmentError(
+        `blackboard: refusing to write through the symlinked JSONL leaf ${path} (issue #25).`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof BlackboardContainmentError) throw err;
+    /* ENOENT (leaf not yet created) is the common case — proceed. */
+  }
   // F-PRF-1 (audit-MED-teams-#10): rotate large JSONL files in place before
   // appending. The rotator is a no-op when the file is under the 4MB
   // threshold, so this stays a hot-path-friendly stat() in the common case.
   try { rotateJsonlIfNeeded(path); } catch { /* rotation is best-effort */ }
-  appendFileSync(path, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600 });
+  // issue #25: O_NOFOLLOW append so a committed leaf symlink (notes.jsonl /
+  // events.jsonl -> outside file) cannot redirect the write out of the tree.
+  appendLineNoFollow(path, `${JSON.stringify(entry)}\n`);
   return entry;
 }
 
@@ -139,11 +261,10 @@ export function initBlackboard(projectRoot = process.cwd()) {
   if (!existsSync(paths.tasks)) writeJson(paths.tasks, defaultTasks());
   if (!existsSync(paths.claims)) writeJson(paths.claims, defaultClaims());
   for (const p of [paths.findings, paths.decisions, paths.blockers, paths.notes, paths.events]) {
-    if (!existsSync(p)) writeFileSync(p, '', { encoding: 'utf8', mode: 0o600 });
+    // issue #25: create-if-missing that refuses to follow a committed symlink.
+    createIfMissingNoFollow(p, '');
   }
-  if (!existsSync(paths.handoff)) {
-    writeFileSync(paths.handoff, '# IJFW Blackboard Handoff\n\nNo active handoff.\n', { encoding: 'utf8', mode: 0o600 });
-  }
+  createIfMissingNoFollow(paths.handoff, '# IJFW Blackboard Handoff\n\nNo active handoff.\n');
   return { ok: true, dir: paths.dir };
 }
 

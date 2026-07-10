@@ -15,7 +15,7 @@
 // Used by the blackboard event/permission writers + any caller that does
 // `appendFileSync(path, JSON.stringify(entry) + '\n')`. ESM, zero external deps.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, lstatSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
@@ -62,9 +62,16 @@ export function rotateJsonlIfNeeded(path, options = {}) {
     : DEFAULT_ROTATE_SIZE;
   const now = options.now instanceof Date ? options.now : new Date();
 
+  // issue #25: lstat (NOT stat) so a symlinked JSONL leaf reports isFile()
+  // false and rotation is refused. With statSync, a committed
+  // `notes.jsonl -> outside >4MB file` symlink was READ (exfiltrated into an
+  // in-tree .gz archive) and then writeFileSync('')-TRUNCATED through the
+  // link, all before the O_NOFOLLOW append in the blackboard writer could
+  // reject it. lstat closes the read+truncate at the source for every caller.
   let stat;
-  try { stat = statSync(path); }
+  try { stat = lstatSync(path); }
   catch { return { rotated: false, reason: 'missing' }; }
+  if (stat.isSymbolicLink()) return { rotated: false, reason: 'symlink-refused' };
   if (!stat.isFile()) return { rotated: false, reason: 'not-a-file' };
   if (stat.size <= maxBytes) return { rotated: false, reason: 'under-threshold', size: stat.size };
 
