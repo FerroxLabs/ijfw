@@ -17,9 +17,8 @@ import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
   appendFileSync, readdirSync, statSync, renameSync, unlinkSync,
   openSync, closeSync, fsyncSync, realpathSync,
-  accessSync, constants as fsConstants
 } from 'fs';
-import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
+import { join, isAbsolute, basename, dirname } from 'path';
 import {
   isBundleInternalPath, safeProjectDir, vetProjectRoot,
 } from './lib/project-root-guard.js';
