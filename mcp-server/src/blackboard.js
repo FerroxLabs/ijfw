@@ -90,7 +90,10 @@ function writeJson(path, data) {
       `tasks/claims (e.g. archive completed tasks) before retrying.`,
     );
   }
-  return writeAtomic(path, serialized, { mode: 0o600 });
+  const res = writeAtomic(path, serialized, { mode: 0o600 });
+  // Same-process readers must never see pre-write state (v1.6.4-gate flake).
+  invalidateBlackboardReadCache(path);
+  return res;
 }
 
 function readJsonl(path, limit = 5) {
@@ -154,27 +157,50 @@ export function initBlackboard(projectRoot = process.cwd()) {
 const BLACKBOARD_READ_CACHE = new Map();
 const BLACKBOARD_READ_CACHE_MAX = 32;
 
-function blackboardFileMtime(path) {
+// v1.6.4-gate flake root cause: the cache was keyed on mtimeMs ALONE and
+// writers never invalidated it. Two writes landing in the same filesystem
+// timestamp quantum (Linux coarse clock: 1-4ms — realistic under parallel-
+// suite load; also any same-quantum cross-process write) made the next read
+// return the PREVIOUS parsed state: blockSwarmTask's update was invisible to
+// readySwarmTask, which then failed 'task-not-blocked' on a stale 'ready'.
+// Deterministic repro: pin tasks.json mtime with utimesSync around an update.
+//
+// Fix: the validity stamp is (mtimeMs, size, ino). writeAtomic renames a
+// fresh temp file over the target, so the inode changes on every write via
+// writeAtomic — same-quantum rewrites and foreign-process writers both miss
+// the cache. (A cross-process writer could in theory recycle a just-freed
+// ino AND match size AND land in the same mtime quantum — negligible, and
+// strictly narrower than the bug being fixed.) writeJson additionally drops
+// entries for the path it wrote, which closes the same-process case
+// UNCONDITIONALLY, independent of any inode/stat semantics.
+function blackboardFileStamp(path) {
   try {
-    return statSync(path).mtimeMs;
+    const st = statSync(path);
+    return `${st.mtimeMs}:${st.size}:${st.ino}`;
   } catch {
-    return 0;
+    return null; // forces a cache miss; transient stat failure degrades safely
   }
 }
 
-function getCachedJson(cacheKey, path, mtime, fallback, validator) {
+function getCachedJson(cacheKey, path, stamp, fallback, validator) {
   const cached = BLACKBOARD_READ_CACHE.get(cacheKey);
-  if (cached && cached.path === path && cached.mtime === mtime && mtime > 0) {
+  if (cached && cached.path === path && cached.stamp === stamp && stamp !== null) {
     return cached.value;
   }
   const value = readJson(path, fallback, validator);
-  BLACKBOARD_READ_CACHE.set(cacheKey, { path, mtime, value });
+  BLACKBOARD_READ_CACHE.set(cacheKey, { path, stamp, value });
   // Lightweight LRU eviction: drop oldest entry when over cap.
   if (BLACKBOARD_READ_CACHE.size > BLACKBOARD_READ_CACHE_MAX) {
     const firstKey = BLACKBOARD_READ_CACHE.keys().next().value;
     if (firstKey !== undefined) BLACKBOARD_READ_CACHE.delete(firstKey);
   }
   return value;
+}
+
+function invalidateBlackboardReadCache(path) {
+  for (const [key, entry] of BLACKBOARD_READ_CACHE) {
+    if (entry.path === path) BLACKBOARD_READ_CACHE.delete(key);
+  }
 }
 
 // Exposed for tests + cache invalidation hooks. Clears all memoised entries.
@@ -184,13 +210,13 @@ export function _resetBlackboardReadCache() {
 
 export function readBlackboard(projectRoot = process.cwd()) {
   const paths = blackboardPaths(projectRoot);
-  // F-SPD-2: mtime-keyed memo. When tasks.json + claims.json are unchanged
-  // we skip JSON.parse entirely. mtime===0 forces a miss so transient stat
-  // failures degrade to the un-cached path safely.
-  const tasksMtime = blackboardFileMtime(paths.tasks);
-  const claimsMtime = blackboardFileMtime(paths.claims);
-  const tasks = getCachedJson(`${paths.root}::tasks`, paths.tasks, tasksMtime, defaultTasks, validTasks);
-  const claims = getCachedJson(`${paths.root}::claims`, paths.claims, claimsMtime, defaultClaims, validClaims);
+  // F-SPD-2: stamp-keyed memo. When tasks.json + claims.json are unchanged
+  // (mtime+size+ino identical) we skip JSON.parse entirely. stamp===null
+  // forces a miss so transient stat failures degrade to the un-cached path.
+  const tasksStamp = blackboardFileStamp(paths.tasks);
+  const claimsStamp = blackboardFileStamp(paths.claims);
+  const tasks = getCachedJson(`${paths.root}::tasks`, paths.tasks, tasksStamp, defaultTasks, validTasks);
+  const claims = getCachedJson(`${paths.root}::claims`, paths.claims, claimsStamp, defaultClaims, validClaims);
   return {
     paths,
     tasks,

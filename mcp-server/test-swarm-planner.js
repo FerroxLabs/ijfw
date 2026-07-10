@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claimArtifact, initBlackboard } from './src/blackboard.js';
+import { blackboardPaths, claimArtifact, initBlackboard } from './src/blackboard.js';
 import { createTeamAssembly } from './src/team/generator.js';
 import {
   blockSwarmTask,
@@ -22,6 +22,34 @@ function makeTmp() {
 
 function cleanup(dir) {
   rmSync(dir, { recursive: true, force: true });
+}
+
+// Release-gate flake, root-caused (v1.6.4 gate: `blockSwarmTask records
+// blocker and readySwarmTask clears it` failed once under the full parallel
+// suite, green in isolation): blackboard.js's BLACKBOARD_READ_CACHE was
+// keyed on mtimeMs alone and never invalidated by writers, so two tasks.json
+// writes inside one filesystem timestamp quantum made the next read return
+// the PREVIOUS parsed state — readySwarmTask saw a stale 'ready' and failed
+// 'task-not-blocked'. Fixed in blackboard.js (stamp = mtime+size+ino, plus
+// writeJson invalidation); the deterministic regression pin lives below
+// ('read cache must not serve stale task state...').
+//
+// mustPrepare() + result-payload assertion messages are hardening from the
+// same investigation: lifecycle tests called prepareSwarmTasks() without
+// asserting it succeeded, so any transient setup failure would surface as a
+// misleading downstream assertion with the real error swallowed.
+function mustPrepare(dir, options) {
+  const prepared = prepareSwarmTasks(dir, options);
+  assert.equal(prepared.ok, true,
+    `prepareSwarmTasks must succeed (got: ${JSON.stringify({ ok: prepared.ok, error: prepared.error, written: prepared.written })})`);
+  return prepared;
+}
+
+// Compact result echo for assertion messages — status/error, never the
+// full task graph (keeps TAP output readable when it does fire).
+function why(result) {
+  if (!result || typeof result !== 'object') return String(result);
+  return JSON.stringify({ ok: result.ok, error: result.error, status: result.task && result.task.status });
 }
 
 test('buildSwarmPlan asks for team assembly when missing', () => {
@@ -176,11 +204,11 @@ test('swarm task lifecycle starts, completes, and releases claims', () => {
   try {
     createTeamAssembly(dir, { archetype: 'software' });
     initBlackboard(dir);
-    prepareSwarmTasks(dir);
+    mustPrepare(dir);
 
     const taskId = 'swarm:w1:runtime-module';
     const started = startSwarmTask(dir, taskId);
-    assert.equal(started.ok, true);
+    assert.equal(started.ok, true, `start must succeed (got: ${why(started)})`);
     assert.equal(started.task.status, 'in_progress');
     assert.equal(started.claims[0].artifact_id, 'runtime-module');
 
@@ -188,7 +216,7 @@ test('swarm task lifecycle starts, completes, and releases claims', () => {
       message: 'tests passed',
       evidence: { commitSha: 'deadbeefcafe1234' },
     });
-    assert.equal(completed.ok, true);
+    assert.equal(completed.ok, true, `complete must succeed (got: ${why(completed)})`);
     assert.equal(completed.task.status, 'done');
     assert.equal(completed.releases[0].released, 1);
 
@@ -204,20 +232,20 @@ test('startSwarmTask requires dependencies to be done', () => {
   try {
     createTeamAssembly(dir, { archetype: 'content' });
     initBlackboard(dir);
-    prepareSwarmTasks(dir);
+    mustPrepare(dir);
 
     const blocked = startSwarmTask(dir, 'swarm:w2:article-draft');
-    assert.equal(blocked.ok, false);
+    assert.equal(blocked.ok, false, `dependent task must not start (got: ${why(blocked)})`);
     assert.equal(blocked.error, 'dependency-not-done');
 
-    assert.equal(startSwarmTask(dir, 'swarm:w1:campaign-brief').ok, true);
-    assert.equal(
-      completeSwarmTask(dir, 'swarm:w1:campaign-brief', {
-        evidence: { commitSha: 'beadcafe7654321' },
-      }).ok,
-      true,
-    );
-    assert.equal(startSwarmTask(dir, 'swarm:w2:article-draft').ok, true);
+    const startBrief = startSwarmTask(dir, 'swarm:w1:campaign-brief');
+    assert.equal(startBrief.ok, true, `brief must start (got: ${why(startBrief)})`);
+    const completeBrief = completeSwarmTask(dir, 'swarm:w1:campaign-brief', {
+      evidence: { commitSha: 'beadcafe7654321' },
+    });
+    assert.equal(completeBrief.ok, true, `brief must complete (got: ${why(completeBrief)})`);
+    const startDraft = startSwarmTask(dir, 'swarm:w2:article-draft');
+    assert.equal(startDraft.ok, true, `draft must start once dependency is done (got: ${why(startDraft)})`);
   } finally {
     cleanup(dir);
   }
@@ -228,17 +256,48 @@ test('blockSwarmTask records blocker and readySwarmTask clears it', () => {
   try {
     createTeamAssembly(dir, { archetype: 'design' });
     initBlackboard(dir);
-    prepareSwarmTasks(dir);
+    mustPrepare(dir);
 
     const blocked = blockSwarmTask(dir, 'swarm:w1:screen-system', { message: 'needs design source' });
-    assert.equal(blocked.ok, true);
+    assert.equal(blocked.ok, true, `block must succeed (got: ${why(blocked)})`);
     assert.equal(blocked.task.status, 'blocked');
     assert.equal(blocked.task.blocker, 'needs design source');
 
     const ready = readySwarmTask(dir, 'swarm:w1:screen-system');
-    assert.equal(ready.ok, true);
+    assert.equal(ready.ok, true, `ready must succeed (got: ${why(ready)})`);
     assert.equal(ready.task.status, 'ready');
     assert.equal(ready.task.blocker, null);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// Regression pin for the v1.6.4 release-gate flake root cause. Pinning
+// tasks.json's mtime to the same whole-second value before AND after
+// blockSwarmTask's write simulates two writes landing in one filesystem
+// timestamp quantum (Linux coarse clock under parallel-suite load). With the
+// old mtime-only cache key this deterministically made readySwarmTask read
+// the stale pre-block state and fail 'task-not-blocked'. The stamp now
+// includes size+ino (writeAtomic renames a fresh inode on every write) and
+// writeJson invalidates, so the pinned mtime must NOT fool the cache.
+test('read cache must not serve stale task state when writes share an mtime quantum', () => {
+  const dir = makeTmp();
+  try {
+    createTeamAssembly(dir, { archetype: 'design' });
+    initBlackboard(dir);
+    mustPrepare(dir);
+    const paths = blackboardPaths(dir);
+    const T = 1700000000; // whole seconds — identical mtime across the update
+
+    utimesSync(paths.tasks, T, T);
+    const blocked = blockSwarmTask(dir, 'swarm:w1:screen-system', { message: 'needs design source' });
+    assert.equal(blocked.ok, true, `block must succeed (got: ${why(blocked)})`);
+    utimesSync(paths.tasks, T, T); // same quantum after the update write
+
+    const ready = readySwarmTask(dir, 'swarm:w1:screen-system');
+    assert.equal(ready.ok, true,
+      `readySwarmTask must see the block despite identical mtimes (got: ${why(ready)}) — stale read cache regression`);
+    assert.equal(ready.task.status, 'ready');
   } finally {
     cleanup(dir);
   }
