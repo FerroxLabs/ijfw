@@ -30,6 +30,7 @@
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve, normalize, isAbsolute } from 'node:path';
 
+import { vetProjectRoot } from '../lib/project-root-guard.js';
 import { expandQuery } from '../compute/synonyms.js';
 import { loadMigrations } from './migration-runner.js';
 // v1.5.1 R4-H2 — auto-index rows must flow through indexEntry so the
@@ -187,7 +188,8 @@ function searchLinear(q, files, limit) {
 // --- Warm tier (FTS5; synchronous via cached driver) ------------------------
 
 function resolveProjectRoot(raw) {
-  const v = raw || process.env.IJFW_PROJECT_DIR || process.cwd();
+  // wayland#755 round 2: shared bundle gate before any .ijfw write root.
+  const v = vetProjectRoot(raw);
   if (typeof v !== 'string' || !v) return null;
   const abs = resolve(v);
   const norm = normalize(abs);

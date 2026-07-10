@@ -39,6 +39,11 @@ import { acquireGraphWriteLock } from '../compute/graph-lock.js';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+// wayland#755 round 2: every root that reaches openDb() (which mkdirs
+// <root>/.ijfw/index) must pass the shared bundle gate. vetProjectRoot
+// keeps the old precedence (ctx.projectRoot, then IJFW_PROJECT_DIR, then
+// cwd) but rejects bundle-internal candidates at every step.
+import { vetProjectRoot } from '../lib/project-root-guard.js';
 
 // Recognised namespaces -- gates dispatchRun against typos.
 // v1.4.0 (F7): added 'override', 'extension', 'domain-manifest' for the
@@ -142,7 +147,7 @@ export async function dispatchRun(parsed, ctx = {}) {
   if (!parsed || typeof parsed !== 'object') return null;
   if (!RUN_NAMESPACES.has(parsed.namespace)) return null;
 
-  const projectRoot = String(ctx.projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd());
+  const projectRoot = vetProjectRoot(ctx.projectRoot);
   const sessionId = String(ctx.sessionId || process.env.IJFW_SESSION_ID || 'unknown');
   // C9.6: provenance pointer (file path / observation kind / skill name).
   // Optional -- callers that don't supply it leave raw.source NULL.
@@ -631,7 +636,7 @@ export async function dispatchSearch(parsed, ctx = {}) {
   }
 
   if (parsed.namespace === 'compute') {
-    const projectRoot = String(ctx.projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd());
+    const projectRoot = vetProjectRoot(ctx.projectRoot);
     // FTS5 query is the command + args glued back together so phrase queries
     // like `compute:foo bar` work without forcing the caller to quote.
     const queryParts = [parsed.command, parsed.args].filter(Boolean);
@@ -705,7 +710,7 @@ async function dispatchSearchGraph(parsed, ctx) {
   if (cmd !== 'related') {
     return { ok: false, error: `Unknown graph search sub-command "${cmd}". Supported: graph:related.` };
   }
-  const projectRoot = String(ctx.projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd());
+  const projectRoot = vetProjectRoot(ctx.projectRoot);
   const query = String(parsed.args || '').trim();
   if (!query) return { ok: false, error: 'graph:related requires a query.' };
 

@@ -6,9 +6,13 @@ import {
   openTemporalDbSync, getValidAt, getHistory, getAllFactsWithWindows,
 } from './memory/temporal.js';
 import { join } from 'node:path';
+import { vetProjectRoot } from './lib/project-root-guard.js';
 
 function resolveDbPath() {
-  const root = process.env.IJFW_PROJECT_ROOT || process.cwd();
+  // wayland#755 round 2: this handler runs inside the MCP server process,
+  // so a bundle-internal spawn cwd must never become the .ijfw db root.
+  // (Note this surface historically reads IJFW_PROJECT_ROOT, not _DIR.)
+  const root = vetProjectRoot(process.env.IJFW_PROJECT_ROOT);
   return join(root, '.ijfw', 'memory.db');
 }
 

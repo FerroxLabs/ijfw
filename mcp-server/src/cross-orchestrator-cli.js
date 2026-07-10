@@ -13,6 +13,8 @@ import { join, dirname, basename, isAbsolute, resolve, parse as parsePath, sep }
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { writeAtomic } from './lib/atomic-io.js';
+// wayland#755 round 2: shared bundle gate for roots handed to dispatch.
+import { vetProjectRoot } from './lib/project-root-guard.js';
 import { runCrossOp } from './cross-orchestrator.js';
 import { chunkText, mergeFindings, CHUNKER_DEFAULTS } from './cross-audit-chunker.js';
 import { readReceipts, purgeReceipts } from './receipts.js';
@@ -3707,7 +3709,7 @@ function readJsonFile(path) {
 // Delegate to the colon-syntax dispatch handlers for the actual logic;
 // this thin wrapper only handles argv parsing + result printing.
 function cmdOverride(sub, rest) {
-  const projectRoot = process.env.IJFW_PROJECT_DIR || process.cwd();
+  const projectRoot = vetProjectRoot(null);
   const args = (rest || []).join(' ');
   import('./dispatch/override.js')
     .then(m => m.overrideDispatch({ command: sub, args, projectRoot }))
@@ -3725,7 +3727,7 @@ function cmdOverride(sub, rest) {
 }
 
 function cmdExtension(sub, rest) {
-  const projectRoot = process.env.IJFW_PROJECT_DIR || process.cwd();
+  const projectRoot = vetProjectRoot(null);
   const args = (rest || []).join(' ');
   import('./dispatch/extension.js')
     .then(m => m.extensionDispatch({ command: sub, args, projectRoot }))

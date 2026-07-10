@@ -47,6 +47,9 @@
  */
 
 import { parseColonCommand, dispatchRun } from './dispatch/colon-syntax.js';
+// wayland#755 round 2: --project-root / env / cwd must pass the shared
+// bundle gate before the dispatch layer turns it into an .ijfw write root.
+import { vetProjectRoot } from './lib/project-root-guard.js';
 
 function parseFlags(argv) {
   // argv layout: [colonExpr, ...rest] -- rest may interleave flags and
@@ -92,7 +95,7 @@ async function main() {
 
   try {
     const result = await dispatchRun(parsed, {
-      projectRoot: projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd(),
+      projectRoot: vetProjectRoot(projectRoot),
     });
     const payload = result == null
       ? { ok: false, error: 'dispatch returned null (unknown namespace)' }

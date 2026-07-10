@@ -36,6 +36,7 @@
 
 import { existsSync, mkdirSync } from 'fs';
 import { join, resolve, normalize, isAbsolute, dirname } from 'path';
+import { vetProjectRoot } from '../lib/project-root-guard.js';
 import { runMigrations, highestKnownVersion, SchemaVersionError } from './migration-runner.js';
 import { autoIndexGraphFromBody } from './graph-auto-index.js';
 import { redactSecrets } from '../redactor.js';
@@ -171,7 +172,9 @@ async function loadDriver() {
 // --- Path resolution ---------------------------------------------------------
 
 function resolveProjectRoot(projectRoot) {
-  const raw = projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd();
+  // wayland#755 round 2: openDb() mkdirs <root>/.ijfw/index -- every
+  // candidate must pass the shared bundle gate before becoming a write root.
+  const raw = vetProjectRoot(projectRoot);
   if (typeof raw !== 'string' || !raw) {
     throw new ComputeDbError('Project root must be a non-empty string.');
   }

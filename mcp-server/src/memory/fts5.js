@@ -32,6 +32,7 @@
 
 import { existsSync, mkdirSync } from 'fs';
 import { join, resolve, normalize, isAbsolute, dirname } from 'path';
+import { vetProjectRoot } from '../lib/project-root-guard.js';
 import {
   runMigrations,
   highestKnownVersion,
@@ -121,7 +122,12 @@ async function loadDriver() {
 // --- Path resolution ---------------------------------------------------------
 
 function resolveProjectRoot(projectRoot) {
-  const raw = projectRoot || process.env.IJFW_PROJECT_DIR || process.cwd();
+  // wayland#755 round 2: openDb() mkdirs <root>/.ijfw/index, so every
+  // candidate (caller arg, IJFW_PROJECT_DIR, cwd) must pass the shared
+  // bundle gate before it can become a write root. vetProjectRoot keeps
+  // the old precedence and falls through to the next-safest option
+  // instead of ever adopting a bundle interior.
+  const raw = vetProjectRoot(projectRoot);
   if (typeof raw !== 'string' || !raw) {
     throw new MemoryDbError('Project root must be a non-empty string.');
   }
@@ -336,7 +342,8 @@ export function indexEntry(db, entry) {
     // <root>/.ijfw/index/memory.db, so dirname(filename) IS the index dir.
     const receiptDir = db.__ijfw_filename
       ? dirname(db.__ijfw_filename)
-      : join(process.env.IJFW_PROJECT_DIR || process.cwd(), IJFW_DIR_NAME, INDEX_DIR_NAME);
+      // wayland#755 round 2: vetted fallback, never raw env/cwd.
+      : join(vetProjectRoot(null), IJFW_DIR_NAME, INDEX_DIR_NAME);
     // v1.5.0 audit-LOW-memory-#14: dead-letter receipt for auto-index failures.
     // Fire-and-forget was already swallowed silently; now we append an
     // append-only JSONL receipt so silent indexer breakage is detectable in

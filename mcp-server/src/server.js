@@ -17,9 +17,11 @@ import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
   appendFileSync, readdirSync, statSync, renameSync, unlinkSync,
   openSync, closeSync, fsyncSync, realpathSync,
-  accessSync, constants as fsConstants
 } from 'fs';
-import { join, resolve, isAbsolute, normalize, basename, dirname } from 'path';
+import { join, isAbsolute, basename, dirname } from 'path';
+import {
+  isBundleInternalPath, safeProjectDir, vetProjectRoot,
+} from './lib/project-root-guard.js';
 import { resolveBrainPaths } from './brain/paths.js';
 import { migrateFactsInternalOnce } from './brain/migrate-facts-internal-once.js';
 // v1.5.2.1 F3: fs-layout migrations live in their own directory with their
@@ -297,53 +299,13 @@ const VALID_MEMORY_TYPES = ['decision', 'observation', 'pattern', 'handoff', 'pr
 // Picking a writable root at startup eliminates the EACCES-on-mkdir failure
 // mode that corrupts the MCP stdio handshake (any stderr byte during init
 // can make the client mark the server as failed).
-function validatePath(raw) {
-  if (!raw) return null;
-  const resolved = resolve(raw);
-  const normalized = normalize(resolved);
-  if (!isAbsolute(normalized)) return null;
-  const parts = normalized.split(/[\\/]+/);
-  if (parts.includes('..')) return null;
-  return normalized;
-}
-
-function isWritable(dir) {
-  try {
-    if (!existsSync(dir)) {
-      // Try to create it; if mkdir fails, treat as non-writable.
-      mkdirSync(dir, { recursive: true });
-      return true;
-    }
-    // v1.5.2.1 H-1 (Lens 1): previously wrote+unlinked a probe file
-    // (`.ijfw-probe-<pid>-<ts>`). That broke the "importing server.js
-    // produces ZERO filesystem artifacts" contract: the probe leaked
-    // under inotify/fswatch even when self-tests in tmpdir saw nothing.
-    // accessSync(W_OK) gives the same writability signal with no I/O.
-    accessSync(dir, fsConstants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function safeProjectDir() {
-  // 1. Explicit IJFW_PROJECT_DIR wins (user or installer set it deliberately).
-  const fromIjfw = validatePath(process.env.IJFW_PROJECT_DIR);
-  if (fromIjfw && isWritable(fromIjfw)) return fromIjfw;
-
-  // 2. CLAUDE_PROJECT_DIR (set by some Claude Code versions).
-  const fromClaude = validatePath(process.env.CLAUDE_PROJECT_DIR);
-  if (fromClaude && isWritable(fromClaude)) return fromClaude;
-
-  // 3. CWD if writable -- normal case for shell-invoked use and Claude Code
-  //    sessions rooted in a project.
-  const cwd = process.cwd();
-  if (isWritable(cwd)) return cwd;
-
-  // 4. HOME fallback -- always writable for the user. Memory becomes
-  //    user-global but we stay alive instead of crashing.
-  return homedir();
-}
+//
+// wayland#755 round 2: validatePath / isWritable / isBundleInternalPath /
+// safeProjectDir moved to lib/project-root-guard.js so the dispatch layer,
+// the fts5 modules, and the CLI runner share ONE vetting point instead of
+// hand-rolled `candidate || IJFW_PROJECT_DIR || process.cwd()` fallbacks.
+// vetProjectRoot() is the gate for caller-supplied roots (MCP tool args,
+// dispatch ctx). Re-exported at the bottom of this file for test back-compat.
 
 const PROJECT_DIR = safeProjectDir();
 const PROJECT_HASH = createHash('sha256').update(PROJECT_DIR).digest('hex').slice(0, 12);
@@ -1447,7 +1409,9 @@ async function handleRecall({ context_hint, detail_level = 'standard', from_proj
 async function indexStoredEntryToFts5({ body, source, sessionId }) {
   if (typeof body !== 'string' || body.length === 0) return null;
   const fts5Mod = await import('./memory/fts5.js');
-  const root = process.env.IJFW_PROJECT_DIR || PROJECT_DIR;
+  // PROJECT_DIR already gives validated IJFW_PROJECT_DIR highest priority
+  // (safeProjectDir); raw env here would bypass the bundle/writability gates.
+  const root = PROJECT_DIR;
   const db = await fts5Mod.openDb(root);
   try {
     // indexEntry runs the ingest scrub gate + M1 indexObsidianRelations +
@@ -1727,7 +1691,9 @@ async function handlePrelude({ detail_level = 'summary' } = {}) {
     const { topKSuccessfulSkills } = await import('./orchestrator/skill-telemetry.js');
     const Database = (await import('better-sqlite3')).default;
     const { join: joinP } = await import('node:path');
-    const root = process.env.IJFW_PROJECT_DIR || process.cwd();
+    // PROJECT_DIR, not raw env/cwd: a cwd inside an app bundle must never
+    // become a .ijfw root (wayland#755 defense-in-depth).
+    const root = PROJECT_DIR;
     const dbPath = joinP(root, '.ijfw', 'index', 'memory.db');
     if (existsSync(dbPath)) {
       const db = new Database(dbPath, { readonly: true });
@@ -1965,7 +1931,10 @@ async function handleSearch({ query, limit = 10, scope = 'project', label }) {
       const body = query.slice(3).trim();
       const dvMod = await import('./memory/query-dataview.js');
       const fts5Mod = await import('./memory/fts5.js');
-      const root = process.env.IJFW_PROJECT_DIR || process.cwd();
+      // PROJECT_DIR, not raw env/cwd: openDb() mkdirs .ijfw/index under the
+      // root it is given, so an unvetted cwd could write inside an app
+      // bundle (wayland#755 defense-in-depth).
+      const root = PROJECT_DIR;
       const db = await fts5Mod.openDb(root);
       try {
         const parsed = dvMod.parseDataviewQuery(body);
@@ -2298,9 +2267,11 @@ function handleMessage(msg) {
               const { query } = await import('./orchestrator/state-sdk.js');
               const payload = (a.payload && typeof a.payload === 'object') ? a.payload : {};
               const ctx = {
-                projectRoot: typeof a.projectRoot === 'string' && a.projectRoot.length > 0
-                  ? a.projectRoot
-                  : process.cwd(),
+                // vetProjectRoot (not raw wire input): state-sdk writes under
+                // <root>/.ijfw, and BOTH an unvetted spawn cwd and a
+                // caller-supplied a.projectRoot can sit inside an app bundle
+                // (wayland#755 defense-in-depth, round 2).
+                projectRoot: vetProjectRoot(a.projectRoot, PROJECT_DIR),
               };
               if (typeof a.subagentId === 'string' && a.subagentId.length > 0) ctx.subagentId = a.subagentId;
               if (typeof a.homeDir === 'string' && a.homeDir.length > 0) ctx.homeDir = a.homeDir;
@@ -2373,7 +2344,8 @@ function handleMessage(msg) {
                 maxIterations: typeof a.maxIterations === 'number' ? a.maxIterations : 3,
                 lenses: Array.isArray(a.lenses) && a.lenses.length > 0 ? a.lenses : undefined,
                 dispatch: defaultConvergeDispatch,
-                projectRoot: process.cwd(),
+                // wayland#755 defense-in-depth: PROJECT_DIR, never raw cwd.
+                projectRoot: PROJECT_DIR,
                 // v1.5.1 R4-H4 — opt-in consensus auto-fix (T27). Threaded
                 // from the tool schema so the code-fixer can genuinely fire;
                 // default false so the audit stays non-mutating unless the
@@ -2420,7 +2392,8 @@ function handleMessage(msg) {
                     },
                     remediation: [],
                   },
-                  { projectRoot: process.cwd() },
+                  // wayland#755 defense-in-depth: PROJECT_DIR, never raw cwd.
+                  { projectRoot: PROJECT_DIR },
                 );
                 // emitGateResult returns the fenced block as a string; the
                 // formatter validates it back into an object before append.
@@ -2464,7 +2437,9 @@ function handleMessage(msg) {
               : null;
             if (parsedQuery && (parsedQuery.namespace === 'compute' || parsedQuery.namespace === 'graph')) {
               const dispatched = await dispatchSearch(parsedQuery, {
-                projectRoot: searchArgs.projectRoot,
+                // wayland#755 round 2: wire-supplied root must pass the
+                // bundle gate before it can become an .ijfw write target.
+                projectRoot: vetProjectRoot(searchArgs.projectRoot, PROJECT_DIR),
                 limit: searchArgs.limit,
               });
               if (dispatched !== null) {
@@ -2525,7 +2500,12 @@ function handleMessage(msg) {
             const parsedRun = parseColonCommand(command);
             if (parsedRun) {
               const dispatched = await dispatchRun(parsedRun, {
-                projectRoot: cwd,
+                // wayland#755 round 2: the raw `cwd` tool arg was fed
+                // straight to the dispatch layer, whose fts5 openDb mkdirs
+                // <root>/.ijfw/index -- the exact bundle write this fix
+                // exists to prevent. runCommand below still executes in the
+                // caller's cwd (that is behavior, not a write root).
+                projectRoot: vetProjectRoot(cwd, PROJECT_DIR),
                 sessionId: process.env.IJFW_SESSION_ID,
               });
               if (dispatched !== null) {
@@ -2862,4 +2842,5 @@ export {
   MEMORY_DIR, FACTS_FILE, FACTS_DB_FILE,
   getFactsDb,
   paths,
+  isBundleInternalPath, safeProjectDir, vetProjectRoot,
 };

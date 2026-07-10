@@ -24,13 +24,13 @@ import { PLACEHOLDER_HTML } from './design-companion.js';
 import { listExtensions } from './extension-installer.js';
 import { aggregateEvents, computeWarnBashBypass, readActiveManifest } from './dashboard-aggregator.js';
 import { getQuotaUsage } from './extension-quota-tracker.js';
+import { vetProjectRoot } from './lib/project-root-guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // REPO_ROOT: IJFW_PROJECT_ROOT override > user's interactive shell cwd (PWD) > process.cwd() fallback.
 // Under npm install the package lands in ~/.ijfw/; PWD keeps memory walks in the user's actual project.
-const REPO_ROOT = process.env.IJFW_PROJECT_ROOT
-  || process.env.PWD
-  || process.cwd();
+// wayland#755 round 2: candidates pass the shared bundle gate before use.
+const REPO_ROOT = vetProjectRoot(process.env.IJFW_PROJECT_ROOT || process.env.PWD);
 
 // Read version dynamically from mcp-server/package.json so bumps don't drift.
 const PKG_VERSION = (() => {
