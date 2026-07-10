@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -356,5 +356,130 @@ test('readBlackboard re-parses after a write invalidates the mtime', async () =>
     assert.equal(after.tasks.data.tasks.length, 1);
   } finally {
     cleanup(dir);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// issue #25 — symlink/containment guard. A maliciously-cloned repo can commit
+// a symlink under .ijfw/blackboard to redirect writes out of the tree. Both
+// vectors were reproduced against the pre-fix code; these pin the guard.
+// ---------------------------------------------------------------------------
+
+test('issue #25: leaf-file symlink (notes.jsonl -> outside) cannot redirect an append', () => {
+  const repo = makeTmp();
+  const outDir = makeTmp();
+  const victim = join(outDir, 'victim.txt');
+  writeFileSync(victim, 'ORIGINAL\n');
+  try {
+    mkdirSync(join(repo, '.ijfw', 'blackboard'), { recursive: true });
+    // Simulate what `git clone` materializes for a committed mode-120000 blob.
+    symlinkSync(victim, join(repo, '.ijfw', 'blackboard', 'notes.jsonl'));
+
+    // addBlackboardNote appends to notes.jsonl; O_NOFOLLOW must stop it from
+    // following the symlink out of the tree (ELOOP → append is refused).
+    let threw = false;
+    try { addBlackboardNote(repo, { kind: 'note', author: 'x', artifact: '', message: 'INJECTED' }); }
+    catch { threw = true; }
+
+    const after = readFileSync(victim, 'utf8');
+    assert.ok(!after.includes('INJECTED'), 'the outside victim file must not receive the append');
+    assert.equal(after, 'ORIGINAL\n', 'the outside victim file is untouched');
+    assert.ok(threw || !after.includes('INJECTED'), 'append either threw or was contained');
+  } finally {
+    cleanup(repo);
+    cleanup(outDir);
+  }
+});
+
+test('issue #25: parent-dir symlink (.ijfw/blackboard -> outside dir) is refused', () => {
+  const repo = makeTmp();
+  const outDir = makeTmp();
+  writeFileSync(join(outDir, 'tasks.json'), '{"pre":"existing"}');
+  try {
+    mkdirSync(join(repo, '.ijfw'), { recursive: true });
+    symlinkSync(outDir, join(repo, '.ijfw', 'blackboard'));
+
+    // Every writer routes through ensureDir → assertContainedDir, which
+    // realpaths the blackboard dir and refuses when it escapes the repo root.
+    assert.throws(() => initBlackboard(repo), /outside the project root|issue #25/,
+      'writing through a symlinked blackboard dir must throw');
+    assert.throws(() => addBlackboardNote(repo, { kind: 'note', author: 'x', artifact: '', message: 'z' }),
+      /outside the project root|issue #25/);
+
+    const t = readFileSync(join(outDir, 'tasks.json'), 'utf8');
+    assert.ok(t.includes('"pre":"existing"'), 'the outside tasks.json must not be clobbered');
+  } finally {
+    cleanup(repo);
+    cleanup(outDir);
+  }
+});
+
+test('issue #25: a symlinked JSONL leaf over the rotation threshold cannot be read or truncated', () => {
+  // The dangerous variant: rotateJsonlIfNeeded runs BEFORE the append and used
+  // statSync/readFileSync/writeFileSync — all follow symlinks. A committed
+  // events.jsonl -> outside >4MB file was exfiltrated into an in-tree .gz and
+  // truncated to zero. lstat-guard in the rotator + an up-front leaf check now
+  // close it. (Adversarial-review CRITICAL finding on the first fix pass.)
+  const repo = makeTmp();
+  const outDir = makeTmp();
+  const victim = join(outDir, 'big-secret.bin');
+  const secret = 'TOP_SECRET_'.repeat(500000); // > 4MB, over the rotation threshold
+  writeFileSync(victim, secret);
+  const sizeBefore = statSync(victim).size;
+  assert.ok(sizeBefore > 4 * 1024 * 1024, 'victim exceeds the 4MB rotation threshold');
+  try {
+    mkdirSync(join(repo, '.ijfw', 'blackboard'), { recursive: true });
+    symlinkSync(victim, join(repo, '.ijfw', 'blackboard', 'events.jsonl'));
+
+    assert.throws(() => appendBlackboardEvent(repo, { type: 'test', message: 'x' }),
+      /symlink|issue #25/, 'append through a symlinked oversized leaf must be refused');
+
+    assert.equal(statSync(victim).size, sizeBefore, 'victim must NOT be truncated by rotation');
+    assert.equal(readFileSync(victim, 'utf8'), secret, 'victim contents intact');
+    // No gz archive of the victim's bytes may exist in the repo tree.
+    const bbDir = join(repo, '.ijfw', 'blackboard');
+    const archives = existsSync(bbDir)
+      ? readdirSync(bbDir).filter((f) => f.endsWith('.gz'))
+      : [];
+    assert.equal(archives.length, 0, 'no in-tree gz archive of the exfiltrated bytes');
+  } finally {
+    cleanup(repo);
+    cleanup(outDir);
+  }
+});
+
+test('issue #25 (read side): a symlinked JSONL leaf cannot disclose an outside file via status', () => {
+  const repo = makeTmp();
+  const outDir = makeTmp();
+  const secretFile = join(outDir, 'credentials');
+  writeFileSync(secretFile, 'aws_secret_key=AKIAEXFIL123\nprivate-line-2\n');
+  try {
+    mkdirSync(join(repo, '.ijfw', 'blackboard'), { recursive: true });
+    // Legit dir, but the notes leaf is a committed symlink to an outside secret.
+    symlinkSync(secretFile, join(repo, '.ijfw', 'blackboard', 'notes.jsonl'));
+    // readBlackboard -> readJsonl(notes) must NOT surface the outside contents.
+    const bb = readBlackboard(repo);
+    const notesText = JSON.stringify(bb.recent && bb.recent.notes || []);
+    assert.ok(!notesText.includes('AKIAEXFIL123'), 'the outside secret must not leak into blackboard reads');
+    assert.deepEqual(bb.recent.notes, [], 'a symlinked notes leaf reads as empty');
+  } finally {
+    cleanup(repo);
+    cleanup(outDir);
+  }
+});
+
+test('issue #25: a legitimate repo is unaffected (writes stay in-tree)', () => {
+  const repo = makeTmp();
+  try {
+    const res = initBlackboard(repo);
+    assert.equal(res.ok, true);
+    appendBlackboardEvent(repo, { type: 'test', message: 'hello' });
+    const paths = blackboardPaths(repo);
+    assert.ok(existsSync(paths.tasks), 'tasks.json created in-tree');
+    // The blackboard dir must be a real directory under the repo, not a link.
+    assert.ok(statSync(paths.dir).isDirectory());
+    assert.ok(readFileSync(paths.events, 'utf8').includes('hello'), 'event appended in-tree');
+  } finally {
+    cleanup(repo);
   }
 });
