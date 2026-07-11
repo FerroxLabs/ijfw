@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # check-all.sh -- single gate for IJFW CI + publish-day health.
 #
-# Runs: banned-char lint, mcp-server unit suite, installer syntax check.
-# Exits 0 only when every check passes. Fail-fast.
+# Runs: banned-char lint, version lockstep, mcp-server unit suite, installer
+# syntax check. Exits 0 only when every check passes. Fail-fast.
 
 set -euo pipefail
 
@@ -65,6 +65,21 @@ if [ "$HITS" -gt 0 ]; then
   exit 1
 fi
 ok "banned-char lint clean"
+
+echo
+echo "== version lockstep =="
+# Every release-versioned surface (the 2 npm packages + all 7 platform plugin/
+# marketplace manifests across claude/codex/gemini/hermes/wayland) must carry the
+# same version. This gate previously ran ONLY in the manual scripts/e2e-smoke.sh
+# and checked just 3 surfaces, so gemini + both marketplaces drifted to 1.5.6 and
+# the hermes/wayland plugin.yaml to 1.5.1 while the code shipped 1.6.4. Wired here
+# so CI enforces all 9 every run. Cheap + fail-fast: runs before the ~5min suite.
+if bash scripts/check-version-lockstep.sh; then
+  ok "release version lockstep"
+else
+  fail "release version lockstep (see drift above)"
+  exit 1
+fi
 
 echo
 echo "== mcp-server unit tests =="

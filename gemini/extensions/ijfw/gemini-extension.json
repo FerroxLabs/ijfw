@@ -1,6 +1,6 @@
 {
   "name": "ijfw",
-  "version": "1.5.6",
+  "version": "1.6.4",
   "description": "IJFW -- AI efficiency layer for Gemini CLI. 19 workflow skills, 11-event hooks, persistent project memory via MCP. Native policy engine + checkpointing integration. One install layer across 15 AI coding platforms.",
   "contextFileName": "IJFW.md",
   "mcpServers": {
