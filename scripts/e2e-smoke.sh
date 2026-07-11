@@ -173,13 +173,14 @@ else
 fi
 
 # ============================================================
-# Version lockstep gate (F4.4 -- installer/mcp-server/codex must match)
+# Version lockstep gate (F4.4 -- all 9 release surfaces must match; also
+# wired into check-all.sh so CI enforces it every run, not just here)
 # ============================================================
 hdr "Version lockstep gate"
 if (cd "$REPO_ROOT" && bash scripts/check-version-lockstep.sh); then
-  pass "version-lockstep: installer/mcp-server/codex versions match"
+  pass "version-lockstep: all release surfaces match"
 else
-  fail "version-lockstep: drift detected between installer/mcp-server/codex package versions"
+  fail "version-lockstep: drift detected across release surfaces (see output above)"
 fi
 
 # ============================================================
