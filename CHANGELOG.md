@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.6.5] - 2026-07-11 - Publish-path hardening and version lockstep across all release surfaces
+
+A release-safety pass on the publish pipeline and the JS chokepoints that feed
+it. No user-facing behavior changes — every fix tightens supply-chain integrity,
+version consistency, or the cold-scan/blackboard guards so a half-formed release
+can never ship.
+
+### Fixed
+
+- **Publish is gated behind a protected `release` environment.** The `v*` tag
+  workflow now pauses for a required human reviewer before any `npm publish`
+  runs, asserts the pushed tag matches `package.json` (tag `!=` version refuses
+  to publish), and routes prereleases to the `next` dist-tag instead of ever
+  shipping them to `latest`.
+- **All nine release surfaces are version-locked and enforced in CI.** The
+  lockstep gate now covers every versioned manifest — installer, mcp-server,
+  the Claude/Codex plugin + marketplace manifests, the Gemini extension, and the
+  Hermes/Wayland `plugin.yaml` manifests — so a half-bumped release fails the
+  gate instead of drifting a listing a version behind.
+- **The gitleaks preflight gate runs `--redact`** so a matched secret's value
+  never lands in a CI artifact or log.
+- **Cold-scan JS chokepoint is seed-gated and bundle-guarded**, closing the last
+  path by which a scan could author config outside a real project root.
+- **Blackboard reads and writes are symlink/containment-guarded**, and a read
+  cache that served stale task state on an mtime-quantum collision now reads
+  through correctly.
+- **Codex config no longer clobbers** a pre-existing setup on install.
+
+### Notes
+
+- Installed copies pick this up on the next `ijfw update` (or a fresh
+  `npx @ijfw/install`).
+
 ## [1.6.4] - 2026-07-10 - Reject bundle-internal project roots (never write inside a signed app)
 
 IJFW could adopt a *writable* directory as its project root even when that

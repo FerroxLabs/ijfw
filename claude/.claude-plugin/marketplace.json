@@ -9,7 +9,7 @@
       "name": "ijfw",
       "source": "./",
       "description": "AI efficiency framework. Smarter output, intelligent routing, persistent memory, context discipline, project workflows. One install. Zero config. It just fucking works.",
-      "version": "1.6.4",
+      "version": "1.6.5",
       "author": { "name": "Sean Donahoe", "url": "https://github.com/TheRealSeanDonahoe" },
       "contributors": [{ "name": "Ferrox Labs", "url": "https://ferroxlabs.com" }],
       "license": "MIT",

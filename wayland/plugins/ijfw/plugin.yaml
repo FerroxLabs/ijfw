@@ -1,5 +1,5 @@
 name: ijfw
-version: 1.6.4
+version: 1.6.5
 description: IJFW -- memory hydration, vague-prompt nudge, destructive-command guard, session receipts.
 author: Sean Donahoe
 entry: __init__.py
