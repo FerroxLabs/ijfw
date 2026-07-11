@@ -13,7 +13,7 @@ jobs:
     name: Preflight gate (belt-and-braces)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -61,7 +61,7 @@ jobs:
     name: check-all.sh (release gate)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Node 22.x: node:sqlite is unavailable/partial on the runner default.
       - uses: actions/setup-node@v6
         with:
@@ -88,7 +88,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Node 24.x ships npm 11.x natively, which is the version that supports
       # Trusted Publishing OIDC token exchange. Avoids the known in-place
@@ -221,7 +221,7 @@ jobs:
       contents: read
     # 1.2.1's first run was green; gating this job from 1.2.2 onward.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install git inside container
         run: |
