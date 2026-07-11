@@ -4,6 +4,48 @@
 
 **Status:** Legacy. Active publish flow: GitHub Actions. See `.github/workflows/publish.yml`.
 
+## ⚠️ Current pipeline (GitHub Actions) — operational notes that OVERRIDE the legacy content below
+
+The active publish path is `.github/workflows/publish.yml` (GitHub Actions), NOT the GitLab
+flow described further down. What differs operationally:
+
+- **Auth is a GRANULAR npm access token** stored as the `NPM_TOKEN` repo secret, scoped to
+  ONLY `@ijfw/install` + `@ijfw/memory-server` (read-write). Provenance is still attached via
+  `id-token: write`. The legacy "No NPM_TOKEN secret / nothing to rotate" line below is
+  **obsolete** for the GitHub flow.
+  - **TOKEN ROTATION — expires ~2026-10-08 (90-day token).** Rotate BEFORE then or the release
+    job fails at `npm publish`. Regenerate a granular token at npmjs.com with the SAME
+    two-package scope (read-write), then update the `NPM_TOKEN` secret under
+    FerroxLabs/ijfw → Settings → Secrets and variables → Actions. Do **not** touch the
+    account's other / classic tokens (shared with unrelated repos).
+- **Publish is gated on the protected `release` environment** (required reviewer): a `v*` tag,
+  regardless of who pushes it, pauses for human approval before any `npm publish` runs.
+- **Tag ↔ version assert:** the publish job fails if the pushed tag doesn't equal
+  `installer/package.json` and `mcp-server/package.json` versions. `check-all.sh`'s
+  version-lockstep gate additionally proves all 9 in-repo release surfaces agree, so a green
+  release means tag == every published/manifest version.
+- **Strict dist-tag rule:** only a clean stable `vMAJOR.MINOR.PATCH` tag ships to `latest`;
+  any prerelease (`-rc` / `-beta` / `-alpha` / ...) ships to `next`; a malformed tag is
+  refused, never defaulted to `latest`.
+
+### Verify the `release` environment protection IS applied (do this once, and after any settings change)
+
+The `environment: release` gate is only as strong as the repo-settings protection behind it.
+A workflow referencing an environment that has **no protection rules auto-creates it
+unprotected**, so the approval pause silently disappears. Confirm the protection is live:
+
+```bash
+# Required reviewers must be non-empty, or a v* tag publishes with NO human approval:
+gh api repos/FerroxLabs/ijfw/environments/release \
+  --jq '{name, reviewers: (.protection_rules[]? | select(.type=="required_reviewers") | .reviewers | length)}'
+# Expect reviewers >= 1. If the environment 404s or reviewers is 0/absent, the gate is a no-op --
+# add a required reviewer under Settings -> Environments -> release before the next release.
+```
+
+Also confirm the tag-creation ruleset restricts `v*` creation to the release actor
+(`gh api repos/FerroxLabs/ijfw/rulesets` -> a ruleset targeting `refs/tags/v*` with a
+`creation` restriction). Both are admin-owned settings, not enforceable from the workflow.
+
 ## How it works
 
 On `git push` of a tag matching `^v\d+\.\d+\.\d+$`, GitLab CI's `publish` stage runs two jobs in parallel — `publish:mcp-server` and `publish:installer`. Each job:
