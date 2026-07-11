@@ -78,6 +78,12 @@ jobs:
     name: Publish to npm
     needs: [preflight, check-all]
     runs-on: ubuntu-latest
+    # WHO-can-publish gate (supply-chain hardening): the `release` environment is
+    # protected in repo settings with a required reviewer, so a v* tag -- no
+    # matter who pushes it -- pauses here until a human approves the deployment
+    # before any npm publish runs. Pairs with the tag-creation ruleset (only the
+    # release actor may create v*), applied by Overwatch outside this workflow.
+    environment: release
     permissions:
       contents: write
       id-token: write
@@ -103,6 +109,31 @@ jobs:
         working-directory: installer
         run: npm run build
 
+      # Supply-chain guard: the pushed tag MUST match the version being
+      # published. Without this, `git tag v9.9.9` on a commit whose
+      # package.json says 1.6.5 would publish 1.6.5 under a GitHub Release
+      # titled v9.9.9 (the post-publish smoke caught it only AFTER the package
+      # went live). check-all's version-lockstep gate already proves all 9
+      # in-repo surfaces agree; this asserts the TAG agrees with them too, so
+      # tag == every published version. TAG_REF via env (never inlined into the
+      # run: script) per GitHub Actions injection guidance.
+      - name: Assert tag matches package.json version
+        env:
+          TAG_REF: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_REF#v}"
+          INSTALLER_VER=$(node -p "require('./installer/package.json').version")
+          MCP_VER=$(node -p "require('./mcp-server/package.json').version")
+          if [ "$VERSION" != "$INSTALLER_VER" ]; then
+            echo "::error::tag $TAG_REF (version $VERSION) != installer/package.json ($INSTALLER_VER)"
+            exit 1
+          fi
+          if [ "$VERSION" != "$MCP_VER" ]; then
+            echo "::error::tag $TAG_REF (version $VERSION) != mcp-server/package.json ($MCP_VER)"
+            exit 1
+          fi
+          echo "tag <-> package.json version match: $VERSION"
+
       # npm publish triggers prepublishOnly, which re-runs the full preflight
       # INSIDE this job -- including the fail-closed gitleaks gate. The gate
       # jobs above install gitleaks for themselves; this job needs it too or
@@ -121,11 +152,25 @@ jobs:
         env:
           TAG_REF: ${{ github.ref_name }}
         run: |
-          if echo "$TAG_REF" | grep -q -- '-rc\.'; then
-            DIST_TAG="next"
-          else
-            DIST_TAG="latest"
+          # First, STRICTLY validate the tag shape. Shell `case` globs use `*`,
+          # which matches dots/letters -- so `v[0-9]*.[0-9]*.[0-9]*` would wrongly
+          # accept `v1.2.3.4` / `v1.2.3extra` and route them to `latest`. An
+          # anchored regex refuses anything that isn't vMAJOR.MINOR.PATCH with an
+          # optional -prerelease, so a malformed tag can never default to `latest`.
+          if [[ ! "$TAG_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$TAG_REF' is not a vMAJOR.MINOR.PATCH[-prerelease] release tag; refusing to publish"
+            exit 1
           fi
+          # SemVer: a hyphen after MAJOR.MINOR.PATCH introduces a prerelease
+          # (1.7.0-rc.1, 1.7.0-beta.2, 1.7.0-alpha.1, ...). NONE may ship to the
+          # `latest` dist-tag -- `npm install @ijfw/install` must only ever
+          # resolve a STABLE release. The old check matched ONLY `-rc.`, so a
+          # `-beta`/`-alpha` tag silently shipped to `latest`. Now: stable ->
+          # latest, ANY prerelease -> next.
+          case "$TAG_REF" in
+            *-*) DIST_TAG="next"   ;; # any prerelease suffix (shape already validated)
+            *)   DIST_TAG="latest" ;; # clean stable release
+          esac
           echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
           echo "Publishing dist-tag: $DIST_TAG"
 
