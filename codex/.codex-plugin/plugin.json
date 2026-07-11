@@ -1,6 +1,6 @@
 {
   "name": "ijfw",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "IJFW -- AI efficiency layer for Codex. 19 workflow skills, 22 command aliases, 6 hook events, persistent project memory via MCP, project teams, swarm orchestration, and design intelligence. One install layer across 15 AI coding platforms.",
   "author": "Sean Donahoe",
   "contributors": [
