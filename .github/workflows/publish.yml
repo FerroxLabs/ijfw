@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
           cache: npm
@@ -63,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       # Node 22.x: node:sqlite is unavailable/partial on the runner default.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
       # check-all.sh runs the mcp-server suite, which needs better-sqlite3 +
@@ -94,7 +94,7 @@ jobs:
       # Trusted Publishing OIDC token exchange. Avoids the known in-place
       # `npm install -g npm@latest` self-upgrade corruption (promise-retry
       # missing mid-swap, see github.com/npm/cli/issues for the lineage).
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24.x'
           registry-url: 'https://registry.npmjs.org'

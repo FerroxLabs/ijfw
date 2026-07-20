@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
           cache: npm
@@ -60,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
 
@@ -86,7 +86,7 @@ jobs:
       # Pin Node 22.x (matches the other jobs). Without this, check-all ran on the
       # runner's default Node, where node:sqlite is unavailable/partial and the
       # mcp-server suite failed ~129 sqlite-backed tests.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
       # check-all.sh runs the mcp-server suite, which needs better-sqlite3 +
@@ -121,7 +121,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
 
