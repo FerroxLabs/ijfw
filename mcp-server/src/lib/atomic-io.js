@@ -71,7 +71,7 @@ export function writeAtomic(targetPath, data, opts = {}) {
     closeSync(fd);
     fd = null;
 
-    renameSync(tmp, abs);
+    renameWithRetry(tmp, abs);
 
     if (fsyncDir) {
       try {
@@ -177,6 +177,33 @@ function sleepSync(ms) {
   const sab = new SharedArrayBuffer(4);
   const view = new Int32Array(sab);
   Atomics.wait(view, 0, 0, ms);
+}
+
+// Windows-safe rename. On NTFS a rename over an existing file transiently
+// fails with EPERM/EACCES/EBUSY when antivirus, the Search indexer, or another
+// process momentarily holds a handle on src or dest -- the classic
+// "EPERM: operation not permitted, rename '<x>.tmp' -> '<x>'". POSIX rename(2)
+// is atomic and does not exhibit this, so on non-Windows we rename once and
+// return. On Windows we retry a bounded number of times with exponential
+// backoff; only the known-transient codes are retried, everything else
+// rethrows immediately so real errors are not masked.
+const RENAME_TRANSIENT = new Set(['EPERM', 'EACCES', 'EBUSY', 'EEXIST']);
+function renameWithRetry(src, dest, { maxAttempts = 10, baseDelayMs = 10, maxDelayMs = 250 } = {}) {
+  if (!IS_WIN) { renameSync(src, dest); return; }
+  let lastErr;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      renameSync(src, dest);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (!RENAME_TRANSIENT.has(e.code)) throw e;
+      if (attempt < maxAttempts - 1) {
+        sleepSync(Math.min(baseDelayMs * (2 ** attempt), maxDelayMs));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 // Log rotation -- caller of writeAtomic for log files invokes this first.

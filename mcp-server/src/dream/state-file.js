@@ -17,10 +17,9 @@
 // Pattern lift from sibling project Wayland's
 // `crates/wcore-memory/src/consolidate.rs` DreamThrottle.
 
-import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, renameSync,
-} from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeAtomic } from '../lib/atomic-io.js';
 
 const DEFAULT = { version: 1, last_run_at: null, runs_total: 0, stages: {} };
 
@@ -42,10 +41,11 @@ export function readDreamState(root) {
 
 export function writeDreamState(root, state) {
   const p = pathOf(root);
-  mkdirSync(join(root, '.ijfw'), { recursive: true });
-  const tmp = p + '.tmp';
-  writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, p);
+  // Delegate to the shared atomic writer: randomized tmp name (no fixed-name
+  // collisions across concurrent runs / stale crash leftovers) + Windows
+  // rename-retry that survives transient EPERM/EBUSY from AV or the Search
+  // indexer. writeAtomic ensures the .ijfw dir exists.
+  writeAtomic(p, JSON.stringify(state, null, 2));
 }
 
 export function markStageStarted(root, stage) {
