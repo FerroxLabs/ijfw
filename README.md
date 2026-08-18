@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/ferroxlabs-ijfw-badge.png)](https://mseep.ai/app/ferroxlabs-ijfw)
+
 <p align="center">
   <img src="https://github.com/TheRealSeanDonahoe/ijfw/releases/download/v1.1.1/ijfw-hero.png" alt="IJFW -- Shared memory, smart routing, disciplined workflow, multi-AI audits across every AI coding agent" width="100%"/>
 </p>
