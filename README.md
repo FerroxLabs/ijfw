@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/ferroxlabs-ijfw-badge.png)](https://mseep.ai/app/ferroxlabs-ijfw)
+
 <p align="center">
   <img src="docs/guide/assets/ferrox-hero.png" alt="Ferrox Labs' IJFW (It Just F*cking Works): local-first infrastructure for AI coding agents, shown as eight engines: shared memory (cross-session recall), workflow discipline (plan, gate, execute), cross-audit (multi-model review), specialist bench (skills on demand), token savings (smarter routing), observability (local dashboard), learns you (adapts from edits), and design contract (one design system). Runs under Claude Code, Codex, Gemini, Cursor, Windsurf, Copilot, OpenCode, Qwen, Kimi, OpenClaw, Aider, and more." width="100%"/>
 </p>
