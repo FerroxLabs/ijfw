@@ -164,3 +164,46 @@ test('ijfw_cross_project_search ("every IJFW project") also covers the current p
   ]);
   assert.match(hit, /@Test:L\d+\][^\n]*BLUE-HERON-42/, `cross-project tool from the same project: ${hit}`);
 });
+
+// --- One unreadable project must never sink the whole search --------------
+// Mac field report: Claude Desktop lacks macOS "Documents" permission; one
+// registered project under ~/Documents threw EPERM reading
+// .ijfw/.layout-version and BOTH search tools failed outright.
+
+test('buildCorpus skips a project whose memory read throws (EPERM) and keeps the rest', async () => {
+  const { buildCorpus, _resetCorpusCache } = await import('./src/cross-project-search.js');
+  _resetCorpusCache();
+  const blocked = join(VOLUME, 'Blocked Project');
+  mkdirSync(join(blocked, '.ijfw'), { recursive: true });
+  const reader = (p) => {
+    if (p === blocked) {
+      const e = new Error(`EPERM: operation not permitted, open '${p}/.ijfw/.layout-version'`);
+      e.code = 'EPERM';
+      throw e;
+    }
+    return { knowledge: 'reachable line', journal: '', handoff: '' };
+  };
+  let docs;
+  assert.doesNotThrow(() => {
+    docs = buildCorpus([{ path: blocked }, { path: TEST_PROJ }], reader, { allowedRoots: [BASE], useCache: false });
+  });
+  assert.ok(docs.length > 0 && docs.every((d) => d.meta.projectPath === TEST_PROJ));
+});
+
+test('real server: an unreadable registered project does not break scope:"all" or the cross-project tool', async () => {
+  const unreadable = join(VOLUME, 'Unreadable Project');
+  // A directory where the layout file should be makes every read of it fail
+  // (EISDIR), the same failure path as macOS denying access (EPERM).
+  mkdirSync(join(unreadable, '.ijfw', '.layout-version'), { recursive: true });
+  const reg = join(HOME, '.ijfw', 'registry.md');
+  writeFileSync(reg, `${unreadable} | 0000000000ff | 2026-11-03T10:00:00Z\n`
+    + [TEST_PROJ, OTHER_PROJ].map((p, i) => `${p} | 00000000000${i} | 2026-11-03T10:00:00Z`).join('\n') + '\n');
+  const [all, tool] = await callServer(OTHER_PROJ, [
+    ['ijfw_memory_search', { query: 'BLUE-HERON-42', scope: 'all' }],
+    ['ijfw_cross_project_search', { pattern: 'BLUE-HERON-42' }],
+  ]);
+  assert.doesNotMatch(all, /EISDIR|EPERM|failed/i, all);
+  assert.match(all, /BLUE-HERON-42/, all);
+  assert.doesNotMatch(tool, /EISDIR|EPERM|failed/i, tool);
+  assert.match(tool, /@Test:L\d+\][^\n]*BLUE-HERON-42/, tool);
+});
