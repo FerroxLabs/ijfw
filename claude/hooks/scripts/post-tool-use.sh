@@ -31,6 +31,15 @@ HOOK_JS="$SCRIPT_DIR/post-tool-use.js"
 
 # Resolve the observation-capture script path so the JS hook can dispatch
 # the detached child. Mirrors the lookup the old shell version used.
-_OBS_SCRIPT="${IJFW_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)}/scripts/observation/capture.js"
+# Same candidate order as observation-capture.sh; a candidate must be a real
+# IJFW checkout. Falls back to the legacy traversal path (JS hook skips
+# capture when the file is missing).
+_OBS_SCRIPT=""
+for _cand in "${IJFW_PLUGIN_ROOT:-}" "$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)" "${IJFW_HOME:-}" "$HOME/.ijfw"; do
+  if [ -n "$_cand" ] && [ -f "$_cand/scripts/observation/capture.js" ] && [ -f "$_cand/mcp-server/src/redactor.js" ]; then
+    _OBS_SCRIPT="$_cand/scripts/observation/capture.js"; break
+  fi
+done
+[ -n "$_OBS_SCRIPT" ] || _OBS_SCRIPT="$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)/scripts/observation/capture.js"
 
 exec node "$HOOK_JS" "$_OBS_SCRIPT"

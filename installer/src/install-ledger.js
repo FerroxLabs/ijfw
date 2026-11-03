@@ -112,6 +112,8 @@ export const INSTALL_PLAN = {
     ['~/.codex/hooks.json', 'm', 'IJFW hook entries'],
     ['~/.codex/hooks/*.sh', 'c', 'lifecycle hook scripts'],
     ['~/.codex/IJFW.md', 'c', 'context file'],
+    ['~/.codex/AGENTS.md', 'm', 'IJFW managed block (rules Codex loads)'],
+    ['~/.codex/hooks/.ijfw-root', 'c', 'IJFW checkout path for capture hooks'],
     ['~/.codex/skills/, commands/', 'c', 'skills + command aliases'],
   ],
   gemini: [

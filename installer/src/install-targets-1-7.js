@@ -52,6 +52,7 @@ import {
   isLive,
   prettyName,
   guardProjectWrite,
+  upsertManagedBlock,
 } from './install-helpers.js';
 
 // ----------------------------------------------------------------------
@@ -372,17 +373,51 @@ export async function installCodex(ctx) {
     installHook(f.path, join(hooksBase, f.name), ctx.ts);
   }
 
-  // 3a. B7 tier-2 extension check script (codex/.codex/scripts/ subdir).
-  const codexScriptsSrc = join(ctx.repoRoot, 'codex', '.codex', 'scripts');
+  // 3a. Nested hook scripts referenced by hooks.json as hooks/scripts/*.sh
+  // (B7 tier-2 extension check). The source lives at
+  // codex/.codex/hooks/scripts; codex/.codex/scripts (the path older
+  // installers searched) is still honoured if a checkout carries it.
   const codexScriptsDst = join(hooksBase, 'scripts');
   ensureDir(codexScriptsDst);
-  for (const f of listFiles(codexScriptsSrc, '.sh')) {
-    installHook(f.path, join(codexScriptsDst, f.name), ctx.ts);
+  for (const srcDir of [
+    join(ctx.repoRoot, 'codex', '.codex', 'scripts'),
+    join(ctx.repoRoot, 'codex', '.codex', 'hooks', 'scripts'),
+  ]) {
+    for (const f of listFiles(srcDir, '.sh')) {
+      installHook(f.path, join(codexScriptsDst, f.name), ctx.ts);
+    }
   }
 
-  // 4. IJFW.md context file (if absent).
+  // 3b. Absolute IJFW checkout path for the capture wrappers. Hooks run from
+  // ~/.codex/hooks, so they cannot derive the checkout by directory
+  // traversal (../../.. is /Users on macOS). Rendered at install time.
+  writeAtomic(join(hooksBase, '.ijfw-root'), `${ctx.repoRoot}\n`, { mode: 0o644 });
+
+  // 4. IJFW.md context file (if absent) -- kept for reference/back-compat.
   const codexCtx = join(ctx.home, '.codex', 'IJFW.md');
-  copyIfAbsent(join(ctx.repoRoot, 'codex', '.codex', 'IJFW.md'), codexCtx);
+  const ijfwMdSrc = join(ctx.repoRoot, 'codex', '.codex', 'IJFW.md');
+  copyIfAbsent(ijfwMdSrc, codexCtx);
+
+  // 4a. Codex only loads ~/.codex/AGENTS.md (or AGENTS.override.md); IJFW.md
+  // is never read. Keep IJFW's rules in a managed block there.
+  if (existsSync(ijfwMdSrc)) {
+    const agentsMd = join(ctx.home, '.codex', 'AGENTS.md');
+    try {
+      const result = upsertManagedBlock(agentsMd, readFileSync(ijfwMdSrc, 'utf8'), ctx.ts);
+      if (result === 'appended' || result === 'updated') {
+        ctx.log.note(`IJFW rules ${result} in ~/.codex/AGENTS.md (your content kept; backup: AGENTS.md.bak.${ctx.ts})`);
+      }
+    } catch (err) {
+      ctx.log.note(`Left ~/.codex/AGENTS.md as-is (${err && err.message ? err.message : err})`);
+    }
+    const override = join(ctx.home, '.codex', 'AGENTS.override.md');
+    let overrideText = '';
+    try { overrideText = readFileSync(override, 'utf8'); } catch { /* absent */ }
+    if (overrideText.trim()) {
+      ctx.log.note('Codex reads ~/.codex/AGENTS.override.md instead of AGENTS.md while it has content -- '
+        + 'copy the IJFW block from ~/.codex/AGENTS.md into it to keep IJFW rules active.');
+    }
+  }
 
   // 5. User-level skills.
   const userSkills = join(ctx.home, '.codex', 'skills');
@@ -527,6 +562,11 @@ export async function installGemini(ctx) {
   for (const f of listFiles(hookScriptsDir, '.sh')) {
     installHook(f.path, join(extDst, 'hooks', f.name), ctx.ts);
   }
+
+  // 4-root. Absolute IJFW checkout path for the capture wrappers. Hooks run
+  // from ~/.gemini/extensions/ijfw/hooks, where ../../../.. is $HOME, not the
+  // checkout. Rendered at install time; removed with the extension dir.
+  writeAtomic(join(extDst, 'hooks', '.ijfw-root'), `${ctx.repoRoot}\n`, { mode: 0o644 });
 
   // 4a. B7 tier-2 extension check script (hooks/scripts/ subdir).
   const geminiHookScriptsSrc = join(extSrc, 'hooks', 'scripts');

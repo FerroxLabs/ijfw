@@ -292,9 +292,11 @@ const VALID_MEMORY_TYPES = ['decision', 'observation', 'pattern', 'handoff', 'pr
 // Strategy:
 //   1. IJFW_PROJECT_DIR env (explicit) -- validated for traversal, used as-is.
 //   2. CLAUDE_PROJECT_DIR env (set by Claude Code when project known) -- same validation.
-//   3. process.cwd() -- used ONLY if writable. Claude Code sometimes spawns
-//      MCP servers in directories the user can't write to (/, /tmp).
+//   3. process.cwd() -- used ONLY if writable and not '/', an app bundle,
+//      or (host-spawned server only) an OS temp dir. Claude Code sometimes spawns MCP servers in
+//      directories the user can't write to (/, /tmp).
 //   4. os.homedir() -- final fallback. Always writable for the user.
+// Full contract + per-host audit: docs/PROJECT-ROOT.md.
 //
 // Picking a writable root at startup eliminates the EACCES-on-mkdir failure
 // mode that corrupts the MCP stdio handshake (any stderr byte during init
@@ -307,7 +309,9 @@ const VALID_MEMORY_TYPES = ['decision', 'observation', 'pattern', 'handoff', 'pr
 // vetProjectRoot() is the gate for caller-supplied roots (MCP tool args,
 // dispatch ctx). Re-exported at the bottom of this file for test back-compat.
 
-const PROJECT_DIR = safeProjectDir();
+// hostSpawned: the MCP host chose this process's cwd, so a temp-dir cwd is
+// not a project (docs/PROJECT-ROOT.md).
+const PROJECT_DIR = safeProjectDir({ hostSpawned: true });
 const PROJECT_HASH = createHash('sha256').update(PROJECT_DIR).digest('hex').slice(0, 12);
 const IJFW_DIR = join(PROJECT_DIR, '.ijfw');
 

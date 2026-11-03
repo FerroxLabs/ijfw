@@ -12,9 +12,18 @@
 [ "${IJFW_DISABLE:-}" = "1" ] && exit 0
 command -v node >/dev/null 2>&1 || exit 0
 
-REPO_ROOT="${IJFW_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+# Locate the IJFW checkout that holds capture.js: IJFW_PLUGIN_ROOT, the
+# checkout this plugin lives in (~/.ijfw/claude/hooks/scripts/../../..),
+# IJFW_HOME, then ~/.ijfw. Each candidate must be a real IJFW checkout
+# (capture.js + the redactor it imports) -- a plugin-cache copy outside
+# ~/.ijfw falls through to ~/.ijfw instead of silently skipping capture.
+_ijfw_root_ok() { [ -n "$1" ] && [ -f "$1/scripts/observation/capture.js" ] && [ -f "$1/mcp-server/src/redactor.js" ]; }
+REPO_ROOT=""
+for _cand in "${IJFW_PLUGIN_ROOT:-}" "$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)" "${IJFW_HOME:-}" "$HOME/.ijfw"; do
+  if _ijfw_root_ok "$_cand"; then REPO_ROOT="$_cand"; break; fi
+done
+[ -n "$REPO_ROOT" ] || exit 0
 CAPTURE="$REPO_ROOT/scripts/observation/capture.js"
-[ -f "$CAPTURE" ] || exit 0
 
 # Payload is passed via arg 1 or stdin
 if [ -n "${1:-}" ]; then

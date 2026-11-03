@@ -48,11 +48,21 @@ FIRST_ERR=$(printf '%s' "$RESPONSE_TEXT" | grep -iE '^(ERROR|FATAL|CRITICAL)|(^|
 FIRST_FAIL=$(printf '%s' "$RESPONSE_TEXT" | grep -iE '\b(test(s)? failed|failed with|assertion (failed|error))\b' 2>/dev/null | head -1 | cut -c1-200)
 if [ -n "$FIRST_ERR" ] || [ -n "$FIRST_FAIL" ]; then
   TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || TZ=UTC date +"%Y-%m-%dT%H:%M:%SZ")
-  node -e '
-    const fs = require("fs");
-    const rec = { ts: process.argv[1], error: process.argv[2] || null, fail: process.argv[3] || null };
-    try { fs.appendFileSync(".ijfw/.session-signals.jsonl", JSON.stringify(rec) + "\n"); } catch {}
-  ' "$TS" "$FIRST_ERR" "$FIRST_FAIL" 2>/dev/null
+  # Redact tool-output snippets (FerroxLabs/ijfw#31); fail closed.
+  _REDACTOR=""
+  for _cand in "${IJFW_PLUGIN_ROOT:-}" "$( [ -f "$(dirname "$0")/.ijfw-root" ] && head -n 1 "$(dirname "$0")/.ijfw-root" 2>/dev/null)" "${IJFW_HOME:-}" "$HOME/.ijfw"; do
+    if [ -n "$_cand" ] && [ -f "$_cand/scripts/observation/redact.js" ]; then _REDACTOR="$_cand/scripts/observation/redact.js"; break; fi
+  done
+  node --input-type=module -e '
+    import { appendFileSync } from "node:fs";
+    import { pathToFileURL } from "node:url";
+    const [ts, err, fail, redactorPath] = process.argv.slice(1);
+    let R = null;
+    try { if (redactorPath) R = (await import(pathToFileURL(redactorPath).href)).redactObservationText; } catch {}
+    const clean = (v) => (!v ? null : (R ? R(v) : "[redacted: redactor unavailable]"));
+    const rec = { ts, error: clean(err), fail: clean(fail) };
+    try { appendFileSync(".ijfw/.session-signals.jsonl", JSON.stringify(rec) + "\n", { mode: 0o600 }); } catch {}
+  ' "$TS" "$FIRST_ERR" "$FIRST_FAIL" "$_REDACTOR" 2>/dev/null
 fi
 
 # Trim noise.

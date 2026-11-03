@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "AfterTool",
+  "session_id": "gemini-session-1",
+  "cwd": "/Users/test user/dev/my project",
+  "tool_name": "run_shell_command",
+  "tool_input": { "command": "ls -la" },
+  "tool_response": { "llmContent": "total 0" }
+}
