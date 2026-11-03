@@ -22,7 +22,7 @@
 // home directory will be caught by step 1+2. Plain `isAbsolute()` was
 // the only prior validation and was insufficient.
 
-import { basename, resolve, join } from 'node:path';
+import { basename, resolve, join, delimiter, isAbsolute } from 'node:path';
 import { realpathSync, statSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { searchCorpus } from './search-bm25.js';
@@ -73,11 +73,17 @@ export function _resetCorpusCache() {
 // by readProjectMemory in server.js so an edit to any of them busts the
 // cache. Missing files contribute "0" -- creation of a previously-missing
 // file is a cache-bust on its own.
+// Both memory layouts (v1: .ijfw/memory, v2: ijfw/memory -- see
+// brain/paths.js) plus the layout sentinel, so a write under either layout
+// or a layout migration busts the cache.
 const CACHE_SIGNATURE_FILES = [
-  ['.ijfw', 'memory', 'knowledge.md'],
-  ['.ijfw', 'memory', 'project-journal.md'],
-  ['.ijfw', 'memory', 'handoff.md'],
-  ['.ijfw', 'memory', 'team-knowledge.md'],
+  ['.ijfw', '.layout-version'],
+  ...['.ijfw', 'ijfw'].flatMap((top) => [
+    [top, 'memory', 'knowledge.md'],
+    [top, 'memory', 'project-journal.md'],
+    [top, 'memory', 'handoff.md'],
+    [top, 'memory', 'team-knowledge.md'],
+  ]),
 ];
 
 function computeProjectSignature(canonicalProjectPath) {
@@ -128,21 +134,47 @@ export function _resetSkipLog() {
   SKIP_LOG.clear();
 }
 
-/** Default allowed roots: just the user's home directory.
- *  Tests can pass `opts.allowedRoots` to constrain or widen.
- *  Returned as resolved (realpath'd) absolute paths so containment
- *  comparison is apples-to-apples with the realpath'd entry. */
-function defaultAllowedRoots() {
+/** Default allowed roots for registry entries.
+ *  - the user's home directory (always);
+ *  - on macOS, /Volumes: projects on a separate drive are common there
+ *    (FerroxLabs/ijfw#50) and were silently skipped before;
+ *  - every absolute entry of IJFW_PROJECT_ROOTS (path-delimiter separated)
+ *    for other layouts (/srv/code, /mnt/projects, ...).
+ *  Entries outside HOME must additionally carry a `.ijfw` directory owned by
+ *  the current user (see safeResolveProjectPath), so widening the roots does
+ *  not turn a hostile registry line into an arbitrary-file read.
+ *  Returned realpath'd where the path exists so containment comparison is
+ *  apples-to-apples with the realpath'd entry. */
+export function defaultAllowedRoots(opts = {}) {
+  const platform = opts.platform || process.platform;
+  const env = opts.env || process.env;
+  const canon = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
   const roots = [];
   try {
-    const home = homedir();
-    if (home && typeof home === 'string') {
-      // realpath the root itself so /var/root on macOS resolves to
-      // /private/var/root (same canonicalization as the entry side).
-      try { roots.push(realpathSync(home)); } catch { roots.push(resolve(home)); }
-    }
+    const home = opts.home !== undefined ? opts.home : homedir();
+    // realpath the root itself so /var/root on macOS resolves to
+    // /private/var/root (same canonicalization as the entry side).
+    if (home && typeof home === 'string') roots.push(canon(home));
   } catch { /* ignore */ }
-  return roots;
+  if (platform === 'darwin') roots.push(canon('/Volumes'));
+  for (const raw of String(env.IJFW_PROJECT_ROOTS || '').split(delimiter)) {
+    const p = raw.trim();
+    if (p && isAbsolute(p)) roots.push(canon(p));
+  }
+  return [...new Set(roots)];
+}
+
+// Outside HOME, only accept a directory that is visibly an IJFW project the
+// current user owns. POSIX only (no uid concept on Windows).
+function isOwnedIjfwProject(canonical) {
+  try {
+    const st = statSync(join(canonical, '.ijfw'));
+    if (!st.isDirectory()) return false;
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** True iff `child` is `root` or a path nested under `root`.
@@ -162,7 +194,7 @@ function isUnder(child, root) {
 /** Resolve + containment check.
  *  Returns the canonical path on success, or null if the entry must be
  *  skipped. On skip, logs to stderr once per unique raw path. */
-function safeResolveProjectPath(rawPath, allowedRoots) {
+function safeResolveProjectPath(rawPath, allowedRoots, opts = {}) {
   if (!rawPath || typeof rawPath !== 'string') {
     return _skip(rawPath, 'not-a-string');
   }
@@ -178,6 +210,10 @@ function safeResolveProjectPath(rawPath, allowedRoots) {
   }
   if (!allowedRoots.some(root => isUnder(canonical, root))) {
     return _skip(rawPath, `escapes-allowed-roots (realpath=${canonical})`);
+  }
+  const homeRoot = allowedRoots[0];
+  if (!isUnder(canonical, homeRoot) && !opts.trustRoots && !isOwnedIjfwProject(canonical)) {
+    return _skip(rawPath, `not-an-owned-ijfw-project (realpath=${canonical})`);
   }
   return canonical;
 }
@@ -206,9 +242,8 @@ function _skip(rawPath, reason) {
 //                      Default: [realpath(homedir())].
 // Returns [{ id, text, meta }] where meta carries project + source + lineNo.
 export function buildCorpus(projects, readProjectMemory, opts = {}) {
-  const allowedRoots = Array.isArray(opts.allowedRoots) && opts.allowedRoots.length
-    ? opts.allowedRoots
-    : defaultAllowedRoots();
+  const callerRoots = Array.isArray(opts.allowedRoots) && opts.allowedRoots.length > 0;
+  const allowedRoots = callerRoots ? opts.allowedRoots : defaultAllowedRoots();
   // Tenant gate (P4): only surface projects in the CALLER's tenant. Caller tenant
   // defaults to 'default'; candidate tenant is read from each project's
   // .ijfw/tenant (injectable for tests via opts.resolveTenant). Default==default
@@ -218,10 +253,17 @@ export function buildCorpus(projects, readProjectMemory, opts = {}) {
     ? (p) => normTenant(opts.resolveTenant(p))
     : resolveProjectTenant;
   const docs = [];
+  const seen = new Set();
   for (const entry of projects) {
     if (!entry || typeof entry !== 'object') continue;
-    const canonical = safeResolveProjectPath(entry.path, allowedRoots);
+    // Caller-supplied allowedRoots (tests, explicit API use) are trusted as
+    // given; only the widened defaults need the ownership check.
+    const canonical = safeResolveProjectPath(entry.path, allowedRoots, { trustRoots: callerRoots });
     if (canonical === null) continue;  // skipped (symlink-escape or missing)
+    // The same project can be listed twice (registry `pwd -P` path plus the
+    // server's own cwd spelling); read it once.
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
 
     // Tenant isolation: skip projects that belong to a different tenant.
     if (tenantOf(canonical) !== callerTenant) continue;

@@ -53,6 +53,22 @@ in this change.
 | Claude Code | plugin `.mcp.json` + `~/.claude/settings.json` | cwd = the directory where the session started; `CLAUDE_PROJECT_DIR` when Claude Code sets it | Not re-verified here |
 | Cursor / Windsurf / Copilot / other project-scoped JSON configs | project or user MCP JSON | cwd only (the host chooses it; IJFW sets no `cwd`) | Not verified |
 
+## Searching all projects (`scope: "all"`)
+
+- **What is searched:** every project listed in `~/.ijfw/registry.md` (the
+  session-start hooks add a project the first time an agent starts in it),
+  plus the current project.
+- **Which folder is read:** each project's memory is read from the folder
+  that project's own server uses: `ijfw/memory` (layout v2) or
+  `.ijfw/memory` (older layout).
+- **Which locations are allowed:**
+  - your home folder;
+  - on macOS, `/Volumes/...` (projects on a separate drive);
+  - any absolute path listed in `IJFW_PROJECT_ROOTS` (separated by `:`).
+- **Safety rule outside the home folder:** a project there is read only if
+  it has a `.ijfw` folder owned by you. A stray or hostile registry line
+  therefore cannot make the server read other folders.
+
 ## Known limitations
 
 - A host that starts the server with cwd `/`, a temp directory, or its own app
