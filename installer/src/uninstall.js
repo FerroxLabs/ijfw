@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { unmergeMarketplace, claudeSettingsPath } from './marketplace.js';
 import { readLedger, isEmptyDir } from './install-ledger.js';
 import { stripManagedBlock } from './install-helpers.js';
+import { claudeDesktopConfigPath } from './install-targets-8-14.js';
 
 // Repo root, resolved relative to this module (installer/src/uninstall.js ->
 // repo root is two dirs up). Used to byte-compare shipped Aider templates
@@ -792,6 +793,14 @@ function cleanPlatforms(opts = {}) {
     removed.push('~/.qwen/settings.json  (removed ijfw-memory)');
   }
 
+  // Claude Desktop: claude_desktop_config.json -- flat mcpServers. Check both
+  // the macOS and the Windows location (whichever exists).
+  for (const plat of ['darwin', 'win32']) {
+    const p = claudeDesktopConfigPath(home, plat);
+    if (p && existsSync(p) && rmJsonEntry(p, 'claude_desktop_config.json')) {
+      removed.push(`${p}  (removed ijfw-memory)`);
+    }
+  }
   // Kimi Code: ~/.kimi/mcp.json -- flat mcpServers.
   if (rmJsonEntry(join(home, '.kimi', 'mcp.json'), '~/.kimi/mcp.json')) {
     removed.push('~/.kimi/mcp.json  (removed ijfw-memory)');

@@ -1991,10 +1991,10 @@ function handleCrossProjectSearch({ pattern, limit = 10 } = {}) {
     return { text: 'pattern is required and must be a string.', isError: true };
   }
   if (pattern.length > 500) pattern = pattern.substring(0, 500);
-  const projects = readRegistry();
-  if (projects.length === 0) {
-    return { text: 'No other IJFW projects on record. Open one more project to enable cross-project search.' };
-  }
+  // "Every IJFW project" includes the current one (FerroxLabs/ijfw#50
+  // rollout: searching from the project that held the answer found nothing).
+  const projects = readRegistry({ includeCurrent: true });
+  if (!projects.some((p) => p.path === PROJECT_DIR)) projects.push({ path: PROJECT_DIR });
   const hits = crossProjectSearch(pattern, projects, readProjectMemory, { limit, tenant: currentTenant() });
   if (hits.length === 0) {
     return { text: `No matches for "${pattern}" across ${projects.length} project${projects.length === 1 ? '' : 's'}.` };

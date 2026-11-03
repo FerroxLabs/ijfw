@@ -247,6 +247,45 @@ export function installKimi(ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Claude Desktop (FerroxLabs/ijfw#50 rollout)
+// ---------------------------------------------------------------------------
+//
+// MCP-only. Claude Desktop reads mcpServers from claude_desktop_config.json
+// (macOS: ~/Library/Application Support/Claude/, Windows: %APPDATA%\Claude\).
+// mergeJson keeps every other key (preferences, other servers) and gives the
+// entry its own PATH -- GUI apps start servers with a minimal PATH. Only
+// written when the app's config folder exists (the app is installed).
+// Claude Desktop does not tell the server which project is open, so memory
+// there is user-global (docs/PROJECT-ROOT.md).
+
+export function claudeDesktopConfigPath(home, plat = process.platform, env = process.env) {
+  if (plat === 'darwin') {
+    return path.posix.join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+  }
+  if (plat === 'win32') {
+    const appData = (env && env.APPDATA) || path.win32.join(home, 'AppData', 'Roaming');
+    return path.win32.join(appData, 'Claude', 'claude_desktop_config.json');
+  }
+  return null;
+}
+
+export function installClaudeDesktop(ctx) {
+  if (ctx.ijfwCustomDir) {
+    printInfo('Custom-dir install -- skipping Claude Desktop merge.');
+    printOk('Claude Desktop: real platform config left untouched.');
+    return { status: 'noop' };
+  }
+  const dst = claudeDesktopConfigPath(ctx.home, ctx.platform || process.platform);
+  if (!dst || !fs.existsSync(path.dirname(dst))) {
+    printInfo('Claude Desktop: install the app, then re-run the installer to connect it.');
+    return { status: 'noop' };
+  }
+  mergeJson(dst, ctx.serverJsNative || ctx.serverJs, ctx.ts);
+  printOk(`Merged MCP into ${dst} (quit Claude Desktop with Cmd+Q and reopen to load it)`);
+  return { status: 'ok' };
+}
+
+// ---------------------------------------------------------------------------
 // 13. OpenClaw -- install.sh:1506-1529
 // ---------------------------------------------------------------------------
 //
