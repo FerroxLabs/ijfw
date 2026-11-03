@@ -1436,3 +1436,85 @@ export function mergeYamlHook(dst, scriptPath, ts) {
 
   writeAtomic(dst, text + block, { mode: 0o600 });
 }
+
+// ============================================================================
+// Managed text blocks (Codex ~/.codex/AGENTS.md)
+// ============================================================================
+//
+// Codex loads user-level instructions ONLY from $CODEX_HOME/AGENTS.override.md
+// (when non-empty) or $CODEX_HOME/AGENTS.md -- verified against openai/codex
+// codex-rs/codex-home/src/instructions/mod.rs. There is no include/import
+// mechanism, so a separate ~/.codex/IJFW.md is never read. IJFW therefore
+// keeps its rules inside ONE marker-delimited block in AGENTS.md:
+//   - user text before/after the block is never touched,
+//   - re-install replaces the block in place (idempotent, no-op when equal),
+//   - the file is backed up before any modification of existing content,
+//   - uninstall removes only the block (stripManagedBlock).
+
+export const IJFW_BLOCK_BEGIN = '<!-- IJFW:BEGIN (managed by IJFW; edits inside this block are replaced on reinstall, `ijfw uninstall` removes it) -->';
+export const IJFW_BLOCK_END = '<!-- IJFW:END -->';
+const BLOCK_RE = /<!-- IJFW:BEGIN[^\n]*-->[\s\S]*?<!-- IJFW:END -->\n?/g;
+
+export function renderManagedBlock(body) {
+  return `${IJFW_BLOCK_BEGIN}\n${String(body).replace(/\s+$/, '')}\n${IJFW_BLOCK_END}\n`;
+}
+
+/**
+ * upsertManagedBlock -- insert or refresh the IJFW block in `path`.
+ * Returns 'created' | 'appended' | 'updated' | 'unchanged'.
+ * Throws only when an existing file cannot be backed up (refuse to modify
+ * user content without a backup).
+ */
+export function upsertManagedBlock(path, body, ts) {
+  const block = renderManagedBlock(body);
+  let current = null;
+  let mode = 0o644;
+  try {
+    current = readFileSync(path, 'utf8');
+    mode = statSync(path).mode & 0o777;
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+
+  if (current === null) {
+    writeAtomic(path, block, { mode });
+    return 'created';
+  }
+
+  const matches = current.match(BLOCK_RE) || [];
+  let next;
+  if (matches.length === 0) {
+    const sep = current.length === 0 ? '' : (current.endsWith('\n\n') ? '' : (current.endsWith('\n') ? '\n' : '\n\n'));
+    next = current + sep + block;
+  } else {
+    // Replace the first block in place; drop any duplicates.
+    let seen = false;
+    next = current.replace(BLOCK_RE, () => {
+      if (seen) return '';
+      seen = true;
+      return block;
+    });
+  }
+  if (next === current) return 'unchanged';
+
+  requireBackup(path, ts || backupTimestamp());
+  writeAtomic(path, next, { mode });
+  return matches.length === 0 ? 'appended' : 'updated';
+}
+
+/**
+ * stripManagedBlock -- text with every IJFW block removed, plus the blank
+ * separator line upsertManagedBlock added. Pure; callers handle I/O.
+ */
+export function stripManagedBlock(text) {
+  const s = String(text);
+  if (!BLOCK_RE.test(s)) { BLOCK_RE.lastIndex = 0; return s; }
+  BLOCK_RE.lastIndex = 0;
+  return s
+    .replace(/\n?\n?<!-- IJFW:BEGIN[^\n]*-->[\s\S]*?<!-- IJFW:END -->\n?/g, (m, offset) => {
+      // Keep one newline when the block sat between two pieces of user text.
+      const before = s.slice(0, offset);
+      const after = s.slice(offset + m.length);
+      return before.length && after.length ? '\n' : (before.length ? '\n' : '');
+    });
+}

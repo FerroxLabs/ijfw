@@ -6,9 +6,9 @@
   "mcpServers": {
     "ijfw-memory": {
       "command": "node",
-      "args": ["${IJFW_MCP_PATH:-${HOME}/.ijfw/mcp-server/src/server.js}"],
+      "args": ["${HOME}/.ijfw/mcp-server/src/server.js"],
       "env": {
-        "IJFW_PROJECT_DIR": "${PWD}",
+        "IJFW_PROJECT_DIR": "${workspacePath}",
         "PATH": "${PATH}"
       },
       "trust": true

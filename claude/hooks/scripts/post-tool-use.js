@@ -20,6 +20,7 @@
 
 import * as fs from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 
@@ -98,10 +99,29 @@ const failRe = /\b(?:tests? failed|failed with|assertion (?:failed|error))\b/i;
 const firstErr  = scanFirst(responseText, errRe, 200);
 const firstFail = scanFirst(responseText, failRe, 200);
 if (firstErr || firstFail) {
+  // Tool output can echo credentials (FerroxLabs/ijfw#31). Redact with the
+  // shared observation redactor that sits next to capture.js (argv[2]).
+  // Fail closed: without it, record that a signal fired but not its text.
+  // Candidates: next to capture.js (argv[2]), this hook's own checkout
+  // (claude/hooks/scripts -> ../../../scripts/observation), then ~/.ijfw.
+  let redact = null;
+  const redactCandidates = [];
+  if (process.argv[2]) redactCandidates.push(join(process.argv[2], '..', 'redact.js'));
+  redactCandidates.push(fileURLToPath(new URL('../../../scripts/observation/redact.js', import.meta.url)));
+  redactCandidates.push(join(process.env.IJFW_HOME || join(homedir(), '.ijfw'), 'scripts', 'observation', 'redact.js'));
+  for (const redactPath of redactCandidates) {
+    try {
+      if (!fs.existsSync(redactPath)) continue;
+      redact = (await import(pathToFileURL(redactPath).href)).redactObservationText;
+      if (typeof redact === 'function') break;
+      redact = null;
+    } catch { redact = null; }
+  }
+  const clean = (v) => (!v ? null : (redact ? redact(v) : '[redacted: redactor unavailable]'));
   try {
     fs.mkdirSync('.ijfw', { recursive: true });
     const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-    const rec = { ts, error: firstErr || null, fail: firstFail || null };
+    const rec = { ts, error: clean(firstErr), fail: clean(firstFail) };
     // mode 0o600: error/fail excerpts can carry sensitive content -- keep them
     // owner-only, not world-readable (privacy audit finding).
     fs.appendFileSync('.ijfw/.session-signals.jsonl', JSON.stringify(rec) + '\n', { mode: 0o600 });

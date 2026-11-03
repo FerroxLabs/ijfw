@@ -3,29 +3,38 @@
  * IJFW observation capture -- reads hook JSON from stdin, classifies,
  * appends to ~/.ijfw/observations.jsonl.
  *
- * Called by observation-capture.sh (async, via `& disown`).
- * Zero deps. Never crashes; all errors to stderr.
+ * Called by observation-capture.sh / user-prompt-submit-capture.sh (async,
+ * via `& disown`). Zero deps. Never crashes; all errors to stderr.
  *
- * stdin: Claude Code hook JSON envelope (PostToolUse or UserPromptSubmit)
+ * stdin: hook JSON envelope (PostToolUse / UserPromptSubmit, or the Gemini
+ *        AfterTool / BeforeAgent equivalents). Claude Code, current Codex,
+ *        legacy Codex and Gemini shapes are all accepted -- see normalize.js.
  * env:
  *   IJFW_SESSION_ID  -- session UUID (set by session-start.sh)
  *   IJFW_PROJECT     -- project name (set by session-start.sh, fallback to cwd basename)
  *   IJFW_PLATFORM    -- "claude-code" | "codex" | "gemini" (default: "claude-code")
+ *
+ * Security (FerroxLabs/ijfw#31): every free-text field (prompt, command line,
+ * tool input path, title) is passed through redactObservationText() before
+ * it can reach the ledger. Tool output is never stored.
  */
 
-import { readFileSync, existsSync, readFileSync as rf } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { basename } from 'path';
 import { homedir } from 'os';
 import { join } from 'path';
 import { classify } from './classify.js';
 import { titleize } from './titleize.js';
 import { appendObservation } from './ledger.js';
+import { normalizeHookPayload } from './normalize.js';
+import { redactObservationText } from './redact.js';
 
 const SESSION_FILE = join(homedir(), '.ijfw', '.current-session');
 
-function readSessionId() {
+function readSessionId(payloadSessionId) {
   const envId = process.env.IJFW_SESSION_ID;
   if (envId) return envId;
+  if (payloadSessionId) return payloadSessionId;
   try {
     if (existsSync(SESSION_FILE)) return readFileSync(SESSION_FILE, 'utf8').trim();
   } catch {}
@@ -35,7 +44,9 @@ function readSessionId() {
 function main() {
   let raw = '';
   try {
-    raw = readFileSync('/dev/stdin', 'utf8');
+    // fd 0 (not '/dev/stdin'): works for pipes, files AND sockets -- Node-based
+    // hosts hand children a socketpair, which '/dev/stdin' cannot open.
+    raw = readFileSync(0, 'utf8');
   } catch {
     // stdin may not be available -- exit silently
     process.exit(0);
@@ -50,52 +61,42 @@ function main() {
     process.exit(0);
   }
 
-  const hookEvent = payload.hook_event_name || payload.hook || 'PostToolUse';
-  const toolName  = payload.tool_name || '';
-  const toolInput = payload.tool_input || {};
-  const toolResp  = payload.tool_response || {};
+  const ev = normalizeHookPayload(payload);
+  const R = redactObservationText;
 
-  // Determine if file is newly created (Write creating a new path)
-  let isNewFile = false;
-  if (toolName === 'Write') {
-    const p = toolInput.file_path || '';
-    // If the tool_response indicates success and it's a Write, treat as new file
-    // (conservative: always new for Write, diff check is too expensive here)
-    isNewFile = true;
-  }
+  const filePath = R(ev.filePath);
+  const files = ev.files.map((f) => R(f)).filter(Boolean);
 
-  const filePath = toolInput.file_path || toolInput.path || '';
-  const cmd      = toolInput.command   || '';
-  const userPrompt = payload.user_prompt || '';
-
-  // Build classifier event
-  const classEvent = {
-    tool_name: toolName,
-    tool_input_cmd:  cmd,
+  // Classify on the raw command (keyword heuristics only, nothing stored),
+  // title on redacted text only.
+  const type = classify({
+    tool_name: ev.toolName,
+    tool_input_cmd: ev.command,
+    tool_input_path: ev.filePath,
+    is_new_file: ev.isNewFile,
+    hook_event: ev.hookEvent,
+    user_prompt: '',
+  });
+  const title = R(titleize({
+    tool_name: ev.toolName,
+    tool_input_cmd: R(ev.command),
     tool_input_path: filePath,
-    is_new_file: isNewFile,
-    hook_event: hookEvent,
-    user_prompt: userPrompt,
-  };
-
-  const type  = classify(classEvent);
-  const title = titleize({ ...classEvent });
-
-  // Collect files touched
-  const files = [];
-  if (filePath) files.push(filePath);
+    is_new_file: ev.isNewFile,
+    hook_event: ev.hookEvent,
+    user_prompt: R(ev.prompt),
+  }));
 
   const obs = {
     ts:         new Date().toISOString(),
     type,
     title,
     files,
-    tool_name:   toolName || null,
+    tool_name:   ev.originalToolName || ev.toolName || null,
     token_cost:  null,
     work_tokens: null,
     platform:    process.env.IJFW_PLATFORM || 'claude-code',
-    session_id:  readSessionId(),
-    project:     process.env.IJFW_PROJECT || basename(process.cwd()),
+    session_id:  readSessionId(ev.sessionId),
+    project:     process.env.IJFW_PROJECT || basename(ev.cwd || process.cwd()),
   };
 
   try {
