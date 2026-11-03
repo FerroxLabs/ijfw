@@ -835,7 +835,9 @@ function resolveProject(spec) {
 // Read this-project-shape memory for an arbitrary project root. Mirrors the
 // sources the local search uses, but isolated to that project's directory.
 function readProjectMemory(projectPath) {
-  const memDir = join(projectPath, '.ijfw', 'memory');
+  // Layout-aware (v2 keeps content in <project>/ijfw/memory): the same
+  // directory the owning project's own server writes and searches.
+  const memDir = resolveBrainPaths(projectPath).memoryDir;
   return {
     knowledge: readOr(join(memDir, 'knowledge.md')),
     journal:   readOr(join(memDir, 'project-journal.md')),
@@ -885,8 +887,12 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   if (scope === 'all') {
     // v1.5.1 H1.5 (audit memory-engine.md F-FUN-4): use BM25-ranked
     // crossProjectSearch, not the legacy naive keyword-count scan.
-    const projects = readRegistry();
-    if (projects.length === 0) return [];
+    // "Every project" includes the current one (it used to be excluded, so a
+    // scope:'all' search from the project that holds the answer found
+    // nothing). The current project is added even before a session-start
+    // hook has registered it.
+    const projects = readRegistry({ includeCurrent: true });
+    if (!projects.some((p) => p.path === PROJECT_DIR)) projects.push({ path: PROJECT_DIR });
     return crossProjectSearch(query, projects, readProjectMemory, { limit, tenant: currentTenant() });
   }
 

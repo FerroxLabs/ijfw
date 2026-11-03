@@ -24,7 +24,7 @@ const EXTRA = [
   [/\b(bearer\s+)(?!\[REDACTED)[A-Za-z0-9._~+/=-]{8,}/gi, '$1[REDACTED]'],
   // URL userinfo: scheme://user:secret@host
   [/([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s/@]+(@)/gi, '$1[REDACTED]$2'],
-  // curl/wget style basic auth: -u user:secret, --user=user:secret
+  // HTTP-client basic auth flags: -u <user>:<password>, --user=<user>:<password>
   [/((?:^|\s)(?:-u|--user|--proxy-user)(?:\s+|=)["']?[^\s:"']+:)(?!\[REDACTED)[^\s"']+/g, '$1[REDACTED]'],
   // CLI flags: --password x, --token=x, --api-key x, --secret x
   [/(--?(?:password|passwd|pass|token|api[-_]?key|secret|client[-_]?secret|access[-_]?token)(?:\s+|=))(?!\[REDACTED)("[^"]*"|'[^']*'|[^\s]+)/gi, '$1[REDACTED]'],
