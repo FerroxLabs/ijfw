@@ -216,6 +216,8 @@ test('isTempPath: macOS and Linux temp roots (lexical)', () => {
   for (const p of [
     '/Users/test user/dev/my project', '/Users/test user/tmp/proj',
     '/home/u/projects/tmp-tools', '/tmpfoo/x', '/var/folders-not/x',
+    // FerroxLabs/ijfw#50: projects on a separate macOS volume.
+    '/Volumes/Projects/my app', '/Volumes/Data/dev/x',
   ]) assert.equal(isTempPath(p), false, p);
 });
 
@@ -223,4 +225,12 @@ test('isUnexpandedTemplate: only real template syntax is flagged', () => {
   assert.equal(isUnexpandedTemplate('${PWD}'), true);
   assert.equal(isUnexpandedTemplate('/Users/test user/dev/my project'), false);
   assert.equal(isUnexpandedTemplate('/Users/a/my$project'), false, 'a bare $ followed by lowercase is a legal path char');
+});
+
+test('FerroxLabs/ijfw#50: a project on a separate volume (/Volumes/...) is never treated as temp or bundle', async () => {
+  const { isBundleInternalPath } = await import('./src/lib/project-root-guard.js');
+  for (const p of ['/Volumes/Projects/my app', '/Volumes/Work Drive/dev/ijfw-client']) {
+    assert.equal(isTempPath(p), false, p);
+    assert.equal(isBundleInternalPath(p), false, p);
+  }
 });
