@@ -281,7 +281,15 @@ export function buildCorpus(projects, readProjectMemory, opts = {}) {
     // Pass the CANONICAL path to the reader, not the raw one — so a reader
     // that joins with `.ijfw/memory/...` walks the canonical tree, not a
     // possibly-spoofed symlink chain.
-    const mem = readProjectMemory(canonical) || {};
+    // One unreadable project (macOS privacy denial EPERM, a damaged file,
+    // a vanished volume) is skipped -- it must never fail the whole search.
+    let mem;
+    try {
+      mem = readProjectMemory(canonical) || {};
+    } catch (err) {
+      _skip(entry.path, `unreadable (${err && err.code ? err.code : 'error'})`);
+      continue;
+    }
     projectDocs = [];
     for (const [source, content] of Object.entries(mem)) {
       if (typeof content !== 'string' || content.length === 0) continue;
