@@ -132,6 +132,17 @@ export function isProjectWritable(cwd, home) {
   // The bleed vector: cwd === $HOME. Refuse.
   if (candReal === homeRealPath) return false;
 
+  // Never treat the IJFW install itself as "your project": running the
+  // installer from ~/.ijfw/installer used to write .cursor/ .vscode/ .ijfw/
+  // .windsurfrules into the IJFW checkout (FerroxLabs/ijfw#50 rollout).
+  const ijfwHomes = [join(rawHome, '.ijfw')];
+  if (process.env.IJFW_HOME) ijfwHomes.push(process.env.IJFW_HOME);
+  for (const h of ijfwHomes) {
+    let hReal;
+    try { hReal = realpathSync(h); } catch { try { hReal = resolve(h); } catch { continue; } }
+    if (candReal === hReal || candReal.startsWith(hReal + sep)) return false;
+  }
+
   return true;
 }
 
@@ -152,7 +163,7 @@ export function guardProjectWrite(cwd, home, opts = {}) {
   const info = (opts.log && typeof opts.log.info === 'function') ? opts.log.info : printInfo;
   info(
     `Run \`ijfw install\` from a project directory to install ${label}; ` +
-    'skipped (cwd is your home directory).',
+    'skipped (this folder is your home directory or the IJFW install).',
   );
   return false;
 }
@@ -508,6 +519,32 @@ function readJsonOrEmpty(path) {
  * PATH for spawned MCPs (harmless elsewhere). On Windows we omit PATH (Path
  * uses different separator + node is on Path after preflight).
  */
+/**
+ * guiSafePath -- PATH value for MCP entries. Desktop apps (Claude Desktop,
+ * Codex Desktop, IDEs) start servers with a minimal PATH, so `node` from
+ * Volta / Homebrew / nvm is not found. Lists the installing node's own dir
+ * first, then common node locations that exist. '' on Windows.
+ */
+export function guiSafePath() {
+  if (IS_WIN) return '';
+  const home = homedir();
+  const candidatePaths = [
+    dirname(process.execPath),
+    `${home}/.volta/bin`,
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    `${home}/.nvm/versions/node/${process.version}/bin`,
+    '/usr/bin',
+    '/bin',
+  ];
+  return [...new Set(candidatePaths)]
+    .filter((d) => {
+      try { return typeof d === 'string' && d.length > 0 && existsSync(d); }
+      catch { return false; }
+    })
+    .join(':');
+}
+
 export function mergeJson(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
   // V155-009: refuse to overwrite an existing config without a verified backup.
@@ -519,23 +556,7 @@ export function mergeJson(dst, serverJs, ts) {
   const doc = readJsonOrEmpty(dst);
   if (!doc.mcpServers || typeof doc.mcpServers !== 'object') doc.mcpServers = {};
 
-  const isWin = IS_WIN;
-  const nodeDir = dirname(process.execPath);
-  const home = homedir();
-  const candidatePaths = isWin ? [] : [
-    nodeDir,
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    `${home}/.nvm/versions/node/${process.version}/bin`,
-    '/usr/bin',
-    '/bin',
-  ];
-  const envPath = candidatePaths
-    .filter(d => {
-      try { return typeof d === 'string' && d.length > 0 && existsSync(d); }
-      catch { return false; }
-    })
-    .join(':');
+  const envPath = guiSafePath();
 
   const entry = { command: 'node', args: [serverJs] };
   if (envPath) entry.env = { PATH: envPath };
@@ -594,6 +615,10 @@ export function mergeToml(dst, serverJs, ts) {
   block += '\n[mcp_servers.ijfw-memory]\n';
   block += 'command = "node"\n';
   block += `args = ["${escaped}"]\n`;
+  // Inline table (not a [mcp_servers.ijfw-memory.env] sub-table) so the
+  // section strip on reinstall/uninstall removes it together with the entry.
+  const envPath = guiSafePath();
+  if (envPath) block += `env = { PATH = "${envPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" }\n`;
   block += 'enabled = true\n';
   block += 'startup_timeout_sec = 10\n';
   block += 'tool_timeout_sec = 30\n';
@@ -1435,4 +1460,86 @@ export function mergeYamlHook(dst, scriptPath, ts) {
   block += `${END}\n`;
 
   writeAtomic(dst, text + block, { mode: 0o600 });
+}
+
+// ============================================================================
+// Managed text blocks (Codex ~/.codex/AGENTS.md)
+// ============================================================================
+//
+// Codex loads user-level instructions ONLY from $CODEX_HOME/AGENTS.override.md
+// (when non-empty) or $CODEX_HOME/AGENTS.md -- verified against openai/codex
+// codex-rs/codex-home/src/instructions/mod.rs. There is no include/import
+// mechanism, so a separate ~/.codex/IJFW.md is never read. IJFW therefore
+// keeps its rules inside ONE marker-delimited block in AGENTS.md:
+//   - user text before/after the block is never touched,
+//   - re-install replaces the block in place (idempotent, no-op when equal),
+//   - the file is backed up before any modification of existing content,
+//   - uninstall removes only the block (stripManagedBlock).
+
+export const IJFW_BLOCK_BEGIN = '<!-- IJFW:BEGIN (managed by IJFW; edits inside this block are replaced on reinstall, `ijfw uninstall` removes it) -->';
+export const IJFW_BLOCK_END = '<!-- IJFW:END -->';
+const BLOCK_RE = /<!-- IJFW:BEGIN[^\n]*-->[\s\S]*?<!-- IJFW:END -->\n?/g;
+
+export function renderManagedBlock(body) {
+  return `${IJFW_BLOCK_BEGIN}\n${String(body).replace(/\s+$/, '')}\n${IJFW_BLOCK_END}\n`;
+}
+
+/**
+ * upsertManagedBlock -- insert or refresh the IJFW block in `path`.
+ * Returns 'created' | 'appended' | 'updated' | 'unchanged'.
+ * Throws only when an existing file cannot be backed up (refuse to modify
+ * user content without a backup).
+ */
+export function upsertManagedBlock(path, body, ts) {
+  const block = renderManagedBlock(body);
+  let current = null;
+  let mode = 0o644;
+  try {
+    current = readFileSync(path, 'utf8');
+    mode = statSync(path).mode & 0o777;
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+
+  if (current === null) {
+    writeAtomic(path, block, { mode });
+    return 'created';
+  }
+
+  const matches = current.match(BLOCK_RE) || [];
+  let next;
+  if (matches.length === 0) {
+    const sep = current.length === 0 ? '' : (current.endsWith('\n\n') ? '' : (current.endsWith('\n') ? '\n' : '\n\n'));
+    next = current + sep + block;
+  } else {
+    // Replace the first block in place; drop any duplicates.
+    let seen = false;
+    next = current.replace(BLOCK_RE, () => {
+      if (seen) return '';
+      seen = true;
+      return block;
+    });
+  }
+  if (next === current) return 'unchanged';
+
+  requireBackup(path, ts || backupTimestamp());
+  writeAtomic(path, next, { mode });
+  return matches.length === 0 ? 'appended' : 'updated';
+}
+
+/**
+ * stripManagedBlock -- text with every IJFW block removed, plus the blank
+ * separator line upsertManagedBlock added. Pure; callers handle I/O.
+ */
+export function stripManagedBlock(text) {
+  const s = String(text);
+  if (!BLOCK_RE.test(s)) { BLOCK_RE.lastIndex = 0; return s; }
+  BLOCK_RE.lastIndex = 0;
+  return s
+    .replace(/\n?\n?<!-- IJFW:BEGIN[^\n]*-->[\s\S]*?<!-- IJFW:END -->\n?/g, (m, offset) => {
+      // Keep one newline when the block sat between two pieces of user text.
+      const before = s.slice(0, offset);
+      const after = s.slice(offset + m.length);
+      return before.length && after.length ? '\n' : (before.length ? '\n' : '');
+    });
 }

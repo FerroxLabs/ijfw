@@ -53,6 +53,7 @@ import { snapshotPreExistingDirs, writeLedger } from './install-ledger.js';
 // ============================================================
 export const CANONICAL_ORDER = [
   'claude',
+  'claude-desktop',
   'codex',
   'gemini',
   'wayland',
@@ -84,6 +85,7 @@ const TARGET_FNS = {
   qwen: targets8to14.installQwen,
   cline: targets8to14.installCline,
   kimi: targets8to14.installKimi,
+  'claude-desktop': targets8to14.installClaudeDesktop,
   openclaw: targets8to14.installOpenclaw,
   aider: targets8to14.installAider,
   antigravity: targets8to14.installAntigravity,

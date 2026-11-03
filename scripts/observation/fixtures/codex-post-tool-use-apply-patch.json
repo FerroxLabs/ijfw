@@ -1,0 +1,13 @@
+{
+  "session_id": "019a0000-0000-7000-8000-000000000001",
+  "turn_id": "turn-2",
+  "transcript_path": null,
+  "cwd": "/Users/test user/dev/my project",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-5-codex",
+  "permission_mode": "default",
+  "tool_name": "apply_patch",
+  "tool_use_id": "call_2",
+  "tool_input": { "command": "*** Begin Patch\n*** Update File: src/upload client.js\n@@\n-const tries = 1;\n+const tries = 3;\n*** End Patch\n" },
+  "tool_response": { "output": "Success. Updated the following files:\nM src/upload client.js\n" }
+}

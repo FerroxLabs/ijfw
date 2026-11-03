@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { unmergeMarketplace, claudeSettingsPath } from './marketplace.js';
 import { readLedger, isEmptyDir } from './install-ledger.js';
+import { stripManagedBlock } from './install-helpers.js';
+import { claudeDesktopConfigPath } from './install-targets-8-14.js';
 
 // Repo root, resolved relative to this module (installer/src/uninstall.js ->
 // repo root is two dirs up). Used to byte-compare shipped Aider templates
@@ -695,6 +697,26 @@ function cleanPlatforms(opts = {}) {
   // Codex: IJFW.md context file
   const codexMd = join(home, '.codex', 'IJFW.md');
   if (existsSync(codexMd)) { rmSync(codexMd, { force: true }); removed.push('~/.codex/IJFW.md'); }
+  // Codex: IJFW managed block in ~/.codex/AGENTS.md. Only the block goes;
+  // user content stays byte-for-byte. Backup first. A file that held nothing
+  // but the IJFW block is removed.
+  const codexAgents = join(home, '.codex', 'AGENTS.md');
+  if (existsSync(codexAgents)) {
+    let text = null;
+    try { text = readFileSync(codexAgents, 'utf8'); } catch { text = null; }
+    if (text !== null) {
+      const stripped = stripManagedBlock(text);
+      if (stripped !== text) {
+        backupFile(codexAgents);
+        if (stripped.trim() === '') rmSync(codexAgents, { force: true });
+        else writeAtomic(codexAgents, stripped);
+        removed.push('~/.codex/AGENTS.md  (removed IJFW managed block)');
+      }
+    }
+  }
+  // Codex: installer-rendered checkout marker read by the capture hooks.
+  const codexRootMarker = join(home, '.codex', 'hooks', '.ijfw-root');
+  if (existsSync(codexRootMarker)) rmSync(codexRootMarker, { force: true });
   // Codex: hook SCRIPT FILES on disk (issue #17 -- registrations were cleared
   // above but the .sh files lingered and still referenced ijfw).
   const codexHookFiles = removeCodexHookFiles(join(home, '.codex', 'hooks'));
@@ -771,6 +793,14 @@ function cleanPlatforms(opts = {}) {
     removed.push('~/.qwen/settings.json  (removed ijfw-memory)');
   }
 
+  // Claude Desktop: claude_desktop_config.json -- flat mcpServers. Check both
+  // the macOS and the Windows location (whichever exists).
+  for (const plat of ['darwin', 'win32']) {
+    const p = claudeDesktopConfigPath(home, plat);
+    if (p && existsSync(p) && rmJsonEntry(p, 'claude_desktop_config.json')) {
+      removed.push(`${p}  (removed ijfw-memory)`);
+    }
+  }
   // Kimi Code: ~/.kimi/mcp.json -- flat mcpServers.
   if (rmJsonEntry(join(home, '.kimi', 'mcp.json'), '~/.kimi/mcp.json')) {
     removed.push('~/.kimi/mcp.json  (removed ijfw-memory)');

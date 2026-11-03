@@ -18,9 +18,9 @@ import {
   constants as fsConstants,
 } from 'node:fs';
 import {
-  resolve, normalize, isAbsolute, join, dirname, basename,
+  resolve, normalize, isAbsolute, join, dirname, basename, sep,
 } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 // --- Bundle-interior detection ------------------------------------------------
 //
@@ -122,34 +122,92 @@ export function isWritable(dir) {
   }
 }
 
+// --- Temp / template / root detection ---------------------------------------
+//
+// A host that spawns the server from a temp dir (or '/') would otherwise get
+// project memory in a place that is wiped on reboot (macOS purges
+// /var/folders/*/T) or that is not a project at all. Those cwd values are
+// skipped; explicit env signals are still honoured.
+const TEMP_ROOTS_STATIC = [
+  '/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp',
+  '/var/folders', '/private/var/folders',
+];
+
+function within(p, root) {
+  if (!p || !root) return false;
+  const a = normalize(p);
+  const r = normalize(root).replace(/[\\/]+$/, '');
+  if (!r) return false;
+  const cmp = process.platform === 'win32' || process.platform === 'darwin'
+    ? (x) => x.toLowerCase() : (x) => x;
+  return cmp(a) === cmp(r) || cmp(a).startsWith(cmp(r) + sep) || cmp(a).startsWith(cmp(r) + '/');
+}
+
+export function isTempPath(p) {
+  if (!p || typeof p !== 'string') return false;
+  const roots = [...TEMP_ROOTS_STATIC];
+  try { const t = tmpdir(); if (t) { roots.push(t); roots.push(realpathOrSelf(t)); } } catch { /* no tmpdir */ }
+  const candidates = [p, realpathOrSelf(p)];
+  return candidates.some((c) => roots.some((r) => within(c, r)));
+}
+
+// Host config templates that reached us unexpanded (e.g. Gemini keeps
+// "${PWD}" literally when PWD is unset). Resolving one would create a
+// directory literally named "${PWD}" under cwd.
+export function isUnexpandedTemplate(raw) {
+  if (typeof raw !== 'string') return false;
+  return /\$\{|\$[A-Z_][A-Z0-9_]*|\{\{|%[A-Za-z_][A-Za-z0-9_]*%/.test(raw);
+}
+
+function isFilesystemRoot(p) {
+  return dirname(p) === p;
+}
+
 // --- Root resolution -----------------------------------------------------------
 //
-// Every candidate must pass BOTH gates: not bundle-internal (wayland#755)
-// AND writable. A rejected candidate falls through to the next-safest
-// option; the HOME fallback guarantees we never crash the server (any
-// stderr byte during MCP init makes the client mark the server failed).
-// The bundle check runs BEFORE the writability probe so a rejected
+// Deterministic contract (see docs/PROJECT-ROOT.md):
+//   1. IJFW_PROJECT_DIR, 2. CLAUDE_PROJECT_DIR -- explicit. Accepted when
+//      absolute, not an unexpanded template, not bundle-internal (wayland#755,
+//      including via symlink), and writable. An explicit temp dir is honoured.
+//   3. process.cwd() -- accepted when not bundle-internal, not the
+//      filesystem root, and writable. With { hostSpawned: true } (the MCP
+//      server: the HOST picked its cwd, the user did not) a cwd inside an OS
+//      temp root is skipped too. CLI callers run where the user typed the
+//      command, so a temp cwd there is a deliberate choice and is kept.
+//   4. HOME -- user-global memory. Never crashes the server (any stderr byte
+//      during MCP init makes the client mark the server failed).
+// The bundle/template checks run BEFORE the writability probe so a rejected
 // candidate directory is never mkdir'd as a side-effect.
-export function safeProjectDir() {
-  // 1. Explicit IJFW_PROJECT_DIR wins (user or installer set it deliberately).
-  //    Still validated: even an explicit signal must not point inside a
-  //    signed app bundle -- not even via a symlink.
-  const fromIjfw = validatePath(process.env.IJFW_PROJECT_DIR);
-  if (fromIjfw && !isBundleInternalDeep(fromIjfw) && isWritable(fromIjfw)) return fromIjfw;
+export function describeProjectRoot(opts = {}) {
+  const hostSpawned = opts.hostSpawned === true;
+  const rejected = [];
+  for (const source of ['IJFW_PROJECT_DIR', 'CLAUDE_PROJECT_DIR']) {
+    const raw = process.env[source];
+    if (!raw) continue;
+    if (isUnexpandedTemplate(raw)) { rejected.push({ source, reason: 'unexpanded-template' }); continue; }
+    if (!isAbsolute(raw)) { rejected.push({ source, reason: 'not-absolute' }); continue; }
+    const p = validatePath(raw);
+    if (!p) { rejected.push({ source, reason: 'invalid' }); continue; }
+    if (isBundleInternalDeep(p)) { rejected.push({ source, reason: 'bundle-internal' }); continue; }
+    if (!isWritable(p)) { rejected.push({ source, reason: 'not-writable' }); continue; }
+    return { dir: p, source, rejected };
+  }
 
-  // 2. CLAUDE_PROJECT_DIR (set by some Claude Code versions).
-  const fromClaude = validatePath(process.env.CLAUDE_PROJECT_DIR);
-  if (fromClaude && !isBundleInternalDeep(fromClaude) && isWritable(fromClaude)) return fromClaude;
+  let cwd = null;
+  try { cwd = process.cwd(); } catch { rejected.push({ source: 'cwd', reason: 'unavailable' }); }
+  if (cwd) {
+    if (isBundleInternalDeep(cwd)) rejected.push({ source: 'cwd', reason: 'bundle-internal' });
+    else if (isFilesystemRoot(cwd)) rejected.push({ source: 'cwd', reason: 'filesystem-root' });
+    else if (hostSpawned && isTempPath(cwd)) rejected.push({ source: 'cwd', reason: 'temp-dir' });
+    else if (!isWritable(cwd)) rejected.push({ source: 'cwd', reason: 'not-writable' });
+    else return { dir: cwd, source: 'cwd', rejected };
+  }
 
-  // 3. CWD if writable -- normal case for shell-invoked use and Claude Code
-  //    sessions rooted in a project. Hosts sometimes spawn MCP servers with
-  //    cwd inside their own bundle (wayland#755) -- never accept that.
-  const cwd = process.cwd();
-  if (!isBundleInternalDeep(cwd) && isWritable(cwd)) return cwd;
+  return { dir: homedir(), source: 'home-fallback', rejected };
+}
 
-  // 4. HOME fallback -- always writable for the user. Memory becomes
-  //    user-global but we stay alive instead of crashing.
-  return homedir();
+export function safeProjectDir(opts = {}) {
+  return describeProjectRoot(opts).dir;
 }
 
 // Vet a caller-supplied root (MCP tool arg, dispatch ctx, CLI flag) before

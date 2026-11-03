@@ -112,6 +112,8 @@ export const INSTALL_PLAN = {
     ['~/.codex/hooks.json', 'm', 'IJFW hook entries'],
     ['~/.codex/hooks/*.sh', 'c', 'lifecycle hook scripts'],
     ['~/.codex/IJFW.md', 'c', 'context file'],
+    ['~/.codex/AGENTS.md', 'm', 'IJFW managed block (rules Codex loads)'],
+    ['~/.codex/hooks/.ijfw-root', 'c', 'IJFW checkout path for capture hooks'],
     ['~/.codex/skills/, commands/', 'c', 'skills + command aliases'],
   ],
   gemini: [
@@ -129,6 +131,7 @@ export const INSTALL_PLAN = {
   openclaw: [['~/.openclaw/openclaw.json', 'm', 'mcp.servers.ijfw-memory']],
   qwen: [['~/.qwen/settings.json', 'm', 'mcpServers.ijfw-memory']],
   kimi: [['~/.kimi/mcp.json', 'm', 'mcpServers.ijfw-memory']],
+  'claude-desktop': [['~/Library/Application Support/Claude/claude_desktop_config.json (macOS)', 'm', 'mcpServers.ijfw-memory']],
   opencode: [['~/.config/opencode/opencode.json', 'm', 'mcp.ijfw-memory']],
   cline: [['VS Code globalStorage <Code|VSCodium>/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json', 'm', 'mcpServers.ijfw-memory']],
   antigravity: [

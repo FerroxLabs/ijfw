@@ -292,9 +292,11 @@ const VALID_MEMORY_TYPES = ['decision', 'observation', 'pattern', 'handoff', 'pr
 // Strategy:
 //   1. IJFW_PROJECT_DIR env (explicit) -- validated for traversal, used as-is.
 //   2. CLAUDE_PROJECT_DIR env (set by Claude Code when project known) -- same validation.
-//   3. process.cwd() -- used ONLY if writable. Claude Code sometimes spawns
-//      MCP servers in directories the user can't write to (/, /tmp).
+//   3. process.cwd() -- used ONLY if writable and not '/', an app bundle,
+//      or (host-spawned server only) an OS temp dir. Claude Code sometimes spawns MCP servers in
+//      directories the user can't write to (/, /tmp).
 //   4. os.homedir() -- final fallback. Always writable for the user.
+// Full contract + per-host audit: docs/PROJECT-ROOT.md.
 //
 // Picking a writable root at startup eliminates the EACCES-on-mkdir failure
 // mode that corrupts the MCP stdio handshake (any stderr byte during init
@@ -307,7 +309,9 @@ const VALID_MEMORY_TYPES = ['decision', 'observation', 'pattern', 'handoff', 'pr
 // vetProjectRoot() is the gate for caller-supplied roots (MCP tool args,
 // dispatch ctx). Re-exported at the bottom of this file for test back-compat.
 
-const PROJECT_DIR = safeProjectDir();
+// hostSpawned: the MCP host chose this process's cwd, so a temp-dir cwd is
+// not a project (docs/PROJECT-ROOT.md).
+const PROJECT_DIR = safeProjectDir({ hostSpawned: true });
 const PROJECT_HASH = createHash('sha256').update(PROJECT_DIR).digest('hex').slice(0, 12);
 const IJFW_DIR = join(PROJECT_DIR, '.ijfw');
 
@@ -831,7 +835,9 @@ function resolveProject(spec) {
 // Read this-project-shape memory for an arbitrary project root. Mirrors the
 // sources the local search uses, but isolated to that project's directory.
 function readProjectMemory(projectPath) {
-  const memDir = join(projectPath, '.ijfw', 'memory');
+  // Layout-aware (v2 keeps content in <project>/ijfw/memory): the same
+  // directory the owning project's own server writes and searches.
+  const memDir = resolveBrainPaths(projectPath).memoryDir;
   return {
     knowledge: readOr(join(memDir, 'knowledge.md')),
     journal:   readOr(join(memDir, 'project-journal.md')),
@@ -881,8 +887,12 @@ async function searchMemory(query, limit = 10, scope = 'project', opts = {}) {
   if (scope === 'all') {
     // v1.5.1 H1.5 (audit memory-engine.md F-FUN-4): use BM25-ranked
     // crossProjectSearch, not the legacy naive keyword-count scan.
-    const projects = readRegistry();
-    if (projects.length === 0) return [];
+    // "Every project" includes the current one (it used to be excluded, so a
+    // scope:'all' search from the project that holds the answer found
+    // nothing). The current project is added even before a session-start
+    // hook has registered it.
+    const projects = readRegistry({ includeCurrent: true });
+    if (!projects.some((p) => p.path === PROJECT_DIR)) projects.push({ path: PROJECT_DIR });
     return crossProjectSearch(query, projects, readProjectMemory, { limit, tenant: currentTenant() });
   }
 
@@ -1981,10 +1991,10 @@ function handleCrossProjectSearch({ pattern, limit = 10 } = {}) {
     return { text: 'pattern is required and must be a string.', isError: true };
   }
   if (pattern.length > 500) pattern = pattern.substring(0, 500);
-  const projects = readRegistry();
-  if (projects.length === 0) {
-    return { text: 'No other IJFW projects on record. Open one more project to enable cross-project search.' };
-  }
+  // "Every IJFW project" includes the current one (FerroxLabs/ijfw#50
+  // rollout: searching from the project that held the answer found nothing).
+  const projects = readRegistry({ includeCurrent: true });
+  if (!projects.some((p) => p.path === PROJECT_DIR)) projects.push({ path: PROJECT_DIR });
   const hits = crossProjectSearch(pattern, projects, readProjectMemory, { limit, tenant: currentTenant() });
   if (hits.length === 0) {
     return { text: `No matches for "${pattern}" across ${projects.length} project${projects.length === 1 ? '' : 's'}.` };

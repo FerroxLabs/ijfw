@@ -1,0 +1,7 @@
+{
+  "event": "PostToolUse",
+  "session_id": "legacy-session-1",
+  "tool": "shell",
+  "tool_input": { "command": ["bash", "-lc", "git commit -m \"fix: retry uploads\""] },
+  "tool_response": { "stdout": "[main 1234abc] fix: retry uploads\n" }
+}

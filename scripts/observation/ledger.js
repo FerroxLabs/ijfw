@@ -6,7 +6,7 @@
  * Zero deps. All Node built-ins.
  */
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync, renameSync, statSync, rmdirSync, readdirSync, unlinkSync, openSync, readSync, closeSync, fstatSync } from 'fs';
+import { appendFileSync, readFileSync, existsSync, mkdirSync, renameSync, statSync, rmdirSync, readdirSync, unlinkSync, openSync, readSync, closeSync, fstatSync, chmodSync } from 'fs';
 import { homedir } from 'os';
 import { join, basename } from 'path';
 
@@ -15,6 +15,16 @@ const JSONL_PATH  = join(IJFW_GLOBAL, 'observations.jsonl');
 const LOCK_DIR    = join(IJFW_GLOBAL, '.obs-lock');
 const MAX_JSONL   = 10 * 1024 * 1024; // 10MB rotation threshold
 const MAX_LINE    = 8 * 1024;         // 8KB line cap
+// Observation files hold prompt/command titles: owner read/write only
+// (FerroxLabs/ijfw#31). No-op on Windows, where POSIX modes do not apply.
+const FILE_MODE   = 0o600;
+
+function tightenMode(p) {
+  if (process.platform === 'win32') return;
+  try {
+    if ((statSync(p).mode & 0o777) !== FILE_MODE) chmodSync(p, FILE_MODE);
+  } catch {}
+}
 
 // Archive retention: keep the N most-recent observations.jsonl.<ts> files after
 // rotation. Default 10 (~100MB worst-case historical ledger). Set 0 to disable
@@ -82,7 +92,9 @@ async function openDb() {
   _dbPromise = (async () => {
     try {
       const { DatabaseSync } = await import('node:sqlite');
-      const db = new DatabaseSync(join(IJFW_GLOBAL, 'observations.db'));
+      const dbPath = join(IJFW_GLOBAL, 'observations.db');
+      const db = new DatabaseSync(dbPath);
+      tightenMode(dbPath);
       db.exec(`
         CREATE TABLE IF NOT EXISTS observations (
           id          INTEGER PRIMARY KEY,
@@ -190,7 +202,9 @@ export function appendObservation(obs) {
       line = JSON.stringify(truncated) + '\n';
     }
     try {
-      appendFileSync(JSONL_PATH, line, { encoding: 'utf8', flag: 'a' });
+      appendFileSync(JSONL_PATH, line, { encoding: 'utf8', flag: 'a', mode: FILE_MODE });
+      // `mode` only applies on create; tighten ledgers written by older builds.
+      tightenMode(JSONL_PATH);
     } catch (err) {
       process.stderr.write(`[ijfw] observation append failed: ${err.message}\n`);
     }

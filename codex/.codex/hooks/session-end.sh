@@ -30,11 +30,18 @@ MODE="${IJFW_MODE:-smart}"
 ROUTING="native"
 case "${OPENROUTER_API_KEY:-}" in ?*) ROUTING="OpenRouter" ;; esac
 
-MEMORY_STORES=0
-if [ -f "$IJFW_DIR/memory/project-journal.md" ]; then
-  MEMORY_STORES=$(grep -c '^- \[' "$IJFW_DIR/memory/project-journal.md" 2>/dev/null || true)
-  [ -z "$MEMORY_STORES" ] && MEMORY_STORES=0
-fi
+# Count memory journal entries the way the MCP server stores them: layout
+# version >= 2 (.ijfw/.layout-version) keeps content under ijfw/memory,
+# older layouts under .ijfw/memory (mcp-server/src/brain/paths.js). IJFW's
+# own codex-session-end bookkeeping lines are not memory updates.
+_ijfw_journal_entries() {
+  _lv=$(head -n 1 .ijfw/.layout-version 2>/dev/null | tr -cd '0-9')
+  if [ -n "$_lv" ] && [ "$_lv" -ge 2 ] 2>/dev/null; then _j="ijfw/memory/project-journal.md"; else _j=".ijfw/memory/project-journal.md"; fi
+  [ -f "$_j" ] || { printf '0'; return; }
+  _c=$(grep '^- \[' "$_j" 2>/dev/null | grep -vc '^- \[[^]]*\] codex-session-end:' 2>/dev/null)
+  printf '%s' "${_c:-0}"
+}
+JOURNAL_ENTRIES=$(_ijfw_journal_entries)
 
 LOCK="$IJFW_DIR/.session-counter.lock"
 COUNTER="$IJFW_DIR/.session-counter"
@@ -60,6 +67,25 @@ HAS_HANDOFF="false"
 HOOK_STDIN=""
 if [ ! -t 0 ]; then
   HOOK_STDIN=$(cat 2>/dev/null || true)
+fi
+
+# "Memory updates this session" = entries now - entries when THIS session
+# started (baseline written by session-start.sh, keyed by Codex session_id).
+# Codex fires Stop after every turn, so this stays a per-session running
+# total. Without a matching baseline no per-session number is claimed:
+# MEMORY_STORES stays empty (metrics: null) and the marker shows the total.
+STOP_SID=""
+if [ -n "$HOOK_STDIN" ] && command -v node >/dev/null 2>&1; then
+  STOP_SID=$(node -e 'try{const j=JSON.parse(process.argv[1]||"{}");process.stdout.write(String(j.session_id||"").replace(/[\t\n\r]/g,""))}catch{}' -- "$HOOK_STDIN" 2>/dev/null)
+fi
+MEMORY_STORES=""
+if [ -f "$IJFW_DIR/.codex-session-baseline" ]; then
+  IFS="$(printf '\t')" read -r BASE_SID BASE_COUNT < "$IJFW_DIR/.codex-session-baseline" 2>/dev/null
+  case "$BASE_COUNT" in ''|*[!0-9]*) BASE_COUNT="" ;; esac
+  if [ -n "$BASE_COUNT" ] && { [ -z "$STOP_SID" ] || [ "$BASE_SID" = "$STOP_SID" ]; }; then
+    MEMORY_STORES=$((JOURNAL_ENTRIES - BASE_COUNT))
+    [ "$MEMORY_STORES" -lt 0 ] && MEMORY_STORES=0
+  fi
 fi
 
 # Write metrics JSONL + check for PreCompact threshold.
@@ -117,7 +143,8 @@ if command -v node >/dev/null 2>&1; then
       session: Number(process.argv[2]),
       mode: process.argv[3],
       routing: process.argv[4],
-      memory_stores: Number(process.argv[5]),
+      memory_stores: process.argv[5] === "" ? null : Number(process.argv[5]),
+      session_id: process.argv[9] || null,
       handoff: process.argv[6] === "true",
       input_tokens: usage.input_tokens,
       output_tokens: usage.output_tokens,
@@ -141,7 +168,7 @@ if command -v node >/dev/null 2>&1; then
     ) > 0;
     const out = { metrics: o, needs_compress: needsCompress, has_usage: hasUsage };
     process.stdout.write(JSON.stringify(out));
-  ' "$ISO_TIMESTAMP" "$SESSION_NUM" "$MODE" "$ROUTING" "$MEMORY_STORES" "$HAS_HANDOFF" "$COMPRESS_THRESHOLD" "$HOOK_STDIN" 2>/dev/null)
+  ' "$ISO_TIMESTAMP" "$SESSION_NUM" "$MODE" "$ROUTING" "$MEMORY_STORES" "$HAS_HANDOFF" "$COMPRESS_THRESHOLD" "$HOOK_STDIN" "$STOP_SID" 2>/dev/null)
 
   if [ -n "$RESULT" ]; then
     METRICS=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(JSON.stringify(r.metrics)||"")}catch{}' -- "$RESULT" 2>/dev/null)
@@ -161,7 +188,11 @@ fi
   echo "<!-- ijfw schema:1 -->"
   echo "# Session: $TIMESTAMP"
   echo "Session #$SESSION_NUM"
-  echo "Memory updates this session: $MEMORY_STORES"
+  if [ -n "$MEMORY_STORES" ]; then
+    echo "Memory updates this session: $MEMORY_STORES"
+  else
+    echo "Journal entries (all sessions): $JOURNAL_ENTRIES"
+  fi
   echo "Handoff present: $HAS_HANDOFF"
   echo "Platform: codex"
 } > "$IJFW_DIR/sessions/session_$TIMESTAMP.md" 2>/dev/null

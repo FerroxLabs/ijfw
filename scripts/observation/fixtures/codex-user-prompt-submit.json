@@ -1,0 +1,10 @@
+{
+  "session_id": "019a0000-0000-7000-8000-000000000001",
+  "turn_id": "turn-1",
+  "transcript_path": null,
+  "cwd": "/Users/test user/dev/my project",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "gpt-5-codex",
+  "permission_mode": "default",
+  "prompt": "Add a retry to the upload client"
+}

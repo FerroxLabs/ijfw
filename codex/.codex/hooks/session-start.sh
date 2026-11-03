@@ -65,6 +65,27 @@ if [ -f "$IJFW_DIR/memory/project-journal.md" ]; then
   [ -z "$MEMORY_COUNT" ] && MEMORY_COUNT=0
 fi
 
+# Per-session memory baseline: session-end.sh reports "Memory updates this
+# session" as (journal entries now) - (entries at session start). IJFW's own
+# codex-session-end bookkeeping lines are not memory updates and are excluded.
+# Count memory journal entries the way the MCP server stores them: layout
+# version >= 2 (.ijfw/.layout-version) keeps content under ijfw/memory,
+# older layouts under .ijfw/memory (mcp-server/src/brain/paths.js). IJFW's
+# own codex-session-end bookkeeping lines are not memory updates.
+_ijfw_journal_entries() {
+  _lv=$(head -n 1 .ijfw/.layout-version 2>/dev/null | tr -cd '0-9')
+  if [ -n "$_lv" ] && [ "$_lv" -ge 2 ] 2>/dev/null; then _j="ijfw/memory/project-journal.md"; else _j=".ijfw/memory/project-journal.md"; fi
+  [ -f "$_j" ] || { printf '0'; return; }
+  _c=$(grep '^- \[' "$_j" 2>/dev/null | grep -vc '^- \[[^]]*\] codex-session-end:' 2>/dev/null)
+  printf '%s' "${_c:-0}"
+}
+_SID=""
+if [ -n "$HOOK_STDIN" ] && command -v node >/dev/null 2>&1; then
+  _SID=$(node -e 'try{const j=JSON.parse(process.argv[1]||"{}");process.stdout.write(String(j.session_id||"").replace(/[\t\n\r]/g,""))}catch{}' -- "$HOOK_STDIN" 2>/dev/null)
+fi
+_BASE_COUNT=$(_ijfw_journal_entries)
+printf '%s\t%s\n' "${_SID:-unknown}" "$_BASE_COUNT" > "$IJFW_DIR/.codex-session-baseline" 2>/dev/null
+
 # Startup flags (for use by other hooks this session).
 printf 'IJFW_MODE=%s\n' "$MODE" >> "$IJFW_DIR/.startup-flags" 2>/dev/null
 

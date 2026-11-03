@@ -233,7 +233,7 @@ tr:hover td{background:var(--surface)}
     <button class="sb-item" data-section="handoffs"><span class="sb-icon">&#128339;</span><span class="sb-label">Handoffs</span></button>
 
     <div class="sb-group-label"><span>Projects</span></div>
-    <button class="sb-item" data-section="allprojects"><span class="sb-icon">&#9776;</span><span class="sb-label">Projects (17)</span></button>
+    <button class="sb-item" data-section="allprojects"><span class="sb-icon">&#9776;</span><span class="sb-label">Projects</span></button>
 
     <div class="sb-group-label"><span>Audits</span></div>
     <button class="sb-item" data-section="trident"><span class="sb-icon">&#9650;</span><span class="sb-label">Cross-AI Reviews</span></button>
@@ -244,8 +244,7 @@ tr:hover td{background:var(--surface)}
   </nav>
 
   <div class="sb-footer">
-    <div class="sb-avatar">SD</div>
-    <div class="sb-user">Sean Donahoe</div>
+    <div class="sb-user" style="color:var(--fg-dim);font-size:12px" title="Your data stays on this computer">Local dashboard</div>
   </div>
 </aside>
 
@@ -254,11 +253,11 @@ tr:hover td{background:var(--surface)}
   <header class="main-header" role="banner">
     <div class="breadcrumb" id="breadcrumb"><span style="color:var(--fg-dim)">Overview</span> <b>Today</b></div>
     <div class="spacer"></div>
-    <span class="tier-pill">MAX 20x</span>
+    <span class="tier-pill" style="display:none"></span>
     <!-- v1.5.0 N4.obs M5: cross-link back to the operator dashboard (port
          19747). Operators flip between MCP (wave/orchestrator views) and
          operator (cost/memory views) so the link is reciprocal. -->
-    <a class="icon-btn" id="operatorDashLink" href="http://localhost:19747/" target="_blank" rel="noopener" title="Open operator dashboard (cost + memory views)">Operator dashboard</a>
+    <a class="icon-btn" id="operatorDashLink" href="http://localhost:19747/" target="_blank" rel="noopener" title="Open operator dashboard (start it first: ijfw dashboard start)" style="display:none">Operator dashboard</a>
     <button class="icon-btn" id="themeBtn" aria-label="Toggle theme">&#9790; Theme</button>
   </header>
 
@@ -272,24 +271,24 @@ tr:hover td{background:var(--surface)}
       <div class="hgrid">
         <div class="hcard">
           <div class="hlabel">Today's Cost</div>
-          <div class="hval" data-live="cost-today">$981</div>
-          <div class="hsub" data-live="cost-today-sub"><b>5</b> sessions, 5 projects</div>
+          <div class="hval" data-live="cost-today">--</div>
+          <div class="hsub" data-live="cost-today-sub">loading</div>
           <div style="margin-top:6px"><span style="font-size:11px;color:var(--fg-dim)">Claude, measured from API tokens</span></div>
         </div>
         <div class="hcard">
           <div class="hlabel"><span class="pulse"></span> Active Session</div>
-          <div class="hval" style="font-size:20px;padding-top:6px">ijfw</div>
-          <div class="hsub">claude-opus-4-7 -- <b>current</b></div>
+          <div class="hval" style="font-size:20px;padding-top:6px">--</div>
+          <div class="hsub">Not shown in this view yet</div>
         </div>
         <div class="hcard">
           <div class="hlabel">Cache Efficiency</div>
-          <div class="hval" style="color:var(--success)">97.0%</div>
-          <div class="hsub">2.71B tokens served from cache (30d)</div>
+          <div class="hval">--</div>
+          <div class="hsub">See By Model for measured cache hit rates</div>
           <div class="disc">Claude Code caches automatically. IJFW measures your efficiency.</div>
         </div>
         <div class="hcard">
           <div class="hlabel">30-Day Actual</div>
-          <div class="hval" data-live="cost-30d">$6,546</div>
+          <div class="hval" data-live="cost-30d">--</div>
           <div class="hsub" style="color:var(--fg-dim)">Claude measured</div>
         </div>
       </div>
@@ -298,11 +297,7 @@ tr:hover td{background:var(--surface)}
         <table aria-label="Today spend by project">
           <thead><tr><th>Project</th><th>Platform</th><th class="nr">Spend</th></tr></thead>
           <tbody id="today-project-tbody">
-            <tr><td>ijfw</td><td><span class="chip cc">Claude</span></td><td class="nr">$392</td></tr>
-            <tr><td>wayland</td><td><span class="chip cc">Claude</span></td><td class="nr">$241</td></tr>
-            <tr><td>aion</td><td><span class="chip cc">Claude</span></td><td class="nr">$223</td></tr>
-            <tr><td>socialmedia</td><td><span class="chip cc">Claude</span></td><td class="nr">$124</td></tr>
-            <tr><td style="color:var(--fg-dim)">others</td><td></td><td class="nr" style="color:var(--fg-dim)">$1</td></tr>
+            <tr class="empty-row"><td colspan="3" style="color:var(--fg-dim);font-size:12px">No spend recorded today.</td></tr>
           </tbody>
         </table>
       </div>
@@ -311,20 +306,9 @@ tr:hover td{background:var(--surface)}
     <!-- ======== LIVE FEED ======== -->
     <div class="section" data-section="live">
       <div class="card">
-        <div class="ctitle">Live Feed <span class="pulse"></span> <span style="font-size:11px;color:var(--fg-dim);margin-left:auto">Real data from ~/.ijfw/observations.jsonl (50 entries)</span></div>
-        <div class="feed-row"><span class="fts">15:37</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">15:19</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">15:16</span><span class="ftype recall">recall</span><span class="fbody">session_start -- decisions (mcp)</span></div>
-        <div class="feed-row"><span class="fts">15:15</span><span class="ftype recall">recall</span><span class="fbody">session_start -- decisions (mcp)</span></div>
-        <div class="feed-row"><span class="fts">15:05</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">14:59</span><span class="ftype recall">recall</span><span class="fbody">session_start -- decisions (mcp)</span></div>
-        <div class="feed-row"><span class="fts">14:58</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">13:48</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">13:47</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">13:46</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">13:33</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div class="feed-row"><span class="fts">13:29</span><span class="ftype recall">recall</span><span class="fbody">decisions -- session_start (mcp)</span></div>
-        <div style="padding:8px 0;font-size:12px;color:var(--fg-dim)">Showing memory-recall events. Tool call and file edit events populate as sessions run.</div>
+        <div class="ctitle">Live Feed <span class="pulse"></span> <span id="live-feed-src" style="font-size:11px;color:var(--fg-dim);margin-left:auto">from ~/.ijfw/observations.jsonl</span></div>
+        <div id="live-feed-rows"><div class="empty"><p>No activity recorded yet. Prompts and tool calls from your AI sessions appear here.</p></div></div>
+        <div style="padding:8px 0;font-size:12px;color:var(--fg-dim)">Newest first, last 50 entries. Secrets are redacted before they are stored.</div>
       </div>
     </div>
 
@@ -333,8 +317,8 @@ tr:hover td{background:var(--surface)}
       <div class="card">
         <div class="ctitle">Usage Limit</div>
         <div style="margin-bottom:16px">
-          <div class="wbar"><div class="wseg" style="width:47%"></div><div style="flex:1;background:var(--surface)"></div></div>
-          <div class="wmeta"><span>2h 21m used of 5h window</span><span class="wok">2h 39m remaining -- 53%</span></div>
+          <div class="wbar"><div class="wseg" style="width:0%"></div><div style="flex:1;background:var(--surface)"></div></div>
+          <div class="wmeta"><span>No usage window data yet</span><span class="wok"></span></div>
         </div>
         <div style="font-size:13px;color:var(--fg-dim);margin-bottom:16px">
           <button class="btn-g" style="font-size:11px;padding:2px 8px" onclick="goSection('accounts')">+ Add account label</button>
@@ -351,23 +335,7 @@ tr:hover td{background:var(--surface)}
         <table aria-label="Spend by project 30 days">
           <thead><tr><th>Project</th><th>Last Active</th><th class="nr">30d Cost</th><th class="nr">%</th></tr></thead>
           <tbody id="spend-project-tbody">
-            <tr><td><strong>ijfw</strong></td><td>2026-04-16</td><td class="nr">$2,736</td><td class="nr">42%</td></tr>
-            <tr><td>wayland</td><td>2026-04-16</td><td class="nr">$2,126</td><td class="nr">32%</td></tr>
-            <tr><td>Flow</td><td>2026-03-27</td><td class="nr">$662</td><td class="nr">10%</td></tr>
-            <tr><td>socialmedia</td><td>2026-04-14</td><td class="nr">$605</td><td class="nr">9%</td></tr>
-            <tr><td>Crucible</td><td>2026-03-25</td><td class="nr">$110</td><td class="nr">2%</td></tr>
-            <tr><td>hearth</td><td>2026-03-30</td><td class="nr">$89</td><td class="nr">1%</td></tr>
-            <tr><td>PiPLLM</td><td>2026-03-18</td><td class="nr">$45</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>openclaw</td><td>2026-04-14</td><td class="nr">$45</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>mindgraph</td><td>2026-04-08</td><td class="nr">$40</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>aion</td><td>2026-04-16</td><td class="nr">$23</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>ContentDev</td><td>2026-04-07</td><td class="nr">$19</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>dev</td><td>2026-03-31</td><td class="nr">$13</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>pip</td><td>2026-04-11</td><td class="nr">$10</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>twitterclean</td><td>2026-04-05</td><td class="nr">$8</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>deepcode</td><td>2026-03-26</td><td class="nr">$7</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>TestBEd</td><td>2026-04-13</td><td class="nr">$5</td><td class="nr">&lt;1%</td></tr>
-            <tr><td>tradecanyon-sentinal</td><td>2026-03-24</td><td class="nr">$4</td><td class="nr">&lt;1%</td></tr>
+            <tr class="empty-row"><td colspan="4" style="color:var(--fg-dim);font-size:12px">No spend recorded in the last 30 days.</td></tr>
           </tbody>
         </table>
         <div class="disc">Claude cost is measured precisely from API tokens. Codex and Gemini costs are flat-rate subscriptions -- shown separately for clarity.</div>
@@ -381,12 +349,10 @@ tr:hover td{background:var(--surface)}
         <table aria-label="Spend by model">
           <thead><tr><th>Model</th><th class="nr">30d Cost</th><th class="nr">Cache hit</th><th class="nr">Sessions</th></tr></thead>
           <tbody id="spend-model-tbody">
-            <tr><td><span class="chip co">Opus 4.6</span></td><td class="nr">$6,544</td><td class="nr">97.0%</td><td class="nr">--</td></tr>
-            <tr><td><span class="chip" style="background:var(--surface);color:var(--fg-dim)">Sonnet 4.6</span></td><td class="nr">$2</td><td class="nr">--</td><td class="nr">--</td></tr>
-            <tr><td colspan="4" style="font-size:12px;color:var(--fg-dim);padding-top:10px">Codex and Gemini are flat-rate subscriptions -- shown separately from per-token Claude costs.</td></tr>
+            <tr class="empty-row"><td colspan="4" style="color:var(--fg-dim);font-size:12px">No model usage recorded in the last 30 days.</td></tr>
           </tbody>
         </table>
-        <div class="disc">Opus 4.6 is your primary model -- 99.9% of Claude cost. Cache hit rate 97.0% is measured from 2.71B cache_read tokens over 30 days.</div>
+        <div class="disc">Cache hit rate is measured from cache_read tokens over 30 days.</div>
       </div>
     </div>
 
@@ -414,87 +380,35 @@ tr:hover td{background:var(--surface)}
                 <stop offset="100%" stop-color="#D97757" stop-opacity="0.03"/>
               </linearGradient>
             </defs>
-            <polygon points="0,74 35,70 70,68 105,63 140,58 175,53 210,48 245,44 280,39 315,33 350,28 385,22 420,18 455,14 490,10 525,7 560,5 595,3 630,2 665,1 700,1 700,80 0,80" fill="url(#g2)"/>
-            <polyline points="0,74 35,70 70,68 105,63 140,58 175,53 210,48 245,44 280,39 315,33 350,28 385,22 420,18 455,14 490,10 525,7 560,5 595,3 630,2 665,1 700,1" fill="none" stroke="#D97757" stroke-width="2"/>
+            <polygon points="0,79 700,79 700,80 0,80" fill="url(#g2)"/>
+            <polyline points="0,79 700,79" fill="none" stroke="#D97757" stroke-width="2"/>
           </svg>
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--fg-dim);margin-top:4px">
-            <span id="trend-start-label">Mar 17</span><span id="trend-total-label">Total: $6,546 Claude (30d measured)</span><span id="trend-end-label">Apr 16</span>
+            <span id="trend-start-label"></span><span id="trend-total-label">No cost history yet</span><span id="trend-end-label"></span>
           </div>
         </div>
-        <div class="disc">Claude measured cost only. Codex/Gemini subscriptions ($270/mo combined) are flat-rate and excluded from this trend.</div>
+        <div class="disc">Claude measured cost only. Codex/Gemini subscriptions are flat-rate and excluded from this trend.</div>
       </div>
     </div>
 
     <!-- ======== MEMORY SEARCH ======== -->
     <div class="section" data-section="memsearch">
       <div class="card">
-        <div class="ctitle" id="memsearch-title">Memory Search -- all 35 files</div>
+        <div class="ctitle" id="memsearch-title">Memory Search</div>
         <div class="mem-layout">
           <div class="mem-l">
             <div class="mem-search">
               <span style="color:var(--fg-dim)">/</span>
-              <input type="search" id="memSearchB" placeholder="Search 35 files..." aria-label="Search memory" oninput="onMemSearch(this.value)">
+              <input type="search" id="memSearchB" placeholder="Search memory..." aria-label="Search memory" oninput="onMemSearch(this.value)">
             </div>
             <div class="mem-list" id="memListB" role="listbox" aria-label="Memory files">
-              <div class="tier-hdr" id="mem-tier-hdr">Project Memory (35)</div>
-              <div class="mfile on" role="option" aria-selected="true" tabindex="0" data-key="loop" onclick="pickMemB(this,'loop')"><span class="mfname">Donahoe Loop <span class="ptag" style="margin-left:4px">pattern</span></span><span class="mfrec" title="Recalled 170 times across sessions">170 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" data-key="posframe" onclick="pickMemB(this,'posframe')"><span class="mfname">Positive Framing is Sacred <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">12 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Memory Tiers <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">8 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Brainstorm is a Conversation <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">6 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Cross-AI Combo Policy <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">5 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Workflow Owns Execution <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">4 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Cross-Audit UX <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">4 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Ownership Discipline <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">3 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Always Recommend and Show Progress <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">3 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Dual-Mode Workflow <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">2 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Workflow Clarity and Navigation <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">2 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">No Proxy Rule <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">2 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Hook Event Semantics <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">2 recalls</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Cross-Audit Must Auto-Fire <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Claude-Side Specialist Swarm <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Phase 7 Scope <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">IJFW Forge Portability <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Installer Must Merge <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Plugin Auto-Register MCP <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Prelude Tool <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">FTS5 Deferred <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Live Todo Visibility <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Don't Make Me Think Cross-Audit <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Book-Tool Recursion <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Session State 2026-04-14 <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Migration Philosophy <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Mockups Must Be Real HTML <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Auto-Invoke Design Skills <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Design Requires Approval Before Build <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Prompt Improver <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Cross-Project Search <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Never Publish Without Live E2E <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">No Hanging Items <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">Reports Must Be Self-Contained <span class="ptag" style="margin-left:4px">feedback</span></span><span class="mfrec">1 recall</span></div>
-              <div class="mfile" role="option" tabindex="0" onclick="pickMemB(this,'generic')"><span class="mfname">IJFW Design Dispatcher <span class="ptag" style="margin-left:4px">project</span></span><span class="mfrec">1 recall</span></div>
+              <div class="tier-hdr" id="mem-tier-hdr">Project Memory</div>
             </div>
           </div>
           <div class="mem-r" id="memRightB">
-            <div class="mem-preview on" data-key="loop">
-              <div class="pv-title">Donahoe Loop</div>
-              <div class="pv-meta"><span>Project Memory</span><span>Recalls: <b>170</b></span><span>~1.2 KB</span><span>Last: <b>2026-04-16 15:37</b></span></div>
-              <div style="margin-bottom:10px"><span class="ptag">pattern</span><span class="ptag">core</span><span class="ptag">IJFW</span></div>
-              <div class="pv-body">
-                <p><strong>Donahoe Loop</strong> -- canonical IJFW loop: audit gates between every stage, Multi-AI Trident handoff at each gate.</p>
-                <p>Plan -- Audit -- Execute -- Verify -- Ship, with cross-AI review at each gate.</p>
-              </div>
-              <div class="pv-actions"><button class="btn-g">Copy path</button><button class="btn-g">Open in editor</button></div>
-            </div>
-            <div class="mem-preview" data-key="posframe">
-              <div class="pv-title">Positive Framing is Sacred</div>
-              <div class="pv-meta"><span>Project Memory</span><span>Recalls: <b>12</b></span><span>~0.8 KB</span></div>
-              <div style="margin-bottom:10px"><span class="ptag">feedback</span><span class="ptag">UX</span></div>
-              <div class="pv-body"><p><strong>Positive framing is sacred</strong> -- no negatives ever in user-facing surfaces. Sutherland reframe rule: reposition every message as opportunity.</p></div>
-              <div class="pv-actions"><button class="btn-g">Copy path</button><button class="btn-g">Open in editor</button></div>
-            </div>
-            <div class="mem-preview" data-key="generic">
+            <div class="mem-preview on" data-key="generic">
               <div class="pv-title" id="bGfTitle">--</div>
-              <div class="pv-meta"><span>Project Memory</span><span id="bGfRec">1 recall</span></div>
+              <div class="pv-meta"><span>Project Memory</span><span id="bGfRec"></span></div>
               <div class="pv-body"><p>Open in editor to view full file content.</p></div>
               <div class="pv-actions"><button class="btn-g">Copy path</button><button class="btn-g">Open in editor</button></div>
             </div>
@@ -506,16 +420,11 @@ tr:hover td{background:var(--surface)}
     <!-- ======== SESSIONS ======== -->
     <div class="section" data-section="sessions">
       <div class="card">
-        <div class="ctitle">Sessions (48 in 30 days)</div>
+        <div class="ctitle">Sessions</div>
         <table aria-label="Session list">
           <thead><tr><th>Date</th><th>Project</th><th>Model</th><th>Trident</th></tr></thead>
           <tbody>
-            <tr style="background:rgba(94,106,210,0.05)"><td>2026-04-16</td><td><strong>ijfw</strong></td><td style="color:var(--fg-dim);font-size:12px">opus-4-6</td><td style="color:var(--success)">active</td></tr>
-            <tr><td>2026-04-16</td><td>wayland</td><td style="color:var(--fg-dim);font-size:12px">opus-4-6</td><td style="color:var(--fg-dim)">--</td></tr>
-            <tr><td>2026-04-16</td><td>aion</td><td style="color:var(--fg-dim);font-size:12px">opus-4-6</td><td style="color:var(--fg-dim)">--</td></tr>
-            <tr><td>2026-04-16</td><td>socialmedia</td><td style="color:var(--fg-dim);font-size:12px">opus-4-6</td><td style="color:var(--fg-dim)">--</td></tr>
-            <tr><td>2026-04-15</td><td>ijfw</td><td style="color:var(--fg-dim);font-size:12px">opus-4-6</td><td style="color:var(--fg-dim)">--</td></tr>
-            <tr><td colspan="4" style="color:var(--fg-dim);font-size:11px">48 total sessions over 30 days.</td></tr>
+            <tr class="empty-row"><td colspan="4" style="color:var(--fg-dim);font-size:12px">Session history is not shown in this dashboard yet. Your sessions are saved per project in .ijfw/sessions/.</td></tr>
           </tbody>
         </table>
       </div>
@@ -538,27 +447,11 @@ tr:hover td{background:var(--surface)}
     <!-- ======== ALL PROJECTS ======== -->
     <div class="section" data-section="allprojects">
       <div class="card">
-        <div class="ctitle">All Projects (17 with spend, Claude measured 30d)</div>
+        <div class="ctitle">All Projects (Claude measured 30d)</div>
         <table aria-label="All projects">
           <thead><tr><th>Project</th><th>Last Active</th><th class="nr">30d Cost</th><th>Model</th></tr></thead>
           <tbody id="allprojects-tbody">
-            <tr><td><strong>ijfw</strong> <span style="font-size:11px;color:var(--accent)">current</span></td><td>2026-04-16</td><td class="nr">$2,736</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>wayland</td><td>2026-04-16</td><td class="nr">$2,126</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>Flow</td><td>2026-03-27</td><td class="nr">$662</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>socialmedia</td><td>2026-04-14</td><td class="nr">$605</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>Crucible</td><td>2026-03-25</td><td class="nr">$110</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>hearth</td><td>2026-03-30</td><td class="nr">$89</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>PiPLLM</td><td>2026-03-18</td><td class="nr">$45</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>openclaw</td><td>2026-04-14</td><td class="nr">$45</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>mindgraph</td><td>2026-04-08</td><td class="nr">$40</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>aion</td><td>2026-04-16</td><td class="nr">$23</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>ContentDev</td><td>2026-04-07</td><td class="nr">$19</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>dev</td><td>2026-03-31</td><td class="nr">$13</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>pip</td><td>2026-04-11</td><td class="nr">$10</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>twitterclean</td><td>2026-04-05</td><td class="nr">$8</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>deepcode</td><td>2026-03-26</td><td class="nr">$7</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>TestBEd</td><td>2026-04-13</td><td class="nr">$5</td><td><span class="chip co">Opus 4.6</span></td></tr>
-            <tr><td>tradecanyon-sentinal</td><td>2026-03-24</td><td class="nr">$4</td><td><span class="chip co">Opus 4.6</span></td></tr>
+            <tr class="empty-row"><td colspan="4" style="color:var(--fg-dim);font-size:12px">No projects with recorded spend yet.</td></tr>
           </tbody>
         </table>
       </div>
@@ -650,13 +543,9 @@ tr:hover td{background:var(--surface)}
         <div class="scard">
           <h3>Platform Subscriptions</h3>
           <div id="subs-config-rows">
-            <div class="srow"><span class="slbl">Claude Max 20x</span><span class="sval">$200/mo</span></div>
-            <div class="srow"><span class="slbl">Codex Pro</span><span class="sval">$20/mo</span></div>
-            <div class="srow"><span class="slbl">Gemini AI Ultra</span><span class="sval">$249.99/mo</span></div>
-            <div class="srow"><span class="slbl">Combined flat-rate</span><span class="sval">$469.99/mo</span></div>
-            <div class="srow"><span class="slbl">Billing day</span><span class="sval">1st of month</span></div>
+            <div class="srow"><span class="slbl">No subscriptions set</span><span class="sval">--</span></div>
           </div>
-          <div class="srow"><span class="slbl">Prices pinned</span><span class="sval" data-live="prices-pinned-date">2026-04-16</span></div>
+          <div class="srow"><span class="slbl">Prices pinned</span><span class="sval" data-live="prices-pinned-date">--</span></div>
           <div class="disc">IJFW uses your subscription tier to calculate accurate cost and savings projections. No tier configured? Defaults work fine.</div>
         </div>
       </div>
@@ -878,7 +767,7 @@ async function loadCostToday() {
     var el = document.querySelector('[data-live="cost-today"]');
     if (el) el.textContent = fmtDollars(cost);
     var sub = document.querySelector('[data-live="cost-today-sub"]');
-    if (sub && cost === 0) sub.textContent = 'no data yet today';
+    if (sub) sub.textContent = cost === 0 ? 'no data yet today' : '';
   } catch(e) {}
 }
 
@@ -946,7 +835,7 @@ async function loadSpendProjects() {
         var td2 = document.createElement('td'); td2.textContent = row.last_active || '--';
         var td3 = document.createElement('td'); td3.className = 'nr'; td3.textContent = fmtDollars(extractCost(row));
         var td4 = document.createElement('td');
-        var chip = document.createElement('span'); chip.className = 'chip co'; chip.textContent = 'Opus 4.6';
+        var chip = document.createElement('span'); chip.className = 'chip co'; chip.textContent = row.model || row.top_model || '--';
         td4.appendChild(chip);
         tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
         all.appendChild(tr);
@@ -1178,7 +1067,37 @@ async function loadConfig() {
     if (tierPill && d.subscriptions && d.subscriptions.claude) {
       var tier = d.subscriptions.claude.tier || d.subscriptions.claude.name || 'MAX';
       tierPill.textContent = tier;
+      tierPill.style.display = '';
     }
+  } catch(e) {}
+}
+
+// --- Live Feed: the user's own observations (newest first) ---
+async function loadLiveFeed() {
+  try {
+    var r = await fetch('/api/observations?limit=50');
+    var rows = await r.json();
+    var box = document.getElementById('live-feed-rows');
+    if (!box || !Array.isArray(rows) || rows.length === 0) return;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    rows.slice().reverse().forEach(function(o) {
+      var row = document.createElement('div'); row.className = 'feed-row';
+      var ts = document.createElement('span'); ts.className = 'fts';
+      var d = o && o.ts ? new Date(o.ts) : null;
+      ts.textContent = d && !isNaN(d) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--';
+      var type = document.createElement('span'); type.className = 'ftype';
+      type.textContent = (o && o.type) || 'event';
+      var body = document.createElement('span'); body.className = 'fbody';
+      var bits = [];
+      if (o && o.title) bits.push(String(o.title));
+      if (o && o.project) bits.push('[' + o.project + ']');
+      if (o && o.platform) bits.push('(' + o.platform + ')');
+      body.textContent = bits.join(' ') || '--';
+      row.appendChild(ts); row.appendChild(type); row.appendChild(body);
+      box.appendChild(row);
+    });
+    var src = document.getElementById('live-feed-src');
+    if (src) src.textContent = 'from ~/.ijfw/observations.jsonl (' + rows.length + ' latest)';
   } catch(e) {}
 }
 
@@ -1554,6 +1473,7 @@ function loadExtensionEvents() {
 document.addEventListener('DOMContentLoaded', function() {
   loadCostToday();
   loadCost30d();
+  loadLiveFeed();
   loadTodayProjects();
   loadSpendProjects();
   loadSpendModels();

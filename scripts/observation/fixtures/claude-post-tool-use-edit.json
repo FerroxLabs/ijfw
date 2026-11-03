@@ -1,0 +1,9 @@
+{
+  "session_id": "claude-session-1",
+  "transcript_path": "/Users/test user/.claude/projects/x/session.jsonl",
+  "cwd": "/Users/test user/dev/my project",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": { "file_path": "/Users/test user/dev/my project/src/app.js", "old_string": "a", "new_string": "b" },
+  "tool_response": { "filePath": "/Users/test user/dev/my project/src/app.js", "success": true }
+}

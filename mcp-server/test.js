@@ -437,12 +437,15 @@ async function runTest() {
     assert(txt.includes('[project:project-beta]'), 'Cross-project results are tagged with project basename');
     srv.kill();
 
-    // scope:'all' should NOT include the current project's own results twice
-    // (current project is excluded from registry walk).
+    // scope:'all' means EVERY project, including the current one, but each
+    // line only once (FerroxLabs/ijfw#50 follow-up: a scope:'all' search from
+    // the project holding the answer used to find nothing).
     srv = spawnXProj(PROJ_A);
     resp = await callTool(srv, 102, 'ijfw_memory_search', { query: 'postgres', scope: 'all' });
     txt = resp.result?.content?.[0]?.text || '';
-    assert(!txt.includes('[project:project-alpha]'), 'scope:all excludes the current project');
+    assert(txt.includes('[project:project-alpha]'), 'scope:all includes the current project');
+    const alphaLines = txt.split('\n').filter((l) => l.includes('[project:project-alpha]'));
+    assert(alphaLines.length === new Set(alphaLines).size, 'scope:all lists each current-project hit once');
     srv.kill();
 
     // recall(from_project) should work by basename, hash, and absolute path.
