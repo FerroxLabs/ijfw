@@ -39,11 +39,13 @@ const REPO_ROOT = join(__dirname, '..');
 const SERVER_JS = join(REPO_ROOT, 'mcp-server', 'src', 'server.js');
 
 // Canonical TARGETS list -- mirrors installer/src/install-flow.js:CANONICAL_ORDER.
-// 16 platforms.
+// 17 platforms.
 const PLATFORMS = [
   // 5 critical platforms (live-verified by sibling test suites; smoke
   // re-asserts install-path landing for matrix completeness).
   { id: 'claude',   tier: 'plugin',     name: 'Claude Code' },
+  // Platform #17 -- Claude Desktop (mcp-only; macOS/Windows app config).
+  { id: 'claude-desktop', tier: 'mcp-config', name: 'Claude Desktop' },
   { id: 'codex',    tier: 'plugin',     name: 'Codex CLI' },
   { id: 'gemini',   tier: 'extension',  name: 'Gemini CLI' },
   { id: 'wayland',  tier: 'plugin',     name: 'Wayland' },
@@ -65,7 +67,7 @@ const PLATFORMS = [
   { id: 'pi', tier: 'rules-only', name: 'Pi' },
 ];
 
-assert.equal(PLATFORMS.length, 16, '16-platform matrix invariant');
+assert.equal(PLATFORMS.length, 17, '17-platform matrix invariant');
 
 // -------------------------------------------------------------------------
 // Per-platform expected landing site under a sandbox HOME.
@@ -190,11 +192,11 @@ function cleanup(sandbox) {
 // OR (rules-only tier) validates the conventions doc lands.
 // -------------------------------------------------------------------------
 
-test('matrix: 16 platforms canonical (no drift)', () => {
+test('matrix: 17 platforms canonical (no drift)', () => {
   // Mirror installer/src/install-flow.js:CANONICAL_ORDER. If this drifts, the
   // matrix is out of sync and Phase 5 docs (PHASE-5-SMOKE-MATRIX.md) need
   // updating.
-  assert.equal(CANONICAL_ORDER.length, 16, 'CANONICAL_ORDER must list 16 platforms');
+  assert.equal(CANONICAL_ORDER.length, 17, 'CANONICAL_ORDER must list 17 platforms');
   const canonicalSet = new Set(CANONICAL_ORDER);
   for (const p of PLATFORMS) {
     assert.ok(canonicalSet.has(p.id), `CANONICAL_ORDER missing platform '${p.id}'`);
@@ -367,6 +369,24 @@ test('cline: VS Code globalStorage settings.json registers ijfw-memory', async (
     assert.deepEqual(doc.mcpServers?.['ijfw-memory']?.args, [SERVER_JS]);
     // Cline-specific schema requires type:"stdio".
     assert.equal(doc.mcpServers?.['ijfw-memory']?.type, 'stdio');
+  } finally { cleanup(sb); }
+});
+
+test('claude-desktop: merges claude_desktop_config.json only where the app config dir exists', async () => {
+  const sb = isolatedSandbox('claude-desktop');
+  try {
+    const appDir = process.platform === 'darwin'
+      ? join(sb.home, 'Library', 'Application Support', 'Claude')
+      : null;
+    if (appDir) mkdirSync(appDir, { recursive: true });
+    await installInSandbox('claude-desktop', sb);
+    if (appDir) {
+      const doc = readJSON(join(appDir, 'claude_desktop_config.json'));
+      assert.equal(doc.mcpServers?.['ijfw-memory']?.command, 'node');
+    } else {
+      // Linux/Windows sandbox without the app: nothing is created.
+      assert.equal(existsSync(join(sb.home, 'Library')), false);
+    }
   } finally { cleanup(sb); }
 });
 

@@ -157,3 +157,10 @@ test('the same project listed twice (symlinked spelling) is searched once', asyn
   buildCorpus([{ path: TEST_PROJ }, { path: link }], reader, { allowedRoots: [BASE], useCache: false });
   assert.equal(reads, 1);
 });
+
+test('ijfw_cross_project_search ("every IJFW project") also covers the current project', async () => {
+  const [hit] = await callServer(TEST_PROJ, [
+    ['ijfw_cross_project_search', { pattern: 'BLUE-HERON-42' }],
+  ]);
+  assert.match(hit, /@Test:L\d+\][^\n]*BLUE-HERON-42/, `cross-project tool from the same project: ${hit}`);
+});

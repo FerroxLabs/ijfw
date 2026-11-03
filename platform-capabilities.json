@@ -5,7 +5,7 @@
     "first-class": "Native plugin surface: skills + agents + commands + hooks scripts + MCP. Local picker + templates as files. (claude, codex, gemini)",
     "mcp-plus-hooks": "MCP + Python plugin tree + shared skills (copy-from shared/) + at least one wired hook. (hermes, wayland)",
     "mcp-plus-rules": "MCP config + rules/instructions file only. No skills, no hooks, no commands, no agents on disk. (cursor, windsurf, copilot, antigravity)",
-    "mcp-only": "MCP config merge only. No rules file deployed by installer. (opencode, qwen, cline, kimi, openclaw)",
+    "mcp-only": "MCP config merge only. No rules file deployed by installer. (opencode, qwen, cline, kimi, openclaw, claude-desktop)",
     "rules-only": "Rules/conventions file only. No MCP (Aider has no native MCP client). (aider)"
   },
   "platforms": {
@@ -22,6 +22,19 @@
       "skillsPath": "claude/skills",
       "hooksPath": "claude/hooks/hooks.json",
       "displayName": "Claude Code"
+    },
+    "claude-desktop": {
+      "tier": "mcp-only",
+      "mcp": true,
+      "memory": true,
+      "rules": false,
+      "skills": 0,
+      "agents": 0,
+      "commands": 0,
+      "hooks": 0,
+      "hookEvents": 0,
+      "displayName": "Claude Desktop",
+      "notes": "Installer merges mcpServers.ijfw-memory into claude_desktop_config.json (macOS ~/Library/Application Support/Claude, Windows %APPDATA%\\Claude) when the app is installed. No rules file, no hooks. Memory is user-global: the app does not report an open project."
     },
     "codex": {
       "tier": "first-class",

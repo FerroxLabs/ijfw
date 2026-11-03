@@ -132,6 +132,17 @@ export function isProjectWritable(cwd, home) {
   // The bleed vector: cwd === $HOME. Refuse.
   if (candReal === homeRealPath) return false;
 
+  // Never treat the IJFW install itself as "your project": running the
+  // installer from ~/.ijfw/installer used to write .cursor/ .vscode/ .ijfw/
+  // .windsurfrules into the IJFW checkout (FerroxLabs/ijfw#50 rollout).
+  const ijfwHomes = [join(rawHome, '.ijfw')];
+  if (process.env.IJFW_HOME) ijfwHomes.push(process.env.IJFW_HOME);
+  for (const h of ijfwHomes) {
+    let hReal;
+    try { hReal = realpathSync(h); } catch { try { hReal = resolve(h); } catch { continue; } }
+    if (candReal === hReal || candReal.startsWith(hReal + sep)) return false;
+  }
+
   return true;
 }
 
@@ -152,7 +163,7 @@ export function guardProjectWrite(cwd, home, opts = {}) {
   const info = (opts.log && typeof opts.log.info === 'function') ? opts.log.info : printInfo;
   info(
     `Run \`ijfw install\` from a project directory to install ${label}; ` +
-    'skipped (cwd is your home directory).',
+    'skipped (this folder is your home directory or the IJFW install).',
   );
   return false;
 }
@@ -508,6 +519,32 @@ function readJsonOrEmpty(path) {
  * PATH for spawned MCPs (harmless elsewhere). On Windows we omit PATH (Path
  * uses different separator + node is on Path after preflight).
  */
+/**
+ * guiSafePath -- PATH value for MCP entries. Desktop apps (Claude Desktop,
+ * Codex Desktop, IDEs) start servers with a minimal PATH, so `node` from
+ * Volta / Homebrew / nvm is not found. Lists the installing node's own dir
+ * first, then common node locations that exist. '' on Windows.
+ */
+export function guiSafePath() {
+  if (IS_WIN) return '';
+  const home = homedir();
+  const candidatePaths = [
+    dirname(process.execPath),
+    `${home}/.volta/bin`,
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    `${home}/.nvm/versions/node/${process.version}/bin`,
+    '/usr/bin',
+    '/bin',
+  ];
+  return [...new Set(candidatePaths)]
+    .filter((d) => {
+      try { return typeof d === 'string' && d.length > 0 && existsSync(d); }
+      catch { return false; }
+    })
+    .join(':');
+}
+
 export function mergeJson(dst, serverJs, ts) {
   mkdirSync(dirname(dst), { recursive: true });
   // V155-009: refuse to overwrite an existing config without a verified backup.
@@ -519,23 +556,7 @@ export function mergeJson(dst, serverJs, ts) {
   const doc = readJsonOrEmpty(dst);
   if (!doc.mcpServers || typeof doc.mcpServers !== 'object') doc.mcpServers = {};
 
-  const isWin = IS_WIN;
-  const nodeDir = dirname(process.execPath);
-  const home = homedir();
-  const candidatePaths = isWin ? [] : [
-    nodeDir,
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    `${home}/.nvm/versions/node/${process.version}/bin`,
-    '/usr/bin',
-    '/bin',
-  ];
-  const envPath = candidatePaths
-    .filter(d => {
-      try { return typeof d === 'string' && d.length > 0 && existsSync(d); }
-      catch { return false; }
-    })
-    .join(':');
+  const envPath = guiSafePath();
 
   const entry = { command: 'node', args: [serverJs] };
   if (envPath) entry.env = { PATH: envPath };
@@ -594,6 +615,10 @@ export function mergeToml(dst, serverJs, ts) {
   block += '\n[mcp_servers.ijfw-memory]\n';
   block += 'command = "node"\n';
   block += `args = ["${escaped}"]\n`;
+  // Inline table (not a [mcp_servers.ijfw-memory.env] sub-table) so the
+  // section strip on reinstall/uninstall removes it together with the entry.
+  const envPath = guiSafePath();
+  if (envPath) block += `env = { PATH = "${envPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" }\n`;
   block += 'enabled = true\n';
   block += 'startup_timeout_sec = 10\n';
   block += 'tool_timeout_sec = 30\n';

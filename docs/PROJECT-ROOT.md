@@ -47,10 +47,11 @@ in this change.
 
 | Host | How IJFW registers the server | Root signal the server receives | Status |
 |------|-------------------------------|----------------------------------|--------|
-| Codex CLI | `~/.codex/config.toml` `[mcp_servers.ijfw-memory]`, no `cwd` key | cwd = Codex's runtime working directory (`LocalStdioServerLauncher` `fallback_cwd`, openai/codex `codex-rs/rmcp-client/src/stdio_server_launcher.rs`) | Verified in source |
+| Codex CLI / Codex Desktop | `~/.codex/config.toml` `[mcp_servers.ijfw-memory]`, no `cwd` key, own `env.PATH` so desktop apps find `node` | cwd = Codex's runtime working directory (`LocalStdioServerLauncher` `fallback_cwd`, openai/codex `codex-rs/rmcp-client/src/stdio_server_launcher.rs`) | Verified in source |
 | Gemini CLI (extension) | `gemini-extension.json` | `IJFW_PROJECT_DIR=${workspacePath}`. Gemini fills this with its workspace dir (`hydrateString` in gemini-cli `packages/cli/src/config/extensions/variables.ts`). The old value, `${PWD}`, depended on the launching shell and stayed as the literal `${PWD}` when `PWD` was unset. | Verified in source |
 | Gemini CLI (settings.json) | `~/.gemini/settings.json` from the installer | cwd only. Gemini skips a second server with the same name, so whichever entry registers first wins. | Order not verified |
 | Claude Code | plugin `.mcp.json` + `~/.claude/settings.json` | cwd = the directory where the session started; `CLAUDE_PROJECT_DIR` when Claude Code sets it | Not re-verified here |
+| Claude Desktop | `claude_desktop_config.json` (macOS `~/Library/Application Support/Claude/`), merged only when the app is installed | none; the app does not report an open project, so memory is **user-global** (HOME). Use `scope: "all"` search to reach project memory | Root signal not verifiable (closed source) |
 | Cursor / Windsurf / Copilot / other project-scoped JSON configs | project or user MCP JSON | cwd only (the host chooses it; IJFW sets no `cwd`) | Not verified |
 
 ## Searching all projects (`scope: "all"`)
